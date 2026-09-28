@@ -14,39 +14,8 @@ class Exporter(private val db: AppDatabase) {
 
     suspend fun exportAll(): String {
         Logger.i("EXPORT", "Exporting all papers")
-        val paperDtos = db.paperDao().getAll().map { paper ->
-            val categories = db.categoryDao().getByPaper(paper.id)
-            val categoryDtos = categories.map { category ->
-                val questions = db.questionDao().getByCategory(category.id).map { question ->
-                    val options = db.optionDao().getByQuestion(question.id)
-                    val correctIds = db.correctAnswerDao().getCorrectIds(question.id)
-                    QuestionDto(
-                        id = question.id,
-                        text = question.text,
-                        image = question.image,
-                        options = options.map { OptionDto(it.id, it.text, it.image) },
-                        correctOptionIds = correctIds,
-                        explanation = question.explanation,
-                        difficulty = question.difficulty,
-                        tags = question.tags.split(",").filter { it.isNotBlank() }
-                    )
-                }
-                CategoryDto(
-                    id = category.id,
-                    title = category.title,
-                    parentId = category.parentId,
-                    questions = questions
-                )
-            }
-            PaperDto(
-                id = paper.id,
-                title = paper.title,
-                description = paper.description,
-                durationMinutes = paper.durationMinutes,
-                negativeMarking = paper.negativeMarking,
-                categories = categoryDtos
-            )
-        }
+        val papers = db.paperDao().getAll()
+        val paperDtos = papers.map { paper -> exportPaperDto(paper) }
         Logger.i("EXPORT", "Exported ${paperDtos.size} papers total")
         return json.encodeToString(
             McqFileDto.serializer(),
@@ -60,40 +29,9 @@ class Exporter(private val db: AppDatabase) {
             McqFileDto.serializer(),
             McqFileDto(version = 1, papers = emptyList())
         )
-        val categories = db.categoryDao().getByPaper(paperId)
-        val categoryDtos = categories.map { category ->
-            val questions = db.questionDao().getByCategory(category.id).map { question ->
-                val options = db.optionDao().getByQuestion(question.id)
-                val correctIds = db.correctAnswerDao().getCorrectIds(question.id)
-                QuestionDto(
-                    id = question.id,
-                    text = question.text,
-                    image = question.image,
-                    options = options.map { OptionDto(it.id, it.text, it.image) },
-                    correctOptionIds = correctIds,
-                    explanation = question.explanation,
-                    difficulty = question.difficulty,
-                    tags = question.tags.split(",").filter { it.isNotBlank() }
-                )
-            }
-            CategoryDto(
-                id = category.id,
-                title = category.title,
-                parentId = category.parentId,
-                questions = questions
-            )
-        }
-        val paperDto = PaperDto(
-            id = paper.id,
-            title = paper.title,
-            description = paper.description,
-            durationMinutes = paper.durationMinutes,
-            negativeMarking = paper.negativeMarking,
-            categories = categoryDtos
-        )
         return json.encodeToString(
             McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = listOf(paperDto))
+            McqFileDto(version = 1, papers = listOf(exportPaperDto(paper)))
         )
     }
 
@@ -104,28 +42,6 @@ class Exporter(private val db: AppDatabase) {
         for (rootId in rootCategoryIds) {
             collectWithDescendants(rootId, byId, selected)
         }
-        val categoryDtos = allCategories.filter { it.id in selected }.map { category ->
-            val questions = db.questionDao().getByCategory(category.id).map { question ->
-                val options = db.optionDao().getByQuestion(question.id)
-                val correctIds = db.correctAnswerDao().getCorrectIds(question.id)
-                QuestionDto(
-                    id = question.id,
-                    text = question.text,
-                    image = question.image,
-                    options = options.map { OptionDto(it.id, it.text, it.image) },
-                    correctOptionIds = correctIds,
-                    explanation = question.explanation,
-                    difficulty = question.difficulty,
-                    tags = question.tags.split(",").filter { it.isNotBlank() }
-                )
-            }
-            CategoryDto(
-                id = category.id,
-                title = category.title,
-                parentId = category.parentId,
-                questions = questions
-            )
-        }
         val paper = db.paperDao().getById(paperId)
         val paperDto = PaperDto(
             id = paperId,
@@ -133,12 +49,57 @@ class Exporter(private val db: AppDatabase) {
             description = paper?.description ?: "",
             durationMinutes = paper?.durationMinutes ?: 0,
             negativeMarking = paper?.negativeMarking ?: 0.0,
-            categories = categoryDtos
+            categories = allCategories.filter { it.id in selected }.map { category ->
+                exportCategoryDto(category)
+            }
         )
         return json.encodeToString(
             McqFileDto.serializer(),
             McqFileDto(version = 1, papers = listOf(paperDto))
         )
+    }
+
+    private suspend fun exportPaperDto(paper: PaperEntity): PaperDto {
+        val categories = db.categoryDao().getByPaper(paper.id)
+        return PaperDto(
+            id = paper.id,
+            title = paper.title,
+            description = paper.description,
+            durationMinutes = paper.durationMinutes,
+            negativeMarking = paper.negativeMarking,
+            categories = categories.map { exportCategoryDto(it) }
+        )
+    }
+
+    private suspend fun exportCategoryDto(category: CategoryEntity): CategoryDto {
+        val questions = db.questionDao().getByCategory(category.id)
+        return CategoryDto(
+            id = category.id,
+            title = category.title,
+            parentId = category.parentId,
+            questions = questions.toDtoBulk()
+        )
+    }
+
+    private suspend fun List<QuestionEntity>.toDtoBulk(): List<QuestionDto> {
+        if (isEmpty()) return emptyList()
+        val ids = map { it.id }
+        val optionsByQuestion = db.optionDao().getForQuestions(ids).groupBy { it.questionId }
+        val correctByQuestion = db.correctAnswerDao().getForQuestions(ids).groupBy { it.questionId }
+        return map { entity ->
+            val options = optionsByQuestion[entity.id] ?: emptyList()
+            val correctIds = correctByQuestion[entity.id]?.map { it.optionId } ?: emptyList()
+            QuestionDto(
+                id = entity.id,
+                text = entity.text,
+                image = entity.image,
+                options = options.map { OptionDto(it.id, it.text, it.image) },
+                correctOptionIds = correctIds,
+                explanation = entity.explanation,
+                difficulty = entity.difficulty,
+                tags = entity.tags.split(",").filter { it.isNotBlank() }
+            )
+        }
     }
 
     private fun collectWithDescendants(

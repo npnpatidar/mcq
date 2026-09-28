@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
@@ -57,9 +58,41 @@ class EditorViewModel(
     )
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
+    private var fromImportSession: Boolean = false
+
     init {
         Logger.i("EDITORVM", "EditorViewModel created: questionId='$questionId', paperId='$paperId', categoryId='$categoryId'")
-        viewModelScope.launch {
+        val holderFlag = com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport
+        val pendingEdit = com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion
+        com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = false
+        com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = null
+        Logger.d("EDITORVM", "init: holderPresent=${pendingEdit != null}, holderId=${pendingEdit?.id}, " +
+            "holderFlag=$holderFlag (both consumed atomically)")
+        fromImportSession = holderFlag && pendingEdit != null && pendingEdit.id == questionId
+        Logger.d("EDITORVM", "init: fromImportSession=$fromImportSession")
+        if (fromImportSession && pendingEdit != null) {
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = null
+            _state.value = _state.value.copy(
+                loading = false,
+                text = pendingEdit.text,
+                image = pendingEdit.image.orEmpty(),
+                explanation = pendingEdit.explanation,
+                difficulty = Difficulty.fromLabel(pendingEdit.difficulty),
+                tags = pendingEdit.tags.joinToString(", "),
+                options = pendingEdit.options.map { o ->
+                    OptionEditorState(
+                        id = o.id,
+                        text = o.text,
+                        image = o.image.orEmpty(),
+                        isCorrect = o.id in pendingEdit.correctOptionIds
+                    )
+                },
+                categories = emptyList(),
+                categoryId = ""
+            )
+            Logger.i("EDITORVM", "Editor ready: editing from import screen (in-memory)")
+        } else {
+            viewModelScope.launch {
             try {
                 val paper = if (paperId.isNotBlank()) repository.getPaper(paperId) else null
             val categories = paper?.categories ?: emptyList()
@@ -99,6 +132,7 @@ class EditorViewModel(
             Logger.i("EDITORVM", "Editor ready: $readyMsg, ${categories.size} categories available")
         } catch (e: Exception) {
             Logger.e("EDITORVM", "Failed to initialize editor", e)
+        }
         }
         }
     }
@@ -158,7 +192,34 @@ class EditorViewModel(
 
     fun save(onDone: () -> Unit) {
         val s = _state.value
-        if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) return
+        Logger.d("EDITORVM", "save() called: questionId='${s.questionId}', textBlank=${s.text.isBlank()}, " +
+            "options=${s.options.size}, blankOptions=${s.options.count { it.text.isBlank() }}, " +
+            "correctCount=${s.options.count { it.isCorrect }}, editingFromImport=" +
+            "${com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport}")
+        if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) {
+            Logger.w("EDITORVM", "save() validation FAILED - not saving")
+            return
+        }
+        val edited = s.options.map { QuestionOption(it.id, it.text.trim(), it.image.trim().ifBlank { null }) }
+        val dto = QuestionDto(
+            id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
+            text = s.text.trim(),
+            image = s.image.trim().ifBlank { null },
+            options = edited.map { com.mcqapp.data.io.OptionDto(it.id, it.text, it.image) },
+            correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toList(),
+            explanation = s.explanation.trim(),
+            difficulty = s.difficulty.label,
+            tags = s.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() }
+        )
+        Logger.d("EDITORVM", "save(): fromImportSession=$fromImportSession, " +
+            "dtoId=${dto.id}, dtoText='${dto.text.take(60)}', dtoOptions=${dto.options.size}, " +
+            "dtoCorrect=${dto.correctOptionIds}")
+        if (fromImportSession) {
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = dto
+            Logger.i("EDITORVM", "Saved question ${dto.id} to import holder (in-memory)")
+            onDone()
+            return
+        }
         val question = Question(
             id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
             categoryId = s.categoryId,

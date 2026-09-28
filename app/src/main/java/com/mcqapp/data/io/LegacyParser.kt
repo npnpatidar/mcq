@@ -16,7 +16,25 @@ object LegacyParser {
     private val letterIds = ('a'..'z').map { it.toString() }
 
     fun parse(json: String): McqFileDto {
-        val root = Json.parseToJsonElement(json).jsonObject
+        val element = Json.parseToJsonElement(json)
+        if (element is JsonArray) {
+            val questions = element.map { parseQuestion(it.jsonObject) }
+            val paperId = "paper-" + System.currentTimeMillis().toString(36)
+            val paper = PaperDto(
+                id = paperId,
+                title = "Imported Questions",
+                categories = listOf(
+                    CategoryDto(
+                        id = "$paperId-uncat",
+                        title = "Uncategorized",
+                        questions = questions
+                    )
+                ),
+                questions = questions
+            )
+            return McqFileDto(version = 1, papers = listOf(paper))
+        }
+        val root = element.jsonObject
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 1
         val papersJson = root["papers"] as? JsonArray ?: JsonArray(emptyList())
         val papers = papersJson.map { parsePaper(it.jsonObject) }

@@ -48,10 +48,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         combine(
             db.paperDao().observeAll(),
             db.categoryDao().observeAll(),
-            db.questionDao().observeAll()
-        ) { papers, categories, questions ->
-            Logger.d("REPO", "observePapers recombine: ${papers.size} papers, ${categories.size} categories, ${questions.size} questions")
-            papers.map { it.toDomain() }
+            db.questionDao().observeCategoryCounts()
+        ) { papers, categories, counts ->
+            val countMap = counts.associate { it.categoryId to it.cnt }
+            papers.map { it.toDomain(countMap) }
         }
 
     suspend fun getPaper(paperId: String): Paper? {
@@ -59,7 +59,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         return db.paperDao().getById(paperId)?.toDomain()
     }
 
-    private suspend fun PaperEntity.toDomain(): Paper {
+    private suspend fun PaperEntity.toDomain(countMap: Map<String, Int> = emptyMap()): Paper {
         val categories = db.categoryDao().getByPaper(id)
         return Paper(
             id = id,
@@ -67,34 +67,101 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             description = description,
             durationMinutes = durationMinutes,
             negativeMarking = negativeMarking,
-            categories = buildTree(categories)
+            categories = buildTree(categories, countMap)
         )
     }
 
-    private suspend fun buildTree(categories: List<CategoryEntity>): List<CategoryNode> {
+    private suspend fun buildTree(
+        categories: List<CategoryEntity>,
+        countMap: Map<String, Int> = emptyMap()
+    ): List<CategoryNode> {
         val byParent = categories.groupBy { it.parentId }
-        suspend fun build(parentId: String?): List<CategoryNode> =
+        suspend fun build(parentId: String?, counts: Map<String, Int>): List<CategoryNode> =
             (byParent[parentId] ?: emptyList()).map { category ->
                 CategoryNode(
                     id = category.id,
                     paperId = category.paperId,
                     title = category.title,
                     parentId = category.parentId,
-                    children = build(category.id),
-                    questionCount = db.questionDao().countByCategory(category.id)
+                    children = build(category.id, counts),
+                    questionCount = counts[category.id] ?: 0
                 )
             }
-        return build(null)
+        return build(null, countMap)
     }
+
+    fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
+        db.questionDao().observeCategoryCounts().map { counts ->
+            val countMap = counts.associate { it.categoryId to it.cnt }
+            val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+            val entities = categoryIds.flatMap { db.questionDao().getByCategory(it) }
+            entities.map { entity ->
+                val options = db.optionDao().getForQuestions(entities.map { it.id })
+                    .groupBy { it.questionId }[entity.id] ?: emptyList()
+                val correctIds = db.correctAnswerDao().getForQuestions(entities.map { it.id })
+                    .groupBy { it.questionId }[entity.id]?.map { it.optionId }?.toSet() ?: emptySet()
+                Question(
+                    id = entity.id,
+                    categoryId = entity.categoryId,
+                    text = entity.text,
+                    image = entity.image,
+                    options = options.map { QuestionOption(it.id, it.text, it.image) },
+                    correctOptionIds = correctIds,
+                    explanation = entity.explanation,
+                    difficulty = Difficulty.fromLabel(entity.difficulty),
+                    tags = entity.tags.split(",").filter { it.isNotBlank() }
+                )
+            }
+        }
+
+    fun observeQuestion(questionId: String): Flow<Question?> =
+        db.questionDao().observeAll().map { list -> list.find { it.id == questionId } }
+            .map { entity ->
+                entity?.let {
+                    val options = db.optionDao().getByQuestion(it.id)
+                    val correctIds = db.correctAnswerDao().getCorrectIds(it.id).toSet()
+                    Question(
+                        id = it.id,
+                        categoryId = it.categoryId,
+                        text = it.text,
+                        image = it.image,
+                        options = options.map { opt -> QuestionOption(opt.id, opt.text, opt.image) },
+                        correctOptionIds = correctIds,
+                        explanation = it.explanation,
+                        difficulty = Difficulty.fromLabel(it.difficulty),
+                        tags = it.tags.split(",").filter { t -> t.isNotBlank() }
+                    )
+                }
+            }
 
     suspend fun getQuestionsForCategories(categoryIds: List<String>): List<Question> {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")
-        val result = mutableListOf<Question>()
-        for (categoryId in categoryIds) {
-            result.addAll(db.questionDao().getByCategory(categoryId).map { it.toDomain() })
-        }
+        val entities = categoryIds.flatMap { db.questionDao().getByCategory(it) }
+        val result = entities.toDomainBulk()
         Logger.d("REPO", "getQuestionsForCategories returned ${result.size} questions")
         return result
+    }
+
+    private suspend fun List<QuestionEntity>.toDomainBulk(): List<Question> {
+        if (isEmpty()) return emptyList()
+        val ids = map { it.id }
+        val optionsByQuestion = db.optionDao().getForQuestions(ids).groupBy { it.questionId }
+        val correctByQuestion = db.correctAnswerDao().getForQuestions(ids).groupBy { it.questionId }
+        return map { entity ->
+            val options = optionsByQuestion[entity.id] ?: emptyList()
+            val correctIds = correctByQuestion[entity.id]?.map { it.optionId }?.toSet() ?: emptySet()
+            Question(
+                id = entity.id,
+                categoryId = entity.categoryId,
+                text = entity.text,
+                image = entity.image,
+                options = options.map { QuestionOption(it.id, it.text, it.image) },
+                correctOptionIds = correctIds,
+                explanation = entity.explanation,
+                difficulty = Difficulty.fromLabel(entity.difficulty),
+                tags = entity.tags.split(",").filter { it.isNotBlank() }
+            )
+        }
     }
 
     suspend fun getQuestionsForPaper(paperId: String): List<Question> {
@@ -124,9 +191,34 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         )
     }
 
+    private fun computeContentHash(text: String, optionTexts: List<String>, optionImages: List<String?>): String {
+        val raw = text + "|" + optionTexts.joinToString(",") + "|" + optionImages.joinToString(",")
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    suspend fun ensurePaperAndCategory(paperId: String, paperTitle: String, categoryId: String, categoryTitle: String) {
+        db.paperDao().upsert(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
+        db.categoryDao().upsert(
+            CategoryEntity(
+                id = categoryId,
+                paperId = paperId,
+                title = categoryTitle.ifBlank { "Uncategorized" }
+            )
+        )
+    }
+
     suspend fun saveQuestion(question: Question) {
-        Logger.d("REPO", "saveQuestion(${question.id}, category=${question.categoryId}, " +
-            "${question.options.size} options, correct=${question.correctOptionIds})")
+        Logger.d("REPO", "saveQuestion(id=${question.id}, category=${question.categoryId}, " +
+            "options=${question.options.size}, correct=${question.correctOptionIds}, " +
+            "text='${question.text.take(60)}')")
+        val existing = db.questionDao().getById(question.id)
+        val sortOrder = existing?.sortOrder
+            ?: ((db.questionDao().getMaxSortOrder(question.categoryId) ?: -1) + 1)
+        Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
+            "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
+        val contentHash = computeContentHash(question.text, question.options.map { it.text }, question.options.map { it.image })
+        Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
         db.questionDao().upsert(
             QuestionEntity(
                 id = question.id,
@@ -135,9 +227,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 image = question.image,
                 explanation = question.explanation,
                 difficulty = question.difficulty.label,
-                tags = question.tags.joinToString(",")
+                tags = question.tags.joinToString(","),
+                sortOrder = sortOrder,
+                contentHash = contentHash
             )
         )
+        Logger.d("REPO", "saveQuestion(id=${question.id}): question row upserted")
         db.optionDao().deleteByQuestion(question.id)
         db.optionDao().upsertAll(
             question.options.mapIndexed { index, o ->
@@ -150,12 +245,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 )
             }
         )
+        Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.options.size} options written")
         db.correctAnswerDao().deleteByQuestion(question.id)
         db.correctAnswerDao().upsertAll(
             question.correctOptionIds.map {
                 CorrectAnswerEntity(question.id, it)
             }
         )
+        Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.correctOptionIds.size} correct answers written - done")
     }
 
     suspend fun deleteQuestion(questionId: String) {

@@ -100,8 +100,17 @@ fun LibraryScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            val encoded = android.net.Uri.encode(it.toString())
-            navController.navigate("import/$encoded")
+            try {
+                val text = context.contentResolver.openInputStream(it)
+                    ?.bufferedReader()
+                    ?.use { reader -> reader.readText() }
+                if (text != null) {
+                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = text
+                    navController.navigate("import/direct")
+                }
+            } catch (e: Exception) {
+                Logger.e("LIB", "Failed to read import file", e)
+            }
         }
     }
 

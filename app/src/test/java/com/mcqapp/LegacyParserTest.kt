@@ -87,6 +87,35 @@ class LegacyParserTest {
     }
 
     @Test
+    fun bareArrayParsesUseUniqueCategoryIdsPerPaper() {
+        val json = """
+        [
+          {"question": "Q1", "options": ["A", "B"]},
+          {"question": "Q2", "options": ["C", "D"]}
+        ]
+        """.trimIndent()
+
+        val first = LegacyParser.parse(json)
+        val second = LegacyParser.parse(json)
+        assertEquals(1, first.papers.size)
+        assertEquals(1, second.papers.size)
+        val firstCat = first.papers[0].categories[0].id
+        val secondCat = second.papers[0].categories[0].id
+        assertTrue(firstCat.isNotBlank())
+        assertTrue(secondCat.isNotBlank())
+        // Same paper id and category id on re-parse would REPLACE the category
+        // row and cascade-delete the first import's questions.
+        assertTrue(
+            "category ids must differ across parses (got $firstCat twice)",
+            firstCat != secondCat
+        )
+        assertTrue(
+            "category id must belong to its paper",
+            firstCat.startsWith(first.papers[0].id)
+        )
+    }
+
+    @Test
     fun generatesIdsWhenMissing() {
         val json = """
         {

@@ -15,6 +15,11 @@ data class PaperEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+data class CategoryCountEntity(
+    val categoryId: String,
+    val cnt: Int
+)
+
 @Entity(
     tableName = "categories",
     foreignKeys = [
@@ -55,7 +60,8 @@ data class QuestionEntity(
     val explanation: String = "",
     val difficulty: String = "medium",
     val tags: String = "",
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    val contentHash: String = ""
 )
 
 @Entity(

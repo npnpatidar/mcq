@@ -33,13 +33,19 @@ class BrowseViewModel(
     init {
         Logger.i("BROWSEVM", "BrowseViewModel created: paperId=$paperId")
         viewModelScope.launch {
+            val paper = repository.getPaper(paperId)
+            _state.value = _state.value.copy(paper = paper)
+        }
+        viewModelScope.launch {
             try {
-                val paper = repository.getPaper(paperId)
-                val questions = repository.getQuestionsForPaper(paperId)
-                Logger.i("BROWSEVM", "Loaded ${questions.size} questions for browsing")
-                _state.value = BrowseUiState(loading = false, paper = paper, questions = questions)
+                repository.observeQuestionsForPaper(paperId).collect { questions ->
+                    val ids = questions.map { it.id }
+                    Logger.d("BROWSEVM", "Observed ${questions.size} questions for paper $paperId: " +
+                        "order=[${ids.take(5).joinToString(",")}${if (ids.size > 5) ",... +${ids.size - 5} more" else ""}]")
+                    _state.update { it.copy(loading = false, questions = questions) }
+                }
             } catch (e: Exception) {
-                Logger.e("BROWSEVM", "Failed to load questions for browsing", e)
+                Logger.e("BROWSEVM", "Observation of questions for paper $paperId FAILED", e)
             }
         }
     }
@@ -47,7 +53,6 @@ class BrowseViewModel(
     fun deleteQuestion(questionId: String) {
         viewModelScope.launch {
             repository.deleteQuestion(questionId)
-            _state.update { it.copy(questions = it.questions.filter { q -> q.id != questionId }) }
             Logger.i("BROWSEVM", "Deleted question $questionId")
         }
     }

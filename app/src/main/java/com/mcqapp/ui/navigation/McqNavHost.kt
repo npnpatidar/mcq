@@ -106,14 +106,10 @@ fun McqNavHost(repository: McqRepository) {
         composable("settings") {
             SettingsScreen(repository = repository, navController = navController)
         }
-        composable(
-            route = "import/{uri}",
-            arguments = listOf(navArgument("uri") { type = NavType.StringType })
-        ) { entry ->
-            val encodedUri = entry.arguments?.getString("uri").orEmpty()
-            val uri = android.net.Uri.decode(encodedUri)
-            Logger.i("NAV", "import screen: uri=$uri")
-            ImportScreen(uri = uri, navController = navController)
+        composable("import/direct") {
+            val text = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText
+            Logger.i("NAV", "import screen: direct text import")
+            ImportScreen(importText = text, navController = navController)
         }
     }
 }

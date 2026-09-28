@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -36,19 +38,43 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.currentBackStackEntryAsState
+import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
-    uri: String,
+    importText: String?,
     navController: NavController,
-    viewModel: ImportViewModel = viewModel(key = "import-$uri")
+    viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
     val state by viewModel.state.collectAsState()
 
+    val currentEntry by navController.currentBackStackEntryAsState()
+    LaunchedEffect(currentEntry) {
+        val route = currentEntry?.destination?.route
+        val pendingId = viewModel.lastEditedQuestionId
+        Logger.d("IMPORTSCREEN", "backStack changed: route=$route, lastEditedInVm=$pendingId")
+        if (route == "import/direct" && pendingId != null) {
+            val edited = com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion
+            Logger.d("IMPORTSCREEN", "returned from editor: holderPresent=${edited != null}, " +
+                "holderId=${edited?.id}, holderText='${edited?.text?.take(60)}'")
+            if (edited != null && edited.id == pendingId) {
+                viewModel.updateQuestionFromImport(edited)
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = null
+            } else {
+                Logger.d("IMPORTSCREEN", "returned from editor: nothing to apply " +
+                    "(holder missing or id mismatch), clearing flag")
+            }
+            viewModel.clearLastEdited()
+        }
+    }
+
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        viewModel.loadJson(android.net.Uri.parse(uri))
+        if (importText != null) {
+            viewModel.loadJsonText(importText)
+        }
     }
 
     Scaffold(
@@ -154,6 +180,20 @@ fun ImportScreen(
                                 )
                                 IconButton(onClick = { viewModel.deleteQuestion(question.id) }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Remove question")
+                                }
+                                IconButton(onClick = {
+                                    Logger.d("IMPORTSCREEN", "edit clicked: id=${question.id}, " +
+                                        "text='${question.text.take(60)}', options=${question.options.size}")
+                                    viewModel.markEditing(question.id)
+                                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = question
+                                    com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = true
+                                    Logger.d("IMPORTSCREEN", "holder armed: id=${question.id}, " +
+                                        "editingFromImport=true; navigating to editor")
+                                    navController.navigate(
+                                        "editor?questionId=${question.id}&paperId=&categoryId="
+                                    )
+                                }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit question")
                                 }
                             }
                             QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))

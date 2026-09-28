@@ -21,8 +21,6 @@ object Logger {
 
     fun init(context: Context) {
         val candidates = listOf(
-            File("/sdcard/repo/mcq/logs"),
-            File("/sdcard/logs"),
             File(context.getExternalFilesDir(null), "logs"),
             File(context.filesDir, "logs")
         )
@@ -48,6 +46,8 @@ object Logger {
         Log.e(TAG, "No writable log directory found")
     }
 
+    fun logFilePath(): String? = synchronized(lock) { logFile?.absolutePath }
+
     fun d(tag: String, message: String) = write("D", tag, message, null)
 
     fun i(tag: String, message: String) = write("I", tag, message, null)
@@ -61,7 +61,8 @@ object Logger {
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
         val line = buildString {
             append(timeFormat.format(Date()))
-            append(' ').append(level).append('/').append(tag).append(": ")
+            append(' ').append(level).append('/').append(tag)
+            append(" [${Thread.currentThread().name}]: ")
             append(message)
             if (throwable != null) {
                 append('\n').append(Log.getStackTraceString(throwable))

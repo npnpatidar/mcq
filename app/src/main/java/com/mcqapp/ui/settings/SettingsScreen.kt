@@ -116,6 +116,29 @@ fun SettingsScreen(
                     ) {
                         Text("Export all data (JSON)")
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            val path = com.mcqapp.util.Logger.logFilePath()
+                            if (path != null) {
+                                val file = java.io.File(path)
+                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    file
+                                )
+                                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(intent, "Export Logs"))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Export Logs")
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "Exports every paper, category and question to a JSON file you can share or re-import.",

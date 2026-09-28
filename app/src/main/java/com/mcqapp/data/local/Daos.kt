@@ -19,6 +19,12 @@ interface PaperDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(paper: PaperEntity)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(paper: PaperEntity)
+
+    @Query("UPDATE papers SET title = :title, description = :description, durationMinutes = :durationMinutes, negativeMarking = :negativeMarking WHERE id = :id")
+    suspend fun updateFields(id: String, title: String, description: String, durationMinutes: Int, negativeMarking: Double)
+
     @Query("DELETE FROM papers WHERE id = :id")
     suspend fun deleteById(id: String)
 }
@@ -37,6 +43,12 @@ interface CategoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(category: CategoryEntity)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(category: CategoryEntity)
+
+    @Query("UPDATE categories SET paperId = :paperId, title = :title, parentId = :parentId, sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateFields(id: String, paperId: String, title: String, parentId: String?, sortOrder: Int)
+
     @Query("DELETE FROM categories WHERE id = :id")
     suspend fun deleteById(id: String)
 }
@@ -49,8 +61,17 @@ interface QuestionDao {
     @Query("SELECT * FROM questions")
     fun observeAll(): Flow<List<QuestionEntity>>
 
+    @Query("SELECT * FROM questions")
+    suspend fun getAll(): List<QuestionEntity>
+
+    @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
+    fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
+
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?
+
+    @Query("SELECT MAX(sortOrder) FROM questions WHERE categoryId = :categoryId")
+    suspend fun getMaxSortOrder(categoryId: String): Int?
 
     @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' OR tags LIKE '%' || :query || '%' ORDER BY rowid DESC")
     suspend fun search(query: String): List<QuestionEntity>
@@ -70,6 +91,9 @@ interface OptionDao {
     @Query("SELECT * FROM options WHERE questionId = :questionId ORDER BY sortOrder, rowid")
     suspend fun getByQuestion(questionId: String): List<OptionEntity>
 
+    @Query("SELECT * FROM options WHERE questionId IN (:questionIds) ORDER BY sortOrder, rowid")
+    suspend fun getForQuestions(questionIds: List<String>): List<OptionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(options: List<OptionEntity>)
 
@@ -81,6 +105,9 @@ interface OptionDao {
 interface CorrectAnswerDao {
     @Query("SELECT optionId FROM correct_answers WHERE questionId = :questionId")
     suspend fun getCorrectIds(questionId: String): List<String>
+
+    @Query("SELECT * FROM correct_answers WHERE questionId IN (:questionIds)")
+    suspend fun getForQuestions(questionIds: List<String>): List<CorrectAnswerEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(answers: List<CorrectAnswerEntity>)

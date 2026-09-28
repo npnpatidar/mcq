@@ -47,11 +47,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
-import android.util.Base64
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.ui.EditorViewModelFactory
+import com.mcqapp.util.ImageUtils
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 
@@ -80,13 +80,27 @@ fun QuestionEditorScreen(
         ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            try {
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                if (bytes != null) {
-                    val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                    viewModel.updateImage("data:image/png;base64,$base64")
-                }
-            } catch (_: Exception) {
+            val encoded = ImageUtils.encodeImageUri(context, uri)
+            if (encoded != null) {
+                viewModel.updateImage(encoded)
+            } else {
+                Logger.e("EDITOR", "Failed to encode question image")
+            }
+        }
+    }
+
+    var pickingOptionImageId by remember { mutableStateOf<String?>(null) }
+    val pickOptionImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        val optionId = pickingOptionImageId
+        pickingOptionImageId = null
+        if (uri != null && optionId != null) {
+            val encoded = ImageUtils.encodeImageUri(context, uri)
+            if (encoded != null) {
+                viewModel.updateOptionImage(optionId, encoded)
+            } else {
+                Logger.e("EDITOR", "Failed to encode option image for $optionId")
             }
         }
     }
@@ -170,6 +184,10 @@ fun QuestionEditorScreen(
                     option = option,
                     onTextChange = { viewModel.updateOptionText(option.id, it) },
                     onImageChange = { viewModel.updateOptionImage(option.id, it) },
+                    onPickImage = {
+                        pickingOptionImageId = option.id
+                        pickOptionImageLauncher.launch("image/*")
+                    },
                     onToggleCorrect = { viewModel.toggleCorrect(option.id) },
                     onMoveUp = { viewModel.moveOptionUp(option.id) },
                     onMoveDown = { viewModel.moveOptionDown(option.id) },
@@ -235,6 +253,7 @@ private fun OptionEditorRow(
     option: OptionEditorState,
     onTextChange: (String) -> Unit,
     onImageChange: (String) -> Unit,
+    onPickImage: () -> Unit,
     onToggleCorrect: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
@@ -266,15 +285,23 @@ private fun OptionEditorRow(
                 }
             }
         }
-        OutlinedTextField(
-            value = option.image,
-            onValueChange = onImageChange,
-            label = { Text("Option image URL (optional)") },
-            singleLine = true,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 48.dp)
-        )
+                .padding(start = 48.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = option.image,
+                onValueChange = onImageChange,
+                label = { Text("Option image URL (optional)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedButton(onClick = { onPickImage() }) {
+                Text("Pick")
+            }
+        }
         if (option.image.isNotBlank()) {
             QuestionImage(
                 src = option.image,

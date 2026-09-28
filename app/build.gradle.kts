@@ -75,4 +75,6 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.5.2")
 }

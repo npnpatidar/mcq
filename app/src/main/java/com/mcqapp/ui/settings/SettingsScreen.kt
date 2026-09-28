@@ -1,5 +1,8 @@
 package com.mcqapp.ui.settings
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +16,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -25,12 +29,18 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.util.Logger
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,6 +50,16 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val themeMode by viewModel.themeMode.collectAsState()
+    val context = LocalContext.current
+    var exportError by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let {
+            viewModel.exportAll(it) { error -> exportError = error }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -88,6 +108,25 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Data", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { exportLauncher.launch("mcq-export.json") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Export all data (JSON)")
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Exports every paper, category and question to a JSON file you can share or re-import.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text("About", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -101,5 +140,16 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    exportError?.let { error ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { exportError = null },
+            title = { Text("Export failed") },
+            text = { Text(error) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { exportError = null }) { Text("OK") }
+            }
+        )
     }
 }

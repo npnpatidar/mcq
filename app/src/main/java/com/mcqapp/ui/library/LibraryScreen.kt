@@ -134,10 +134,6 @@ fun LibraryScreen(
                         navController.navigate("test?paperId=$paperId&categories=$csv")
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "*/*")) },
-                    onExportAll = {
-                        pendingExportPaperId = null
-                        exportLauncher.launch("mcq-export.json")
-                    },
                     onDeleteCategory = { id -> viewModel.deleteCategory(id) }
                 )
             }
@@ -285,7 +281,6 @@ private fun DrawerContent(
     onOpenSettings: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
     onImport: () -> Unit,
-    onExportAll: () -> Unit,
     onDeleteCategory: (String) -> Unit
 ) {
     var expandedPaperId by remember { mutableStateOf<String?>(null) }
@@ -401,6 +396,10 @@ private fun DrawerContent(
                                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                                     Spacer(Modifier.width(4.dp))
                                     Text("Start test (${selected.size} categories)")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -418,18 +417,6 @@ private fun DrawerContent(
                 Icon(Icons.Default.FileUpload, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
                 Text("Import JSON")
-            }
-            Button(
-                onClick = onExportAll,
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Default.FileUpload, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text("Export All")
-            }
-        }
-    }
-}
             }
         }
     }

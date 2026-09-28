@@ -178,6 +178,12 @@ private fun BrowseQuestionCard(
                     )
                     Text(option.text, style = MaterialTheme.typography.bodyMedium)
                 }
+                if (option.image != null) {
+                    QuestionImage(
+                        src = option.image,
+                        modifier = Modifier.padding(start = 20.dp, top = 2.dp)
+                    )
+                }
             }
 
             if (question.explanation.isNotBlank()) {

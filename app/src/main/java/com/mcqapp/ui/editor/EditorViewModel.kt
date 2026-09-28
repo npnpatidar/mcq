@@ -61,6 +61,30 @@ class EditorViewModel(
 
     private var fromImportSession: Boolean = false
 
+    /**
+     * Signature of the last persisted state (load or save), normalized the
+     * same way buildDto() normalizes. A Prev/Next move with a matching
+     * signature writes nothing.
+     */
+    private var cleanSignature: String = ""
+
+    private fun signatureOf(s: EditorUiState): String {
+        fun normImage(v: String) = v.trim().ifBlank { "<null>" }
+        val opts = s.options.map { o ->
+            "${o.id}|${o.text.trim()}|${normImage(o.image)}|${o.isCorrect}"
+        }
+        val tags = s.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
+            .joinToString(",")
+        return listOf(
+            s.text.trim(), normImage(s.image), s.explanation.trim(),
+            normImage(s.explanationImage), s.difficulty.label, tags, s.categoryId
+        ).joinToString("\n") + "\n" + opts.joinToString("\n")
+    }
+
+    private fun snapshotClean() {
+        cleanSignature = signatureOf(_state.value)
+    }
+
     init {
         Logger.i("EDITORVM", "EditorViewModel created: questionId='$questionId', paperId='$paperId', categoryId='$categoryId'")
         val holderFlag = com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport
@@ -92,6 +116,7 @@ class EditorViewModel(
                 categories = emptyList(),
                 categoryId = ""
             )
+            snapshotClean()
             Logger.i("EDITORVM", "Editor ready: editing from import screen (in-memory)")
         } else {
             viewModelScope.launch {
@@ -120,6 +145,7 @@ class EditorViewModel(
                         categories = categories,
                         categoryId = question.categoryId
                     )
+                    snapshotClean()
                     return@launch
                 }
             }
@@ -131,6 +157,7 @@ class EditorViewModel(
                     OptionEditorState(id = "b", text = "")
                 )
             )
+            snapshotClean()
             val readyMsg = if (_state.value.isNew) "new question" else "editing $questionId"
             Logger.i("EDITORVM", "Editor ready: $readyMsg, ${categories.size} categories available")
         } catch (e: Exception) {
@@ -194,18 +221,11 @@ class EditorViewModel(
         _state.update(block)
     }
 
-    fun save(onDone: () -> Unit) {
+    private fun buildDto(): QuestionDto? {
         val s = _state.value
-        Logger.d("EDITORVM", "save() called: questionId='${s.questionId}', textBlank=${s.text.isBlank()}, " +
-            "options=${s.options.size}, blankOptions=${s.options.count { it.text.isBlank() }}, " +
-            "correctCount=${s.options.count { it.isCorrect }}, editingFromImport=" +
-            "${com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport}")
-        if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) {
-            Logger.w("EDITORVM", "save() validation FAILED - not saving")
-            return
-        }
+        if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) return null
         val edited = s.options.map { QuestionOption(it.id, it.text.trim(), it.image.trim().ifBlank { null }) }
-        val dto = QuestionDto(
+        return QuestionDto(
             id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
             text = s.text.trim(),
             image = s.image.trim().ifBlank { null },
@@ -216,30 +236,162 @@ class EditorViewModel(
             difficulty = s.difficulty.label,
             tags = s.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() }
         )
+    }
+
+    private fun domainFrom(dto: QuestionDto, categoryId: String): Question {
+        return Question(
+            id = dto.id,
+            categoryId = categoryId,
+            text = dto.text,
+            image = dto.image,
+            options = dto.options.map { QuestionOption(it.id, it.text, it.image) },
+            correctOptionIds = dto.correctOptionIds.toSet(),
+            explanation = dto.explanation,
+            explanationImage = dto.explanationImage,
+            difficulty = Difficulty.fromLabel(dto.difficulty),
+            tags = dto.tags
+        )
+    }
+
+    fun save(onDone: () -> Unit) {
+        val s = _state.value
+        Logger.d("EDITORVM", "save() called: questionId='${s.questionId}', textBlank=${s.text.isBlank()}, " +
+            "options=${s.options.size}, blankOptions=${s.options.count { it.text.isBlank() }}, " +
+            "correctCount=${s.options.count { it.isCorrect }}, editingFromImport=" +
+            "${com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport}")
+        val dto = buildDto()
+        if (dto == null) {
+            Logger.w("EDITORVM", "save() validation FAILED - not saving")
+            return
+        }
         Logger.d("EDITORVM", "save(): fromImportSession=$fromImportSession, " +
             "dtoId=${dto.id}, dtoText='${dto.text.take(60)}', dtoOptions=${dto.options.size}, " +
             "dtoCorrect=${dto.correctOptionIds}")
+        // Signature of exactly what is being persisted (state may keep
+        // changing under an async save; snapshotting later would mark
+        // unpersisted keystrokes as clean).
+        val savedSig = signatureOf(s)
         if (fromImportSession) {
+            // Live write-through as well: if the user moved Prev/Next before
+            // saving, the holder alone would be discarded on return (id
+            // mismatch with the original mark), so update the list directly.
+            EditorSession.importWriter?.invoke(dto)
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = dto
+            cleanSignature = savedSig
             Logger.i("EDITORVM", "Saved question ${dto.id} to import holder (in-memory)")
             onDone()
             return
         }
-        val question = Question(
-            id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
-            categoryId = s.categoryId,
-            text = s.text.trim(),
-            image = s.image.trim().ifBlank { null },
-            options = s.options.map { QuestionOption(it.id, it.text.trim(), it.image.trim().ifBlank { null }) },
-            correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toSet(),
-            explanation = s.explanation.trim(),
-            explanationImage = s.explanationImage.trim().ifBlank { null },
-            difficulty = s.difficulty,
-            tags = s.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
-        )
+        val question = domainFrom(dto, s.categoryId)
         viewModelScope.launch {
             repository.saveQuestion(question)
+            cleanSignature = savedSig
             onDone()
+        }
+    }
+
+    /**
+     * Persists current edits through the same channel as save() — but only if
+     * anything actually changed — then loads the target question from the
+     * [EditorSession] queue. Stays on this screen: no navigation, so Back
+     * still returns to the originating list. [onMoved] reports whether a
+     * write happened (for user feedback).
+     */
+    fun moveToQuestion(targetId: String, onMoved: (saved: Boolean) -> Unit = {}) {
+        val dto = buildDto()
+        if (dto == null) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: current edits invalid")
+            return
+        }
+        val targetIndex = EditorSession.ids.indexOf(targetId)
+        if (targetIndex < 0) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId): not in session queue")
+            return
+        }
+        val dirty = signatureOf(_state.value) != cleanSignature
+        val savedSig = signatureOf(_state.value)
+        Logger.i("EDITORVM", "moveToQuestion: ${if (dirty) "saving" else "no changes, skipping save for"} " +
+            "${dto.id}, loading $targetId (fromImportSession=$fromImportSession)")
+        if (fromImportSession) {
+            if (dirty) {
+                val writer = EditorSession.importWriter
+                if (writer != null) {
+                    writer(dto)
+                } else {
+                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = dto
+                }
+                cleanSignature = savedSig
+            }
+            val next = EditorSession.importReader?.invoke(targetId)
+            if (next == null) {
+                Logger.w("EDITORVM", "moveToQuestion($targetId): not found via import reader")
+                return
+            }
+            EditorSession.go(targetIndex)
+            _state.update {
+                it.copy(
+                    questionId = next.id,
+                    text = next.text,
+                    image = next.image.orEmpty(),
+                    explanation = next.explanation,
+                    explanationImage = next.explanationImage.orEmpty(),
+                    difficulty = Difficulty.fromLabel(next.difficulty),
+                    tags = next.tags.joinToString(", "),
+                    options = next.options.map { o ->
+                        OptionEditorState(
+                            id = o.id,
+                            text = o.text,
+                            image = o.image.orEmpty(),
+                            isCorrect = o.id in next.correctOptionIds
+                        )
+                    },
+                    categoryId = ""
+                )
+            }
+            snapshotClean()
+            Logger.i("EDITORVM", "moveToQuestion: now editing $targetId (in-memory)")
+            onMoved(dirty)
+        } else {
+            viewModelScope.launch {
+                try {
+                    if (dirty) {
+                        val categoryId = _state.value.categoryId
+                        repository.saveQuestion(domainFrom(dto, categoryId))
+                        cleanSignature = savedSig
+                    }
+                    val next = repository.getQuestion(targetId)
+                    if (next == null) {
+                        Logger.w("EDITORVM", "moveToQuestion($targetId): not found in DB")
+                        return@launch
+                    }
+                    EditorSession.go(targetIndex)
+                    _state.update {
+                        it.copy(
+                            questionId = next.id,
+                            text = next.text,
+                            image = next.image.orEmpty(),
+                            explanation = next.explanation,
+                            explanationImage = next.explanationImage.orEmpty(),
+                            difficulty = next.difficulty,
+                            tags = next.tags.joinToString(", "),
+                            options = next.options.map { o ->
+                                OptionEditorState(
+                                    id = o.id,
+                                    text = o.text,
+                                    image = o.image.orEmpty(),
+                                    isCorrect = o.id in next.correctOptionIds
+                                )
+                            },
+                            categoryId = next.categoryId
+                        )
+                    }
+                    snapshotClean()
+                    Logger.i("EDITORVM", "moveToQuestion: now editing $targetId (DB)")
+                    onMoved(dirty)
+                } catch (e: Exception) {
+                    Logger.e("EDITORVM", "moveToQuestion($targetId) failed", e)
+                }
+            }
         }
     }
 

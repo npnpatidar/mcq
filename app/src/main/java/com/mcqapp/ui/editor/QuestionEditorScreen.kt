@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
+import android.widget.Toast
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
@@ -118,6 +119,14 @@ fun QuestionEditorScreen(
         }
     }
 
+    val canProceed = state.text.isNotBlank() &&
+        state.options.size >= 2 &&
+        state.options.all { it.text.isNotBlank() }
+    val queueIndex = EditorSession.index
+    val queueSize = EditorSession.ids.size
+    val prevId = EditorSession.prevId
+    val nextId = EditorSession.nextId
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -125,6 +134,39 @@ fun QuestionEditorScreen(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (EditorSession.hasQueue && queueSize > 0) {
+                        Text(
+                            "${queueIndex + 1}/$queueSize",
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        TextButton(
+                            onClick = {
+                                prevId?.let {
+                                    viewModel.moveToQuestion(it) { saved ->
+                                        if (saved) Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            enabled = canProceed && prevId != null
+                        ) {
+                            Text("Prev")
+                        }
+                        TextButton(
+                            onClick = {
+                                nextId?.let {
+                                    viewModel.moveToQuestion(it) { saved ->
+                                        if (saved) Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            enabled = canProceed && nextId != null
+                        ) {
+                            Text("Next")
+                        }
                     }
                 }
             )
@@ -260,9 +302,7 @@ fun QuestionEditorScreen(
                 Button(
                     onClick = { viewModel.save { navController.popBackStack() } },
                     modifier = Modifier.weight(1f),
-                    enabled = state.text.isNotBlank() &&
-                        state.options.size >= 2 &&
-                        state.options.all { it.text.isNotBlank() }
+                    enabled = canProceed
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(Modifier.padding(2.dp))

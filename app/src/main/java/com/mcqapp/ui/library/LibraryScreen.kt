@@ -256,11 +256,13 @@ fun LibraryScreen(
                                     showCategoryDialog = true
                                 },
                                 onEditQuestion = { questionId, categoryId ->
+                                    com.mcqapp.ui.editor.EditorSession.clear()
                                     navController.navigate(
                                         "editor?questionId=$questionId&paperId=${paper.id}&categoryId=$categoryId"
                                     )
                                 },
                                 onAddQuestion = { categoryId ->
+                                    com.mcqapp.ui.editor.EditorSession.clear()
                                     navController.navigate(
                                         "editor?questionId=&paperId=${paper.id}&categoryId=$categoryId"
                                     )

@@ -134,6 +134,10 @@ fun BrowseScreen(
                         index = index + 1,
                         question = question,
                         onEdit = {
+                            com.mcqapp.ui.editor.EditorSession.start(
+                                ids = filtered.map { it.id },
+                                index = index
+                            )
                             navController.navigate(
                                 "editor?questionId=${question.id}&paperId=$paperId&categoryId=${question.categoryId}"
                             )

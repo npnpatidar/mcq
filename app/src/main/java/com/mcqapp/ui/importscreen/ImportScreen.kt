@@ -84,6 +84,13 @@ fun ImportScreen(
     fun editQuestion(question: com.mcqapp.data.io.QuestionDto) {
         Logger.d("IMPORTSCREEN", "edit clicked: id=${question.id}, " +
             "text='${question.text.take(60)}', options=${question.options.size}")
+        val order = viewModel.state.value.questions
+        com.mcqapp.ui.editor.EditorSession.start(
+            ids = order.map { it.id },
+            index = order.indexOfFirst { it.id == question.id },
+            reader = { id -> viewModel.state.value.questions.find { it.id == id } },
+            writer = { dto -> viewModel.updateQuestionFromImport(dto) }
+        )
         viewModel.markEditing(question.id)
         com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = question
         com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = true

@@ -78,6 +78,7 @@ fun BookmarksScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
+                                com.mcqapp.ui.editor.EditorSession.clear()
                                 navController.navigate(
                                     "editor?questionId=${question.id}&paperId=&categoryId=${question.categoryId}"
                                 )

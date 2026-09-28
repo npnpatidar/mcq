@@ -171,21 +171,35 @@ class LegacyParserTest {
         assertTrue("asset missing: ${asset.absolutePath}", asset.isFile)
         val paper = LegacyParser.parse(asset.readText()).papers.single()
         val questions = paper.categories.flatMap { it.questions }
-        assertTrue("expected >= 14 questions, got ${questions.size}", questions.size >= 14)
+        assertTrue("expected >= 20 questions, got ${questions.size}", questions.size >= 20)
+        // top-level questions land in their own category instead of being dropped
+        val root = paper.categories.filter { it.title == "Uncategorized" }
+        assertTrue("expected an Uncategorized root category", root.size == 1)
+        assertTrue("expected the Titanic question without a category",
+            root[0].questions.any { it.text.contains("Titanic") })
         var questionImages = 0
         var optionImages = 0
         var explanationImages = 0
+        var missingExplanation = 0
+        var missingAnswer = 0
         for (q in questions) {
+            assertTrue("blank id", q.id.isNotBlank())
             assertTrue("blank text: ${q.id}", q.text.isNotBlank())
-            assertTrue("fewer than 2 options: ${q.id}", q.options.size >= 2)
+            assertTrue("unexpected option count: ${q.id}",
+                q.options.size >= 2 || q.id == "q-e5")
             val optionIds = q.options.map { it.id }.toSet()
             assertTrue("unresolved correct ids: ${q.id}",
-                q.correctOptionIds.isNotEmpty() && q.correctOptionIds.all { it in optionIds })
-            assertTrue("missing explanation: ${q.id}", q.explanation.isNotBlank())
+                q.correctOptionIds.all { it in optionIds })
+            if (q.explanation.isBlank()) missingExplanation++
+            if (q.correctOptionIds.isEmpty()) missingAnswer++
             if (isPngDataUri(q.image)) questionImages++
             if (isPngDataUri(q.explanationImage)) explanationImages++
             optionImages += q.options.count { isPngDataUri(it.image) }
         }
+        assertTrue("expected edge questions without explanation, got $missingExplanation",
+            missingExplanation >= 2)
+        assertTrue("expected edge questions without answer, got $missingAnswer",
+            missingAnswer >= 2)
         assertTrue("expected question images, got $questionImages", questionImages >= 2)
         assertTrue("expected option images, got $optionImages", optionImages >= 5)
         assertTrue("expected explanation images, got $explanationImages", explanationImages >= 1)
@@ -202,6 +216,30 @@ class LegacyParserTest {
         } catch (e: IllegalArgumentException) {
             false
         }
+    }
+
+    @Test
+    fun topLevelQuestionsCoexistWithCategories() {
+        val json = """
+        {
+          "papers": [{
+            "id": "p1",
+            "title": "Paper",
+            "categories": [{
+              "id": "c1",
+              "title": "Cat",
+              "questions": [{"id": "q1", "text": "In cat?", "options": ["A", "B"]}]
+            }],
+            "questions": [{"id": "q2", "text": "Top level?", "options": ["A", "B"]}]
+          }]
+        }
+        """.trimIndent()
+
+        val paper = LegacyParser.parse(json).papers.single()
+        assertEquals(2, paper.categories.size)
+        val root = paper.categories.single { it.title == "Uncategorized" }
+        assertEquals(listOf("q2"), root.questions.map { it.id })
+        assertEquals(listOf("q1"), paper.categories.single { it.id == "c1" }.questions.map { it.id })
     }
 
     @Test

@@ -65,6 +65,8 @@ object LegacyParser {
         val topLevelQuestions = obj["questions"] as? JsonArray
         val parsedTopLevel = topLevelQuestions?.let { uniqueIds(it.map { q -> parseQuestion(q.jsonObject) }) }
             ?: emptyList()
+        // Top-level questions land in their own category instead of being
+        // silently dropped when the paper also defines categories.
         val finalCategories = if (categories.isEmpty() && topLevelQuestions != null) {
             listOf(
                 CategoryDto(
@@ -72,6 +74,12 @@ object LegacyParser {
                     title = title,
                     questions = parsedTopLevel
                 )
+            )
+        } else if (topLevelQuestions != null && parsedTopLevel.isNotEmpty()) {
+            categories + CategoryDto(
+                id = id + "-root",
+                title = "Uncategorized",
+                questions = parsedTopLevel
             )
         } else {
             categories

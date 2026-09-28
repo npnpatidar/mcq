@@ -4,8 +4,8 @@
     {
       "id": "paper-demo",
       "title": "General Knowledge Demo",
-      "description": "A sample paper to explore the app: text, images, explanations and every question format",
-      "durationMinutes": 10,
+      "description": "A sample paper to explore the app: text, images, explanations, every question format and incomplete edge cases",
+      "durationMinutes": 15,
       "negativeMarking": 0.25,
       "categories": [
         {
@@ -354,6 +354,72 @@
               ]
             }
           ]
+        },
+        {
+          "id": "cat-edge",
+          "title": "Edge Cases",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-e1",
+              "text": "Which planet is known as the Blue Planet?",
+              "options": [
+                "Venus",
+                "Earth",
+                "Mars",
+                "Jupiter"
+              ],
+              "difficulty": "easy",
+              "tags": ["edge"]
+            },
+            {
+              "id": "q-e2",
+              "text": "What gas do plants absorb from the atmosphere?",
+              "options": [
+                "Oxygen",
+                "Carbon dioxide",
+                "Nitrogen",
+                "Hydrogen"
+              ],
+              "correctOptionIds": ["b"],
+              "difficulty": "easy",
+              "tags": ["edge"]
+            },
+            {
+              "id": "q-e3",
+              "text": "How many days are there in a leap year?",
+              "options": [
+                "365",
+                "366",
+                "367",
+                "364"
+              ],
+              "explanation": "A leap year has 366 days, with 29 February as the extra day.",
+              "difficulty": "easy",
+              "tags": ["edge"]
+            },
+            {
+              "text": "What is the boiling point of pure water at sea level?",
+              "options": ["90°C", "100°C", "110°C", "120°C"],
+              "correctIndex": 1,
+              "explanation": "Pure water boils at 100°C at standard atmospheric pressure."
+            },
+            {
+              "id": "q-e5",
+              "text": "This question arrived with no options at all.",
+              "options": [],
+              "explanation": "Imports tolerate empty option lists; the question simply has nothing to answer.",
+              "difficulty": "medium",
+              "tags": ["edge"]
+            }
+          ]
+        }
+      ],
+      "questions": [
+        {
+          "question": "In which year did the Titanic sink?",
+          "options": ["1905", "1912", "1915", "1920"],
+          "answer": "1912"
         }
       ]
     }

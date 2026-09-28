@@ -34,6 +34,11 @@ data class ImportUiState(
     val negativeMarking: Double = 0.0,
     val categoryName: String = "Uncategorized",
     val questions: List<QuestionDto> = emptyList(),
+    /** Ids of preview questions already in the library (same content hash). */
+    val duplicateIds: Set<String> = emptySet(),
+    /** Ids whose content changed vs the library row with the same id (will UPDATE). */
+    val changedIds: Set<String> = emptySet(),
+    val importReport: com.mcqapp.data.io.ImportReport? = null,
     val originalFile: McqFileDto? = null,
     val importing: Boolean = false,
     val importDone: Boolean = false
@@ -63,6 +68,39 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             s.copy(questions = s.questions.map { if (it.id == dto.id) dto else it })
         }
         Logger.i("IMPORTVM", "Updated question ${dto.id} from in-memory edit")
+        refreshDuplicates()
+    }
+
+    /**
+     * Classifies preview questions exactly like Importer will: same content
+     * hash in DB -> duplicate (skipped); same id but different hash ->
+     * changed (updates the existing row in place); else brand new (added).
+     * Advisory only; Importer re-evaluates at import.
+     */
+    fun refreshDuplicates() {
+        viewModelScope.launch {
+            try {
+                val existing = repository.db().questionDao().getAll()
+                val hashes = existing.map { it.contentHash }.toHashSet()
+                val ids = existing.map { it.id }.toHashSet()
+                val dups = HashSet<String>()
+                val changed = HashSet<String>()
+                _state.value.questions.forEach { q ->
+                    if (com.mcqapp.data.io.ContentHash.of(q) in hashes) {
+                        dups.add(q.id)
+                    } else if (q.id in ids) {
+                        changed.add(q.id)
+                    }
+                }
+                _state.update { it.copy(duplicateIds = dups, changedIds = changed) }
+                val total = _state.value.questions.size
+                Logger.d("IMPORTVM", "refreshDuplicates: $total preview = " +
+                    "${total - dups.size - changed.size} new, ${changed.size} changed, " +
+                    "${dups.size} duplicates")
+            } catch (e: Exception) {
+                Logger.e("IMPORTVM", "refreshDuplicates failed", e)
+            }
+        }
     }
 
     fun clearLastEdited() {
@@ -133,6 +171,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             originalFile = file
         )
         Logger.i("IMPORTVM", "Loaded ${allQuestions.size} questions for import preview")
+        refreshDuplicates()
     }
 
     fun updatePaperTitle(value: String) = update { it.copy(paperTitle = value) }
@@ -149,33 +188,61 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         _state.update(block)
     }
 
-    fun import(onDone: () -> Unit) {
+    fun import() {
         val s = _state.value
         if (s.paperTitle.isBlank() || s.questions.isEmpty()) return
-        _state.update { it.copy(importing = true) }
+        _state.update { it.copy(importing = true, importDone = false, importReport = null) }
 
         viewModelScope.launch {
             try {
                 val original = s.originalFile
                 val paperDto: PaperDto = if (original != null && original.papers.isNotEmpty()) {
                     val orig = original.papers.first()
+                    val origTotal = orig.categories.sumOf { it.questions.size }
+                    Logger.d("IMPORTVM", "import(): orig cats=${orig.categories.size} " +
+                        "origQs=$origTotal stateQs=${s.questions.size} " +
+                        "origIds=${orig.categories.flatMap { it.questions }.map { it.id }} " +
+                        "stateIds=${s.questions.map { it.id }}")
+                    val matchedIds = HashSet<String>()
+                    val mapped = orig.categories.map { cat ->
+                        val matched = cat.questions.mapNotNull { origQ ->
+                            s.questions.find { it.id == origQ.id }
+                                ?.also { matchedIds.add(it.id) }
+                        }
+                        if (matched.size != cat.questions.size) {
+                            Logger.w("IMPORTVM", "import(): category '${cat.title}': " +
+                                "orig=${cat.questions.size} questions but only " +
+                                "${matched.size} matched state by id; missing " +
+                                (cat.questions.map { it.id } - matched.map { it.id }.toSet()))
+                        }
+                        cat.copy(
+                            title = if (orig.categories.size == 1) {
+                                s.categoryName.trim().ifBlank { cat.title }
+                            } else {
+                                cat.title
+                            },
+                            questions = matched
+                        )
+                    }
+                    // Safety net: every preview question must reach the Importer.
+                    // If IDs diverged, appending beats silently dropping; the
+                    // DB content-hash dedup still decides what is actually new.
+                    val unmatched = s.questions.filter { it.id !in matchedIds }
+                    val categories = if (unmatched.isNotEmpty() && mapped.isNotEmpty()) {
+                        Logger.w("IMPORTVM", "import(): appending ${unmatched.size} unmatched " +
+                            "state questions to last category: ${unmatched.map { it.id }}")
+                        mapped.dropLast(1) + mapped.last().copy(
+                            questions = mapped.last().questions + unmatched
+                        )
+                    } else {
+                        mapped
+                    }
                     orig.copy(
                         title = s.paperTitle.trim(),
                         description = s.paperDescription.trim(),
                         durationMinutes = s.durationMinutes,
                         negativeMarking = s.negativeMarking,
-                        categories = orig.categories.map { cat ->
-                            cat.copy(
-                                title = if (orig.categories.size == 1) {
-                                    s.categoryName.trim().ifBlank { cat.title }
-                                } else {
-                                    cat.title
-                                },
-                                questions = cat.questions.mapNotNull { origQ ->
-                                    s.questions.find { it.id == origQ.id }
-                                }
-                            )
-                        }
+                        categories = categories
                     )
                 } else {
                     val paperId = "paper-" + System.currentTimeMillis().toString(36)
@@ -201,12 +268,15 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 val report = com.mcqapp.data.io.Importer(repository.db()).import(file)
                 Logger.i("IMPORTVM", "Imported: ${report.newPapers} new papers, ${report.updatedPapers} updated, " +
                     "${report.newQuestions} new questions, ${report.updatedQuestions} updated")
-                _state.update { it.copy(importing = false, importDone = true) }
-                onDone()
+                _state.update { it.copy(importing = false, importDone = true, importReport = report) }
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "Import failed", e)
                 _state.update { it.copy(importing = false) }
             }
         }
+    }
+
+    fun consumeImportResult() {
+        _state.update { it.copy(importDone = false, importReport = null) }
     }
 }

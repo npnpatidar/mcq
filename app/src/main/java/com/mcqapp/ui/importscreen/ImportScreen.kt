@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +34,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +53,46 @@ fun ImportScreen(
     viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
     val state by viewModel.state.collectAsState()
+
+    val newQuestions = state.questions.filter {
+        it.id !in state.duplicateIds && it.id !in state.changedIds
+    }
+    val changedQuestions = state.questions.filter { it.id in state.changedIds }
+    val dupQuestions = state.questions.filter { it.id in state.duplicateIds }
+    val report = state.importReport
+    if (state.importDone && report != null) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Import complete") },
+            text = {
+                Text(
+                    "• ${report.newQuestions} new questions added\n" +
+                        "• ${report.updatedQuestions} updated\n" +
+                        "• ${report.duplicateQuestions} already existed (skipped)"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.consumeImportResult()
+                    navController.navigate("library") {
+                        popUpTo("library") { inclusive = true }
+                    }
+                }) { Text("OK") }
+            }
+        )
+    }
+    fun editQuestion(question: com.mcqapp.data.io.QuestionDto) {
+        Logger.d("IMPORTSCREEN", "edit clicked: id=${question.id}, " +
+            "text='${question.text.take(60)}', options=${question.options.size}")
+        viewModel.markEditing(question.id)
+        com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = question
+        com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = true
+        Logger.d("IMPORTSCREEN", "holder armed: id=${question.id}, " +
+            "editingFromImport=true; navigating to editor")
+        navController.navigate(
+            "editor?questionId=${question.id}&paperId=&categoryId="
+        )
+    }
 
     val currentEntry by navController.currentBackStackEntryAsState()
     LaunchedEffect(currentEntry) {
@@ -163,81 +206,77 @@ fun ImportScreen(
 
                 item {
                     Spacer(Modifier.height(8.dp))
-                    Text("Questions (${state.questions.size})", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "New questions (${newQuestions.size}) — will be added",
+                        style = MaterialTheme.typography.titleSmall
+                    )
                     Spacer(Modifier.height(4.dp))
                 }
 
-                items(state.questions, key = { it.id }) { question ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    question.text,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(onClick = { viewModel.deleteQuestion(question.id) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Remove question")
-                                }
-                                IconButton(onClick = {
-                                    Logger.d("IMPORTSCREEN", "edit clicked: id=${question.id}, " +
-                                        "text='${question.text.take(60)}', options=${question.options.size}")
-                                    viewModel.markEditing(question.id)
-                                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = question
-                                    com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = true
-                                    Logger.d("IMPORTSCREEN", "holder armed: id=${question.id}, " +
-                                        "editingFromImport=true; navigating to editor")
-                                    navController.navigate(
-                                        "editor?questionId=${question.id}&paperId=&categoryId="
-                                    )
-                                }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit question")
-                                }
-                            }
-                            QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))
-                            question.options.forEach { option ->
-                                Row(modifier = Modifier.padding(vertical = 1.dp)) {
-                                    val isCorrect = option.id in question.correctOptionIds
-                                    Text(
-                                        if (isCorrect) "✓" else "○",
-                                        color = if (isCorrect) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.width(18.dp),
-                                        fontWeight = if (isCorrect) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                    Text(option.text, style = MaterialTheme.typography.bodySmall)
-                                }
-                                if (option.image != null) {
-                                    QuestionImage(
-                                        src = option.image,
-                                        modifier = Modifier.padding(start = 18.dp, top = 1.dp)
-                                    )
-                                }
-                            }
-                            if (question.explanation.isNotBlank()) {
-                                Text(
-                                    "Explanation: ${question.explanation}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
-                            }
-                        }
+                items(newQuestions, key = { it.id }) { question ->
+                    PreviewQuestionCard(
+                        question = question,
+                        dimmed = false,
+                        badge = null,
+                        onDelete = { viewModel.deleteQuestion(question.id) },
+                        onEdit = { editQuestion(question) }
+                    )
+                }
+
+                if (changedQuestions.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Changed (${changedQuestions.size}) — will update the existing question",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    items(changedQuestions, key = { it.id }) { question ->
+                        PreviewQuestionCard(
+                            question = question,
+                            dimmed = false,
+                            badge = "CHANGED",
+                            onDelete = { viewModel.deleteQuestion(question.id) },
+                            onEdit = { editQuestion(question) }
+                        )
+                    }
+                }
+
+                if (dupQuestions.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Duplicates (${dupQuestions.size}) — already in library, will be skipped",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            "Matched by question text + options.",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    items(dupQuestions, key = { it.id }) { question ->
+                        PreviewQuestionCard(
+                            question = question,
+                            dimmed = true,
+                            badge = "DUPLICATE",
+                            onDelete = { viewModel.deleteQuestion(question.id) },
+                            onEdit = { editQuestion(question) }
+                        )
                     }
                 }
             }
 
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = {
-                    viewModel.import {
-                        navController.navigate("library") {
-                            popUpTo("library") { inclusive = true }
-                        }
-                    }
-                },
+                onClick = { viewModel.import() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = state.paperTitle.isNotBlank() && state.questions.isNotEmpty() && !state.importing
+                enabled = state.paperTitle.isNotBlank() &&
+                    (newQuestions.isNotEmpty() || changedQuestions.isNotEmpty()) &&
+                    !state.importing
             ) {
                 if (state.importing) {
                     CircularProgressIndicator(
@@ -246,7 +285,84 @@ fun ImportScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Import ${state.questions.size} questions")
+                Text(
+                    if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
+                        "Nothing new to import"
+                    } else if (changedQuestions.isEmpty()) {
+                        "Import ${newQuestions.size} new questions"
+                    } else if (newQuestions.isEmpty()) {
+                        "Update ${changedQuestions.size} questions"
+                    } else {
+                        "Import ${newQuestions.size} new • update ${changedQuestions.size}"
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviewQuestionCard(
+    question: com.mcqapp.data.io.QuestionDto,
+    dimmed: Boolean,
+    badge: String?,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (dimmed) 0.55f else 1f)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    question.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (badge != null) {
+                    Text(
+                        badge,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Remove question")
+                }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit question")
+                }
+            }
+            QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))
+            question.options.forEach { option ->
+                Row(modifier = Modifier.padding(vertical = 1.dp)) {
+                    val isCorrect = option.id in question.correctOptionIds
+                    Text(
+                        if (isCorrect) "✓" else "○",
+                        color = if (isCorrect) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.width(18.dp),
+                        fontWeight = if (isCorrect) FontWeight.Bold else FontWeight.Normal
+                    )
+                    Text(option.text, style = MaterialTheme.typography.bodySmall)
+                }
+                if (option.image != null) {
+                    QuestionImage(
+                        src = option.image,
+                        modifier = Modifier.padding(start = 18.dp, top = 1.dp)
+                    )
+                }
+            }
+            if (question.explanation.isNotBlank()) {
+                Text(
+                    "Explanation: ${question.explanation}",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
         }
     }

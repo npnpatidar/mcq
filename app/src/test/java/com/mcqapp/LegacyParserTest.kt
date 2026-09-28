@@ -116,6 +116,34 @@ class LegacyParserTest {
     }
 
     @Test
+    fun bareArrayQuestionIdsAreStableAcrossParses() {
+        val json = """
+        [
+          {"question": "Q1", "options": ["A", "B"]},
+          {"question": "Q2", "options": ["C", "D"]}
+        ]
+        """.trimIndent()
+
+        val first = LegacyParser.parse(json).papers[0].categories[0].questions.map { it.id }
+        val second = LegacyParser.parse(json).papers[0].categories[0].questions.map { it.id }
+        assertEquals(first, second)
+        assertEquals(2, first.toSet().size)
+    }
+
+    @Test
+    fun duplicateQuestionsGetUniqueIds() {
+        val json = """
+        [
+          {"question": "Same", "options": ["A", "B"]},
+          {"question": "Same", "options": ["A", "B"]}
+        ]
+        """.trimIndent()
+
+        val ids = LegacyParser.parse(json).papers[0].categories[0].questions.map { it.id }
+        assertEquals(2, ids.toSet().size)
+    }
+
+    @Test
     fun generatesIdsWhenMissing() {
         val json = """
         {

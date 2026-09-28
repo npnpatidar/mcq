@@ -10,6 +10,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.security.MessageDigest
 
 object LegacyParser {
 
@@ -18,7 +19,7 @@ object LegacyParser {
     fun parse(json: String): McqFileDto {
         val element = Json.parseToJsonElement(json)
         if (element is JsonArray) {
-            val questions = element.map { parseQuestion(it.jsonObject) }
+            val questions = uniqueIds(element.map { parseQuestion(it.jsonObject) })
             val paperId = "paper-" + System.currentTimeMillis().toString(36)
             val paper = PaperDto(
                 id = paperId,
@@ -62,12 +63,14 @@ object LegacyParser {
             ?: JsonArray(emptyList())
         val categories = categoriesJson.map { parseCategory(it.jsonObject) }
         val topLevelQuestions = obj["questions"] as? JsonArray
+        val parsedTopLevel = topLevelQuestions?.let { uniqueIds(it.map { q -> parseQuestion(q.jsonObject) }) }
+            ?: emptyList()
         val finalCategories = if (categories.isEmpty() && topLevelQuestions != null) {
             listOf(
                 CategoryDto(
                     id = id + "-root",
                     title = title,
-                    questions = topLevelQuestions.map { parseQuestion(it.jsonObject) }
+                    questions = parsedTopLevel
                 )
             )
         } else {
@@ -80,7 +83,7 @@ object LegacyParser {
             durationMinutes = duration,
             negativeMarking = negative,
             categories = finalCategories,
-            questions = topLevelQuestions?.map { parseQuestion(it.jsonObject) } ?: emptyList()
+            questions = parsedTopLevel
         )
     }
 
@@ -96,13 +99,36 @@ object LegacyParser {
             id = id,
             title = title,
             parentId = parentId,
-            questions = questionsJson.map { parseQuestion(it.jsonObject) }
+            questions = uniqueIds(questionsJson.map { parseQuestion(it.jsonObject) })
         )
     }
 
+    /**
+     * IDs generated for questions without one are deterministic (content hash),
+     * so re-parsing the same JSON yields the same IDs. Random IDs broke the
+     * import-screen join between the parsed file and the edited preview state:
+     * any divergence silently dropped questions. Suffixes keep duplicates unique.
+     */
+    private fun uniqueIds(questions: List<QuestionDto>): List<QuestionDto> {
+        val seen = HashSet<String>()
+        return questions.map { q ->
+            var id = q.id
+            var n = 2
+            while (!seen.add(id)) {
+                id = "${q.id}-$n"
+                n++
+            }
+            if (id != q.id) q.copy(id = id) else q
+        }
+    }
+
+    private fun stableQuestionId(text: String, options: List<OptionDto>): String {
+        val raw = text + "|" + options.joinToString(",") { it.id + "=" + it.text }
+        val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
+        return "q-" + bytes.joinToString("") { "%02x".format(it) }.take(12)
+    }
+
     private fun parseQuestion(obj: JsonObject): QuestionDto {
-        val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: "q-" + System.currentTimeMillis().toString(36) + "-" + (0..99999).random()
         val text = obj["text"]?.jsonPrimitive?.contentOrNull
             ?: obj["question"]?.jsonPrimitive?.contentOrNull
             ?: ""
@@ -121,6 +147,8 @@ object LegacyParser {
 
         val options = parseOptions(obj)
         val correctIds = parseCorrectIds(obj, options)
+        val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: stableQuestionId(text, options)
 
         return QuestionDto(
             id = id,

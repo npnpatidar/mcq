@@ -8,7 +8,6 @@ import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
-import java.security.MessageDigest
 
 data class ImportReport(
     val newPapers: Int,
@@ -36,18 +35,29 @@ class Importer(private val db: AppDatabase) {
                 .toHashSet()
 
             for (paperDto in file.papers) {
-                val existingPaper = db.paperDao().getById(paperDto.id)
-                if (existingPaper == null) newPapers++ else updatedPapers++
-                Logger.d("IMPORT", "Paper '${paperDto.title}' (${paperDto.id}): " +
-                    "${if (existingPaper == null) "NEW" else "UPDATE"}, " +
+                // Paper identity: match by id first, then by title. Bare-array
+                // JSON has no stable id (random per parse), so without the
+                // title fallback every re-import would create a same-named stub.
+                val existingById = db.paperDao().getById(paperDto.id)
+                val existingByTitle = if (existingById == null && paperDto.title.isNotBlank()) {
+                    db.paperDao().getByTitle(paperDto.title)
+                } else {
+                    null
+                }
+                val effectivePaperId = existingById?.id ?: existingByTitle?.id ?: paperDto.id
+                val isNewPaper = existingById == null && existingByTitle == null
+                if (isNewPaper) newPapers++ else updatedPapers++
+                Logger.d("IMPORT", "Paper '${paperDto.title}' (${paperDto.id} -> $effectivePaperId): " +
+                    "${if (isNewPaper) "NEW" else "UPDATE"}" +
+                    (if (existingByTitle != null) " (matched by title)" else "") + ", " +
                     "${paperDto.categories.size} categories")
 
                 // Never REPLACE papers/categories: REPLACE deletes the row and
                 // FK CASCADE wipes its questions, which dedup would then skip.
-                if (existingPaper == null) {
+                if (isNewPaper) {
                     db.paperDao().insertIgnore(
                         PaperEntity(
-                            id = paperDto.id,
+                            id = effectivePaperId,
                             title = paperDto.title,
                             description = paperDto.description,
                             durationMinutes = paperDto.durationMinutes,
@@ -56,7 +66,7 @@ class Importer(private val db: AppDatabase) {
                     )
                 } else {
                     db.paperDao().updateFields(
-                        id = paperDto.id,
+                        id = effectivePaperId,
                         title = paperDto.title,
                         description = paperDto.description,
                         durationMinutes = paperDto.durationMinutes,
@@ -65,7 +75,7 @@ class Importer(private val db: AppDatabase) {
                 }
 
                 val effectiveCategories = if (paperDto.categories.isEmpty()) {
-                    listOf(CategoryDto(id = paperDto.id + "-uncat", title = "Uncategorized", questions = paperDto.topLevelQuestions()))
+                    listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = paperDto.topLevelQuestions()))
                 } else {
                     paperDto.categories
                 }
@@ -74,34 +84,42 @@ class Importer(private val db: AppDatabase) {
                 // skip creating the shell so the library doesn't fill with stubs.
                 val incomingHashes = effectiveCategories.flatMap { cat ->
                     cat.questions.map { q ->
-                        computeHash(q.text, q.options.map { it.text }, q.options.map { it.image })
+                        ContentHash.of(q.text, q.options.map { it.text }, q.options.map { it.image })
                     }
                 }
-                if (existingPaper == null && incomingHashes.isNotEmpty() &&
+                if (isNewPaper && incomingHashes.isNotEmpty() &&
                     incomingHashes.all { it in existingHashes }) {
                     duplicateQuestions += incomingHashes.size
-                    Logger.i("IMPORT", "Paper '${paperDto.title}' (${paperDto.id}): " +
+                    Logger.i("IMPORT", "Paper '${paperDto.title}' ($effectivePaperId): " +
                         "all ${incomingHashes.size} questions already exist, skipping paper creation")
                     continue
                 }
 
                 effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
-                    // A category id owned by a DIFFERENT paper would REPLACE that
-                    // row and cascade-delete its questions: remap to stay unique.
-                    val owningCat = db.categoryDao().getById(categoryDto.id)
-                    val effectiveCatId = if (owningCat != null && owningCat.paperId != paperDto.id) {
-                        Logger.w("IMPORT", "Category id ${categoryDto.id} belongs to paper " +
-                            "${owningCat.paperId}, remapping for paper ${paperDto.id}")
-                        paperDto.id + "-" + categoryDto.id
-                    } else {
-                        categoryDto.id
-                    }
+                    // Category identity within the paper: match by id first, then
+                    // by title, so re-imports reuse the same category instead of
+                    // piling up same-named ones.
+                    val catsInPaper = db.categoryDao().getByPaper(effectivePaperId)
+                    val matchInPaper = catsInPaper.find { it.id == categoryDto.id }
+                        ?: catsInPaper.find { it.title == categoryDto.title }
+                    // A category id owned by a DIFFERENT paper must never be
+                    // reused: remap to stay unique (else CASCADE wipe).
+                    val ownedElsewhere = db.categoryDao().getById(categoryDto.id)
+                        ?.takeIf { it.paperId != effectivePaperId }
+                    val effectiveCatId = matchInPaper?.id
+                        ?: if (ownedElsewhere != null) {
+                            Logger.w("IMPORT", "Category id ${categoryDto.id} belongs to paper " +
+                                "${ownedElsewhere.paperId}, remapping for paper $effectivePaperId")
+                            "$effectivePaperId-${categoryDto.id}"
+                        } else {
+                            categoryDto.id
+                        }
 
                     if (db.categoryDao().getById(effectiveCatId) == null) {
                         db.categoryDao().insertIgnore(
                             CategoryEntity(
                                 id = effectiveCatId,
-                                paperId = paperDto.id,
+                                paperId = effectivePaperId,
                                 title = categoryDto.title,
                                 parentId = categoryDto.parentId,
                                 sortOrder = categoryIndex
@@ -110,15 +128,15 @@ class Importer(private val db: AppDatabase) {
                     } else {
                         db.categoryDao().updateFields(
                             id = effectiveCatId,
-                            paperId = paperDto.id,
+                            paperId = effectivePaperId,
                             title = categoryDto.title,
                             parentId = categoryDto.parentId,
                             sortOrder = categoryIndex
                         )
                     }
 
-                    categoryDto.questions.forEachIndexed { qIndex, questionDto ->
-                        val contentHash = computeHash(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image })
+                    categoryDto.questions.forEach { questionDto ->
+                        val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image })
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
                             "text='${questionDto.text.take(60)}'")
@@ -126,13 +144,21 @@ class Importer(private val db: AppDatabase) {
                         if (contentHash in existingHashes) {
                             duplicateQuestions++
                             Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
-                            return@forEachIndexed
+                            return@forEach
                         }
 
+                        // New questions append after existing ones; updates keep
+                        // their current position so re-imports never reorder.
                         val existingQuestion = db.questionDao().getById(questionDto.id)
-                        if (existingQuestion == null) newQuestions++ else updatedQuestions++
+                        val resolvedSortOrder = if (existingQuestion == null) {
+                            newQuestions++
+                            (db.questionDao().getMaxSortOrder(effectiveCatId) ?: -1) + 1
+                        } else {
+                            updatedQuestions++
+                            existingQuestion.sortOrder
+                        }
                         Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
-                            "id=${questionDto.id}, sortOrder=$qIndex")
+                            "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
 
                         db.questionDao().upsert(
                             QuestionEntity(
@@ -143,7 +169,7 @@ class Importer(private val db: AppDatabase) {
                                 explanation = questionDto.explanation,
                                 difficulty = questionDto.difficulty,
                                 tags = questionDto.tags.joinToString(","),
-                                sortOrder = qIndex,
+                                sortOrder = resolvedSortOrder,
                                 contentHash = contentHash
                             )
                         )
@@ -174,9 +200,4 @@ class Importer(private val db: AppDatabase) {
         return ImportReport(newPapers, updatedPapers, newQuestions, updatedQuestions, duplicateQuestions)
     }
 
-    private fun computeHash(text: String, optionTexts: List<String>, optionImages: List<String?>): String {
-        val raw = text + "|" + optionTexts.joinToString(",") + "|" + optionImages.joinToString(",")
-        val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
 }

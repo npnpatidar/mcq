@@ -16,6 +16,9 @@ interface PaperDao {
     @Query("SELECT * FROM papers WHERE id = :id")
     suspend fun getById(id: String): PaperEntity?
 
+    @Query("SELECT * FROM papers WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
+    suspend fun getByTitle(title: String): PaperEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(paper: PaperEntity)
 

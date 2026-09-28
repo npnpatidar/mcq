@@ -105,6 +105,14 @@ fun LibraryScreen(
                     ?.bufferedReader()
                     ?.use { reader -> reader.readText() }
                 if (text != null) {
+                    val fingerprint = try {
+                        val bytes = java.security.MessageDigest.getInstance("SHA-256")
+                            .digest(text.toByteArray())
+                        bytes.joinToString("") { "%02x".format(it) }.take(12)
+                    } catch (e: Exception) {
+                        "unknown"
+                    }
+                    Logger.i("LIB", "picked import file: chars=${text.length}, sha=$fingerprint")
                     com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = text
                     navController.navigate("import/direct")
                 }

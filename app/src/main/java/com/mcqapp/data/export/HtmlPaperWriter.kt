@@ -40,6 +40,65 @@ object HtmlPaperWriter {
         return sb.toString()
     }
 
+    /**
+     * Quiz mode: correct answers and explanations are hidden until the reader
+     * taps "Show answer". Fully self-contained (inline CSS + JS, no network).
+     */
+    fun paperToQuizHtml(paper: PaperDto): String {
+        val sb = StringBuilder()
+        sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+        sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        sb.append("<title>").append(esc(paper.title)).append("</title>\n<style>\n")
+        sb.append(CSS)
+        sb.append("</style>\n</head>\n<body>\n")
+        sb.append("<h1>").append(esc(paper.title)).append("</h1>\n")
+        sb.append("<p class=\"meta\">Quiz mode — answers are hidden. ")
+            .append("Tap &quot;Show answer&quot; on any question to reveal it.</p>\n")
+        sb.append("<p><button class=\"toggle\" onclick=\"toggleAll(true)\">Show all answers</button>\n")
+        sb.append("<button class=\"toggle\" onclick=\"toggleAll(false)\">Hide all answers</button></p>\n")
+        sb.append("<script>\n").append(QUIZ_JS).append("</script>\n")
+
+        var number = 0
+        for (category in paper.categories) {
+            sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
+            for (question in category.questions) {
+                number++
+                appendQuizQuestion(sb, number, question)
+            }
+        }
+        sb.append("</body>\n</html>\n")
+        return sb.toString()
+    }
+
+    private fun appendQuizQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
+        sb.append("<div class=\"q\">\n")
+        sb.append("<p class=\"qt\">Q").append(number).append(". ")
+            .append(esc(question.text)).append("</p>\n")
+        appendImage(sb, question.image)
+        if (question.options.isNotEmpty()) {
+            sb.append("<ul class=\"opts\">\n")
+            for (option in question.options) {
+                appendOption(sb, option, isCorrect = false)
+            }
+            sb.append("</ul>\n")
+        }
+        sb.append("<button class=\"toggle\" onclick=\"toggle('ans")
+            .append(number).append("')\">Show answer</button>\n")
+        sb.append("<div id=\"ans").append(number).append("\" class=\"ans\" style=\"display:none\">\n")
+        val correct = question.options.filter { it.id in question.correctOptionIds }
+        if (correct.isNotEmpty()) {
+            sb.append("<p class=\"answer\">Answer: ")
+                .append(esc(correct.joinToString(", ") { it.text }))
+                .append("</p>\n")
+        }
+        if (question.explanation.isNotBlank()) {
+            sb.append("<p class=\"expl\">Explanation: ")
+                .append(esc(question.explanation)).append("</p>\n")
+        }
+        appendImage(sb, question.explanationImage)
+        sb.append("</div>\n</div>\n")
+    }
+
     private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
         sb.append("<div class=\"q\">\n")
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
@@ -105,5 +164,35 @@ ul.opts li.optimg { padding-left: 18px; }
 img { max-width: 100%; height: auto; border-radius: 4px; margin: 4px 0; }
 .answer { color: #2E7D32; }
 .expl { color: #666; font-size: 0.9em; }
+button.toggle { background: #1976D2; color: #fff; border: none; border-radius: 6px;
+  padding: 6px 12px; margin: 4px 4px 4px 0; font-size: 0.9em; cursor: pointer; }
+.ans { border-top: 1px dashed #bbb; margin-top: 8px; padding-top: 4px; }
+"""
+
+    private const val QUIZ_JS = """
+function toggle(id) {
+  var e = document.getElementById(id);
+  if (!e) return;
+  var show = e.style.display === 'none';
+  e.style.display = show ? 'block' : 'none';
+  var btns = e.parentElement.getElementsByClassName('toggle');
+  for (var i = 0; i < btns.length; i++) {
+    if (btns[i].getAttribute('onclick') && btns[i].getAttribute('onclick').indexOf(id) >= 0) {
+      btns[i].textContent = show ? 'Hide answer' : 'Show answer';
+    }
+  }
+}
+function toggleAll(show) {
+  var list = document.getElementsByClassName('ans');
+  for (var i = 0; i < list.length; i++) {
+    list[i].style.display = show ? 'block' : 'none';
+  }
+  var btns = document.getElementsByClassName('toggle');
+  for (var j = 0; j < btns.length; j++) {
+    if (btns[j].textContent === 'Show answer' || btns[j].textContent === 'Hide answer') {
+      btns[j].textContent = show ? 'Hide answer' : 'Show answer';
+    }
+  }
+}
 """
 }

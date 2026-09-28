@@ -5,7 +5,8 @@ enum class ExportFormat(
     val mimeType: String,
     val extension: String,
     val title: String,
-    val description: String
+    val description: String,
+    val fileSuffix: String = ""
 ) {
     JSON_INLINE(
         "application/json",
@@ -22,13 +23,27 @@ enum class ExportFormat(
     HTML(
         "text/html",
         "html",
-        "Web page (self-contained)",
-        "Single .html file with images embedded. Opens in any browser."
+        "Web page (answers shown)",
+        "Single .html file, correct answers visible. Opens in any browser."
+    ),
+    HTML_QUIZ(
+        "text/html",
+        "html",
+        "Web page (quiz mode)",
+        "Answers hidden; tap Show answer to reveal. Self-contained.",
+        "-quiz"
     ),
     PDF(
         "application/pdf",
         "pdf",
-        "PDF document",
-        ".pdf with questions, options, correct answers and images."
+        "PDF (answers inline)",
+        ".pdf with correct answers under each question."
+    ),
+    PDF_ANSWER_KEY(
+        "application/pdf",
+        "pdf",
+        "PDF (answer key at end)",
+        ".pdf for self-testing: questions first, all answers at the end.",
+        "-answer-key"
     )
 }

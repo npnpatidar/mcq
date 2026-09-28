@@ -97,36 +97,41 @@ fun LibraryScreen(
     var categoryDialogPaperId by remember { mutableStateOf("") }
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
     var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
+    var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
     var showExportFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
 
-    fun onExportDocument(uri: Uri?, format: ExportFormat) {
-        uri?.let {
-            val paperId = pendingExportPaperId
-            if (paperId != null) viewModel.exportPaperAs(it, paperId, format)
-            else viewModel.exportAll(it)
-        }
+    // The format must travel in state: saver callbacks fire after the save
+    // dialog, so anything baked into the callback itself goes stale.
+    fun onExportDocument(uri: Uri?) {
+        val paperId = pendingExportPaperId
+        val format = pendingExportFormat
         pendingExportPaperId = null
+        pendingExportFormat = null
+        uri?.let {
+            if (paperId != null && format != null) viewModel.exportPaperAs(it, paperId, format)
+            else if (paperId == null) viewModel.exportAll(it)
+        }
     }
 
     val exportJsonLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(ExportFormat.JSON_INLINE.mimeType)
-    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.JSON_INLINE) }
+    ) { uri: Uri? -> onExportDocument(uri) }
     val exportZipLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(ExportFormat.ZIP.mimeType)
-    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.ZIP) }
+    ) { uri: Uri? -> onExportDocument(uri) }
     val exportHtmlLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(ExportFormat.HTML.mimeType)
-    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.HTML) }
+    ) { uri: Uri? -> onExportDocument(uri) }
     val exportPdfLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(ExportFormat.PDF.mimeType)
-    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.PDF) }
+    ) { uri: Uri? -> onExportDocument(uri) }
 
     fun exportSaver(format: ExportFormat) = when (format) {
         ExportFormat.JSON_INLINE -> exportJsonLauncher
         ExportFormat.ZIP -> exportZipLauncher
-        ExportFormat.HTML -> exportHtmlLauncher
-        ExportFormat.PDF -> exportPdfLauncher
+        ExportFormat.HTML, ExportFormat.HTML_QUIZ -> exportHtmlLauncher
+        ExportFormat.PDF, ExportFormat.PDF_ANSWER_KEY -> exportPdfLauncher
     }
 
     val importLauncher = rememberLauncherForActivityResult(
@@ -307,6 +312,7 @@ fun LibraryScreen(
             onDismissRequest = {
                 showExportFormatDialog = false
                 pendingExportPaperId = null
+                pendingExportFormat = null
             },
             title = { Text("Export format") },
             text = {
@@ -341,10 +347,12 @@ fun LibraryScreen(
                     val paper = papers.firstOrNull { it.id == pendingExportPaperId }
                     showExportFormatDialog = false
                     if (paper != null) {
+                        pendingExportFormat = exportFormat
                         exportSaver(exportFormat)
                             .launch(PaperExporter.fileNameFor(paper.title, exportFormat))
                     } else {
                         pendingExportPaperId = null
+                        pendingExportFormat = null
                     }
                 }) { Text("Export") }
             },
@@ -352,6 +360,7 @@ fun LibraryScreen(
                 TextButton(onClick = {
                     showExportFormatDialog = false
                     pendingExportPaperId = null
+                    pendingExportFormat = null
                 }) { Text("Cancel") }
             }
         )

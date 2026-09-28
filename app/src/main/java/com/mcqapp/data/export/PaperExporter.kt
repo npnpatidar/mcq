@@ -41,10 +41,20 @@ class PaperExporter(private val db: AppDatabase) {
                 format.mimeType,
                 HtmlPaperWriter.paperToHtml(dto).toByteArray(Charsets.UTF_8)
             )
+            ExportFormat.HTML_QUIZ -> ExportResult(
+                "$base-quiz.html",
+                format.mimeType,
+                HtmlPaperWriter.paperToQuizHtml(dto).toByteArray(Charsets.UTF_8)
+            )
             ExportFormat.PDF -> ExportResult(
                 "$base.pdf",
                 format.mimeType,
                 PdfPaperWriter.paperToPdfBytes(dto)
+            )
+            ExportFormat.PDF_ANSWER_KEY -> ExportResult(
+                "$base-answer-key.pdf",
+                format.mimeType,
+                PdfPaperWriter.paperToPdfBytes(dto, answersAtEnd = true)
             )
         }
     }
@@ -58,6 +68,6 @@ class PaperExporter(private val db: AppDatabase) {
                 .ifBlank { "paper" }
 
         fun fileNameFor(title: String, format: ExportFormat): String =
-            "${baseName(title)}.${format.extension}"
+            "${baseName(title)}${format.fileSuffix}.${format.extension}"
     }
 }

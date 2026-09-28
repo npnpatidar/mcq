@@ -23,7 +23,14 @@ object PdfPaperWriter {
     private val CONTENT_W = (PAGE_W - MARGIN * 2).toFloat()
     private val BOTTOM = (PAGE_H - MARGIN).toFloat()
 
-    fun paperToPdfBytes(paper: PaperDto): ByteArray {
+    fun paperToPdfBytes(paper: PaperDto): ByteArray = paperToPdfBytes(paper, answersAtEnd = false)
+
+    /**
+     * @param answersAtEnd when true, questions print without correct marks and
+     * all answers + explanations move to an "Answer Key" section at the end,
+     * so the paper can be attempted without seeing answers.
+     */
+    fun paperToPdfBytes(paper: PaperDto, answersAtEnd: Boolean): ByteArray {
         val doc = PdfDocument()
         try {
             val w = Writer(doc)
@@ -38,6 +45,14 @@ object PdfPaperWriter {
             }.joinToString("\n")
             w.paragraph(meta, 10f, Typeface.NORMAL, Color.GRAY, spaceAfter = 12f)
 
+            data class KeyEntry(
+                val number: Int,
+                val answer: String,
+                val explanation: String,
+                val explanationImage: String?
+            )
+            val key = mutableListOf<KeyEntry>()
+
             var number = 0
             for (category in paper.categories) {
                 w.paragraph(category.title, 14f, Typeface.BOLD, Color.BLACK, spaceBefore = 10f)
@@ -49,7 +64,7 @@ object PdfPaperWriter {
                     )
                     w.image(question.image)
                     for (option in question.options) {
-                        val isCorrect = option.id in question.correctOptionIds
+                        val isCorrect = !answersAtEnd && option.id in question.correctOptionIds
                         w.paragraph(
                             (if (isCorrect) "✓ " else "○ ") + "${option.id}) ${option.text}",
                             11f,
@@ -61,19 +76,50 @@ object PdfPaperWriter {
                         w.image(option.image, indent = 12f)
                     }
                     val correct = question.options.filter { it.id in question.correctOptionIds }
-                    if (correct.isNotEmpty()) {
-                        w.paragraph(
-                            "Answer: " + correct.joinToString(", ") { it.text },
-                            11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
-                        )
+                    val answerText = correct.joinToString(", ") { it.text }
+                    if (answersAtEnd) {
+                        if (answerText.isNotEmpty() || question.explanation.isNotBlank()) {
+                            key.add(
+                                KeyEntry(
+                                    number = number,
+                                    answer = answerText,
+                                    explanation = question.explanation,
+                                    explanationImage = question.explanationImage
+                                )
+                            )
+                        }
+                    } else {
+                        if (correct.isNotEmpty()) {
+                            w.paragraph(
+                                "Answer: $answerText",
+                                11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
+                            )
+                        }
+                        if (question.explanation.isNotBlank()) {
+                            w.paragraph(
+                                "Explanation: ${question.explanation}",
+                                10f, Typeface.NORMAL, Color.GRAY
+                            )
+                        }
+                        w.image(question.explanationImage)
                     }
-                    if (question.explanation.isNotBlank()) {
+                }
+            }
+            if (answersAtEnd && key.isNotEmpty()) {
+                w.paragraph("Answer Key", 16f, Typeface.BOLD, Color.BLACK, spaceBefore = 16f)
+                for (entry in key) {
+                    val line = buildString {
+                        append("Q${entry.number}. ")
+                        append(entry.answer.ifBlank { "—" })
+                    }
+                    w.paragraph(line, 11f, Typeface.BOLD, Color.rgb(46, 125, 50), spaceBefore = 6f)
+                    if (entry.explanation.isNotBlank()) {
                         w.paragraph(
-                            "Explanation: ${question.explanation}",
+                            "Explanation: ${entry.explanation}",
                             10f, Typeface.NORMAL, Color.GRAY
                         )
                     }
-                    w.image(question.explanationImage)
+                    w.image(entry.explanationImage)
                 }
             }
             w.finish()

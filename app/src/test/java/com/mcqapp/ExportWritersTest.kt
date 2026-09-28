@@ -57,6 +57,50 @@ class ExportWritersTest {
     }
 
     @Test
+    fun quizHtmlHidesAnswersBehindToggle() {
+        val html = HtmlPaperWriter.paperToQuizHtml(samplePaper())
+        // no correct marks in the question body ...
+        assertFalse(html.contains("class=\"correct\""))
+        // ... and the answer line exists only inside the hidden block
+        val hiddenAt = html.indexOf("style=\"display:none\"")
+        val answerAt = html.indexOf("<p class=\"answer\">Answer:")
+        assertTrue(hiddenAt >= 0 && answerAt > hiddenAt)
+        // reveal controls exist and are self-contained (inline script, no src=)
+        assertTrue(html.contains("Show answer"))
+        assertTrue(html.contains("function toggle(id)"))
+        assertFalse(html.contains("<script src="))
+        // the answer itself is present but hidden
+        assertTrue(html.contains("id=\"ans1\""))
+        assertTrue(html.contains("Beta"))
+        assertTrue(html.contains("style=\"display:none\""))
+    }
+
+    @Test
+    fun exportFileNamesAreDistinctPerFormat() {
+        assertEquals(
+            "My-Paper-quiz.html",
+            com.mcqapp.data.export.PaperExporter.fileNameFor(
+                "My Paper",
+                com.mcqapp.data.export.ExportFormat.HTML_QUIZ
+            )
+        )
+        assertEquals(
+            "My-Paper-answer-key.pdf",
+            com.mcqapp.data.export.PaperExporter.fileNameFor(
+                "My Paper",
+                com.mcqapp.data.export.ExportFormat.PDF_ANSWER_KEY
+            )
+        )
+        assertEquals(
+            "My-Paper.pdf",
+            com.mcqapp.data.export.PaperExporter.fileNameFor(
+                "My Paper",
+                com.mcqapp.data.export.ExportFormat.PDF
+            )
+        )
+    }
+
+    @Test
     fun parseDataUriHandlesShapes() {
         assertNull(parseDataUri(null))
         assertNull(parseDataUri("https://example.com/x.png"))

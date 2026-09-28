@@ -85,7 +85,6 @@ fun LibraryScreen(
     viewModel: LibraryViewModel = viewModel()
 ) {
     val papers by viewModel.papers.collectAsState()
-    val importReport by viewModel.importReport.collectAsState()
     val exportError by viewModel.exportError.collectAsState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -99,7 +98,12 @@ fun LibraryScreen(
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? -> uri?.let { viewModel.importJson(it) } }
+    ) { uri: Uri? ->
+        uri?.let {
+            val encoded = android.net.Uri.encode(it.toString())
+            navController.navigate("import/$encoded")
+        }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -242,22 +246,6 @@ fun LibraryScreen(
             onSave = { title, parent ->
                 viewModel.addCategory(categoryDialogPaperId, title, parent)
                 showCategoryDialog = false
-            }
-        )
-    }
-
-    importReport?.let { report ->
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissImportReport() },
-            title = { Text("Import complete") },
-            text = {
-                Text(
-                    "Papers: ${report.newPapers} new, ${report.updatedPapers} updated\n" +
-                        "Questions: ${report.newQuestions} new, ${report.updatedQuestions} updated"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.dismissImportReport() }) { Text("OK") }
             }
         )
     }

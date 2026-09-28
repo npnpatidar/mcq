@@ -11,6 +11,7 @@ import com.mcqapp.ui.browse.BrowseScreen
 import com.mcqapp.ui.editor.QuestionEditorScreen
 import com.mcqapp.ui.history.BookmarksScreen
 import com.mcqapp.ui.history.HistoryScreen
+import com.mcqapp.ui.importscreen.ImportScreen
 import com.mcqapp.ui.library.LibraryScreen
 import com.mcqapp.ui.results.ResultsScreen
 import com.mcqapp.ui.settings.SettingsScreen
@@ -104,6 +105,15 @@ fun McqNavHost(repository: McqRepository) {
         }
         composable("settings") {
             SettingsScreen(repository = repository, navController = navController)
+        }
+        composable(
+            route = "import/{uri}",
+            arguments = listOf(navArgument("uri") { type = NavType.StringType })
+        ) { entry ->
+            val encodedUri = entry.arguments?.getString("uri").orEmpty()
+            val uri = android.net.Uri.decode(encodedUri)
+            Logger.i("NAV", "import screen: uri=$uri")
+            ImportScreen(uri = uri, navController = navController)
         }
     }
 }

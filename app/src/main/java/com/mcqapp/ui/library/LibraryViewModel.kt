@@ -5,10 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
-import com.mcqapp.data.io.ImportReport
+import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
-import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
@@ -26,31 +25,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _importReport = MutableStateFlow<ImportReport?>(null)
-    val importReport: StateFlow<ImportReport?> = _importReport.asStateFlow()
-
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
-
-    fun importJson(uri: Uri) {
-        viewModelScope.launch {
-            try {
-                val text = getApplication<Application>().contentResolver.openInputStream(uri)
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                if (text == null) {
-                    _exportError.value = "Could not read file"
-                    return@launch
-                }
-                val file = LegacyParser.parse(text)
-                val report = Importer(repository.db()).import(file)
-                _importReport.value = report
-                _exportError.value = null
-            } catch (e: Exception) {
-                _exportError.value = "Import failed: ${e.message}"
-            }
-        }
-    }
 
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
@@ -80,10 +56,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
             it.write(text.toByteArray())
         } ?: throw IllegalStateException("Could not open output stream")
-    }
-
-    fun dismissImportReport() {
-        _importReport.value = null
     }
 
     fun dismissError() {

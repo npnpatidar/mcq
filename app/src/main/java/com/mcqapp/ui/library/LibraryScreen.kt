@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -75,7 +77,7 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun LibraryScreen(
     repository: McqRepository,
@@ -498,19 +500,22 @@ private fun PaperCard(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = {
-                                    Logger.i("LIB", "Start paper: paperId=${paper.id}")
-                                    onStart()
-                                }, modifier = Modifier.weight(1f)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = {
+                    Logger.i("LIB", "Start paper: paperId=${paper.id}")
+                    onStart()
+                }) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text("Start")
                 }
-                TextButton(onClick = onExport, modifier = Modifier.weight(1f)) {
+                TextButton(onClick = onExport) {
                     Text("Export")
                 }
-                OutlinedButton(onClick = onBrowse, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onBrowse) {
                     Text("Browse")
                 }
             }

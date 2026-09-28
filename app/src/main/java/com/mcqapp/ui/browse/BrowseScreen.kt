@@ -2,6 +2,8 @@ package com.mcqapp.ui.browse
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,7 +45,7 @@ import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BrowseScreen(
     repository: McqRepository,
@@ -100,9 +102,10 @@ fun BrowseScreen(
         ) {
             item {
                 val filter = remember { mutableStateOf("All") }
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf("All", "No answer", "No explanation", "No category").forEach { label ->
                         FilterChip(

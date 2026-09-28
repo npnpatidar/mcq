@@ -196,6 +196,7 @@ private fun BrowseQuestionCard(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+            QuestionImage(src = question.explanationImage)
 
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

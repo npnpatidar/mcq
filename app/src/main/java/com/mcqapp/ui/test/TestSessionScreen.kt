@@ -375,6 +375,10 @@ private fun ExplanationCard(question: Question) {
                 question.explanation.ifBlank { "No explanation provided." },
                 style = MaterialTheme.typography.bodyMedium
             )
+            QuestionImage(
+                src = question.explanationImage,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
     }
 }

@@ -41,15 +41,28 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun exportPaper(uri: Uri, paperId: String) {
+        exportPaperAs(uri, paperId, com.mcqapp.data.export.ExportFormat.JSON_INLINE)
+    }
+
+    fun exportPaperAs(uri: Uri, paperId: String, format: com.mcqapp.data.export.ExportFormat) {
         viewModelScope.launch {
             try {
-                val json = Exporter(repository.db()).exportPaper(paperId)
-                writeUri(uri, json)
+                val result = com.mcqapp.data.export.PaperExporter(repository.db())
+                    .exportPaper(paperId, format)
+                Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
+                writeUriBytes(uri, result.bytes)
                 _exportError.value = null
             } catch (e: Exception) {
+                Logger.e("LIBVM", "Export failed", e)
                 _exportError.value = "Export failed: ${e.message}"
             }
         }
+    }
+
+    private suspend fun writeUriBytes(uri: Uri, bytes: ByteArray) {
+        getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
+            it.write(bytes)
+        } ?: throw IllegalStateException("Could not open output stream")
     }
 
     private suspend fun writeUri(uri: Uri, text: String) {

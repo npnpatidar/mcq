@@ -25,6 +25,7 @@ data class EditorUiState(
     val text: String = "",
     val image: String = "",
     val explanation: String = "",
+    val explanationImage: String = "",
     val difficulty: Difficulty = Difficulty.MEDIUM,
     val tags: String = "",
     val options: List<OptionEditorState> = emptyList(),
@@ -77,6 +78,7 @@ class EditorViewModel(
                 text = pendingEdit.text,
                 image = pendingEdit.image.orEmpty(),
                 explanation = pendingEdit.explanation,
+                explanationImage = pendingEdit.explanationImage.orEmpty(),
                 difficulty = Difficulty.fromLabel(pendingEdit.difficulty),
                 tags = pendingEdit.tags.joinToString(", "),
                 options = pendingEdit.options.map { o ->
@@ -104,6 +106,7 @@ class EditorViewModel(
                         text = question.text,
                         image = question.image.orEmpty(),
                         explanation = question.explanation,
+                        explanationImage = question.explanationImage.orEmpty(),
                         difficulty = question.difficulty,
                         tags = question.tags.joinToString(", "),
                         options = question.options.map { o ->
@@ -140,6 +143,7 @@ class EditorViewModel(
     fun updateText(value: String) = updateState { it.copy(text = value) }
     fun updateImage(value: String) = updateState { it.copy(image = value) }
     fun updateExplanation(value: String) = updateState { it.copy(explanation = value) }
+    fun updateExplanationImage(value: String) = updateState { it.copy(explanationImage = value) }
     fun updateTags(value: String) = updateState { it.copy(tags = value) }
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
     fun updateCategory(value: String) = updateState { it.copy(categoryId = value) }
@@ -208,6 +212,7 @@ class EditorViewModel(
             options = edited.map { com.mcqapp.data.io.OptionDto(it.id, it.text, it.image) },
             correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toList(),
             explanation = s.explanation.trim(),
+            explanationImage = s.explanationImage.trim().ifBlank { null },
             difficulty = s.difficulty.label,
             tags = s.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() }
         )
@@ -228,6 +233,7 @@ class EditorViewModel(
             options = s.options.map { QuestionOption(it.id, it.text.trim(), it.image.trim().ifBlank { null }) },
             correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toSet(),
             explanation = s.explanation.trim(),
+            explanationImage = s.explanationImage.trim().ifBlank { null },
             difficulty = s.difficulty,
             tags = s.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
         )

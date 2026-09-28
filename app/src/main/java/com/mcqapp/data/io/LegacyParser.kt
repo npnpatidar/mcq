@@ -138,6 +138,10 @@ object LegacyParser {
             ?: obj["explain"]?.jsonPrimitive?.contentOrNull
             ?: obj["reason"]?.jsonPrimitive?.contentOrNull
             ?: ""
+        val explanationImage = obj["explanationImage"]?.jsonPrimitive?.contentOrNull
+            ?: obj["explanation_image"]?.jsonPrimitive?.contentOrNull
+            ?: obj["explainImage"]?.jsonPrimitive?.contentOrNull
+            ?: obj["explanationImageUrl"]?.jsonPrimitive?.contentOrNull
         val difficulty = obj["difficulty"]?.jsonPrimitive?.contentOrNull ?: "medium"
         val tags = when (val t = obj["tags"]) {
             is JsonArray -> t.mapNotNull { it.jsonPrimitive.contentOrNull }
@@ -157,6 +161,7 @@ object LegacyParser {
             options = options,
             correctOptionIds = correctIds,
             explanation = explanation,
+            explanationImage = explanationImage,
             difficulty = difficulty,
             tags = tags
         )

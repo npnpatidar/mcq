@@ -164,4 +164,64 @@ class LegacyParserTest {
         assertTrue(file.papers[0].categories[0].questions[0].id.isNotBlank())
         assertEquals(listOf("a"), file.papers[0].categories[0].questions[0].correctOptionIds)
     }
+
+    @Test
+    fun samplePaperAssetIsComprehensive() {
+        val asset = java.io.File("src/main/assets/sample_paper.json")
+        assertTrue("asset missing: ${asset.absolutePath}", asset.isFile)
+        val paper = LegacyParser.parse(asset.readText()).papers.single()
+        val questions = paper.categories.flatMap { it.questions }
+        assertTrue("expected >= 14 questions, got ${questions.size}", questions.size >= 14)
+        var questionImages = 0
+        var optionImages = 0
+        var explanationImages = 0
+        for (q in questions) {
+            assertTrue("blank text: ${q.id}", q.text.isNotBlank())
+            assertTrue("fewer than 2 options: ${q.id}", q.options.size >= 2)
+            val optionIds = q.options.map { it.id }.toSet()
+            assertTrue("unresolved correct ids: ${q.id}",
+                q.correctOptionIds.isNotEmpty() && q.correctOptionIds.all { it in optionIds })
+            assertTrue("missing explanation: ${q.id}", q.explanation.isNotBlank())
+            if (isPngDataUri(q.image)) questionImages++
+            if (isPngDataUri(q.explanationImage)) explanationImages++
+            optionImages += q.options.count { isPngDataUri(it.image) }
+        }
+        assertTrue("expected question images, got $questionImages", questionImages >= 2)
+        assertTrue("expected option images, got $optionImages", optionImages >= 5)
+        assertTrue("expected explanation images, got $explanationImages", explanationImages >= 1)
+    }
+
+    private fun isPngDataUri(src: String?): Boolean {
+        if (src == null || !src.startsWith("data:image/png;base64,")) return false
+        return try {
+            val bytes = java.util.Base64.getMimeDecoder()
+                .decode(src.substringAfter(","))
+            bytes.size > 8 &&
+                bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+                bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()
+        } catch (e: IllegalArgumentException) {
+            false
+        }
+    }
+
+    @Test
+    fun parsesExplanationImageAliases() {
+        val json = """
+        {
+          "papers": [{
+            "title": "T",
+            "questions": [
+              {"text": "Q1", "options": ["A", "B"], "explanationImage": "data:image/png;base64,AAA"},
+              {"text": "Q2", "options": ["A", "B"], "explanation_image": "https://example.com/e.png"},
+              {"text": "Q3", "options": ["A", "B"]}
+            ]
+          }]
+        }
+        """.trimIndent()
+
+        val questions = LegacyParser.parse(json).papers[0].categories[0].questions
+        assertEquals("data:image/png;base64,AAA", questions[0].explanationImage)
+        assertEquals("https://example.com/e.png", questions[1].explanationImage)
+        assertEquals(null, questions[2].explanationImage)
+    }
 }

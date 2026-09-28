@@ -364,6 +364,10 @@ private fun PreviewQuestionCard(
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
+            QuestionImage(
+                src = question.explanationImage,
+                modifier = Modifier.padding(top = 2.dp)
+            )
         }
     }
 }

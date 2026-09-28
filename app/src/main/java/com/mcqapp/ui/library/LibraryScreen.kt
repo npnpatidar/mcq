@@ -71,6 +71,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.mcqapp.data.export.ExportFormat
+import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Paper
@@ -95,6 +97,37 @@ fun LibraryScreen(
     var categoryDialogPaperId by remember { mutableStateOf("") }
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
     var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
+    var showExportFormatDialog by remember { mutableStateOf(false) }
+    var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
+
+    fun onExportDocument(uri: Uri?, format: ExportFormat) {
+        uri?.let {
+            val paperId = pendingExportPaperId
+            if (paperId != null) viewModel.exportPaperAs(it, paperId, format)
+            else viewModel.exportAll(it)
+        }
+        pendingExportPaperId = null
+    }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ExportFormat.JSON_INLINE.mimeType)
+    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.JSON_INLINE) }
+    val exportZipLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ExportFormat.ZIP.mimeType)
+    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.ZIP) }
+    val exportHtmlLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ExportFormat.HTML.mimeType)
+    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.HTML) }
+    val exportPdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ExportFormat.PDF.mimeType)
+    ) { uri: Uri? -> onExportDocument(uri, ExportFormat.PDF) }
+
+    fun exportSaver(format: ExportFormat) = when (format) {
+        ExportFormat.JSON_INLINE -> exportJsonLauncher
+        ExportFormat.ZIP -> exportZipLauncher
+        ExportFormat.HTML -> exportHtmlLauncher
+        ExportFormat.PDF -> exportPdfLauncher
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -120,16 +153,6 @@ fun LibraryScreen(
                 Logger.e("LIB", "Failed to read import file", e)
             }
         }
-    }
-
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri: Uri? ->
-        uri?.let {
-            val paperId = pendingExportPaperId
-            if (paperId != null) viewModel.exportPaper(it, paperId) else viewModel.exportAll(it)
-        }
-        pendingExportPaperId = null
     }
 
     ModalNavigationDrawer(
@@ -218,7 +241,8 @@ fun LibraryScreen(
                                 onBrowse = { navController.navigate("browse/${paper.id}") },
                                 onExport = {
                                     pendingExportPaperId = paper.id
-                                    exportLauncher.launch("${paper.title.replace(" ", "-")}.json")
+                                    exportFormat = ExportFormat.JSON_INLINE
+                                    showExportFormatDialog = true
                                 },
                                 onDelete = { viewModel.deletePaper(paper.id) },
                                 onAddCategory = {
@@ -274,6 +298,61 @@ fun LibraryScreen(
             text = { Text(error) },
             confirmButton = {
                 TextButton(onClick = { viewModel.dismissError() }) { Text("OK") }
+            }
+        )
+    }
+
+    if (showExportFormatDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showExportFormatDialog = false
+                pendingExportPaperId = null
+            },
+            title = { Text("Export format") },
+            text = {
+                Column {
+                    ExportFormat.entries.forEach { format ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { exportFormat = format }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = exportFormat == format,
+                                onClick = { exportFormat = format }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(format.title, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    format.description,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val paper = papers.firstOrNull { it.id == pendingExportPaperId }
+                    showExportFormatDialog = false
+                    if (paper != null) {
+                        exportSaver(exportFormat)
+                            .launch(PaperExporter.fileNameFor(paper.title, exportFormat))
+                    } else {
+                        pendingExportPaperId = null
+                    }
+                }) { Text("Export") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showExportFormatDialog = false
+                    pendingExportPaperId = null
+                }) { Text("Cancel") }
             }
         )
     }

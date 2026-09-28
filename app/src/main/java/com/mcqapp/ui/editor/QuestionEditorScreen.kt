@@ -89,6 +89,19 @@ fun QuestionEditorScreen(
         }
     }
 
+    val pickExplanationImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val encoded = ImageUtils.encodeImageUri(context, uri)
+            if (encoded != null) {
+                viewModel.updateExplanationImage(encoded)
+            } else {
+                Logger.e("EDITOR", "Failed to encode explanation image")
+            }
+        }
+    }
+
     var pickingOptionImageId by remember { mutableStateOf<String?>(null) }
     val pickOptionImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -213,6 +226,26 @@ fun QuestionEditorScreen(
                 label = { Text("Explanation") },
                 modifier = Modifier.fillMaxWidth()
             )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = state.explanationImage,
+                    onValueChange = viewModel::updateExplanationImage,
+                    label = { Text("Explanation image URL (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(onClick = { pickExplanationImageLauncher.launch("image/*") }) {
+                    Text("Pick")
+                }
+            }
+            if (state.explanationImage.isNotBlank()) {
+                QuestionImage(src = state.explanationImage, modifier = Modifier.padding(top = 8.dp))
+            }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = state.tags,

@@ -17,6 +17,7 @@ data class QuestionDto(
     val options: List<OptionDto> = emptyList(),
     val correctOptionIds: List<String> = emptyList(),
     val explanation: String = "",
+    val explanationImage: String? = null,
     val difficulty: String = "medium",
     val tags: List<String> = emptyList()
 )

@@ -289,6 +289,7 @@ private fun ResultCard(index: Int, result: QuestionResult) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+            QuestionImage(src = result.explanationImage)
         }
     }
 }

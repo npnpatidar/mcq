@@ -23,6 +23,11 @@ class Exporter(private val db: AppDatabase) {
         )
     }
 
+    suspend fun getPaperDto(paperId: String): PaperDto? {
+        val paper = db.paperDao().getById(paperId) ?: return null
+        return exportPaperDto(paper)
+    }
+
     suspend fun exportPaper(paperId: String): String {
         Logger.i("EXPORT", "Exporting paper $paperId")
         val paper = db.paperDao().getById(paperId) ?: return json.encodeToString(
@@ -96,6 +101,7 @@ class Exporter(private val db: AppDatabase) {
                 options = options.map { OptionDto(it.id, it.text, it.image) },
                 correctOptionIds = correctIds,
                 explanation = entity.explanation,
+                explanationImage = entity.explanationImage,
                 difficulty = entity.difficulty,
                 tags = entity.tags.split(",").filter { it.isNotBlank() }
             )

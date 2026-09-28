@@ -25,6 +25,7 @@ data class Question(
     val options: List<QuestionOption>,
     val correctOptionIds: Set<String>,
     val explanation: String = "",
+    val explanationImage: String? = null,
     val difficulty: Difficulty = Difficulty.MEDIUM,
     val tags: List<String> = emptyList()
 ) {
@@ -77,5 +78,6 @@ data class QuestionResult(
     val correctOptionIds: Set<String>,
     val selectedOptionIds: Set<String>,
     val isCorrect: Boolean,
-    val explanation: String
+    val explanation: String,
+    val explanationImage: String? = null
 )

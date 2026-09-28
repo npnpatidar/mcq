@@ -58,6 +58,7 @@ data class QuestionEntity(
     val text: String,
     val image: String? = null,
     val explanation: String = "",
+    val explanationImage: String? = null,
     val difficulty: String = "medium",
     val tags: String = "",
     val sortOrder: Int = 0,
@@ -138,5 +139,6 @@ data class QuestionResultEntity(
     val correctOptionIds: String,
     val selectedOptionIds: String,
     val isCorrect: Boolean,
-    val explanation: String
+    val explanation: String,
+    val explanationImage: String? = null
 )

@@ -108,6 +108,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     options = options.map { QuestionOption(it.id, it.text, it.image) },
                     correctOptionIds = correctIds,
                     explanation = entity.explanation,
+                    explanationImage = entity.explanationImage,
                     difficulty = Difficulty.fromLabel(entity.difficulty),
                     tags = entity.tags.split(",").filter { it.isNotBlank() }
                 )
@@ -128,6 +129,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                         options = options.map { opt -> QuestionOption(opt.id, opt.text, opt.image) },
                         correctOptionIds = correctIds,
                         explanation = it.explanation,
+                        explanationImage = it.explanationImage,
                         difficulty = Difficulty.fromLabel(it.difficulty),
                         tags = it.tags.split(",").filter { t -> t.isNotBlank() }
                     )
@@ -186,6 +188,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             options = options.map { QuestionOption(it.id, it.text, it.image) },
             correctOptionIds = correctIds,
             explanation = explanation,
+            explanationImage = explanationImage,
             difficulty = Difficulty.fromLabel(difficulty),
             tags = tags.split(",").filter { it.isNotBlank() }
         )
@@ -226,6 +229,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 text = question.text,
                 image = question.image,
                 explanation = question.explanation,
+                explanationImage = question.explanationImage,
                 difficulty = question.difficulty.label,
                 tags = question.tags.joinToString(","),
                 sortOrder = sortOrder,
@@ -357,7 +361,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     correctOptionIds = q.correctOptionIds.joinToString(","),
                     selectedOptionIds = selected.joinToString(","),
                     isCorrect = isCorrect,
-                    explanation = q.explanation
+                    explanation = q.explanation,
+                    explanationImage = q.explanationImage
                 )
             )
         }
@@ -419,7 +424,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 correctOptionIds = entity.correctOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
                 selectedOptionIds = entity.selectedOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
                 isCorrect = entity.isCorrect,
-                explanation = entity.explanation
+                explanation = entity.explanation,
+                explanationImage = entity.explanationImage
             )
         }
     }

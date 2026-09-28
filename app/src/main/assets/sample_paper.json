@@ -4,8 +4,8 @@
     {
       "id": "paper-demo",
       "title": "General Knowledge Demo",
-      "description": "A small sample paper to explore the app",
-      "durationMinutes": 5,
+      "description": "A sample paper to explore the app: text, images, explanations and every question format",
+      "durationMinutes": 10,
       "negativeMarking": 0.25,
       "categories": [
         {
@@ -124,6 +124,234 @@
               "explanation": "The Berlin Wall fell on 9 November 1989.",
               "difficulty": "medium",
               "tags": ["history", "world"]
+            }
+          ]
+        },
+        {
+          "id": "cat-geography",
+          "title": "Geography",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-g1",
+              "question": "What is the capital of Australia?",
+              "options": [
+                "Sydney",
+                "Canberra",
+                "Melbourne",
+                "Perth"
+              ],
+              "answer": "Canberra",
+              "explanation": "Canberra was purpose-built as the capital as a compromise between Sydney and Melbourne.",
+              "difficulty": "medium",
+              "tags": "geography, capitals"
+            },
+            {
+              "id": "q-g2",
+              "text": "Which is the largest ocean on Earth?",
+              "options": [
+                "Atlantic Ocean",
+                "Indian Ocean",
+                "Arctic Ocean",
+                "Pacific Ocean"
+              ],
+              "correctIndex": 3,
+              "explanation": "The Pacific Ocean covers about one-third of Earth's surface.",
+              "difficulty": "easy",
+              "tags": [
+                "geography",
+                "oceans"
+              ]
+            },
+            {
+              "id": "q-g3",
+              "text": "Which river flows north through Egypt into the Mediterranean Sea?",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Amazon"
+                },
+                {
+                  "id": "b",
+                  "text": "Nile"
+                },
+                {
+                  "id": "c",
+                  "text": "Mississippi"
+                },
+                {
+                  "id": "d",
+                  "text": "Yangtze"
+                }
+              ],
+              "correct": "b",
+              "explanation": "The Nile flows northward through Egypt into the Mediterranean Sea (see its course).",
+              "explanationImage": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAABkCAIAAABM5OhcAAADX0lEQVR42u3dwVHjUBCE4Q6HSDaSjWmD4Ew4XDhvEksVewBTyJI18zQ981fN3Wr1ZyFsvWf9fX1hmPARp4ABFgMsBlgMAywGWAywGAZYl83T72dOArBiJG0PpwhYkZ4QBqx0UvAC1llVv/68YQtYAaTeJW0PvIB1QNVdT3uEAQtVp0ht8AIWpAJUcekC1ksGKS5d02Flq8LWRFhrVGFLY1WlkvqJF7BQhS1g1VY105ZQhS1gnYV1oaobW8BCFbaAVV7VHFtCFbaA5XfDPvZGXqjCFrD6qGpvS9xacbMFrG6qGtsSqrCVAqtNGF9VLW01gWV0wz7kRl49kriranbReo+gBmGWPbqetP6ima2P45d7mIyOH1hcj62bOmT91z2815N7Nwy39flUyDfJgiWBV9kyfat/PgkyfZfEdvnwFgx5vOxs3WSX6RU4VVWRddXWdcgxTJ6qaosWfeuQ3RU4aQOPqLzhly6XOu7AKm7LZVuYIbY2MsrozjGqqjUr3wNtOdYhlzBeqtrbuptLFmGs6+lna08i1Q/ToJhOtnZmUfEwbSrpEWR/ClUO0+yPiHucQ8evsmFa/rue8XFJzTpUM0zjD4EcbT1QhwqGaf/Ropetx+pQqTBzvgxx/Arh0IGpTpi8vfx7P/ZTsw5V+AY374vbys8F5NmqUIeqPcY0RNUCW9c+WKbwMDvzLHiud+Bj+7F1nDkqJYW5/GnxsUtCitShkDAn87BwqtRyo5ADCIPFcjwWSH6BdckC4vAXbbDxwZqTs2xJtxpsedBm14MeO1B81KEGYTpt0tKmDrlvANRvy7Iedch6c6muG3i61/EflvvWnY1h+W6mKvfNhrtuwG9n66YOmV6BJ/wcjXUdcgwz58fZfOuQ3RV42m/gutRxB1ZxWzN/Eb5+Hd8bkdGd48yfgzetQy5hxqoyrUMWYYarcqxD9cOgyrEOFQ+DKtM6VDkMqnzrUNkwqLKuQzXDoMq9DhUMg6oGdahUmJUbhPazld3IoQNTnTCoKmXrZB0KCRO7kzGqGtSha8NE7TjARC3qiqpD4WF25oFUKV5ntuGIh7XN6+jAIs/W+jpUIQ8aSvEKOQBdGwYB1XhFvbSuykPrpXiFv6g470zGAIsBFgMsBlicBQZYDLAYYDFM8PwD/rf4KpVXteQAAAAASUVORK5CYII=",
+              "difficulty": "hard",
+              "tags": [
+                "geography",
+                "rivers"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cat-sports",
+          "name": "Sports",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-sp1",
+              "text": "How many players does a football (soccer) team field on the pitch?",
+              "options": [
+                "9",
+                "10",
+                "11",
+                "12"
+              ],
+              "correctAnswer": "11",
+              "explanation": "A football team fields 11 players, including the goalkeeper.",
+              "difficulty": "easy",
+              "tags": "sports, football"
+            },
+            {
+              "id": "q-sp2",
+              "text": "Which of these are Olympic sports?",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Swimming"
+                },
+                {
+                  "id": "b",
+                  "text": "Chess"
+                },
+                {
+                  "id": "c",
+                  "text": "Athletics"
+                },
+                {
+                  "id": "d",
+                  "text": "Formula 1"
+                }
+              ],
+              "correctOptionIds": [
+                "a",
+                "c"
+              ],
+              "explanation": "Swimming and athletics are core Olympic sports; chess and Formula 1 are not.",
+              "difficulty": "medium",
+              "tags": [
+                "sports",
+                "olympics"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cat-visual",
+          "title": "Visual Round",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-v1",
+              "text": "Which colour is shown in the image?",
+              "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAAB4CAIAAAD6wG44AAAA4UlEQVR42u3RAQ0AIAgAQUIQgsSmM4wpHMpu+wR/sTI1uLAAsAALsJ4A3lX6OsCABViABViABViAAQMGLMACLMACLMCAAQMWYAEWYAEWYAEGbBBgARZgARZgAQYMGLAAC7AAC7AAAwYMWIAFWIAFWIAFGDBgwAIswAIswAIMGDBgARZgARZgAQYMGLAAC7AAC7AACzBgwIAFWIAFWIAFGDBgwAIswAIswAIswIA9AizAAizAAizAgAEDFmABFmABFmDAgAELsAALsAALsAADBgxYgAVYgHUHWMMCDFiABVg9HUUAYLbMoI09AAAAAElFTkSuQmCC",
+              "options": [
+                "Red",
+                "Green",
+                "Blue",
+                "Yellow"
+              ],
+              "correctIndex": 0,
+              "explanation": "The picture is a solid red rectangle.",
+              "difficulty": "easy",
+              "tags": [
+                "visual",
+                "colours"
+              ]
+            },
+            {
+              "id": "q-v2",
+              "text": "Which swatch below is blue?",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Red",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAVElEQVR42u3aQQ0AMAzEsANWsANWMIOxtbIUAv4nJ1lZwMbCumpBYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgP8McpmBPu/gCMo8c6Fv3AAAAAElFTkSuQmCC"
+                },
+                {
+                  "id": "b",
+                  "text": "Green",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAV0lEQVR42u3aQQ0AIAwAsYmYHESgBGFTiYzB0uQM9H8RJ2cG9i1s1R4QGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBjYyzCHKVhrFyOqatGJzAzIAAAAAElFTkSuQmCC"
+                },
+                {
+                  "id": "c",
+                  "text": "Blue",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAVUlEQVR42u3aQQ0AMAgAMYQhbHIQNjGTMSBNzkD/F5G1M7CxsDx3QWBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYJ1hDlOwrz1G+MH8gxqazwAAAABJRU5ErkJggg=="
+                },
+                {
+                  "id": "d",
+                  "text": "Yellow",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAWElEQVR42u3aQQ0AIBAEsRWGRJSgBCXoQMbBpckY6H+yZloWsG9hZ48GgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBvQxzmIKVdgFOChk2qmRfdgAAAABJRU5ErkJggg=="
+                }
+              ],
+              "correctOptionIds": [
+                "c"
+              ],
+              "explanation": "The third swatch is blue.",
+              "difficulty": "easy",
+              "tags": [
+                "visual",
+                "colours"
+              ]
+            },
+            {
+              "id": "q-v3",
+              "text": "Which of these shapes is a triangle?",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Circle",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAABaklEQVR42u3cu7FCMQxF0VMJlRBTGPGrkzaAgJDxs7H1s7fGBdxZc5RcS9aTapYgAAgggAACCCCAAKIAAggggAD6py7XP4A+EKPnCKAfXGKlVIvGn0nlXJyllE3ndn+kMlIgzdui/0QxyV9nyGVUqgCQHU0nU14gHxpnJlnrGNH0MCUCCtSxNjIEctNpGKUACqdpMwUDpdKxMFL1zrLuNW0Wn+Uh0n46a420pc5CI4BcgBLqfDVyAioRn1Uh0sbxWRIibRyfJSHS3vGZDxFAS4HK9dd8l2n7+EyGCCCAAAIIIICOAKqrM2NEggACCCCAAAIIIP4H8UcRoAggbjW4F+Nmlbt5pjsYfykHxIQZM4pMuTInHT8nzaR9pV6rt8zCtk8WowL7Ym0jNg4DmErurPYYsfXcZXT63vwQ06EvL8wYHfR2h6mUz2fzflAyoBmpkO/kDbNqQNkKIIAAAggggAACCCAKIIAA8q8XxncHROmjZ4wAAAAASUVORK5CYII="
+                },
+                {
+                  "id": "b",
+                  "text": "Triangle",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAABhElEQVR42u3cwW0DQQxDUVbiInJ2JVtimkyuhg3sJvGMRCqfmAoe/lEYfbHTCQKAAAIIIIAAAgggBhBAAAEE0MVuxwdAZzoAXei4GQEUAvSoY2UEUALQq46PkR3Q/fMA6EznEcjByBHIKiIZ6lhFZArkE5E8dXwi8gUyiUi2OiYRWQM5RCRnHYeI3IHaI5K5TntEAUC9EclfpzeiDKDGiBSh0xhRDFBXRErR6YooCaglIgXptEQUBlQfkbJ06iPKAyqOSHE6xRFFAlVGpESdyohSgcqMFKoTD/R0hrADqMZIoflkA9XkU2Ok3HxSgSrzKTBSdD55QPX57DZSej5JQF35bDXSgHwygHrz2WekGfm4Aznks8lIY/LxBfLJZ4eRJuXjCOSWz3IjDcvHC8gzn7VGmpePC5BzPguNNDKffiD/fFYZaWo+nUAp+Swx0uB8eoCy8nnf6F2guLcXKF3nD0YArQOaofNbo38K9HMj/jADCCCAAAIIIIAAYgABBBBAAAE0bN9PA9VFvB7FQAAAAABJRU5ErkJggg=="
+                },
+                {
+                  "id": "c",
+                  "text": "Square",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAqUlEQVR42u3cUREAEBRE0RdCEnEEE0I6DWjg0wzv3NkEJ8DG0rFAAAgQIECAAAECJECAAAF6GGi08tMAAQIE6Gug2etbAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAuS7w7kJIECAMgLlDBAgQIAAAQIECJAAAQJ0vw0F7tx0hvY0lwAAAABJRU5ErkJggg=="
+                }
+              ],
+              "correctOptionIds": [
+                "b"
+              ],
+              "explanation": "A triangle has three straight sides; only the second shape qualifies.",
+              "difficulty": "easy",
+              "tags": [
+                "visual",
+                "shapes"
+              ]
+            },
+            {
+              "id": "q-v4",
+              "text": "The chart compares three values A, B and C from left to right. Which value is the largest?",
+              "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAACWCAIAAAA6+3HcAAAB/UlEQVR42u3cwQ2DMBBFQZdDJZz3TDlUQjl0BTWAjTHLPFHAij+KcknKIQ1W8QoEpQSloJSgFJQSlIJSglJqiDIivEFBKSihFJQSlIJSglJQSlAKSigF5ZtNy9bzwRFKKKGEEkoo65vXveeDI5RQQgkllFBCCSWUUEIJJZRQQgkllFBCCSWUUEIJJZRQQgkllFBCCSWUUEIJJZRQQgmloIQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiivl++fXaGEEkoooYQyPcp8X3yhhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEsg3KT/wwFEoooYQSSiihtDeUUEIJpb0dCaW9oYTSkVDaG0ooHQmlvaGE0pFQ2tuRUEIJJZSOhNLeUELpSCjtDSWUjoTS3lBCCSWU9nYklPaGEkpHQmlvKKF0JJT2hhJKR0Jpb0dCCSWUUDoSSntDCaUjobQ3lFA6Ekp7QwkllFDa25FQQgkllI6E0t5QQulIKO0NJZSOhNLejoQSSiihdCSU9oYSSkdCaW8o61BK93oKpTTcJ6UEpaCUoJSgFJQSlIJSglJQSlAKSglKCUpBKUEpKCUo9YNOGPvOwC3zBrQAAAAASUVORK5CYII=",
+              "options": [
+                "A",
+                "B",
+                "C"
+              ],
+              "correctIndex": 1,
+              "explanation": "Bar B in the middle is the tallest, so it represents the largest value.",
+              "difficulty": "medium",
+              "tags": [
+                "visual",
+                "data"
+              ]
             }
           ]
         }

@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "papers": [
+    {
+      "id": "paper-demo",
+      "title": "General Knowledge Demo",
+      "description": "A small sample paper to explore the app",
+      "durationMinutes": 5,
+      "negativeMarking": 0.25,
+      "categories": [
+        {
+          "id": "cat-science",
+          "title": "Science",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-s1",
+              "text": "Which planet is known as the Red Planet?",
+              "options": [
+                { "id": "a", "text": "Venus" },
+                { "id": "b", "text": "Mars" },
+                { "id": "c", "text": "Jupiter" },
+                { "id": "d", "text": "Mercury" }
+              ],
+              "correctOptionIds": ["b"],
+              "explanation": "Mars appears red because of iron oxide (rust) on its surface.",
+              "difficulty": "easy",
+              "tags": ["space", "planets"]
+            },
+            {
+              "id": "q-s2",
+              "text": "What is the chemical symbol for gold?",
+              "options": [
+                { "id": "a", "text": "Go" },
+                { "id": "b", "text": "Gd" },
+                { "id": "c", "text": "Au" },
+                { "id": "d", "text": "Ag" }
+              ],
+              "correctOptionIds": ["c"],
+              "explanation": "Au comes from the Latin word 'aurum', meaning shining dawn.",
+              "difficulty": "easy",
+              "tags": ["chemistry"]
+            },
+            {
+              "id": "q-s3",
+              "text": "Which of the following are noble gases?",
+              "options": [
+                { "id": "a", "text": "Helium" },
+                { "id": "b", "text": "Oxygen" },
+                { "id": "c", "text": "Neon" },
+                { "id": "d", "text": "Argon" }
+              ],
+              "correctOptionIds": ["a", "c", "d"],
+              "explanation": "Helium, neon and argon are noble gases (group 18). Oxygen is not.",
+              "difficulty": "medium",
+              "tags": ["chemistry"]
+            }
+          ]
+        },
+        {
+          "id": "cat-physics",
+          "title": "Physics",
+          "parentId": "cat-science",
+          "questions": [
+            {
+              "id": "q-p1",
+              "text": "What is the SI unit of force?",
+              "options": [
+                { "id": "a", "text": "Joule" },
+                { "id": "b", "text": "Newton" },
+                { "id": "c", "text": "Watt" },
+                { "id": "d", "text": "Pascal" }
+              ],
+              "correctOptionIds": ["b"],
+              "explanation": "Force is measured in newtons (N), after Isaac Newton.",
+              "difficulty": "easy",
+              "tags": ["physics"]
+            },
+            {
+              "id": "q-p2",
+              "text": "The speed of light in vacuum is approximately:",
+              "options": [
+                { "id": "a", "text": "3 × 10^6 m/s" },
+                { "id": "b", "text": "3 × 10^7 m/s" },
+                { "id": "c", "text": "3 × 10^8 m/s" },
+                { "id": "d", "text": "3 × 10^9 m/s" }
+              ],
+              "correctOptionIds": ["c"],
+              "explanation": "Light travels at about 299,792,458 m/s ≈ 3 × 10^8 m/s.",
+              "difficulty": "medium",
+              "tags": ["physics"]
+            }
+          ]
+        },
+        {
+          "id": "cat-history",
+          "title": "History",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-h1",
+              "text": "Who was the first President of the United States?",
+              "options": [
+                { "id": "a", "text": "Thomas Jefferson" },
+                { "id": "b", "text": "John Adams" },
+                { "id": "c", "text": "George Washington" },
+                { "id": "d", "text": "Benjamin Franklin" }
+              ],
+              "correctOptionIds": ["c"],
+              "explanation": "George Washington served as the first U.S. President from 1789 to 1797.",
+              "difficulty": "easy",
+              "tags": ["history", "usa"]
+            },
+            {
+              "id": "q-h2",
+              "text": "The Berlin Wall fell in which year?",
+              "options": [
+                { "id": "a", "text": "1987" },
+                { "id": "b", "text": "1989" },
+                { "id": "c", "text": "1991" },
+                { "id": "d", "text": "1985" }
+              ],
+              "correctOptionIds": ["b"],
+              "explanation": "The Berlin Wall fell on 9 November 1989.",
+              "difficulty": "medium",
+              "tags": ["history", "world"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

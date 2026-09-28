@@ -1,0 +1,21 @@
+# Logs
+logs/
+*.log
+
+# Screenshots
+Screenshot/
+Screenshots/
+
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Android
+*.iml
+.idea/
+.DS_Store
+
+# Keystores
+*.jks
+*.keystore

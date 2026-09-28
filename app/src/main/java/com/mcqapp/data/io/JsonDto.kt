@@ -36,8 +36,11 @@ data class PaperDto(
     val description: String = "",
     val durationMinutes: Int = 0,
     val negativeMarking: Double = 0.0,
-    val categories: List<CategoryDto> = emptyList()
-)
+    val categories: List<CategoryDto> = emptyList(),
+    val questions: List<QuestionDto> = emptyList()
+) {
+    fun topLevelQuestions(): List<QuestionDto> = questions
+}
 
 @Serializable
 data class McqFileDto(

@@ -41,7 +41,13 @@ class Importer(private val db: AppDatabase) {
                 )
             )
 
-            paperDto.categories.forEachIndexed { categoryIndex, categoryDto ->
+            val effectiveCategories = if (paperDto.categories.isEmpty()) {
+                listOf(CategoryDto(id = paperDto.id + "-uncat", title = "Uncategorized", questions = paperDto.topLevelQuestions()))
+            } else {
+                paperDto.categories
+            }
+
+            effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
                 db.categoryDao().upsert(
                     CategoryEntity(
                         id = categoryDto.id,

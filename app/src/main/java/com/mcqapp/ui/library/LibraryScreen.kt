@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -43,6 +44,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
@@ -130,7 +132,13 @@ fun LibraryScreen(
                         scope.launch { drawerState.close() }
                         val csv = categoryIds.joinToString(",")
                         navController.navigate("test?paperId=$paperId&categories=$csv")
-                    }
+                    },
+                    onImport = { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                    onExportAll = {
+                        pendingExportPaperId = null
+                        exportLauncher.launch("mcq-export.json")
+                    },
+                    onDeleteCategory = { id -> viewModel.deleteCategory(id) }
                 )
             }
         }
@@ -157,33 +165,6 @@ fun LibraryScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.FileUpload, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Import JSON")
-                    }
-                    Button(
-                        onClick = {
-                            pendingExportPaperId = null
-                            exportLauncher.launch("mcq-export.json")
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.FileUpload, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Export All")
-                    }
-                }
-
                 if (papers.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -215,6 +196,7 @@ fun LibraryScreen(
                             PaperCard(
                                 paper = paper,
                                 onStart = { navController.navigate("test?paperId=${paper.id}&categories=") },
+                                onBrowse = { navController.navigate("browse/${paper.id}") },
                                 onExport = {
                                     pendingExportPaperId = paper.id
                                     exportLauncher.launch("${paper.title.replace(" ", "-")}.json")
@@ -301,7 +283,10 @@ private fun DrawerContent(
     onOpenHistory: () -> Unit,
     onOpenBookmarks: () -> Unit,
     onOpenSettings: () -> Unit,
-    onStartTest: (paperId: String, categoryIds: List<String>) -> Unit
+    onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
+    onImport: () -> Unit,
+    onExportAll: () -> Unit,
+    onDeleteCategory: (String) -> Unit
 ) {
     var expandedPaperId by remember { mutableStateOf<String?>(null) }
     val checkedCategories = remember { mutableStateOf(setOf<String>()) }
@@ -398,7 +383,8 @@ private fun DrawerContent(
                                     checkedCategories.value = checkedCategories.value.toMutableSet().apply {
                                         if (!add(id)) remove(id)
                                     }
-                                }
+                                },
+                                onDelete = onDeleteCategory
                             )
                             val selected = checkedCategories.value
                             if (selected.isNotEmpty()) {
@@ -415,11 +401,35 @@ private fun DrawerContent(
                                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                                     Spacer(Modifier.width(4.dp))
                                     Text("Start test (${selected.size} categories)")
-                                }
-                            }
-                        }
-                    }
                 }
+            }
+        }
+        Divider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = onImport,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.FileUpload, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("Import JSON")
+            }
+            Button(
+                onClick = onExportAll,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.FileUpload, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text("Export All")
+            }
+        }
+    }
+}
             }
         }
     }
@@ -429,7 +439,8 @@ private fun DrawerContent(
 private fun CategoryTree(
     nodes: List<CategoryNode>,
     checked: Set<String>,
-    onToggle: (String) -> Unit
+    onToggle: (String) -> Unit,
+    onDelete: (String) -> Unit
 ) {
     for (node in nodes) {
         Row(
@@ -446,9 +457,16 @@ private fun CategoryTree(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
                 modifier = Modifier.weight(1f)
             )
+            IconButton(onClick = { onDelete(node.id) }) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete category",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
         Column(modifier = Modifier.padding(start = 24.dp)) {
-            CategoryTree(nodes = node.children, checked = checked, onToggle = onToggle)
+            CategoryTree(nodes = node.children, checked = checked, onToggle = onToggle, onDelete = onDelete)
         }
     }
 }
@@ -457,6 +475,7 @@ private fun CategoryTree(
 private fun PaperCard(
     paper: Paper,
     onStart: () -> Unit,
+    onBrowse: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
     onAddCategory: () -> Unit,
@@ -503,6 +522,9 @@ private fun PaperCard(
                 }
                 TextButton(onClick = onExport, modifier = Modifier.weight(1f)) {
                     Text("Export")
+                }
+                OutlinedButton(onClick = onBrowse, modifier = Modifier.weight(1f)) {
+                    Text("Browse")
                 }
             }
             AnimatedVisibility(visible = expanded) {

@@ -5,7 +5,6 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
-
 @Dao
 interface PaperDao {
     @Query("SELECT * FROM papers ORDER BY createdAt DESC")
@@ -29,6 +28,9 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE paperId = :paperId ORDER BY sortOrder, title")
     suspend fun getByPaper(paperId: String): List<CategoryEntity>
 
+    @Query("SELECT * FROM categories")
+    fun observeAll(): Flow<List<CategoryEntity>>
+
     @Query("SELECT * FROM categories WHERE id = :id")
     suspend fun getById(id: String): CategoryEntity?
 
@@ -43,6 +45,9 @@ interface CategoryDao {
 interface QuestionDao {
     @Query("SELECT * FROM questions WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
     suspend fun getByCategory(categoryId: String): List<QuestionEntity>
+
+    @Query("SELECT * FROM questions")
+    fun observeAll(): Flow<List<QuestionEntity>>
 
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?

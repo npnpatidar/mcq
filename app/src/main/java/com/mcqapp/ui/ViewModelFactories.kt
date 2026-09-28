@@ -3,6 +3,7 @@ package com.mcqapp.ui
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.mcqapp.ui.browse.BrowseViewModel
 import com.mcqapp.ui.editor.EditorViewModel
 import com.mcqapp.ui.results.ResultsViewModel
 import com.mcqapp.ui.test.TestViewModel
@@ -37,5 +38,15 @@ class EditorViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return EditorViewModel(application, questionId, paperId, categoryId) as T
+    }
+}
+
+class BrowseViewModelFactory(
+    private val application: Application,
+    private val paperId: String
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return BrowseViewModel(application, paperId) as T
     }
 }

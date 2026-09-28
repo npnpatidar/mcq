@@ -113,6 +113,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { repository.addCategory(paperId, title, parentId) }
     }
 
+    fun deleteCategory(categoryId: String) {
+        Logger.i("LIBVM", "deleteCategory($categoryId)")
+        viewModelScope.launch { repository.deleteCategory(categoryId) }
+    }
+
     fun loadSampleData() {
         Logger.i("LIBVM", "Loading sample data from assets")
         viewModelScope.launch {

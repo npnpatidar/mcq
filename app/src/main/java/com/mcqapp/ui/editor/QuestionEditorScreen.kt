@@ -210,9 +210,8 @@ fun QuestionEditorScreen(
                     onClick = { viewModel.save { navController.popBackStack() } },
                     modifier = Modifier.weight(1f),
                     enabled = state.text.isNotBlank() &&
-                        state.options.all { it.text.isNotBlank() } &&
-                        state.options.any { it.isCorrect } &&
-                        state.categoryId.isNotBlank()
+                        state.options.size >= 2 &&
+                        state.options.all { it.text.isNotBlank() }
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(Modifier.padding(2.dp))

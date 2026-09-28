@@ -7,6 +7,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.ui.browse.BrowseScreen
 import com.mcqapp.ui.editor.QuestionEditorScreen
 import com.mcqapp.ui.history.BookmarksScreen
 import com.mcqapp.ui.history.HistoryScreen
@@ -68,6 +69,14 @@ fun McqNavHost(repository: McqRepository) {
         }
         composable("history") {
             HistoryScreen(repository = repository, navController = navController)
+        }
+        composable(
+            route = "browse/{paperId}",
+            arguments = listOf(navArgument("paperId") { type = NavType.StringType })
+        ) { entry ->
+            val paperId = entry.arguments?.getString("paperId").orEmpty()
+            Logger.i("NAV", "browse screen: paperId=$paperId")
+            BrowseScreen(repository = repository, paperId = paperId, navController = navController)
         }
         composable("bookmarks") {
             BookmarksScreen(repository = repository, navController = navController)

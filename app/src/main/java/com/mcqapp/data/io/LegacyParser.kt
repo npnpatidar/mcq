@@ -61,7 +61,8 @@ object LegacyParser {
             description = description,
             durationMinutes = duration,
             negativeMarking = negative,
-            categories = finalCategories
+            categories = finalCategories,
+            questions = topLevelQuestions?.map { parseQuestion(it.jsonObject) } ?: emptyList()
         )
     }
 

@@ -158,7 +158,7 @@ class EditorViewModel(
 
     fun save(onDone: () -> Unit) {
         val s = _state.value
-        if (s.text.isBlank() || s.options.any { it.text.isBlank() } || s.options.none { it.isCorrect }) return
+        if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) return
         val question = Question(
             id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
             categoryId = s.categoryId,

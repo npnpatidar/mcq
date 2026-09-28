@@ -22,6 +22,7 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -44,8 +45,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     }
 
     fun observePapers(): Flow<List<Paper>> =
-        db.paperDao().observeAll().map { papers ->
-            Logger.d("REPO", "observePapers emitted ${papers.size} papers")
+        combine(
+            db.paperDao().observeAll(),
+            db.categoryDao().observeAll(),
+            db.questionDao().observeAll()
+        ) { papers, categories, questions ->
+            Logger.d("REPO", "observePapers recombine: ${papers.size} papers, ${categories.size} categories, ${questions.size} questions")
             papers.map { it.toDomain() }
         }
 

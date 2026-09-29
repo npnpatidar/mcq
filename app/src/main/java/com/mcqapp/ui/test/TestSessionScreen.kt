@@ -99,6 +99,33 @@ fun TestSessionScreen(
     val ungradedTotal = remember(state.questions) {
         state.questions.count { it.correctOptionIds.isEmpty() }
     }
+    val resumeOffer = state.resumeOffer
+    if (resumeOffer != null) {
+        val answered = resumeOffer.selections.count { it.value.isNotEmpty() }
+        val minutes = resumeOffer.remainingSeconds / 60
+        val seconds = resumeOffer.remainingSeconds % 60
+        AlertDialog(
+            onDismissRequest = { /* explicit choice required */ },
+            title = { Text("Resume previous attempt?") },
+            text = {
+                Text(
+                    "$answered question(s) answered" +
+                        if (resumeOffer.totalSeconds > 0) {
+                            ", %02d:%02d left.".format(minutes, seconds)
+                        } else {
+                            "."
+                        } +
+                        " Your progress was saved when the app closed."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.resume() }) { Text("Resume") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.discardResume() }) { Text("Start fresh") }
+            }
+        )
+    }
     if (!state.loading && ungradedTotal > 0 && !ungradedDismissed) {
         AlertDialog(
             onDismissRequest = { ungradedDismissed = true },

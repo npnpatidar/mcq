@@ -8,6 +8,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.Shuffle
+import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,7 +32,8 @@ data class TestUiState(
     val totalSeconds: Int = 0,
     val submitted: Boolean = false,
     val attemptId: Long? = null,
-    val practiceMode: Boolean = false
+    val practiceMode: Boolean = false,
+    val resumeOffer: TestSnapshot? = null
 ) {
     val currentQuestion: Question? get() = questions.getOrNull(currentIndex)
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
@@ -86,6 +88,7 @@ class TestViewModel(
                         practiceMode = practice
                     )
                 }
+                checkResumeOffer()
                 startTimestamp = System.currentTimeMillis()
                 if (totalSeconds > 0) startTimer()
             } catch (e: Exception) {
@@ -124,6 +127,7 @@ class TestViewModel(
             }
             state.copy(selections = state.selections + (question.id to updated))
         }
+        persistProgress()
     }
 
     fun revealCurrent() {
@@ -132,6 +136,7 @@ class TestViewModel(
         _state.update {
             it.copy(revealed = it.revealed + question.id)
         }
+        persistProgress()
     }
 
     fun toggleFlag() {
@@ -141,12 +146,14 @@ class TestViewModel(
             if (!flagged.add(question.id)) flagged.remove(question.id)
             it.copy(flagged = flagged)
         }
+        persistProgress()
     }
 
     fun goTo(index: Int) {
         val questions = _state.value.questions
         if (index in questions.indices) {
             _state.update { it.copy(currentIndex = index) }
+            persistProgress()
         }
     }
 
@@ -166,6 +173,7 @@ class TestViewModel(
         }
         _state.update { it.copy(submitted = true) }
         viewModelScope.launch {
+            repository.clearTestProgress()
             val attemptId = repository.saveAttempt(
                 paperId = paperId,
                 paperTitle = current.paper?.title ?: "Test",
@@ -177,6 +185,87 @@ class TestViewModel(
             )
             Logger.i("TESTVM", "Attempt saved: attemptId=$attemptId")
             _state.update { it.copy(attemptId = attemptId) }
+        }
+    }
+
+    /**
+     * Offers to resume a snapshot left by a killed session of this exact
+     * paper + category selection. Only offered when real progress exists
+     * and the paper still contains overlapping questions.
+     */
+    private suspend fun checkResumeOffer() {
+        val raw = repository.loadTestProgress() ?: return
+        val saved = TestSnapshot.fromJson(raw) ?: run {
+            repository.clearTestProgress()
+            return
+        }
+        if (!saved.matches(paperId, categoryIds)) return
+        if (saved.selections.isEmpty() && saved.currentIndex <= 0) {
+            repository.clearTestProgress()
+            return
+        }
+        val ordered = TestSnapshot.reorder(_state.value.questions, saved.questionIds)
+        if (ordered.isEmpty()) {
+            repository.clearTestProgress()
+            return
+        }
+        Logger.i("TESTVM", "Resume available: ${saved.selections.size} answered, " +
+            "index=${saved.currentIndex}, remaining=${saved.remainingSeconds}s")
+        _state.update { it.copy(resumeOffer = saved) }
+    }
+
+    fun resume() {
+        val saved = _state.value.resumeOffer ?: return
+        val ordered = TestSnapshot.reorder(_state.value.questions, saved.questionIds)
+        if (ordered.isEmpty()) {
+            discardResume()
+            return
+        }
+        Logger.i("TESTVM", "Resuming saved progress: index=${saved.currentIndex}, " +
+            "answered=${saved.selections.size}")
+        _state.update {
+            it.copy(
+                questions = ordered,
+                selections = saved.selections.mapValues { e -> e.value.toSet() },
+                revealed = saved.revealed,
+                flagged = saved.flagged,
+                currentIndex = saved.currentIndex.coerceIn(ordered.indices),
+                remainingSeconds = saved.remainingSeconds,
+                totalSeconds = saved.totalSeconds,
+                resumeOffer = null
+            )
+        }
+        startTimestamp = System.currentTimeMillis()
+        if (saved.totalSeconds > 0 && saved.remainingSeconds > 0) startTimer()
+    }
+
+    fun discardResume() {
+        Logger.i("TESTVM", "Discarding saved progress, starting fresh")
+        viewModelScope.launch { repository.clearTestProgress() }
+        _state.update { it.copy(resumeOffer = null) }
+    }
+
+    /** Best-effort snapshot after every discrete change (never on timer ticks). */
+    private fun persistProgress() {
+        val current = _state.value
+        if (current.loading || current.questions.isEmpty() || current.submitted) return
+        val snapshot = TestSnapshot(
+            paperId = paperId,
+            categoryIds = categoryIds,
+            questionIds = current.questions.map { it.id },
+            selections = current.selections.mapValues { e -> e.value.toList() },
+            revealed = current.revealed,
+            flagged = current.flagged,
+            currentIndex = current.currentIndex,
+            remainingSeconds = current.remainingSeconds,
+            totalSeconds = current.totalSeconds
+        )
+        viewModelScope.launch {
+            try {
+                repository.saveTestProgress(snapshot.toJson())
+            } catch (e: Exception) {
+                Logger.w("TESTVM", "persistProgress failed: ${e.message}")
+            }
         }
     }
 }

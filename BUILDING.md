@@ -188,7 +188,7 @@ The debug APK produced by this build is approximately 21 MB:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
-378080379b90613137aaba65f2ab513788aa342752ba24d6b6f2079aabc0b416  app/build/outputs/apk/debug/app-debug.apk
+d8ebabb2d9e7f8e47de350ff46c7e0b4c37c6799349d8855be1b9bff5ee8769f  app/build/outputs/apk/debug/app-debug.apk
 ```
 
 AGP prints an experimental warning for `android.aapt2FromMavenOverride`; it is expected for this command-line-only compatibility override and does not indicate a build failure.

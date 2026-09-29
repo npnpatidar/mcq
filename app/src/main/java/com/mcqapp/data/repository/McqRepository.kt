@@ -25,6 +25,7 @@ import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
@@ -71,6 +72,19 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun setPracticeMode(enabled: Boolean) {
         context.dataStore.edit { it[practiceModeKey] = enabled }
+    }
+
+    private val progressKey = stringPreferencesKey("in_progress_test")
+
+    suspend fun saveTestProgress(json: String) {
+        context.dataStore.edit { it[progressKey] = json }
+    }
+
+    suspend fun loadTestProgress(): String? =
+        context.dataStore.data.map { it[progressKey] }.first()
+
+    suspend fun clearTestProgress() {
+        context.dataStore.edit { it.remove(progressKey) }
     }
 
     fun observePapers(): Flow<List<Paper>> =

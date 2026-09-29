@@ -148,12 +148,16 @@ fun BrowseScreen(
         val filter = remember { mutableStateOf("All") }
         val questions = state.questions
         val filterValue = filter.value
-        val filtered = remember(questions, filterValue) {
+        var searchQuery by remember { mutableStateOf("") }
+        val searched = remember(questions, searchQuery) {
+            com.mcqapp.domain.QuestionSearch.filter(questions, searchQuery)
+        }
+        val filtered = remember(searched, filterValue) {
             when (filterValue) {
-                "No answer" -> questions.filter { it.correctOptionIds.isEmpty() }
-                "No explanation" -> questions.filter { it.explanation.isBlank() }
-                "No category" -> questions.filter { it.categoryId.isBlank() }
-                else -> questions
+                "No answer" -> searched.filter { it.correctOptionIds.isEmpty() }
+                "No explanation" -> searched.filter { it.explanation.isBlank() }
+                "No category" -> searched.filter { it.categoryId.isBlank() }
+                else -> searched
             }
         }
         val filteredIds = remember(filtered) { filtered.map { it.id } }
@@ -165,6 +169,21 @@ fun BrowseScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
+                androidx.compose.material3.OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search text, tags, options") },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

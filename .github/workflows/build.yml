@@ -30,9 +30,9 @@ jobs:
           packages: platform-tools
 
       - name: Install Android platform and build tools
-        run: |
-          echo "--- remote platforms ---"
-          sdkmanager --list 2>/dev/null | grep -E "platforms;android-[0-9]+" | sort -u || true
+        # NOTE: the API-37 platform packages are versioned (android-37.0…);
+        # bare `platforms;android-37` does not exist.
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Build debug APK and run unit tests
         # No aapt2 override: the bundled aapt2 runs natively on x86_64

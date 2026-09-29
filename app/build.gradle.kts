@@ -7,6 +7,7 @@ plugins {
 
 android {
     namespace = "com.mcqapp"
+    // 37 required by navigation-compose 2.10.2 / compose BOM 2026.09 (AAR metadata).
     compileSdk = 37
 
     defaultConfig {

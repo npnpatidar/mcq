@@ -64,6 +64,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it[shuffleOptionsKey] = enabled }
     }
 
+    private val practiceModeKey = booleanPreferencesKey("practice_mode")
+
+    fun practiceMode(): Flow<Boolean> =
+        context.dataStore.data.map { it[practiceModeKey] ?: false }
+
+    suspend fun setPracticeMode(enabled: Boolean) {
+        context.dataStore.edit { it[practiceModeKey] = enabled }
+    }
+
     fun observePapers(): Flow<List<Paper>> =
         combine(
             db.paperDao().observeAll(),

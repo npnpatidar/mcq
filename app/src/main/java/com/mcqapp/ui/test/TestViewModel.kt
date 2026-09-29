@@ -30,7 +30,8 @@ data class TestUiState(
     val remainingSeconds: Int = 0,
     val totalSeconds: Int = 0,
     val submitted: Boolean = false,
-    val attemptId: Long? = null
+    val attemptId: Long? = null,
+    val practiceMode: Boolean = false
 ) {
     val currentQuestion: Question? get() = questions.getOrNull(currentIndex)
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
@@ -73,13 +74,16 @@ class TestViewModel(
                         "questions=$shuffleQ, options=$shuffleO")
                 }
                 val totalSeconds = (paper?.durationMinutes ?: 0) * 60
+                val practice = repository.practiceMode().first()
+                if (practice) Logger.i("TESTVM", "Practice mode on: live feedback enabled")
                 _state.update {
                     it.copy(
                         loading = false,
                         paper = paper,
                         questions = ordered,
                         totalSeconds = totalSeconds,
-                        remainingSeconds = totalSeconds
+                        remainingSeconds = totalSeconds,
+                        practiceMode = practice
                     )
                 }
                 startTimestamp = System.currentTimeMillis()

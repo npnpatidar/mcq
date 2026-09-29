@@ -60,6 +60,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.Feedback
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.util.Logger
@@ -224,6 +225,13 @@ fun TestSessionScreen(
                         if (question.marks == 1.0) "mark" else "marks",
                     style = MaterialTheme.typography.labelMedium
                 )
+                if (state.practiceMode) {
+                    Text(
+                        "Practice — answers shown instantly",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
                 if (question.isMultiCorrect) {
                     Text(
                         "Multiple correct — select all that apply",
@@ -244,9 +252,12 @@ fun TestSessionScreen(
 
                 Spacer(Modifier.height(16.dp))
                 val questionUngraded = question.correctOptionIds.isEmpty()
+                val manuallyRevealed = question.id in state.revealed
                 question.options.forEach { option ->
                     val selected = option.id in (state.selections[question.id] ?: emptySet())
-                    val revealed = question.id in state.revealed && !questionUngraded
+                    val revealed = Feedback.liveReveal(
+                        state.practiceMode, manuallyRevealed, questionUngraded
+                    )
                     val isCorrectOption = option.id in question.correctOptionIds
                     OptionRow(
                         text = option.text,
@@ -260,7 +271,7 @@ fun TestSessionScreen(
                     Spacer(Modifier.height(8.dp))
                 }
 
-                if (question.id in state.revealed) {
+                if (Feedback.showExplanation(state.practiceMode, manuallyRevealed)) {
                     Spacer(Modifier.height(8.dp))
                     ExplanationCard(question = question)
                 }
@@ -296,12 +307,14 @@ fun TestSessionScreen(
                     .padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
-                    onClick = { viewModel.revealCurrent() },
-                    enabled = question.id !in state.revealed,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Show answer")
+                if (!state.practiceMode) {
+                    OutlinedButton(
+                        onClick = { viewModel.revealCurrent() },
+                        enabled = question.id !in state.revealed,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Show answer")
+                    }
                 }
                 Button(
                     onClick = { showSubmitDialog = true },

@@ -53,6 +53,7 @@ fun SettingsScreen(
     val themeMode by viewModel.themeMode.collectAsState()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsState()
     val shuffleOptions by viewModel.shuffleOptions.collectAsState()
+    val practiceMode by viewModel.practiceMode.collectAsState()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
 
@@ -144,6 +145,23 @@ fun SettingsScreen(
                         Switch(
                             checked = shuffleOptions,
                             onCheckedChange = { viewModel.setShuffleOptions(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Practice mode")
+                            Text(
+                                "Show correct answers and explanations instantly",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = practiceMode,
+                            onCheckedChange = { viewModel.setPracticeMode(it) }
                         )
                     }
                     Spacer(Modifier.height(4.dp))

@@ -52,6 +52,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setShuffleOptions(enabled) }
     }
 
+    private val _practiceMode = MutableStateFlow(false)
+    val practiceMode: StateFlow<Boolean> = _practiceMode.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.practiceMode().collect { _practiceMode.value = it }
+        }
+    }
+
+    fun setPracticeMode(enabled: Boolean) {
+        viewModelScope.launch { repository.setPracticeMode(enabled) }
+    }
+
     fun exportAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {

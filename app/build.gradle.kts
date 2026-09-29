@@ -75,6 +75,16 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    testImplementation("org.robolectric:robolectric:4.14.1")
-    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.5.2")
+    testImplementation("org.robolectric:robolectric:4.14.1") {
+        // Uber jar ships x86_64 natives only; regular artifact has ARM64.
+        exclude(group = "org.conscrypt", module = "conscrypt-openjdk-uber")
+    }
+    testImplementation("androidx.test:core:1.7.0")
+    // Regular Conscrypt 2.7.0 with per-arch native jars: the uber jar that
+    // Robolectric pulls in ships x86_64 natives only and breaks its setup
+    // with UnsatisfiedLinkError on any other host (both jars on the
+    // classpath; the loader picks the matching architecture).
+    testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0")
+    testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0:linux-aarch_64")
+    testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0:linux-x86_64")
 }

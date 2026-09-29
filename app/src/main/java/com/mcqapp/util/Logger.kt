@@ -59,26 +59,40 @@ object Logger {
     fun crash(throwable: Throwable) = write("CRASH", "UNCAUGHT", throwable.javaClass.name + ": " + throwable.message, throwable)
 
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
+        val trace = if (throwable != null) {
+            try {
+                Log.getStackTraceString(throwable)
+            } catch (_: Exception) {
+                throwable.stackTraceToString()
+            }
+        } else {
+            null
+        }
         val line = buildString {
             append(timeFormat.format(Date()))
             append(' ').append(level).append('/').append(tag)
             append(" [${Thread.currentThread().name}]: ")
             append(message)
-            if (throwable != null) {
-                append('\n').append(Log.getStackTraceString(throwable))
+            if (trace != null) {
+                append('\n').append(trace)
             }
             append('\n')
         }
-        Log.println(
-            when (level) {
-                "D" -> Log.DEBUG
-                "I" -> Log.INFO
-                "W" -> Log.WARN
-                else -> Log.ERROR
-            },
-            tag,
-            message
-        )
+        // Logging must never crash its caller, on device or on plain-JVM tests.
+        try {
+            Log.println(
+                when (level) {
+                    "D" -> Log.DEBUG
+                    "I" -> Log.INFO
+                    "W" -> Log.WARN
+                    else -> Log.ERROR
+                },
+                tag,
+                message
+            )
+        } catch (_: Exception) {
+            println("$level/$tag: $message")
+        }
         synchronized(lock) {
             val file = logFile ?: return
             try {

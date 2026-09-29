@@ -1,0 +1,48 @@
+name: Build and test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build:
+    # x86_64 runners: Robolectric's native runtime and the Conscrypt JNI
+    # only ship x86_64 Linux binaries, so the DB-backed unit tests run
+    # here (they cannot run on ARM64 Linux hosts).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 37 platform
+        run: sdkmanager "platforms;android-37"
+
+      - name: Build debug APK and run unit tests
+        # No aapt2 override: the bundled aapt2 runs natively on x86_64
+        # (the override is only needed on ARM64 hosts with QEMU).
+        run: sh gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: app/build/test-results/testDebugUnitTest/

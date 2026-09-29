@@ -43,7 +43,9 @@ data class ImportUiState(
     val importReport: com.mcqapp.data.io.ImportReport? = null,
     val originalFile: McqFileDto? = null,
     val importing: Boolean = false,
-    val importDone: Boolean = false
+    val importDone: Boolean = false,
+    /** Fatal load failure (unreadable/corrupt file, no papers): shown as a dialog. */
+    val error: String? = null
 )
 
 class ImportViewModel(application: Application) : AndroidViewModel(application) {
@@ -122,12 +124,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                         ?.use { it.readText() }
                 if (text == null) {
                     Logger.e("IMPORTVM", "Could not read file")
+                    _state.update { it.copy(loading = false, error = "Could not read the file.") }
                     return@launch
                 }
                 ImportDataHolder.pendingJsonText = null
                 parseAndLoad(text)
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
+                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
             }
         }
     }
@@ -156,6 +160,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
+                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
             }
         }
     }
@@ -165,6 +170,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val paper = file.papers.firstOrNull()
         if (paper == null) {
             Logger.e("IMPORTVM", "No papers found in JSON")
+            _state.update { it.copy(loading = false, error = "No papers found in this file.") }
             return
         }
 
@@ -319,5 +325,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun consumeImportResult() {
         _state.update { it.copy(importDone = false, importReport = null) }
+    }
+
+    fun dismissError() {
+        _state.update { it.copy(error = null) }
     }
 }

@@ -22,7 +22,8 @@ data class ImportReport(
 class Importer(private val db: AppDatabase) {
 
     suspend fun import(file: McqFileDto): ImportReport {
-        val started = android.os.SystemClock.elapsedRealtime()
+        // currentTimeMillis (not elapsedRealtime): JVM-testable, and this is log timing only.
+        val started = System.currentTimeMillis()
         Logger.i("IMPORT", "Starting import of ${file.papers.size} papers")
         var newPapers = 0
         var updatedPapers = 0
@@ -263,7 +264,7 @@ class Importer(private val db: AppDatabase) {
                 Logger.i("IMPORT", "Restored $restoredBookmarks bookmarks, $restoredAttempts attempts")
             }
         }
-        val elapsed = android.os.SystemClock.elapsedRealtime() - started
+        val elapsed = System.currentTimeMillis() - started
         val runtime = Runtime.getRuntime()
         val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
         Logger.i("IMPORT", "Import complete: papers $newPapers new/$updatedPapers updated, " +

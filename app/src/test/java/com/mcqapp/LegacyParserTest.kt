@@ -45,8 +45,7 @@ class LegacyParserTest {
     }
 
     @Test
-    fun parsesMarksWithAliasesAndFallbacks() {
-        val json = """
+    fun parsesMarksWithAliasesAndFallbacks() {        val json = """
         {
           "papers": [{
             "id": "p1",
@@ -304,5 +303,18 @@ class LegacyParserTest {
         assertEquals("data:image/png;base64,AAA", questions[0].explanationImage)
         assertEquals("https://example.com/e.png", questions[1].explanationImage)
         assertEquals(null, questions[2].explanationImage)
+    }
+
+    @Test(expected = RuntimeException::class)
+    fun malformedJsonThrows() {
+        LegacyParser.parse("{not json at all")
+    }
+
+    @Test
+    fun validJsonWithoutPapersParsesEmpty() {
+        val file = LegacyParser.parse("""{"version": 1}""")
+        assertTrue(file.papers.isEmpty())
+        assertTrue(file.bookmarks.isEmpty())
+        assertTrue(file.attempts.isEmpty())
     }
 }

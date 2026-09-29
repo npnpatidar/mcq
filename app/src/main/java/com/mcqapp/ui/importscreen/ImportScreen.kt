@@ -72,6 +72,19 @@ fun ImportScreen(
         ImportWarnings.forFile(state.questions)
     }
     val report = state.importReport
+    state.error?.let { error ->
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Cannot open file") },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.dismissError()
+                    navController.popBackStack()
+                }) { Text("Go back") }
+            }
+        )
+    }
     if (state.importDone && report != null) {
         AlertDialog(
             onDismissRequest = { },

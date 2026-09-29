@@ -112,11 +112,17 @@ fun ResultsScreen(
         val filter = remember { mutableStateOf("All") }
         val results = state.results
         val filterValue = filter.value
+        val ungradedCount = remember(results) { results.count { it.correctOptionIds.isEmpty() } }
         val filtered = remember(results, filterValue) {
             when (filterValue) {
                 "Correct" -> results.filter { it.isCorrect }
-                "Wrong" -> results.filter { !it.isCorrect && it.selectedOptionIds.isNotEmpty() }
-                "Skipped" -> results.filter { it.selectedOptionIds.isEmpty() }
+                "Wrong" -> results.filter {
+                    !it.isCorrect && it.selectedOptionIds.isNotEmpty() && it.correctOptionIds.isNotEmpty()
+                }
+                "Skipped" -> results.filter {
+                    it.selectedOptionIds.isEmpty() && it.correctOptionIds.isNotEmpty()
+                }
+                "Ungraded" -> results.filter { it.correctOptionIds.isEmpty() }
                 else -> results
             }
         }
@@ -161,6 +167,13 @@ fun ResultsScreen(
                         Stat("Correct", attempt.correctCount.toString(), MaterialTheme.colorScheme.primary)
                         Stat("Wrong", attempt.wrongCount.toString(), MaterialTheme.colorScheme.error)
                         Stat("Skipped", attempt.skippedCount.toString(), MaterialTheme.colorScheme.outline)
+                        if (ungradedCount > 0) {
+                            Stat(
+                                "Ungraded",
+                                ungradedCount.toString(),
+                                MaterialTheme.colorScheme.tertiary
+                            )
+                        }
                     }
                     val minutes = attempt.durationSeconds / 60
                     val seconds = attempt.durationSeconds % 60
@@ -193,7 +206,7 @@ fun ResultsScreen(
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    "$correct/$total",
+                                    if (total > 0) "$correct/$total" else "Not scored",
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }
@@ -217,7 +230,14 @@ fun ResultsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("All", "Correct", "Wrong", "Skipped").forEach { label ->
+                    val chips = buildList {
+                        add("All")
+                        add("Correct")
+                        add("Wrong")
+                        add("Skipped")
+                        if (ungradedCount > 0) add("Ungraded")
+                    }
+                    chips.forEach { label ->
                         FilterChip(
                             selected = filter.value == label,
                             onClick = { filter.value = label },
@@ -253,13 +273,15 @@ private fun Stat(label: String, value: String, color: androidx.compose.ui.graphi
 
 @Composable
 private fun ResultCard(index: Int, result: QuestionResult) {
+    val ungraded = result.correctOptionIds.isEmpty()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = if (result.isCorrect)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.errorContainer
+            containerColor = when {
+                ungraded -> MaterialTheme.colorScheme.surfaceVariant
+                result.isCorrect -> MaterialTheme.colorScheme.primaryContainer
+                else -> MaterialTheme.colorScheme.errorContainer
+            }
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -275,9 +297,10 @@ private fun ResultCard(index: Int, result: QuestionResult) {
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    if (result.isCorrect) "Correct" else "Wrong",
+                    if (ungraded) "Not scored" else if (result.isCorrect) "Correct" else "Wrong",
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (result.isCorrect)
+                    color = if (ungraded) MaterialTheme.colorScheme.tertiary
+                    else if (result.isCorrect)
                         MaterialTheme.colorScheme.primary
                     else
                         MaterialTheme.colorScheme.error
@@ -289,10 +312,11 @@ private fun ResultCard(index: Int, result: QuestionResult) {
                 val wasSelected = option.id in result.selectedOptionIds
                 Row(modifier = Modifier.padding(top = 4.dp)) {
                     Text(
-                        if (isCorrect) "✓" else if (wasSelected) "✗" else "○",
+                        if (isCorrect) "✓" else if (wasSelected && !ungraded) "✗"
+                        else if (wasSelected) "•" else "○",
                         color = if (isCorrect)
                             MaterialTheme.colorScheme.primary
-                        else if (wasSelected)
+                        else if (wasSelected && !ungraded)
                             MaterialTheme.colorScheme.error
                         else
                             MaterialTheme.colorScheme.onSurface,

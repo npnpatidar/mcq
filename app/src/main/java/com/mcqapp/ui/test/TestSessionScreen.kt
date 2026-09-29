@@ -94,6 +94,37 @@ fun TestSessionScreen(
 
     var showPalette by remember { mutableStateOf(false) }
     var showSubmitDialog by remember { mutableStateOf(false) }
+    var ungradedDismissed by remember { mutableStateOf(false) }
+    val ungradedTotal = remember(state.questions) {
+        state.questions.count { it.correctOptionIds.isEmpty() }
+    }
+    if (!state.loading && ungradedTotal > 0 && !ungradedDismissed) {
+        AlertDialog(
+            onDismissRequest = { ungradedDismissed = true },
+            title = { Text("Questions without an answer key") },
+            text = {
+                Text(
+                    if (ungradedTotal == 1)
+                        "1 question has no answer key and won't be scored. " +
+                            "You can still answer it for practice."
+                    else
+                        "$ungradedTotal questions have no answer key and won't be scored. " +
+                            "You can still answer them for practice."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { ungradedDismissed = true }) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        ungradedDismissed = true
+                        navController.popBackStack()
+                    }
+                ) { Text("Go back") }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -198,14 +229,22 @@ fun TestSessionScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+                if (question.correctOptionIds.isEmpty()) {
+                    Text(
+                        "No answer key — not scored",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(question.text, style = MaterialTheme.typography.titleMedium)
                 QuestionImage(src = question.image, modifier = Modifier.padding(top = 8.dp))
 
                 Spacer(Modifier.height(16.dp))
+                val questionUngraded = question.correctOptionIds.isEmpty()
                 question.options.forEach { option ->
                     val selected = option.id in (state.selections[question.id] ?: emptySet())
-                    val revealed = question.id in state.revealed
+                    val revealed = question.id in state.revealed && !questionUngraded
                     val isCorrectOption = option.id in question.correctOptionIds
                     OptionRow(
                         text = option.text,

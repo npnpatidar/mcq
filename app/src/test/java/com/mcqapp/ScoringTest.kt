@@ -74,4 +74,39 @@ class ScoringTest {
         assertEquals(0.75, summary.score, 0.0001)
         assertEquals(3.0, summary.maxScore, 0.0001)
     }
+
+    @Test
+    fun ungradedQuestionsExcludedFromScoring() {
+        val questions = listOf(
+            com.mcqapp.domain.Question(
+                id = "q1", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = setOf("a")
+            ),
+            com.mcqapp.domain.Question(
+                id = "q2", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = emptySet()
+            ),
+            com.mcqapp.domain.Question(
+                id = "q3", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = emptySet()
+            )
+        )
+        val summary = Scoring.summarize(
+            selections = mapOf("q1" to setOf("a"), "q2" to setOf("x")),
+            questions = questions,
+            negativeMarking = 0.25
+        )
+        assertEquals(1, summary.correctCount)
+        assertEquals(0, summary.wrongCount)
+        assertEquals(0, summary.skippedCount)
+        assertEquals(2, summary.ungradedCount)
+        assertEquals(1.0, summary.score, 0.0001)
+        assertEquals(1.0, summary.maxScore, 0.0001)
+    }
+
+    @Test
+    fun ungradedSingleQuestionScoresZeroWithoutPenalty() {
+        assertEquals(0.0, Scoring.scoreQuestion(setOf("a"), emptySet(), 0.33), 0.0001)
+        assertEquals(0.0, Scoring.scoreQuestion(emptySet(), emptySet(), 0.33), 0.0001)
+    }
 }

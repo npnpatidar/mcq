@@ -22,7 +22,9 @@ data class ResultsUiState(
         get() {
             val byCategory = results.groupBy { it.categoryTitle }
             return byCategory.map { (title, list) ->
-                title to (list.count { it.isCorrect } to list.size)
+                // Ungraded (no answer key) questions are out of the denominator.
+                val graded = list.filter { it.correctOptionIds.isNotEmpty() }
+                title to (graded.count { it.isCorrect } to graded.size)
             }.sortedBy { it.first }
         }
 }

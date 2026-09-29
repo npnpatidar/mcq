@@ -2,10 +2,14 @@ package com.mcqapp.domain
 
 object Scoring {
 
+    /** Questions with an empty answer key are ungraded: never scored, never penalized. */
+    fun isGraded(correct: Set<String>): Boolean = correct.isNotEmpty()
+
     fun isCorrect(selected: Set<String>, correct: Set<String>): Boolean =
         selected.isNotEmpty() && selected == correct
 
     fun scoreQuestion(selected: Set<String>, correct: Set<String>, negativeMarking: Double): Double {
+        if (correct.isEmpty()) return 0.0
         if (selected.isEmpty()) return 0.0
         return if (isCorrect(selected, correct)) 1.0 else -negativeMarking
     }
@@ -15,7 +19,8 @@ object Scoring {
         val wrongCount: Int,
         val skippedCount: Int,
         val score: Double,
-        val maxScore: Double
+        val maxScore: Double,
+        val ungradedCount: Int = 0
     )
 
     fun summarize(
@@ -26,8 +31,13 @@ object Scoring {
         var correct = 0
         var wrong = 0
         var skipped = 0
+        var ungraded = 0
         var score = 0.0
         for (q in questions) {
+            if (q.correctOptionIds.isEmpty()) {
+                ungraded++
+                continue
+            }
             val selected = selections[q.id].orEmpty()
             when {
                 selected.isEmpty() -> skipped++
@@ -41,6 +51,6 @@ object Scoring {
                 }
             }
         }
-        return Summary(correct, wrong, skipped, score, questions.size.toDouble())
+        return Summary(correct, wrong, skipped, score, (correct + wrong + skipped).toDouble(), ungraded)
     }
 }

@@ -94,6 +94,7 @@ fun LibraryScreen(
 ) {
     val papers by viewModel.papers.collectAsState()
     val mistakeCounts by viewModel.mistakeCounts.collectAsState()
+    val studyCounts by viewModel.studyCounts.collectAsState()
     val exportError by viewModel.exportError.collectAsState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -264,6 +265,8 @@ fun LibraryScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(papers, key = { it.id }) { paper ->
+                            val dueCountBadge = studyCounts[paper.id]?.due ?: 0
+                            val leechCountBadge = studyCounts[paper.id]?.leeches ?: 0
                             PaperCard(
                                 paper = paper,
                                 onStart = { navController.navigate("test?paperId=${paper.id}&categories=") },
@@ -276,6 +279,14 @@ fun LibraryScreen(
                                             "&drillCount=$count&drillMinutes=$minutes"
                                     )
                                 },
+                                onStudy = {
+                                    Logger.i("LIB", "Study: paperId=${paper.id}, due=$dueCountBadge")
+                                    navController.navigate("study/${paper.id}")
+                                    viewModel.refreshStudyCounts()
+                                },
+                                dueCount = dueCountBadge,
+                                freshCount = studyCounts[paper.id]?.fresh ?: 0,
+                                leechCount = leechCountBadge,
                                 mistakeCount = mistakeCounts[paper.id] ?: 0,
                                 onBrowse = { navController.navigate("browse/${paper.id}") },
                                 onExport = {
@@ -647,7 +658,11 @@ private fun PaperCard(
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onPracticeMistakes: () -> Unit = {},
     onDrill: (Int, Int) -> Unit = { _, _ -> },
-    mistakeCount: Int = 0
+    onStudy: () -> Unit = {},
+    mistakeCount: Int = 0,
+    dueCount: Int = 0,
+    freshCount: Int = 0,
+    leechCount: Int = 0
 ) {
     var showDrillDialog by remember { mutableStateOf(false) }
     var drillCountText by remember { mutableStateOf("10") }
@@ -698,6 +713,21 @@ private fun PaperCard(
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text("Start")
+                }
+                OutlinedButton(onClick = onStudy) {
+                    Text(
+                        when {
+                            dueCount > 0 && freshCount > 0 -> "Study ($dueCount due, $freshCount new)"
+                            dueCount > 0 -> "Study ($dueCount due)"
+                            freshCount > 0 -> "Study ($freshCount new)"
+                            else -> "Study"
+                        }
+                    )
+                }
+                if (leechCount > 0) {
+                    TextButton(onClick = onStudy) {
+                        Text("${leechCount} tricky")
+                    }
                 }
                 TextButton(onClick = onExport) {
                     Text("Export")

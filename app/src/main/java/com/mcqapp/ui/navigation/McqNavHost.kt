@@ -21,6 +21,7 @@ import com.mcqapp.ui.library.LibraryScreen
 import com.mcqapp.ui.results.ResultsScreen
 import com.mcqapp.ui.search.SearchScreen
 import com.mcqapp.ui.settings.SettingsScreen
+import com.mcqapp.ui.study.StudyScreen
 import com.mcqapp.ui.test.TestSessionScreen
 import com.mcqapp.util.Logger
 
@@ -136,6 +137,18 @@ fun McqNavHost(repository: McqRepository) {
                 questionId = entry.arguments?.getString("questionId").orEmpty(),
                 paperId = entry.arguments?.getString("paperId").orEmpty(),
                 categoryId = entry.arguments?.getString("categoryId").orEmpty(),
+                navController = navController
+            )
+        }
+        composable(
+            route = "study/{paperId}",
+            arguments = listOf(navArgument("paperId") { type = NavType.StringType })
+        ) { entry ->
+            val paperId = entry.arguments?.getString("paperId").orEmpty()
+            Logger.i("NAV", "study screen: paperId=$paperId")
+            StudyScreen(
+                repository = repository,
+                paperId = paperId,
                 navController = navController
             )
         }

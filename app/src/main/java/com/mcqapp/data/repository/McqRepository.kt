@@ -660,6 +660,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         )
     }
 
+    /** The stored schedule for a card, or null if it has never been studied. */
+    suspend fun cardState(
+        paperId: String,
+        questionId: String
+    ): com.mcqapp.domain.CardState? = db.cardStateDao().get(paperId, questionId)?.toDomain()
+
     /** Applies one grade to a question's card and persists the new schedule. */
     suspend fun recordStudyReview(
         paperId: String,

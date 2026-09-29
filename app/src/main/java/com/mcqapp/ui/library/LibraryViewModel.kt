@@ -38,6 +38,39 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
+        viewModelScope.launch {
+            // Due counts move whenever a study session rewrites a schedule,
+            // so they are recomputed with the rest of the badges.
+            papers.collect { list ->
+                try {
+                    val counts = list.associate { paper ->
+                        paper.id to repository.getStudyCounts(paper.id)
+                    }
+                    _studyCounts.value = counts
+                } catch (e: Exception) {
+                    Logger.e("LIBVM", "getStudyCounts failed", e)
+                }
+            }
+        }
+    }
+
+    private val _studyCounts = MutableStateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>>(
+        emptyMap()
+    )
+    val studyCounts: StateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>> =
+        _studyCounts.asStateFlow()
+
+    /** Re-reads due counts, e.g. after returning from a study session. */
+    fun refreshStudyCounts() {
+        viewModelScope.launch {
+            try {
+                _studyCounts.value = papers.value.associate { paper ->
+                    paper.id to repository.getStudyCounts(paper.id)
+                }
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "refreshStudyCounts failed", e)
+            }
+        }
     }
 
     private val _exportError = MutableStateFlow<String?>(null)

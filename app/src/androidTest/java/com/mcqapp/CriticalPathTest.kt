@@ -14,6 +14,9 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.navigation.McqNavHost
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -89,5 +92,33 @@ class CriticalPathTest {
         // Results: 1 correct, 1 wrong, no negative marking -> 1.0 / 3.
         waitFor("1.0 / 3")
         compose.onNodeWithText("1.0 / 3", substring = false).assertIsDisplayed()
+    }
+
+    @Test
+    fun studyGradesAndSchedulesTheNextReview() {
+        compose.setContent { McqNavHost(repository = repository) }
+
+        waitFor("UITest Paper")
+        compose.onNodeWithTag("paper-title").assertIsDisplayed()
+        // A fresh paper offers all three questions as new cards.
+        compose.onNodeWithText("Study (3 new)", substring = false).performClick()
+
+        waitFor("Show answer")
+        compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Good", substring = false).performScrollTo().performClick()
+
+        // Grading advances to the next card rather than ending the session.
+        waitFor("Show answer")
+        compose.onNodeWithText("Show answer", substring = false).assertIsDisplayed()
+
+        // The schedule is persisted, so the card is no longer new and is not
+        // due until its first interval elapses.
+        val scheduled = runBlocking {
+            repository.cardState("uitest-paper", "uitest-q1")
+        }
+        assertNotNull(scheduled)
+        assertEquals(1, scheduled!!.reps)
+        assertTrue(scheduled.dueAt > System.currentTimeMillis())
     }
 }

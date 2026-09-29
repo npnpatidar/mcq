@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.mcqapp.ui.browse.BrowseViewModel
 import com.mcqapp.ui.editor.EditorViewModel
 import com.mcqapp.ui.results.ResultsViewModel
+import com.mcqapp.ui.study.StudyViewModel
 import com.mcqapp.ui.test.TestViewModel
 
 class TestViewModelFactory(
@@ -51,5 +52,15 @@ class BrowseViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return BrowseViewModel(application, paperId) as T
+    }
+}
+
+class StudyViewModelFactory(
+    private val application: Application,
+    private val paperId: String
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return StudyViewModel(application, paperId) as T
     }
 }

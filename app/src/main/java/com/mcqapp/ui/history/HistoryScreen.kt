@@ -47,6 +47,7 @@ fun HistoryScreen(
     viewModel: HistoryViewModel = viewModel()
 ) {
     val attempts by viewModel.attempts.collectAsState()
+    val hardest by viewModel.hardest.collectAsState()
 
     Scaffold(
         topBar = {
@@ -87,6 +88,33 @@ fun HistoryScreen(
                     }
                     item {
                         Text("Attempts", style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+                if (hardest.isNotEmpty()) {
+                    item {
+                        Text("Hardest questions", style = MaterialTheme.typography.titleSmall)
+                    }
+                    items(hardest, key = { "hard-${it.questionId}" }) { stat ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    stat.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${"%.0f%%".format(stat.wrongRate * 100)} wrong" +
+                                        " · ${"%.0f%%".format(stat.skipRate * 100)} skipped" +
+                                        " · ${stat.gradedAttempts} attempts",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
                     }
                 }
                 items(attempts, key = { it.id }) { attempt ->

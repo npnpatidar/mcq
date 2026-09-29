@@ -460,20 +460,27 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun getAttemptResults(attemptId: Long): List<QuestionResult> {
         Logger.d("REPO", "getAttemptResults($attemptId)")
-        return db.attemptDao().getResults(attemptId).map { entity ->
-            val options = json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), entity.optionsJson)
-            QuestionResult(
-                questionId = entity.questionId,
-                categoryTitle = entity.categoryTitle,
-                text = entity.text,
-                options = options.map { QuestionOption(it.id, it.text, it.image) },
-                correctOptionIds = entity.correctOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
-                selectedOptionIds = entity.selectedOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
-                isCorrect = entity.isCorrect,
-                explanation = entity.explanation,
-                explanationImage = entity.explanationImage
-            )
-        }
+        return db.attemptDao().getResults(attemptId).map { it.toDomainResult() }
+    }
+
+    suspend fun getAllQuestionResults(): List<QuestionResult> {
+        Logger.d("REPO", "getAllQuestionResults()")
+        return db.attemptDao().getAllResults().map { it.toDomainResult() }
+    }
+
+    private fun QuestionResultEntity.toDomainResult(): QuestionResult {
+        val options = json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), optionsJson)
+        return QuestionResult(
+            questionId = questionId,
+            categoryTitle = categoryTitle,
+            text = text,
+            options = options.map { QuestionOption(it.id, it.text, it.image) },
+            correctOptionIds = correctOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
+            selectedOptionIds = selectedOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
+            isCorrect = isCorrect,
+            explanation = explanation,
+            explanationImage = explanationImage
+        )
     }
 
     suspend fun deleteAttempt(attemptId: Long) {

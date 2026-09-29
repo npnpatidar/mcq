@@ -151,6 +151,9 @@ interface AttemptDao {
     @Query("SELECT * FROM question_results WHERE attemptId = :attemptId ORDER BY rowid")
     suspend fun getResults(attemptId: Long): List<QuestionResultEntity>
 
+    @Query("SELECT * FROM question_results ORDER BY rowid")
+    suspend fun getAllResults(): List<QuestionResultEntity>
+
     @Query("DELETE FROM attempts WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

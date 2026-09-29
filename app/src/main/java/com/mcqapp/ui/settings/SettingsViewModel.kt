@@ -65,6 +65,23 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setPracticeMode(enabled) }
     }
 
+    private val _storage = MutableStateFlow<com.mcqapp.domain.StorageInfo.Report?>(null)
+    val storage: StateFlow<com.mcqapp.domain.StorageInfo.Report?> = _storage.asStateFlow()
+
+    init {
+        refreshStorage()
+    }
+
+    fun refreshStorage() {
+        viewModelScope.launch {
+            try {
+                _storage.value = repository.storageReport()
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "storageReport failed", e)
+            }
+        }
+    }
+
     fun exportAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {

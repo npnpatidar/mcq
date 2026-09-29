@@ -26,6 +26,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -54,6 +55,7 @@ fun SettingsScreen(
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsState()
     val shuffleOptions by viewModel.shuffleOptions.collectAsState()
     val practiceMode by viewModel.practiceMode.collectAsState()
+    val storage by viewModel.storage.collectAsState()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
 
@@ -170,6 +172,64 @@ fun SettingsScreen(
                             "Scoring is unaffected: answers are matched by option, not position.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Storage",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.refreshStorage() }) {
+                            Text("Refresh")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val report = storage
+                    if (report == null) {
+                        Text("Measuring…", style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        Text(
+                            "Database: ${com.mcqapp.domain.StorageInfo.formatBytes(report.dbBytes)}" +
+                                " · ${report.papers} papers · ${report.questions} questions" +
+                                " · ${report.attempts} attempts · ${report.bookmarks} bookmarks",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        report.perPaper.take(10).forEach { usage ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    usage.title,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1
+                                )
+                                Text(
+                                    "${usage.questions} q · " +
+                                        com.mcqapp.domain.StorageInfo.formatBytes(usage.imageChars),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Image weight counts embedded pictures; large banks shrink " +
+                                "automatically at import.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
 

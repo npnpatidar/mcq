@@ -87,6 +87,37 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it.remove(progressKey) }
     }
 
+    /** Storage breakdown for Settings: file size, row counts, per-paper weight. */
+    suspend fun storageReport(): com.mcqapp.domain.StorageInfo.Report {
+        val dbBytes = try {
+            context.getDatabasePath("mcq.db").length()
+        } catch (e: Exception) {
+            -1L
+        }
+        val papers = db.paperDao().getAll()
+        val allQuestions = db.questionDao().getAll()
+        val optionsByQuestion = if (allQuestions.isEmpty()) {
+            emptyMap()
+        } else {
+            db.optionDao().getForQuestions(allQuestions.map { it.id }).groupBy { it.questionId }
+        }
+        val attempts = db.attemptDao().getAllAttempts().size
+        val bookmarks = db.bookmarkDao().getAll().size
+        val perPaper = papers.map { paper ->
+            val catIds = db.categoryDao().getByPaper(paper.id).map { it.id }.toHashSet()
+            val questions = allQuestions.filter { it.categoryId in catIds }
+            com.mcqapp.domain.StorageInfo.usageForPaper(paper.id, paper.title, questions, optionsByQuestion)
+        }.sortedByDescending { it.imageChars }
+        return com.mcqapp.domain.StorageInfo.Report(
+            dbBytes = dbBytes,
+            papers = papers.size,
+            questions = allQuestions.size,
+            attempts = attempts,
+            bookmarks = bookmarks,
+            perPaper = perPaper
+        )
+    }
+
     fun observePapers(): Flow<List<Paper>> =
         combine(
             db.paperDao().observeAll(),

@@ -650,8 +650,10 @@ private fun PaperCard(
     mistakeCount: Int = 0
 ) {
     var showDrillDialog by remember { mutableStateOf(false) }
-    var drillCount by remember { mutableStateOf(10) }
-    var drillMinutes by remember { mutableStateOf(5) }
+    var drillCountText by remember { mutableStateOf("10") }
+    var drillMinutesText by remember { mutableStateOf("5") }
+    val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
+    val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
     var expanded by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -721,40 +723,47 @@ private fun PaperCard(
                     title = { Text("Quick drill") },
                     text = {
                         Column {
-                            Text("Questions", style = MaterialTheme.typography.labelLarge)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(5, 10, 20).forEach { n ->
-                                    FilterChip(
-                                        selected = drillCount == n,
-                                        onClick = { drillCount = n },
-                                        label = { Text("$n") }
-                                    )
-                                }
-                            }
+                            OutlinedTextField(
+                                value = drillCountText,
+                                onValueChange = { drillCountText = it.filter { c -> c.isDigit() }.take(4) },
+                                label = { Text("Questions") },
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             Spacer(Modifier.height(8.dp))
-                            Text("Minutes", style = MaterialTheme.typography.labelLarge)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(3, 5, 10).forEach { m ->
-                                    FilterChip(
-                                        selected = drillMinutes == m,
-                                        onClick = { drillMinutes = m },
-                                        label = { Text("$m") }
-                                    )
-                                }
-                            }
+                            OutlinedTextField(
+                                value = drillMinutesText,
+                                onValueChange = { drillMinutesText = it.filter { c -> c.isDigit() }.take(4) },
+                                label = { Text("Minutes") },
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                "$drillCount random questions, $drillMinutes:00 on the clock.",
+                                if (drillCount != null && drillMinutes != null) {
+                                    "$drillCount random questions, $drillMinutes:00 on the clock."
+                                } else {
+                                    "Enter positive numbers for both."
+                                },
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
                     },
                     confirmButton = {
-                        TextButton(onClick = {
-                            showDrillDialog = false
-                            Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes")
-                            onDrill(drillCount, drillMinutes)
-                        }) { Text("Start drill") }
+                        TextButton(
+                            onClick = {
+                                showDrillDialog = false
+                                Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes")
+                                onDrill(drillCount!!, drillMinutes!!)
+                            },
+                            enabled = drillCount != null && drillMinutes != null
+                        ) { Text("Start drill") }
                     },
                     dismissButton = {
                         TextButton(onClick = { showDrillDialog = false }) { Text("Cancel") }

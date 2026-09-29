@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -44,6 +45,23 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun setThemeMode(mode: String) {
         context.dataStore.edit { it[themeKey] = mode }
+    }
+
+    private val shuffleQuestionsKey = booleanPreferencesKey("shuffle_questions")
+    private val shuffleOptionsKey = booleanPreferencesKey("shuffle_options")
+
+    fun shuffleQuestions(): Flow<Boolean> =
+        context.dataStore.data.map { it[shuffleQuestionsKey] ?: false }
+
+    suspend fun setShuffleQuestions(enabled: Boolean) {
+        context.dataStore.edit { it[shuffleQuestionsKey] = enabled }
+    }
+
+    fun shuffleOptions(): Flow<Boolean> =
+        context.dataStore.data.map { it[shuffleOptionsKey] ?: false }
+
+    suspend fun setShuffleOptions(enabled: Boolean) {
+        context.dataStore.edit { it[shuffleOptionsKey] = enabled }
     }
 
     fun observePapers(): Flow<List<Paper>> =

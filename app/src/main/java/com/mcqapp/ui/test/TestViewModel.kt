@@ -7,14 +7,17 @@ import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.Shuffle
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 data class TestUiState(
     val loading: Boolean = true,
@@ -61,12 +64,20 @@ class TestViewModel(
                     repository.getQuestionsForCategories(categoryIds)
                 }
                 Logger.i("TESTVM", "Loaded ${questions.size} questions, duration=${paper?.durationMinutes}min")
+                val shuffleQ = repository.shuffleQuestions().first()
+                val shuffleO = repository.shuffleOptions().first()
+                val seed = Random.nextLong()
+                val ordered = Shuffle.shuffleAttempt(questions, seed, shuffleQ, shuffleO)
+                if (shuffleQ || shuffleO) {
+                    Logger.i("TESTVM", "Shuffled attempt: seed=$seed, " +
+                        "questions=$shuffleQ, options=$shuffleO")
+                }
                 val totalSeconds = (paper?.durationMinutes ?: 0) * 60
                 _state.update {
                     it.copy(
                         loading = false,
                         paper = paper,
-                        questions = questions,
+                        questions = ordered,
                         totalSeconds = totalSeconds,
                         remainingSeconds = totalSeconds
                     )

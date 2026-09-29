@@ -29,6 +29,29 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setThemeMode(mode) }
     }
 
+    private val _shuffleQuestions = MutableStateFlow(false)
+    val shuffleQuestions: StateFlow<Boolean> = _shuffleQuestions.asStateFlow()
+
+    private val _shuffleOptions = MutableStateFlow(false)
+    val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.shuffleQuestions().collect { _shuffleQuestions.value = it }
+        }
+        viewModelScope.launch {
+            repository.shuffleOptions().collect { _shuffleOptions.value = it }
+        }
+    }
+
+    fun setShuffleQuestions(enabled: Boolean) {
+        viewModelScope.launch { repository.setShuffleQuestions(enabled) }
+    }
+
+    fun setShuffleOptions(enabled: Boolean) {
+        viewModelScope.launch { repository.setShuffleOptions(enabled) }
+    }
+
     fun exportAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {

@@ -24,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -50,6 +51,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val themeMode by viewModel.themeMode.collectAsState()
+    val shuffleQuestions by viewModel.shuffleQuestions.collectAsState()
+    val shuffleOptions by viewModel.shuffleOptions.collectAsState()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
 
@@ -102,6 +105,53 @@ fun SettingsScreen(
                             Text(label, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Test", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Shuffle question order")
+                            Text(
+                                "Present questions in random order each attempt",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = shuffleQuestions,
+                            onCheckedChange = { viewModel.setShuffleQuestions(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Shuffle options")
+                            Text(
+                                "Present answer options in random order",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = shuffleOptions,
+                            onCheckedChange = { viewModel.setShuffleOptions(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Review always shows the order you were given. " +
+                            "Scoring is unaffected: answers are matched by option, not position.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
 

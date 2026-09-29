@@ -356,6 +356,93 @@
           ]
         },
         {
+          "id": "cat-order",
+          "title": "Order Check",
+          "parentId": null,
+          "questions": [
+            {
+              "id": "q-o1",
+              "text": "Step 1 of 5: which option is labelled Alpha?",
+              "options": [
+                "Alpha",
+                "Beta",
+                "Gamma",
+                "Delta"
+              ],
+              "correctIndex": 0,
+              "explanation": "First step, first option.",
+              "difficulty": "easy",
+              "tags": [
+                "order-check"
+              ]
+            },
+            {
+              "id": "q-o2",
+              "text": "Step 2 of 5: which option is labelled Beta?",
+              "options": [
+                "Alpha",
+                "Beta",
+                "Gamma",
+                "Delta"
+              ],
+              "correctIndex": 1,
+              "explanation": "Second step, second option.",
+              "difficulty": "easy",
+              "tags": [
+                "order-check"
+              ]
+            },
+            {
+              "id": "q-o3",
+              "text": "Step 3 of 5: which option is labelled Gamma?",
+              "options": [
+                "Alpha",
+                "Beta",
+                "Gamma",
+                "Delta"
+              ],
+              "correctIndex": 2,
+              "explanation": "Third step, third option.",
+              "difficulty": "easy",
+              "tags": [
+                "order-check"
+              ]
+            },
+            {
+              "id": "q-o4",
+              "text": "Step 4 of 5: which option is labelled Delta?",
+              "options": [
+                "Alpha",
+                "Beta",
+                "Gamma",
+                "Delta"
+              ],
+              "correctIndex": 3,
+              "explanation": "Fourth step, fourth option.",
+              "difficulty": "easy",
+              "tags": [
+                "order-check"
+              ]
+            },
+            {
+              "id": "q-o5",
+              "text": "Step 5 of 5: which option is labelled Alpha again?",
+              "options": [
+                "Alpha",
+                "Beta",
+                "Gamma",
+                "Delta"
+              ],
+              "correctIndex": 0,
+              "explanation": "Final step, back to the first option.",
+              "difficulty": "easy",
+              "tags": [
+                "order-check"
+              ]
+            }
+          ]
+        },
+        {
           "id": "cat-edge",
           "title": "Edge Cases",
           "parentId": null,

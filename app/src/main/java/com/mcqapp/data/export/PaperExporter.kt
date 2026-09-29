@@ -25,6 +25,12 @@ class PaperExporter(private val db: AppDatabase) {
         return render(dto, dto.title, format)
     }
 
+    /** Any assembled DTO (e.g. bookmarks) through the same format writers. */
+    fun exportDto(dto: PaperDto, title: String, format: ExportFormat): ExportResult {
+        Logger.i("EXPORT", "Exporting '$title' as ${format.name}")
+        return render(dto, title, format)
+    }
+
     /** Single category (with descendants) through the same format writers. */
     suspend fun exportCategory(paperId: String, categoryId: String, format: ExportFormat): ExportResult {
         val dto = Exporter(db).getCategoriesDto(paperId, setOf(categoryId))

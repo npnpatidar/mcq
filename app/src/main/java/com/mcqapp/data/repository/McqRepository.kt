@@ -578,6 +578,21 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())
             .mapValues { it.value.size }
 
+    /** Export DTO of all bookmarked questions, grouped by source paper. */
+    suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? {
+        val ids = db.bookmarkDao().getAll()
+        if (ids.isEmpty()) return null
+        val questions = ids.mapNotNull { getQuestion(it) }
+        if (questions.isEmpty()) return null
+        val titles = mutableMapOf<String, String>()
+        for (categoryId in questions.map { it.categoryId }.toSet()) {
+            val category = db.categoryDao().getById(categoryId) ?: continue
+            val paper = db.paperDao().getById(category.paperId) ?: continue
+            titles[categoryId] = paper.title
+        }
+        return com.mcqapp.data.io.BookmarkExport.paperDto(questions, titles)
+    }
+
     /** Ever-missed questions of one paper, most-recently-missed first. */
     suspend fun getMistakenQuestions(paperId: String): List<Question> {
         val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())[paperId]

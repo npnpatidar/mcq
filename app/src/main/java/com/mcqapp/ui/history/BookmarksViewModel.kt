@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
+import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,5 +34,34 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun removeBookmark(questionId: String) {
         viewModelScope.launch { repository.toggleBookmark(questionId) }
+    }
+
+    private val _exportError = MutableStateFlow<String?>(null)
+    val exportError: StateFlow<String?> = _exportError.asStateFlow()
+
+    fun exportBookmarks(
+        uri: android.net.Uri,
+        format: com.mcqapp.data.export.ExportFormat
+    ) {
+        viewModelScope.launch {
+            try {
+                val dto = repository.getBookmarkExportDto()
+                    ?: throw IllegalStateException("No bookmarked questions to export")
+                val result = com.mcqapp.data.export.PaperExporter(repository.db())
+                    .exportDto(dto, com.mcqapp.data.io.BookmarkExport.PAPER_TITLE, format)
+                Logger.i("BOOKVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
+                    it.write(result.bytes)
+                } ?: throw IllegalStateException("Could not open output stream")
+                _exportError.value = null
+            } catch (e: Exception) {
+                Logger.e("BOOKVM", "Export failed", e)
+                _exportError.value = "Export failed: ${e.message}"
+            }
+        }
+    }
+
+    fun dismissError() {
+        _exportError.value = null
     }
 }

@@ -11,12 +11,14 @@ import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class ResultsUiState(
     val loading: Boolean = true,
     val attempt: Attempt? = null,
-    val results: List<QuestionResult> = emptyList()
+    val results: List<QuestionResult> = emptyList(),
+    val bookmarked: Set<String> = emptySet()
 ) {
     val categoryBreakdown: List<Pair<String, Pair<Int, Int>>>
         get() {
@@ -49,10 +51,26 @@ class ResultsViewModel(
                 _state.value = ResultsUiState(
                     loading = false,
                     attempt = attempt,
-                    results = results
+                    results = results,
+                    bookmarked = _state.value.bookmarked
                 )
             } catch (e: Exception) {
                 Logger.e("RESULTVM", "Failed to load attempt $attemptId", e)
+            }
+        }
+        viewModelScope.launch {
+            repository.observeBookmarks().collect { ids ->
+                _state.update { it.copy(bookmarked = ids.toSet()) }
+            }
+        }
+    }
+
+    fun toggleBookmark(questionId: String) {
+        viewModelScope.launch {
+            try {
+                repository.toggleBookmark(questionId)
+            } catch (e: Exception) {
+                Logger.e("RESULTVM", "toggleBookmark($questionId) failed", e)
             }
         }
     }

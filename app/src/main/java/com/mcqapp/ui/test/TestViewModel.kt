@@ -37,7 +37,8 @@ data class TestUiState(
     val practiceMode: Boolean = false,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
-    val timeWarning: String? = null
+    val timeWarning: String? = null,
+    val bookmarked: Set<String> = emptySet()
 ) {
     val currentQuestion: Question? get() = questions.getOrNull(currentIndex)
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
@@ -62,6 +63,11 @@ class TestViewModel(
 
     init {
         Logger.i("TESTVM", "TestViewModel created: paperId=$paperId, categoryIds=${categoryIds.size} categories")
+        viewModelScope.launch {
+            repository.observeBookmarks().collect { ids ->
+                _state.update { it.copy(bookmarked = ids.toSet()) }
+            }
+        }
         viewModelScope.launch {
             try {
                 Logger.d("TESTVM", "Loading paper $paperId")
@@ -178,6 +184,17 @@ class TestViewModel(
             it.copy(flagged = flagged)
         }
         persistProgress()
+    }
+
+    fun toggleBookmarkCurrent() {
+        val question = _state.value.currentQuestion ?: return
+        viewModelScope.launch {
+            try {
+                repository.toggleBookmark(question.id)
+            } catch (e: Exception) {
+                Logger.e("TESTVM", "toggleBookmark(${question.id}) failed", e)
+            }
+        }
     }
 
     fun goTo(index: Int) {

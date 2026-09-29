@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -42,6 +44,7 @@ import android.app.Application
 import androidx.compose.ui.platform.LocalContext
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.QuestionResult
+import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.ui.ResultsViewModelFactory
 import com.mcqapp.util.QuestionImage
 import java.text.SimpleDateFormat
@@ -112,19 +115,10 @@ fun ResultsScreen(
         val filter = remember { mutableStateOf("All") }
         val results = state.results
         val filterValue = filter.value
+        val bookmarked = state.bookmarked
         val ungradedCount = remember(results) { results.count { it.correctOptionIds.isEmpty() } }
-        val filtered = remember(results, filterValue) {
-            when (filterValue) {
-                "Correct" -> results.filter { it.isCorrect }
-                "Wrong" -> results.filter {
-                    !it.isCorrect && it.selectedOptionIds.isNotEmpty() && it.correctOptionIds.isNotEmpty()
-                }
-                "Skipped" -> results.filter {
-                    it.selectedOptionIds.isEmpty() && it.correctOptionIds.isNotEmpty()
-                }
-                "Ungraded" -> results.filter { it.correctOptionIds.isEmpty() }
-                else -> results
-            }
+        val filtered = remember(results, filterValue, bookmarked) {
+            ReviewFilters.apply(results, filterValue, bookmarked)
         }
         LazyColumn(
             modifier = Modifier
@@ -236,6 +230,7 @@ fun ResultsScreen(
                         add("Wrong")
                         add("Skipped")
                         if (ungradedCount > 0) add("Ungraded")
+                        if (bookmarked.isNotEmpty()) add("Saved")
                     }
                     chips.forEach { label ->
                         FilterChip(
@@ -256,7 +251,12 @@ fun ResultsScreen(
                 }
             } else {
                 itemsIndexed(filtered, key = { _, result -> result.questionId }) { index, result ->
-                    ResultCard(index = index + 1, result = result)
+                    ResultCard(
+                        index = index + 1,
+                        result = result,
+                        bookmarked = result.questionId in bookmarked,
+                        onToggleBookmark = { viewModel.toggleBookmark(result.questionId) }
+                    )
                 }
             }
         }
@@ -272,7 +272,12 @@ private fun Stat(label: String, value: String, color: androidx.compose.ui.graphi
 }
 
 @Composable
-private fun ResultCard(index: Int, result: QuestionResult) {
+private fun ResultCard(
+    index: Int,
+    result: QuestionResult,
+    bookmarked: Boolean,
+    onToggleBookmark: () -> Unit
+) {
     val ungraded = result.correctOptionIds.isEmpty()
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -305,6 +310,12 @@ private fun ResultCard(index: Int, result: QuestionResult) {
                     else
                         MaterialTheme.colorScheme.error
                 )
+                IconButton(onClick = onToggleBookmark) {
+                    Icon(
+                        if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark question"
+                    )
+                }
             }
             QuestionImage(src = null, modifier = Modifier.padding(top = 4.dp))
             result.options.forEach { option ->

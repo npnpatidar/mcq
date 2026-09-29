@@ -31,4 +31,15 @@ class SubmitSummaryTest {
         val summary = SubmitSummary.Summary(answered = 3, total = 5, flagged = 0, ungraded = 0)
         assertEquals(2, summary.unanswered)
     }
+
+    @Test
+    fun longestDwellLineAppearsWhenTracked() {
+        val lines = SubmitSummary.lines(
+            SubmitSummary.Summary(5, 5, 0, 0, slowestQuestion = 7, slowestSeconds = 252)
+        )
+        assertEquals(
+            listOf("Answered: 5 of 5", "Longest on Q7: 4:12"),
+            lines
+        )
+    }
 }

@@ -18,7 +18,8 @@ data class TestSnapshot(
     val flagged: Set<String> = emptySet(),
     val currentIndex: Int = 0,
     val remainingSeconds: Int = 0,
-    val totalSeconds: Int = 0
+    val totalSeconds: Int = 0,
+    val dwellSeconds: Map<String, Long> = emptyMap()
 ) {
     /** A snapshot resumes only the exact paper + category selection it came from. */
     fun matches(paperId: String, categoryIds: List<String>): Boolean =

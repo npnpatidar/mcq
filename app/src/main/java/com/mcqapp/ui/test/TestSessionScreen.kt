@@ -60,6 +60,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Feedback
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SubmitSummary
@@ -230,6 +231,33 @@ fun TestSessionScreen(
                 )
             }
 
+            state.timeWarning?.let { warning ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            warning,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.dismissTimeWarning() }) {
+                            Text("Dismiss")
+                        }
+                    }
+                }
+            }
+
             val question = state.currentQuestion
             if (question == null) {
                 Box(
@@ -250,7 +278,8 @@ fun TestSessionScreen(
                 Text(
                     "Question ${state.currentIndex + 1} of ${state.questions.size}" +
                         " · ${formatMarks(question.marks)} " +
-                        if (question.marks == 1.0) "mark" else "marks",
+                        if (question.marks == 1.0) "mark" else "marks" +
+                        " · ${Dwell.format(state.dwellSeconds[question.id] ?: 0L)} here",
                     style = MaterialTheme.typography.labelMedium
                 )
                 if (state.practiceMode) {
@@ -355,11 +384,17 @@ fun TestSessionScreen(
     }
 
     if (showSubmitDialog) {
+        val slowest = state.dwellSeconds.maxByOrNull { it.value }
+        val slowestIndex = slowest?.let { entry ->
+            state.questions.indexOfFirst { it.id == entry.key }.takeIf { it >= 0 }
+        }
         val summary = SubmitSummary.Summary(
             answered = state.answeredCount,
             total = state.questions.size,
             flagged = state.flagged.size,
-            ungraded = ungradedTotal
+            ungraded = ungradedTotal,
+            slowestQuestion = slowestIndex?.plus(1),
+            slowestSeconds = slowest?.value ?: 0L
         )
         val firstFlagged = state.questions.indexOfFirst { it.id in state.flagged }
         AlertDialog(

@@ -11,7 +11,9 @@ object SubmitSummary {
         val answered: Int,
         val total: Int,
         val flagged: Int,
-        val ungraded: Int
+        val ungraded: Int,
+        val slowestQuestion: Int? = null,
+        val slowestSeconds: Long = 0L
     ) {
         val unanswered: Int get() = total - answered
     }
@@ -26,6 +28,9 @@ object SubmitSummary {
         }
         if (summary.ungraded > 0) {
             add("Not scored (no answer key): ${summary.ungraded}")
+        }
+        if (summary.slowestQuestion != null && summary.slowestSeconds > 0) {
+            add("Longest on Q${summary.slowestQuestion}: ${Dwell.format(summary.slowestSeconds)}")
         }
     }
 }

@@ -5,10 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.TestSnapshot
+import com.mcqapp.domain.TimerWarnings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,7 +35,9 @@ data class TestUiState(
     val submitted: Boolean = false,
     val attemptId: Long? = null,
     val practiceMode: Boolean = false,
-    val resumeOffer: TestSnapshot? = null
+    val resumeOffer: TestSnapshot? = null,
+    val dwellSeconds: Map<String, Long> = emptyMap(),
+    val timeWarning: String? = null
 ) {
     val currentQuestion: Question? get() = questions.getOrNull(currentIndex)
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
@@ -53,6 +57,8 @@ class TestViewModel(
 
     private var timerJob: Job? = null
     private var startTimestamp: Long = 0
+    private var lastNavMillis: Long = 0
+    private val warnedThresholds = mutableSetOf<Int>()
 
     init {
         Logger.i("TESTVM", "TestViewModel created: paperId=$paperId, categoryIds=${categoryIds.size} categories")
@@ -90,6 +96,7 @@ class TestViewModel(
                 }
                 checkResumeOffer()
                 startTimestamp = System.currentTimeMillis()
+                lastNavMillis = startTimestamp
                 if (totalSeconds > 0) startTimer()
             } catch (e: Exception) {
                 Logger.e("TESTVM", "Failed to load test session", e)
@@ -104,13 +111,37 @@ class TestViewModel(
                 delay(1000)
                 val current = _state.value
                 if (current.submitted || current.remainingSeconds <= 0) break
+                val previous = current.remainingSeconds
                 _state.update { it.copy(remainingSeconds = it.remainingSeconds - 1) }
-                if (_state.value.remainingSeconds <= 0) {
+                val now = _state.value.remainingSeconds
+                val due = TimerWarnings.newlyDue(previous, now)
+                    .filter { warnedThresholds.add(it) }
+                if (due.isNotEmpty()) {
+                    val text = due.joinToString("; ") { TimerWarnings.message(it) }
+                    Logger.i("TESTVM", "Time warning: $text")
+                    _state.update { it.copy(timeWarning = text) }
+                }
+                if (now <= 0) {
                     submit()
                     break
                 }
             }
         }
+    }
+
+    fun dismissTimeWarning() {
+        _state.update { it.copy(timeWarning = null) }
+    }
+
+    /** Credits elapsed time since the last navigation to the question left. */
+    private fun flushDwell() {
+        val current = _state.value
+        val question = current.currentQuestion ?: return
+        val elapsed = (System.currentTimeMillis() - lastNavMillis) / 1000
+        if (elapsed > 0) {
+            _state.update { it.copy(dwellSeconds = Dwell.add(it.dwellSeconds, question.id, elapsed)) }
+        }
+        lastNavMillis = System.currentTimeMillis()
     }
 
     fun toggleOption(optionId: String) {
@@ -152,6 +183,7 @@ class TestViewModel(
     fun goTo(index: Int) {
         val questions = _state.value.questions
         if (index in questions.indices) {
+            flushDwell()
             _state.update { it.copy(currentIndex = index) }
             persistProgress()
         }
@@ -166,6 +198,7 @@ class TestViewModel(
         Logger.i("TESTVM", "submit() called: answered=${current.answeredCount}/${current.questions.size}, " +
             "remaining=${current.remainingSeconds}s")
         timerJob?.cancel()
+        flushDwell()
         val durationSeconds = if (current.totalSeconds > 0) {
             (current.totalSeconds - current.remainingSeconds).toLong()
         } else {
@@ -232,10 +265,14 @@ class TestViewModel(
                 currentIndex = saved.currentIndex.coerceIn(ordered.indices),
                 remainingSeconds = saved.remainingSeconds,
                 totalSeconds = saved.totalSeconds,
+                dwellSeconds = saved.dwellSeconds,
+                timeWarning = null,
                 resumeOffer = null
             )
         }
+        warnedThresholds.clear()
         startTimestamp = System.currentTimeMillis()
+        lastNavMillis = startTimestamp
         if (saved.totalSeconds > 0 && saved.remainingSeconds > 0) startTimer()
     }
 
@@ -258,7 +295,8 @@ class TestViewModel(
             flagged = current.flagged,
             currentIndex = current.currentIndex,
             remainingSeconds = current.remainingSeconds,
-            totalSeconds = current.totalSeconds
+            totalSeconds = current.totalSeconds,
+            dwellSeconds = current.dwellSeconds
         )
         viewModelScope.launch {
             try {

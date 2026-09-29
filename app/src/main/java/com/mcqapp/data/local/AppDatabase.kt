@@ -16,9 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CorrectAnswerEntity::class,
         BookmarkEntity::class,
         AttemptEntity::class,
-        QuestionResultEntity::class
+        QuestionResultEntity::class,
+        CardStateEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -29,6 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun correctAnswerDao(): CorrectAnswerDao
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun attemptDao(): AttemptDao
+    abstract fun cardStateDao(): CardStateDao
 
     companion object {
         @Volatile
@@ -53,13 +55,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `card_state` (" +
+                        "`paperId` TEXT NOT NULL, " +
+                        "`questionId` TEXT NOT NULL, " +
+                        "`ease` REAL NOT NULL, " +
+                        "`intervalDays` INTEGER NOT NULL, " +
+                        "`dueAt` INTEGER NOT NULL, " +
+                        "`reps` INTEGER NOT NULL, " +
+                        "`lapses` INTEGER NOT NULL, " +
+                        "`leech` INTEGER NOT NULL, " +
+                        "`lastReviewedAt` INTEGER NOT NULL, " +
+                        "`contentHash` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`paperId`, `questionId`), " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_questionId` " +
+                        "ON `card_state` (`questionId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_dueAt` " +
+                        "ON `card_state` (`dueAt`)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "mcq.db"
-                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { INSTANCE = it }
+                ).addMigrations(
+                    MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                ).build().also { INSTANCE = it }
             }
     }
 }

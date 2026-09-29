@@ -140,6 +140,30 @@ interface CorrectAnswerDao {
 }
 
 @Dao
+interface CardStateDao {
+    @Query("SELECT * FROM card_state WHERE paperId = :paperId")
+    suspend fun getByPaper(paperId: String): List<CardStateEntity>
+
+    @Query("SELECT * FROM card_state WHERE paperId = :paperId AND questionId = :questionId")
+    suspend fun get(paperId: String, questionId: String): CardStateEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(state: CardStateEntity)
+
+    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId AND reps > 0 AND dueAt <= :now")
+    suspend fun countDue(paperId: String, now: Long): Int
+
+    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId AND leech = 1")
+    suspend fun countLeeches(paperId: String): Int
+
+    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId AND reps = 0")
+    suspend fun countNew(paperId: String): Int
+
+    @Query("DELETE FROM card_state WHERE questionId = :questionId")
+    suspend fun deleteByQuestion(questionId: String)
+}
+
+@Dao
 interface BookmarkDao {
     @Query("SELECT questionId FROM bookmarks ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<String>>

@@ -9,6 +9,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.BookmarkEntity
+import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
@@ -33,6 +34,14 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
+
+/** Spaced repetition badges for a paper in the library list. */
+data class StudyCounts(
+    val due: Int = 0,
+    val leeches: Int = 0
+) {
+    val isEmpty: Boolean get() = due == 0 && leeches == 0
+}
 
 class McqRepository(private val db: AppDatabase, private val context: Context) {
 
@@ -381,11 +390,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun deleteQuestion(questionId: String) {
         Logger.d("REPO", "deleteQuestion($questionId)")
         db.questionDao().deleteById(questionId)
+        db.cardStateDao().deleteByQuestion(questionId)
     }
 
     suspend fun deleteQuestions(questionIds: Collection<String>) {
         Logger.i("REPO", "deleteQuestions(${questionIds.size} ids)")
-        questionIds.forEach { db.questionDao().deleteById(it) }
+        questionIds.forEach {
+            db.questionDao().deleteById(it)
+            db.cardStateDao().deleteByQuestion(it)
+        }
     }
 
     /** Deep-copies a question (options, key, explanation, marks) after siblings. */
@@ -536,6 +549,154 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun deleteCategory(categoryId: String) {
         db.categoryDao().deleteById(categoryId)
     }
+
+    // --- spaced repetition ---
+
+    private fun CardStateEntity.toDomain() = com.mcqapp.domain.CardState(
+        questionId = questionId,
+        ease = ease,
+        intervalDays = intervalDays,
+        dueAt = dueAt,
+        reps = reps,
+        lapses = lapses,
+        leech = leech,
+        lastReviewedAt = lastReviewedAt
+    )
+
+    private fun com.mcqapp.domain.CardState.toEntity(paperId: String, hash: String) =
+        CardStateEntity(
+            paperId = paperId,
+            questionId = questionId,
+            ease = ease,
+            intervalDays = intervalDays,
+            dueAt = dueAt,
+            reps = reps,
+            lapses = lapses,
+            leech = leech,
+            lastReviewedAt = lastReviewedAt,
+            contentHash = hash
+        )
+
+    /**
+     * Today's study queue for a paper, seeding any card that has never been
+     * studied from existing attempt history so an existing install starts warm
+     * instead of treating every question as new.
+     */
+    suspend fun getStudyQueue(
+        paperId: String,
+        now: Long = System.currentTimeMillis(),
+        newLimit: Int = com.mcqapp.domain.Study.DEFAULT_NEW_LIMIT
+    ): List<com.mcqapp.domain.StudyCard> {
+        val questions = getQuestionsForPaper(paperId)
+        if (questions.isEmpty()) return emptyList()
+        val stored = db.cardStateDao().getByPaper(paperId).associate { it.questionId to it }
+        val history = historySignalsFor(paperId, questions.map { it.id })
+        val states = mutableMapOf<String, com.mcqapp.domain.CardState>()
+        val seeded = mutableListOf<CardStateEntity>()
+        for (q in questions) {
+            val existing = stored[q.id]
+            if (existing != null) {
+                // A question whose text or options changed is scheduled again
+                // from scratch: the old interval describes memory of other text.
+                if (existing.contentHash != contentHashOf(q)) {
+                    val reset = com.mcqapp.domain.Sm2Scheduler.initial(q.id)
+                    states[q.id] = reset
+                    seeded += reset.toEntity(paperId, existing.contentHash)
+                } else {
+                    states[q.id] = existing.toDomain()
+                }
+            } else {
+                val rebuilt = history[q.id]?.let {
+                    com.mcqapp.domain.Study.rebuild(com.mcqapp.domain.Sm2Scheduler, q.id, it)
+                } ?: com.mcqapp.domain.Sm2Scheduler.initial(q.id)
+                states[q.id] = rebuilt
+                seeded += rebuilt.toEntity(paperId, contentHashOf(q))
+            }
+        }
+        if (seeded.isNotEmpty()) seeded.forEach { db.cardStateDao().upsert(it) }
+        Logger.i(
+            "REPO",
+            "getStudyQueue($paperId): ${questions.size} questions, " +
+                "${seeded.size} seeded/reset, due=${states.values.count { it.reps > 0 && it.dueAt <= now }}"
+        )
+        return com.mcqapp.domain.Study.queue(
+            com.mcqapp.domain.Sm2Scheduler,
+            questions.map { it.id },
+            states,
+            now,
+            newLimit
+        )
+    }
+
+    /** Due / new / leech counts for a paper's library badge. */
+    suspend fun getStudyCounts(
+        paperId: String,
+        now: Long = System.currentTimeMillis()
+    ): StudyCounts {
+        val stored = db.cardStateDao().getByPaper(paperId)
+        val states = stored.map { it.toDomain() }
+        return StudyCounts(
+            due = com.mcqapp.domain.Study.dueCount(states, now),
+            leeches = com.mcqapp.domain.Study.leechCount(states)
+        )
+    }
+
+    /** Applies one grade to a question's card and persists the new schedule. */
+    suspend fun recordStudyReview(
+        paperId: String,
+        questionId: String,
+        grade: com.mcqapp.domain.ReviewGrade,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.CardState {
+        val question = getQuestion(questionId)
+        val existing = db.cardStateDao().get(paperId, questionId)?.toDomain()
+            ?: com.mcqapp.domain.Sm2Scheduler.initial(questionId)
+        val next = com.mcqapp.domain.Sm2Scheduler.next(existing, grade, now)
+        db.cardStateDao().upsert(
+            next.toEntity(paperId, question?.let { contentHashOf(it) } ?: "")
+        )
+        Logger.i(
+            "REPO",
+            "recordStudyReview($questionId, $grade): interval=${next.intervalDays}d, " +
+                "reps=${next.reps}, lapses=${next.lapses}, leech=${next.leech}"
+        )
+        return next
+    }
+
+    /**
+     * Graded history for the given questions, newest last. Rows with no
+     * selection or no answer key carry no memory signal, so they are skipped.
+     */
+    private suspend fun historySignalsFor(
+        paperId: String,
+        questionIds: List<String>
+    ): Map<String, List<com.mcqapp.domain.ReviewSignal>> {
+        val ids = questionIds.toHashSet()
+        val attemptsById = db.attemptDao().getAllAttempts()
+            .filter { it.paperId == paperId }
+            .associateBy { it.id }
+        if (attemptsById.isEmpty()) return emptyMap()
+        val signals = mutableMapOf<String, MutableList<com.mcqapp.domain.ReviewSignal>>()
+        for (row in db.attemptDao().getAllResults()) {
+            val attempt = attemptsById[row.attemptId] ?: continue
+            if (row.questionId !in ids) continue
+            if (row.selectedOptionIds.isEmpty() || row.correctOptionIds.isEmpty()) continue
+            val grade = com.mcqapp.domain.Study.inferGrade(row.isCorrect, row.dwellSeconds)
+            signals.getOrPut(row.questionId) { mutableListOf() }
+                .add(com.mcqapp.domain.ReviewSignal(row.questionId, grade, attempt.finishedAt))
+        }
+        return signals
+    }
+
+    /**
+     * Mirrors the hash written by [saveQuestion] so a stored card can be
+     * compared against the question it was scheduled for.
+     */
+    private fun contentHashOf(question: Question): String = computeContentHash(
+        question.text,
+        question.options.map { it.text },
+        question.options.map { it.image }
+    )
 
     fun observeBookmarks(): Flow<List<String>> = db.bookmarkDao().observeAll()
 

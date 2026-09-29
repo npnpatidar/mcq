@@ -97,6 +97,39 @@ data class CorrectAnswerEntity(
     val optionId: String
 )
 
+/**
+ * Per-question memory state. Keyed by paper so a question reused in two
+ * papers is scheduled independently, matching how the app already scopes
+ * scores, marks and mistakes. [contentHash] mirrors the question's hash at
+ * last review so an edit can reset the card instead of keeping a schedule
+ * for text the learner never saw.
+ */
+@Entity(
+    tableName = "card_state",
+    primaryKeys = ["paperId", "questionId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("questionId"), Index("dueAt")]
+)
+data class CardStateEntity(
+    val paperId: String,
+    val questionId: String,
+    val ease: Double,
+    val intervalDays: Int,
+    val dueAt: Long,
+    val reps: Int,
+    val lapses: Int,
+    val leech: Boolean,
+    val lastReviewedAt: Long,
+    val contentHash: String
+)
+
 @Entity(tableName = "bookmarks")
 data class BookmarkEntity(
     @PrimaryKey val questionId: String,

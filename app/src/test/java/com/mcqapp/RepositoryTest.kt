@@ -110,4 +110,176 @@ class RepositoryTest {
         assertEquals(2.0, copy.marks, 0.0001)
         assertEquals(2, repository.getQuestionsForPaper("p1").size)
     }
+
+    // --- spaced repetition ---
+
+    @Test
+    fun studyQueueIsAllNewForAFreshPaper() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        val queue = repository.getStudyQueue("p1")
+        assertEquals(2, queue.size)
+        assertTrue(queue.all { it.reason == com.mcqapp.domain.StudyReason.NEW })
+    }
+
+    @Test
+    fun studyQueueIsEmptyForAnUnknownPaper() = runBlocking {
+        assertTrue(repository.getStudyQueue("nope").isEmpty())
+    }
+
+    @Test
+    fun studyQueueRespectsTheNewLimit() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repeat(5) { repository.saveQuestion(question("q$it", setOf("q$it-a"))) }
+        assertEquals(2, repository.getStudyQueue("p1", newLimit = 2).size)
+    }
+
+    @Test
+    fun reviewingAQuestionPersistsItsSchedule() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val next = repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        assertEquals(1, next.reps)
+        assertEquals(1, next.intervalDays)
+        assertEquals(1000L + com.mcqapp.domain.Sm2Scheduler.DAY_MS, next.dueAt)
+        val stored = db.cardStateDao().get("p1", "q1")
+        assertEquals(1, stored!!.reps)
+        assertEquals(com.mcqapp.domain.Sm2Scheduler.DEFAULT_EASE, stored.ease, 0.0001)
+    }
+
+    @Test
+    fun aReviewedQuestionStopsBeingNew() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        val counts = repository.getStudyCounts("p1", now = 2000L)
+        assertEquals(0, counts.due)
+    }
+
+    @Test
+    fun aFailedReviewLeavesTheQuestionNewAndNotDue() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val again = repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.AGAIN, now = 1000L)
+        assertEquals(0, again.reps)
+        assertEquals(0, again.lapses)
+        // Due later today, not due as a day-scheduled card.
+        val counts = repository.getStudyCounts("p1", now = 1000L)
+        assertEquals(0, counts.due)
+    }
+
+    @Test
+    fun editingAQuestionResetsItsSchedule() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 2000L)
+        val before = db.cardStateDao().get("p1", "q1")!!
+        assertTrue(before.reps >= 2)
+        // Change the text, so the stored hash no longer matches.
+        repository.saveQuestion(question("q1", setOf("q1-a")).copy(text = "Rewritten"))
+        repository.getStudyQueue("p1")
+        val after = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(0, after.reps)
+        assertEquals(0, after.lapses)
+    }
+
+    @Test
+    fun historySeedsNewCardsSoAnInstallStartsWarm() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val questions = repository.getQuestionsForPaper("p1")
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = questions,
+            selections = mapOf("q1" to setOf("q1-a")),
+            negativeMarking = 0.0,
+            durationSeconds = 30,
+            finishedAt = 5000L,
+            dwellSeconds = mapOf("q1" to 15L)
+        )
+        val queue = repository.getStudyQueue("p1", now = 6000L)
+        assertEquals(1, queue.size)
+        val card = queue.first()
+        assertEquals(com.mcqapp.domain.StudyReason.DUE, card.reason)
+        assertTrue(card.state.reps >= 1)
+    }
+
+    @Test
+    fun skippedAnswersDoNotSeedMemory() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val questions = repository.getQuestionsForPaper("p1")
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = questions,
+            selections = emptyMap(),
+            negativeMarking = 0.0,
+            durationSeconds = 30,
+            finishedAt = 5000L
+        )
+        val card = repository.getStudyQueue("p1", now = 6000L).first()
+        assertEquals(com.mcqapp.domain.StudyReason.NEW, card.reason)
+        assertEquals(0, card.state.reps)
+    }
+
+    @Test
+    fun ungradedQuestionsDoNotSeedMemory() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", emptySet()))
+        val questions = repository.getQuestionsForPaper("p1")
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = questions,
+            selections = mapOf("q1" to setOf("q1-a")),
+            negativeMarking = 0.0,
+            durationSeconds = 30,
+            finishedAt = 5000L
+        )
+        val card = repository.getStudyQueue("p1", now = 6000L).first()
+        assertEquals(0, card.state.reps)
+    }
+
+    @Test
+    fun historyFromAnotherPaperIsIgnored() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat2")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val questions = repository.getQuestionsForPaper("p2")
+        repository.saveAttempt(
+            paperId = "p2",
+            paperTitle = "Other",
+            questions = questions,
+            selections = mapOf("q1" to setOf("q1-a")),
+            negativeMarking = 0.0,
+            durationSeconds = 30,
+            finishedAt = 5000L
+        )
+        val card = repository.getStudyQueue("p1", now = 6000L).first()
+        assertEquals(0, card.state.reps)
+    }
+
+    @Test
+    fun deletingAQuestionClearsItsSchedule() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.deleteQuestion("q1")
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
+    fun bulkDeleteClearsSchedules() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q2", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.deleteQuestions(listOf("q1", "q2"))
+        assertTrue(db.cardStateDao().getByPaper("p1").isEmpty())
+    }
 }

@@ -66,6 +66,31 @@ class MistakesTest {
     }
 
     @Test
+    fun laterCorrectAnswerClearsTheMistake() {
+        val attempts = listOf(attempt(1, "p1"), attempt(2, "p1"))
+        val results = listOf(
+            result(1, "fixed", isCorrect = false),
+            result(1, "still-wrong", isCorrect = false),
+            result(2, "fixed", isCorrect = true),
+            result(2, "still-wrong", isCorrect = false)
+        )
+        assertEquals(
+            listOf("still-wrong"),
+            Mistakes.mistakenIdsByPaper(attempts, results)["p1"]
+        )
+    }
+
+    @Test
+    fun skippedAfterMissKeepsTheMistake() {
+        val attempts = listOf(attempt(1, "p1"), attempt(2, "p1"))
+        val results = listOf(
+            result(1, "q", isCorrect = false),
+            result(2, "q", isCorrect = false, selected = emptySet())
+        )
+        assertEquals(listOf("q"), Mistakes.mistakenIdsByPaper(attempts, results)["p1"])
+    }
+
+    @Test
     fun ignoresSkipsUngradedAndOrphans() {
         val attempts = listOf(attempt(1, "p1"))
         val results = listOf(

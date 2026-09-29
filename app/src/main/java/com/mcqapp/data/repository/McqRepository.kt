@@ -522,9 +522,29 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         return db.attemptDao().getAllResults().map { it.toDomainResult() }
     }
 
+    suspend fun getAttempts(): List<Attempt> {
+        Logger.d("REPO", "getAttempts()")
+        return db.attemptDao().getAllAttempts().map { it.toDomain() }
+    }
+
+    /** Paper id -> count of distinct ever-missed questions (for badges). */
+    suspend fun getMistakeCounts(): Map<String, Int> =
+        com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())
+            .mapValues { it.value.size }
+
+    /** Ever-missed questions of one paper, most-recently-missed first. */
+    suspend fun getMistakenQuestions(paperId: String): List<Question> {
+        val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())[paperId]
+            ?: return emptyList()
+        if (ids.isEmpty()) return emptyList()
+        val byId = db.questionDao().getByIds(ids).toDomainBulk().associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
     private fun QuestionResultEntity.toDomainResult(): QuestionResult {
         val options = json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), optionsJson)
         return QuestionResult(
+            attemptId = attemptId,
             questionId = questionId,
             categoryTitle = categoryTitle,
             text = text,

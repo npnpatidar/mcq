@@ -73,6 +73,9 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?
 
+    @Query("SELECT * FROM questions WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<QuestionEntity>
+
     @Query("SELECT MAX(sortOrder) FROM questions WHERE categoryId = :categoryId")
     suspend fun getMaxSortOrder(categoryId: String): Int?
 

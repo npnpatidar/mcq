@@ -27,19 +27,22 @@ fun McqNavHost(repository: McqRepository) {
             LibraryScreen(repository = repository, navController = navController)
         }
         composable(
-            route = "test?paperId={paperId}&categories={categories}",
+            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
-                navArgument("categories") { type = NavType.StringType; defaultValue = "" }
+                navArgument("categories") { type = NavType.StringType; defaultValue = "" },
+                navArgument("mistakes") { type = NavType.BoolType; defaultValue = false }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
             val categories = entry.arguments?.getString("categories").orEmpty()
-            Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories'")
+            val mistakes = entry.arguments?.getBoolean("mistakes") ?: false
+            Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories', mistakes=$mistakes")
             TestSessionScreen(
                 repository = repository,
                 paperId = paperId,
                 categoryIds = categories.split(",").filter { it.isNotBlank() },
+                mistakesOnly = mistakes,
                 navController = navController
             )
         }

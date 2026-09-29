@@ -11,11 +11,12 @@ import com.mcqapp.ui.test.TestViewModel
 class TestViewModelFactory(
     private val application: Application,
     private val paperId: String,
-    private val categoryIds: List<String>
+    private val categoryIds: List<String>,
+    private val mistakesOnly: Boolean = false
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return TestViewModel(application, paperId, categoryIds) as T
+        return TestViewModel(application, paperId, categoryIds, mistakesOnly) as T
     }
 }
 

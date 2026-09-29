@@ -78,15 +78,17 @@ fun TestSessionScreen(
     repository: McqRepository,
     paperId: String,
     categoryIds: List<String>,
+    mistakesOnly: Boolean = false,
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
-        key = "test-$paperId-${categoryIds.joinToString(",")}",
+        key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
-            categoryIds
+            categoryIds,
+            mistakesOnly
         )
     )
     val state by viewModel.state.collectAsState()
@@ -298,6 +300,13 @@ fun TestSessionScreen(
                 if (state.practiceMode) {
                     Text(
                         "Practice — answers shown instantly",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+                if (state.mistakesOnly) {
+                    Text(
+                        "Mistakes round — previously missed questions",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )

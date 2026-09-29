@@ -25,6 +25,21 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _mistakeCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val mistakeCounts: StateFlow<Map<String, Int>> = _mistakeCounts.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.observeAttempts().collect {
+                try {
+                    _mistakeCounts.value = repository.getMistakeCounts()
+                } catch (e: Exception) {
+                    Logger.e("LIBVM", "getMistakeCounts failed", e)
+                }
+            }
+        }
+    }
+
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
 

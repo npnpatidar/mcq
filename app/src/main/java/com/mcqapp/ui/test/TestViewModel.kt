@@ -35,6 +35,7 @@ data class TestUiState(
     val submitted: Boolean = false,
     val attemptId: Long? = null,
     val practiceMode: Boolean = false,
+    val mistakesOnly: Boolean = false,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
     val timeWarning: String? = null,
@@ -48,7 +49,8 @@ data class TestUiState(
 class TestViewModel(
     application: Application,
     private val paperId: String,
-    private val categoryIds: List<String>
+    private val categoryIds: List<String>,
+    private val mistakesOnly: Boolean = false
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -73,12 +75,15 @@ class TestViewModel(
                 Logger.d("TESTVM", "Loading paper $paperId")
                 val paper = repository.getPaper(paperId)
                 Logger.d("TESTVM", "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}")
-                val questions = if (categoryIds.isEmpty()) {
+                val questions = if (mistakesOnly) {
+                    repository.getMistakenQuestions(paperId)
+                } else if (categoryIds.isEmpty()) {
                     repository.getQuestionsForPaper(paperId)
                 } else {
                     repository.getQuestionsForCategories(categoryIds)
                 }
-                Logger.i("TESTVM", "Loaded ${questions.size} questions, duration=${paper?.durationMinutes}min")
+                Logger.i("TESTVM", "Loaded ${questions.size} questions, duration=${paper?.durationMinutes}min" +
+                    if (mistakesOnly) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
                 val seed = Random.nextLong()
@@ -97,7 +102,8 @@ class TestViewModel(
                         questions = ordered,
                         totalSeconds = totalSeconds,
                         remainingSeconds = totalSeconds,
-                        practiceMode = practice
+                        practiceMode = practice,
+                        mistakesOnly = mistakesOnly
                     )
                 }
                 checkResumeOffer()

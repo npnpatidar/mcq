@@ -88,6 +88,7 @@ fun LibraryScreen(
     viewModel: LibraryViewModel = viewModel()
 ) {
     val papers by viewModel.papers.collectAsState()
+    val mistakeCounts by viewModel.mistakeCounts.collectAsState()
     val exportError by viewModel.exportError.collectAsState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -257,6 +258,10 @@ fun LibraryScreen(
                             PaperCard(
                                 paper = paper,
                                 onStart = { navController.navigate("test?paperId=${paper.id}&categories=") },
+                                onPracticeMistakes = {
+                                    navController.navigate("test?paperId=${paper.id}&categories=&mistakes=true")
+                                },
+                                mistakeCount = mistakeCounts[paper.id] ?: 0,
                                 onBrowse = { navController.navigate("browse/${paper.id}") },
                                 onExport = {
                                     pendingExportPaperId = paper.id
@@ -601,7 +606,9 @@ private fun PaperCard(
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
-    onExportCategory: (String, String) -> Unit
+    onExportCategory: (String, String) -> Unit,
+    onPracticeMistakes: () -> Unit = {},
+    mistakeCount: Int = 0
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -649,6 +656,14 @@ private fun PaperCard(
                 }
                 OutlinedButton(onClick = onBrowse) {
                     Text("Browse")
+                }
+                if (mistakeCount > 0) {
+                    OutlinedButton(onClick = {
+                        Logger.i("LIB", "Practice mistakes: paperId=${paper.id}, count=$mistakeCount")
+                        onPracticeMistakes()
+                    }) {
+                        Text("Mistakes ($mistakeCount)")
+                    }
                 }
             }
             AnimatedVisibility(visible = expanded) {

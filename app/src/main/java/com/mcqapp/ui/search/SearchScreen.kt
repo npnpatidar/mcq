@@ -3,6 +3,7 @@ package com.mcqapp.ui.search
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -78,6 +79,16 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.mcqapp.domain.QuestionSearch.Scope.entries.forEach { scope ->
+                    androidx.compose.material3.FilterChip(
+                        selected = state.scope == scope,
+                        onClick = { viewModel.updateScope(scope) },
+                        label = { Text(scope.label) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             when {
                 state.searching -> Text("Searching…", style = MaterialTheme.typography.bodyMedium)
                 state.searched && state.hits.isEmpty() ->
@@ -97,7 +108,9 @@ fun SearchScreen(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { navController.navigate("browse/${hit.paperId}") }
+                            .clickable {
+                                navController.navigate("browse/${hit.paperId}?focus=${hit.question.id}")
+                            }
                     ) {
                         Row(
                             modifier = Modifier

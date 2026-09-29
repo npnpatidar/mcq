@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 
 data class SearchUiState(
     val query: String = "",
+    val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL,
     val searching: Boolean = false,
     val searched: Boolean = false,
     val hits: List<QuestionSearch.Hit> = emptyList()
@@ -33,6 +34,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateQuery(query: String) {
         _state.update { it.copy(query = query, searched = false) }
+        rerun()
+    }
+
+    fun updateScope(scope: QuestionSearch.Scope) {
+        _state.update { it.copy(scope = scope, searched = false) }
+        rerun()
+    }
+
+    private fun rerun() {
+        val query = _state.value.query
+        val scope = _state.value.scope
         searchJob?.cancel()
         if (query.isBlank()) {
             _state.update { it.copy(searching = false, hits = emptyList()) }
@@ -42,8 +54,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             delay(300)
             _state.update { it.copy(searching = true) }
             try {
-                val hits = repository.searchGlobal(query)
-                Logger.d("SEARCHVM", "search('$query') -> ${hits.size} hits")
+                val hits = repository.searchGlobal(query, scope)
+                Logger.d("SEARCHVM", "search('$query', $scope) -> ${hits.size} hits")
                 _state.update { it.copy(searching = false, searched = true, hits = hits) }
             } catch (e: Exception) {
                 Logger.e("SEARCHVM", "search failed", e)

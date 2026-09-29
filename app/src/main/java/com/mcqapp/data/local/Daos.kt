@@ -91,6 +91,14 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' OR tags LIKE '%' || :query || '%' ORDER BY rowid DESC")
     suspend fun search(query: String): List<QuestionEntity>
 
+    @Query(
+        "SELECT DISTINCT questions.* FROM questions LEFT JOIN options " +
+            "ON options.questionId = questions.id WHERE questions.text LIKE '%' || :query || '%' " +
+            "OR questions.tags LIKE '%' || :query || '%' OR options.text LIKE '%' || :query || '%' " +
+            "ORDER BY questions.rowid DESC"
+    )
+    suspend fun searchIncludingOptions(query: String): List<QuestionEntity>
+
     @Query("SELECT COUNT(*) FROM questions WHERE categoryId = :categoryId")
     suspend fun countByCategory(categoryId: String): Int
 

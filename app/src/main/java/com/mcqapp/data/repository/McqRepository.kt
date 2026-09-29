@@ -117,10 +117,20 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it.remove(progressKey) }
     }
 
-    /** Cross-paper text/tag search with paper provenance attached. */
-    suspend fun searchGlobal(query: String): List<com.mcqapp.domain.QuestionSearch.Hit> {
+    /** Cross-paper search with paper provenance attached. */
+    suspend fun searchGlobal(
+        query: String,
+        scope: com.mcqapp.domain.QuestionSearch.Scope =
+            com.mcqapp.domain.QuestionSearch.Scope.ALL
+    ): List<com.mcqapp.domain.QuestionSearch.Hit> {
         if (query.isBlank()) return emptyList()
-        val questions = searchQuestions(query)
+        // DAO prefilter must cover option texts whenever the scope needs them.
+        val prefiltered = when (scope) {
+            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(query)
+            else -> db.questionDao().searchIncludingOptions(query)
+        }
+        val questions = prefiltered.toDomainBulk()
+            .let { com.mcqapp.domain.QuestionSearch.filter(it, query, scope) }
         if (questions.isEmpty()) return emptyList()
         val papersById = db.paperDao().getAll().associateBy({ it.id }, { it.title })
         val paperByCategory = db.categoryDao().getAll().associate { cat ->

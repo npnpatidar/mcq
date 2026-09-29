@@ -46,6 +46,36 @@ class QuestionSearchTest {
     }
 
     @Test
+    fun scopesRestrictMatchArea() {
+        // "paris" is option-only; "planet" is text-only.
+        assertEquals(
+            listOf("q2"),
+            QuestionSearch.filter(questions, "paris", QuestionSearch.Scope.OPTIONS).map { it.id }
+        )
+        assertEquals(
+            emptyList<Question>(),
+            QuestionSearch.filter(questions, "paris", QuestionSearch.Scope.QUESTION)
+        )
+        assertEquals(
+            listOf("q1"),
+            QuestionSearch.filter(questions, "planet", QuestionSearch.Scope.QUESTION).map { it.id }
+        )
+        assertEquals(
+            emptyList<Question>(),
+            QuestionSearch.filter(questions, "planet", QuestionSearch.Scope.OPTIONS)
+        )
+        // Tags belong to the question scope.
+        assertEquals(
+            listOf("q1"),
+            QuestionSearch.filter(questions, "space", QuestionSearch.Scope.QUESTION).map { it.id }
+        )
+        assertEquals(
+            emptyList<Question>(),
+            QuestionSearch.filter(questions, "space", QuestionSearch.Scope.OPTIONS)
+        )
+    }
+
+    @Test
     fun attachAddsProvenanceAndDropsOrphans() {
         val hits = QuestionSearch.attach(
             questions,

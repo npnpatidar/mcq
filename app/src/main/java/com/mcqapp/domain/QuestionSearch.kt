@@ -8,13 +8,25 @@ package com.mcqapp.domain
  */
 object QuestionSearch {
 
-    fun filter(questions: List<Question>, query: String): List<Question> {
+    /** Where to look: question text (+tags), option texts, or both. */
+    enum class Scope(val label: String) { ALL("All"), QUESTION("Questions"), OPTIONS("Options") }
+
+    fun filter(
+        questions: List<Question>,
+        query: String,
+        scope: Scope = Scope.ALL
+    ): List<Question> {
         val q = query.trim().lowercase()
         if (q.isBlank()) return questions
         return questions.filter { question ->
-            question.text.lowercase().contains(q) ||
-                question.tags.any { it.lowercase().contains(q) } ||
-                question.options.any { it.text.lowercase().contains(q) }
+            val inQuestion = question.text.lowercase().contains(q) ||
+                question.tags.any { it.lowercase().contains(q) }
+            val inOptions = question.options.any { it.text.lowercase().contains(q) }
+            when (scope) {
+                Scope.QUESTION -> inQuestion
+                Scope.OPTIONS -> inOptions
+                Scope.ALL -> inQuestion || inOptions
+            }
         }
     }
 

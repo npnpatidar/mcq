@@ -96,6 +96,10 @@ class LegacyParserTest {
         """.trimIndent()
 
         val first = LegacyParser.parse(json)
+        // Paper ids derive from wall-clock millis: wait for the clock to tick
+        // so the two parses cannot share an id (same-ms parses would flake).
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() == start) Thread.sleep(1)
         val second = LegacyParser.parse(json)
         assertEquals(1, first.papers.size)
         assertEquals(1, second.papers.size)

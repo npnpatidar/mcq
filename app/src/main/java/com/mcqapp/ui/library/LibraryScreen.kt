@@ -212,7 +212,10 @@ fun LibraryScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                if (papers.isEmpty()) {
+                // Delayed empty-state: papers arrive a frame after first
+                // composition, which used to flash "No papers yet" every visit.
+                val showEmpty = com.mcqapp.util.rememberDelayedVisibility(papers.isEmpty())
+                if (showEmpty) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
@@ -228,6 +231,8 @@ fun LibraryScreen(
                             }
                         }
                     }
+                } else if (papers.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize()) { }
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),

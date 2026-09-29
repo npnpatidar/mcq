@@ -172,12 +172,21 @@ fun QuestionEditorScreen(
             )
         }
     ) { padding ->
-        if (state.loading) {
+        val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
+        if (showLoading) {
             Text(
                 "Loading…",
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
+            )
+            return@Scaffold
+        }
+        if (state.loading) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
             )
             return@Scaffold
         }

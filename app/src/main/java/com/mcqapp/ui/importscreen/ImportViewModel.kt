@@ -14,11 +14,13 @@ import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 object ImportDataHolder {
     var pendingJsonText: String? = null
@@ -81,21 +83,25 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 val existing = repository.db().questionDao().getAll()
-                val hashes = existing.map { it.contentHash }.toHashSet()
-                val ids = existing.map { it.id }.toHashSet()
-                val dups = HashSet<String>()
-                val changed = HashSet<String>()
-                _state.value.questions.forEach { q ->
-                    if (com.mcqapp.data.io.ContentHash.of(q) in hashes) {
-                        dups.add(q.id)
-                    } else if (q.id in ids) {
-                        changed.add(q.id)
+                // Hashing tens of thousands of questions blocks Main: classify off-thread.
+                val questions = _state.value.questions
+                val (dups, changed) = withContext(Dispatchers.Default) {
+                    val hashes = existing.map { it.contentHash }.toHashSet()
+                    val ids = existing.map { it.id }.toHashSet()
+                    val d = HashSet<String>()
+                    val c = HashSet<String>()
+                    questions.forEach { q ->
+                        if (com.mcqapp.data.io.ContentHash.of(q) in hashes) {
+                            d.add(q.id)
+                        } else if (q.id in ids) {
+                            c.add(q.id)
+                        }
                     }
+                    d to c
                 }
                 _state.update { it.copy(duplicateIds = dups, changedIds = changed) }
-                val total = _state.value.questions.size
-                Logger.d("IMPORTVM", "refreshDuplicates: $total preview = " +
-                    "${total - dups.size - changed.size} new, ${changed.size} changed, " +
+                Logger.d("IMPORTVM", "refreshDuplicates: ${questions.size} preview = " +
+                    "${questions.size - dups.size - changed.size} new, ${changed.size} changed, " +
                     "${dups.size} duplicates")
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "refreshDuplicates failed", e)
@@ -126,20 +132,29 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private var loadedDirectText: String? = null
+    // Fingerprint (not the full text: a 25k-question file is ~9MB and must
+    // not be retained twice) of the last directly-loaded JSON.
+    private var loadedDirectFp: String? = null
+
+    private fun fingerprint(text: String): String {
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
 
     fun loadJsonText(text: String) {
-        if (text == loadedDirectText && _state.value.questions.isNotEmpty()) {
-            Logger.d("IMPORTVM", "loadJsonText: same text already loaded " +
-                "(${_state.value.questions.size} questions), skipping reload to preserve in-memory edits")
-            return
-        }
-        loadedDirectText = text
         viewModelScope.launch {
+            // Fingerprint + parse off the main thread: multi-MB files froze it.
+            val fp = withContext(Dispatchers.Default) { fingerprint(text) }
+            if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) {
+                Logger.d("IMPORTVM", "loadJsonText: same text already loaded " +
+                    "(${_state.value.questions.size} questions), skipping reload to preserve in-memory edits")
+                return@launch
+            }
+            loadedDirectFp = fp
             try {
-                parseAndLoad(text)
+                withContext(Dispatchers.Default) { parseAndLoad(text) }
             } catch (e: Exception) {
-                loadedDirectText = null
+                loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
             }
         }
@@ -188,6 +203,80 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         _state.update(block)
     }
 
+    private fun buildPaperDto(
+        s: ImportUiState,
+        original: McqFileDto?
+    ): PaperDto {
+        if (original == null || original.papers.isEmpty()) {
+            val paperId = "paper-" + System.currentTimeMillis().toString(36)
+            return PaperDto(
+                id = paperId,
+                title = s.paperTitle.trim(),
+                description = s.paperDescription.trim(),
+                durationMinutes = s.durationMinutes,
+                negativeMarking = s.negativeMarking,
+                categories = listOf(
+                    CategoryDto(
+                        id = paperId + "-cat",
+                        title = s.categoryName.trim().ifBlank { "Uncategorized" },
+                        questions = s.questions
+                    )
+                )
+            )
+        }
+        val orig = original.papers.first()
+        val origTotal = orig.categories.sumOf { it.questions.size }
+        val origIds = orig.categories.flatMap { it.questions }.map { it.id }
+        val stateIds = s.questions.map { it.id }
+        // Counts + head only: a full 25k id list once blew up a log line.
+        Logger.d("IMPORTVM", "import(): orig cats=${orig.categories.size} " +
+            "origQs=$origTotal stateQs=${s.questions.size} " +
+            "origHead=${origIds.take(5)} stateHead=${stateIds.take(5)}")
+        // Index once: per-question find() was O(n^2) and froze Main on 25k rows.
+        val byId = s.questions.associateBy { it.id }
+        val matchedIds = HashSet<String>()
+        val mapped = orig.categories.map { cat ->
+            val matched = cat.questions.mapNotNull { origQ ->
+                byId[origQ.id]?.also { matchedIds.add(it.id) }
+            }
+            if (matched.size != cat.questions.size) {
+                Logger.w("IMPORTVM", "import(): category '${cat.title}': " +
+                    "orig=${cat.questions.size} questions but only " +
+                    "${matched.size} matched state by id; missing " +
+                    (cat.questions.map { it.id } - matched.map { it.id }.toSet())
+                        .take(10))
+            }
+            cat.copy(
+                title = if (orig.categories.size == 1) {
+                    s.categoryName.trim().ifBlank { cat.title }
+                } else {
+                    cat.title
+                },
+                questions = matched
+            )
+        }
+        // Safety net: every preview question must reach the Importer.
+        // If IDs diverged, appending beats silently dropping; the
+        // DB content-hash dedup still decides what is actually new.
+        val unmatched = s.questions.filter { it.id !in matchedIds }
+        val categories = if (unmatched.isNotEmpty() && mapped.isNotEmpty()) {
+            Logger.w("IMPORTVM", "import(): appending ${unmatched.size} unmatched " +
+                "state questions to last category: ${unmatched.take(10).map { it.id }}")
+            mapped.dropLast(1) + mapped.last().copy(
+                questions = mapped.last().questions + unmatched
+            )
+        } else {
+            mapped
+        }
+        return orig.copy(
+            title = s.paperTitle.trim(),
+            description = s.paperDescription.trim(),
+            durationMinutes = s.durationMinutes,
+            negativeMarking = s.negativeMarking,
+            categories = categories
+        )
+    }
+
     fun import() {
         val s = _state.value
         if (s.paperTitle.isBlank() || s.questions.isEmpty()) return
@@ -196,76 +285,21 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 val original = s.originalFile
-                val paperDto: PaperDto = if (original != null && original.papers.isNotEmpty()) {
-                    val orig = original.papers.first()
-                    val origTotal = orig.categories.sumOf { it.questions.size }
-                    Logger.d("IMPORTVM", "import(): orig cats=${orig.categories.size} " +
-                        "origQs=$origTotal stateQs=${s.questions.size} " +
-                        "origIds=${orig.categories.flatMap { it.questions }.map { it.id }} " +
-                        "stateIds=${s.questions.map { it.id }}")
-                    val matchedIds = HashSet<String>()
-                    val mapped = orig.categories.map { cat ->
-                        val matched = cat.questions.mapNotNull { origQ ->
-                            s.questions.find { it.id == origQ.id }
-                                ?.also { matchedIds.add(it.id) }
-                        }
-                        if (matched.size != cat.questions.size) {
-                            Logger.w("IMPORTVM", "import(): category '${cat.title}': " +
-                                "orig=${cat.questions.size} questions but only " +
-                                "${matched.size} matched state by id; missing " +
-                                (cat.questions.map { it.id } - matched.map { it.id }.toSet()))
-                        }
-                        cat.copy(
-                            title = if (orig.categories.size == 1) {
-                                s.categoryName.trim().ifBlank { cat.title }
-                            } else {
-                                cat.title
-                            },
-                            questions = matched
-                        )
-                    }
-                    // Safety net: every preview question must reach the Importer.
-                    // If IDs diverged, appending beats silently dropping; the
-                    // DB content-hash dedup still decides what is actually new.
-                    val unmatched = s.questions.filter { it.id !in matchedIds }
-                    val categories = if (unmatched.isNotEmpty() && mapped.isNotEmpty()) {
-                        Logger.w("IMPORTVM", "import(): appending ${unmatched.size} unmatched " +
-                            "state questions to last category: ${unmatched.map { it.id }}")
-                        mapped.dropLast(1) + mapped.last().copy(
-                            questions = mapped.last().questions + unmatched
-                        )
-                    } else {
-                        mapped
-                    }
-                    orig.copy(
-                        title = s.paperTitle.trim(),
-                        description = s.paperDescription.trim(),
-                        durationMinutes = s.durationMinutes,
-                        negativeMarking = s.negativeMarking,
-                        categories = categories
-                    )
-                } else {
-                    val paperId = "paper-" + System.currentTimeMillis().toString(36)
-                    PaperDto(
-                        id = paperId,
-                        title = s.paperTitle.trim(),
-                        description = s.paperDescription.trim(),
-                        durationMinutes = s.durationMinutes,
-                        negativeMarking = s.negativeMarking,
-                        categories = listOf(
-                            CategoryDto(
-                                id = paperId + "-cat",
-                                title = s.categoryName.trim().ifBlank { "Uncategorized" },
-                                questions = s.questions
-                            )
-                        )
-                    )
+                // paperDto assembly is O(n) CPU work (25k rows froze Main as
+                // O(n^2)); build it off-thread. Only the final state update
+                // below needs the main thread (and update() is thread-safe).
+                val paperDto: PaperDto = withContext(Dispatchers.Default) {
+                    buildPaperDto(s, original)
                 }
 
                 val file = McqFileDto(version = 1, papers = listOf(paperDto))
                 Logger.d("IMPORTVM", "import(): using ${s.questions.size} edited state questions " +
                     "(correct set on ${s.questions.count { it.correctOptionIds.isNotEmpty() }})")
-                val report = com.mcqapp.data.io.Importer(repository.db()).import(file)
+                // The whole DB import (hashing + writes for every row) stays
+                // off Main; 25k rows froze it for tens of seconds.
+                val report = withContext(Dispatchers.Default) {
+                    com.mcqapp.data.io.Importer(repository.db()).import(file)
+                }
                 Logger.i("IMPORTVM", "Imported: ${report.newPapers} new papers, ${report.updatedPapers} updated, " +
                     "${report.newQuestions} new questions, ${report.updatedQuestions} updated")
                 _state.update { it.copy(importing = false, importDone = true, importReport = report) }

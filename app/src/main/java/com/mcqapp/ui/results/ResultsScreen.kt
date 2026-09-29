@@ -11,10 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
@@ -78,12 +77,21 @@ fun ResultsScreen(
             )
         }
     ) { padding ->
-        if (state.loading) {
+        val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
+        if (showLoading) {
             Text(
                 "Loading…",
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
+            )
+            return@Scaffold
+        }
+        if (state.loading) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
             )
             return@Scaffold
         }
@@ -99,13 +107,27 @@ fun ResultsScreen(
             return@Scaffold
         }
 
-        Column(
+        // Hoisted + lazy: all result cards used to compose eagerly inside a
+        // scrolling Column, OOMing big attempt reviews like Browse did.
+        val filter = remember { mutableStateOf("All") }
+        val results = state.results
+        val filterValue = filter.value
+        val filtered = remember(results, filterValue) {
+            when (filterValue) {
+                "Correct" -> results.filter { it.isCorrect }
+                "Wrong" -> results.filter { !it.isCorrect && it.selectedOptionIds.isNotEmpty() }
+                "Skipped" -> results.filter { it.selectedOptionIds.isEmpty() }
+                else -> results
+            }
+        }
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+                .padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(attempt.title, style = MaterialTheme.typography.titleMedium)
@@ -150,8 +172,9 @@ fun ResultsScreen(
                 }
             }
 
+            }
+            item {
             if (state.categoryBreakdown.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Category breakdown", style = MaterialTheme.typography.titleSmall)
@@ -184,41 +207,37 @@ fun ResultsScreen(
                     }
                 }
             }
+            }
 
-            Spacer(Modifier.height(12.dp))
-            Text("Questions", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(8.dp))
-            val filter = remember { mutableStateOf("All") }
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("All", "Correct", "Wrong", "Skipped").forEach { label ->
-                    FilterChip(
-                        selected = filter.value == label,
-                        onClick = { filter.value = label },
-                        label = { Text(label) }
-                    )
+            item {
+                Text("Questions", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(8.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("All", "Correct", "Wrong", "Skipped").forEach { label ->
+                        FilterChip(
+                            selected = filter.value == label,
+                            onClick = { filter.value = label },
+                            label = { Text(label) }
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            val filtered = when (filter.value) {
-                "Correct" -> state.results.filter { it.isCorrect }
-                "Wrong" -> state.results.filter { !it.isCorrect && it.selectedOptionIds.isNotEmpty() }
-                "Skipped" -> state.results.filter { it.selectedOptionIds.isEmpty() }
-                else -> state.results
-            }
             if (filtered.isEmpty()) {
-                Text(
-                    "No ${filter.value.lowercase()} questions",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(vertical = 16.dp)
-                )
-            }
-            filtered.forEachIndexed { index, result ->
-                ResultCard(index = index + 1, result = result)
-                Spacer(Modifier.height(8.dp))
+                item {
+                    Text(
+                        "No ${filter.value.lowercase()} questions",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                }
+            } else {
+                itemsIndexed(filtered, key = { _, result -> result.questionId }) { index, result ->
+                    ResultCard(index = index + 1, result = result)
+                }
             }
         }
     }

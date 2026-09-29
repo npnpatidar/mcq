@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -73,12 +74,22 @@ fun BrowseScreen(
             )
         }
     ) { padding ->
-        if (state.loading) {
+        // Delayed spinner: fast loads show blank instead of flashing text.
+        val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
+        if (showLoading) {
             Text(
                 "Loading…",
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
+            )
+            return@Scaffold
+        }
+        if (state.loading) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
             )
             return@Scaffold
         }
@@ -93,6 +104,20 @@ fun BrowseScreen(
             return@Scaffold
         }
 
+        // Hoisted + memoized: cards used to render inside a single lazy item
+        // via forEach, defeating virtualization and OOMing big papers.
+        val filter = remember { mutableStateOf("All") }
+        val questions = state.questions
+        val filterValue = filter.value
+        val filtered = remember(questions, filterValue) {
+            when (filterValue) {
+                "No answer" -> questions.filter { it.correctOptionIds.isEmpty() }
+                "No explanation" -> questions.filter { it.explanation.isBlank() }
+                "No category" -> questions.filter { it.categoryId.isBlank() }
+                else -> questions
+            }
+        }
+        val filteredIds = remember(filtered) { filtered.map { it.id } }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -101,7 +126,6 @@ fun BrowseScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
-                val filter = remember { mutableStateOf("All") }
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -115,36 +139,30 @@ fun BrowseScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                val filtered = when (filter.value) {
-                    "No answer" -> state.questions.filter { it.correctOptionIds.isEmpty() }
-                    "No explanation" -> state.questions.filter { it.explanation.isBlank() }
-                    "No category" -> state.questions.filter { it.categoryId.isBlank() }
-                    else -> state.questions
-                }
                 if (filtered.isEmpty()) {
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         "No questions match this filter",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(vertical = 16.dp)
                     )
                 }
-                filtered.forEachIndexed { index, question ->
-                    BrowseQuestionCard(
-                        index = index + 1,
-                        question = question,
-                        onEdit = {
-                            com.mcqapp.ui.editor.EditorSession.start(
-                                ids = filtered.map { it.id },
-                                index = index
-                            )
-                            navController.navigate(
-                                "editor?questionId=${question.id}&paperId=$paperId&categoryId=${question.categoryId}"
-                            )
-                        },
-                        onDelete = { viewModel.deleteQuestion(question.id) }
-                    )
-                }
+            }
+            itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
+                BrowseQuestionCard(
+                    index = index + 1,
+                    question = question,
+                    onEdit = {
+                        com.mcqapp.ui.editor.EditorSession.start(
+                            ids = filteredIds,
+                            index = index
+                        )
+                        navController.navigate(
+                            "editor?questionId=${question.id}&paperId=$paperId&categoryId=${question.categoryId}"
+                        )
+                    },
+                    onDelete = { viewModel.deleteQuestion(question.id) }
+                )
             }
         }
     }

@@ -32,6 +32,8 @@ class BrowseViewModel(
 
     init {
         Logger.i("BROWSEVM", "BrowseViewModel created: paperId=$paperId")
+        val created = android.os.SystemClock.elapsedRealtime()
+        var firstLoad = true
         viewModelScope.launch {
             val paper = repository.getPaper(paperId)
             _state.value = _state.value.copy(paper = paper)
@@ -42,6 +44,15 @@ class BrowseViewModel(
                     val ids = questions.map { it.id }
                     Logger.d("BROWSEVM", "Observed ${questions.size} questions for paper $paperId: " +
                         "order=[${ids.take(5).joinToString(",")}${if (ids.size > 5) ",... +${ids.size - 5} more" else ""}]")
+                    if (firstLoad) {
+                        firstLoad = false
+                        val runtime = Runtime.getRuntime()
+                        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
+                        val maxMb = runtime.maxMemory() / 1048576
+                        Logger.i("BROWSEVM", "first load of ${questions.size} questions took " +
+                            "${android.os.SystemClock.elapsedRealtime() - created}ms, " +
+                            "heap ${usedMb}MB/${maxMb}MB")
+                    }
                     _state.update { it.copy(loading = false, questions = questions) }
                 }
             } catch (e: Exception) {

@@ -20,6 +20,7 @@ data class ImportReport(
 class Importer(private val db: AppDatabase) {
 
     suspend fun import(file: McqFileDto): ImportReport {
+        val started = android.os.SystemClock.elapsedRealtime()
         Logger.i("IMPORT", "Starting import of ${file.papers.size} papers")
         var newPapers = 0
         var updatedPapers = 0
@@ -196,8 +197,12 @@ class Importer(private val db: AppDatabase) {
                 }
             }
         }
+        val elapsed = android.os.SystemClock.elapsedRealtime() - started
+        val runtime = Runtime.getRuntime()
+        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
         Logger.i("IMPORT", "Import complete: papers $newPapers new/$updatedPapers updated, " +
-            "questions $newQuestions new/$updatedQuestions updated, $duplicateQuestions duplicates skipped")
+            "questions $newQuestions new/$updatedQuestions updated, $duplicateQuestions duplicates skipped " +
+            "in ${elapsed}ms, heap ${usedMb}MB/${runtime.maxMemory() / 1048576}MB")
         return ImportReport(newPapers, updatedPapers, newQuestions, updatedQuestions, duplicateQuestions)
     }
 

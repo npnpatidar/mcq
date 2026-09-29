@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -54,11 +55,17 @@ fun ImportScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    val newQuestions = state.questions.filter {
-        it.id !in state.duplicateIds && it.id !in state.changedIds
+    // Memoized: these re-ran over all rows on every recomposition (frames
+    // dropped while scrolling big previews).
+    val newQuestions = remember(state.questions, state.duplicateIds, state.changedIds) {
+        state.questions.filter { it.id !in state.duplicateIds && it.id !in state.changedIds }
     }
-    val changedQuestions = state.questions.filter { it.id in state.changedIds }
-    val dupQuestions = state.questions.filter { it.id in state.duplicateIds }
+    val changedQuestions = remember(state.questions, state.changedIds) {
+        state.questions.filter { it.id in state.changedIds }
+    }
+    val dupQuestions = remember(state.questions, state.duplicateIds) {
+        state.questions.filter { it.id in state.duplicateIds }
+    }
     val report = state.importReport
     if (state.importDone && report != null) {
         AlertDialog(
@@ -124,6 +131,12 @@ fun ImportScreen(
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (importText != null) {
             viewModel.loadJsonText(importText)
+            // Drop the global copy once consumed: the VM owns the text now
+            // (fingerprint-gated), and a 25k-question file is ~9MB retained.
+            // Identity-guarded so a newer pick made meanwhile is never lost.
+            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText === importText) {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = null
+            }
         }
     }
 
@@ -139,7 +152,8 @@ fun ImportScreen(
             )
         }
     ) { padding ->
-        if (state.loading) {
+        val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
+        if (showLoading) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -151,6 +165,14 @@ fun ImportScreen(
                 Spacer(Modifier.height(8.dp))
                 Text("Loading JSON…")
             }
+            return@Scaffold
+        }
+        if (state.loading) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
             return@Scaffold
         }
 

@@ -21,8 +21,10 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -91,29 +93,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     }
 
     fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
-        db.questionDao().observeCategoryCounts().map { counts ->
-            val countMap = counts.associate { it.categoryId to it.cnt }
+        // Bulk load (one options + one answers query for all rows) and map off
+        // the main thread: the per-row re-fetch version stalled Browse badly.
+        db.questionDao().observeCategoryCounts().map {
+            val started = android.os.SystemClock.elapsedRealtime()
             val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
             val entities = categoryIds.flatMap { db.questionDao().getByCategory(it) }
-            entities.map { entity ->
-                val options = db.optionDao().getForQuestions(entities.map { it.id })
-                    .groupBy { it.questionId }[entity.id] ?: emptyList()
-                val correctIds = db.correctAnswerDao().getForQuestions(entities.map { it.id })
-                    .groupBy { it.questionId }[entity.id]?.map { it.optionId }?.toSet() ?: emptySet()
-                Question(
-                    id = entity.id,
-                    categoryId = entity.categoryId,
-                    text = entity.text,
-                    image = entity.image,
-                    options = options.map { QuestionOption(it.id, it.text, it.image) },
-                    correctOptionIds = correctIds,
-                    explanation = entity.explanation,
-                    explanationImage = entity.explanationImage,
-                    difficulty = Difficulty.fromLabel(entity.difficulty),
-                    tags = entity.tags.split(",").filter { it.isNotBlank() }
-                )
-            }
-        }
+            val result = entities.toDomainBulk()
+            Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
+                "mapped ${result.size} questions in " +
+                "${android.os.SystemClock.elapsedRealtime() - started}ms")
+            result
+        }.flowOn(Dispatchers.IO)
 
     fun observeQuestion(questionId: String): Flow<Question?> =
         db.questionDao().observeAll().map { list -> list.find { it.id == questionId } }

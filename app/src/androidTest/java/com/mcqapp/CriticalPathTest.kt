@@ -72,7 +72,7 @@ class CriticalPathTest {
         // The tag assert proves layout is done, so the adjacent Start click
         // needs no scroll synchronization.
         waitFor("UITest Paper")
-        compose.onNodeWithTag("paper-title").assertIsDisplayed()
+        compose.onNodeWithTag("paper-title-uitest-paper").assertIsDisplayed()
         compose.onNodeWithText("Start", substring = false).performClick()
 
         // Q1 correct, Q2 skipped, Q3 wrong. Options live in the
@@ -106,8 +106,10 @@ class CriticalPathTest {
         }
         compose.setContent { McqNavHost(repository = repository) }
 
-        waitFor("UISR Paper")
-        compose.onNodeWithText("UISR Paper", substring = false).assertIsDisplayed()
+        // The tag assert proves the seeded card is laid out, so the Study
+        // button beside it needs no scroll synchronization. Matching on the
+        // title text alone would hit the drawer's duplicate copy.
+        compose.onNodeWithTag("paper-title-uitest-sr").assertIsDisplayed()
         // Never-studied cards are counted as new rather than due.
         compose.onNodeWithText("Study (2 new)", substring = false).performClick()
 

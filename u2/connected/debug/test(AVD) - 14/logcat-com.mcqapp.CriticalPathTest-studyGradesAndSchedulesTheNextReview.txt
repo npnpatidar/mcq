@@ -1,0 +1,183 @@
+09-29 22:10:10.894  2333  2352 I TestRunner: started: studyGradesAndSchedulesTheNextReview(com.mcqapp.CriticalPathTest)
+09-29 22:10:10.905  2333  2352 D IdlingRegistry: Registering idling resources: [androidx.compose.ui.test.EspressoLink@e774f02]
+09-29 22:10:10.914  2333  2352 W Settings: Setting always_finish_activities has moved from android.provider.Settings.System to android.provider.Settings.Global, returning read-only value.
+09-29 22:10:10.922   800   859 D SplashScreenView: Build android.window.SplashScreenView{d665f10 V.E...... ......ID 0,0-0,0}
+09-29 22:10:10.922   800   859 D SplashScreenView: Icon: view: null drawable: null size: 0
+09-29 22:10:10.922   800   859 D SplashScreenView: Branding: view: android.view.View{bed8a09 G.ED..... ......I. 0,0-0,0 #10204ef android:id/splashscreen_branding_view} drawable: null size w: 0 h: 0
+09-29 22:10:11.115   508  1162 W ServiceManagerCppClient: Permission failure: android.permission.ROTATE_SURFACE_FLINGER from uid=10142 pid=0
+09-29 22:10:11.115   508  1162 D PermissionCache: checking android.permission.ROTATE_SURFACE_FLINGER for uid=10142 => denied (68 us)
+09-29 22:10:11.115   508  1162 W ServiceManagerCppClient: Permission failure: android.permission.INTERNAL_SYSTEM_WINDOW from uid=10142 pid=0
+09-29 22:10:11.115   508  1162 D PermissionCache: checking android.permission.INTERNAL_SYSTEM_WINDOW for uid=10142 => denied (15 us)
+09-29 22:10:11.115   508  1162 W ServiceManagerCppClient: Permission failure: android.permission.ACCESS_SURFACE_FLINGER from uid=10142 pid=0
+09-29 22:10:11.115   508  1162 D PermissionCache: checking android.permission.ACCESS_SURFACE_FLINGER for uid=10142 => denied (11 us)
+09-29 22:10:11.133  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: PRE_ON_CREATE
+09-29 22:10:11.134  2333  2333 V ActivityScenario: Activity lifecycle changed event received but ignored because the reported transition was not ON_CREATE while the last known transition was PRE_ON_CREATE
+09-29 22:10:11.140  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: CREATED
+09-29 22:10:11.141  2333  2333 V ActivityScenario: Update currentActivityStage to CREATED, currentActivity=androidx.activity.ComponentActivity@ab94426
+09-29 22:10:11.143  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: STARTED
+09-29 22:10:11.144  2333  2333 V ActivityScenario: Update currentActivityStage to STARTED, currentActivity=androidx.activity.ComponentActivity@ab94426
+09-29 22:10:11.145  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: RESUMED
+09-29 22:10:11.145  2333  2333 V ActivityScenario: Update currentActivityStage to RESUMED, currentActivity=androidx.activity.ComponentActivity@ab94426
+09-29 22:10:11.163   800   858 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@429bfdc
+09-29 22:10:11.164   508   718 W InputManager-JNI: Input channel object '10ae135 Splash Screen com.mcqapp.test (client)' was disposed without first being removed with the input manager!
+09-29 22:10:11.177   508   525 W ziparchive: Unable to open '/data/app/~~ssl014mP924hTeFngxiSng==/com.mcqapp-qGa1H2YWzTtUGaVZDdnhGA==/base.dm': No such file or directory
+09-29 22:10:11.178  2380  2380 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@6aea912
+09-29 22:10:11.178   508   525 I ActivityTaskManager: Displayed com.mcqapp/androidx.activity.ComponentActivity for user 0: +260ms
+09-29 22:10:11.179   508  1636 W InputManager-JNI: Input channel object '4d406d0 com.mcqapp.test/androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity (client)' was disposed without first being removed with the input manager!
+09-29 22:10:11.208   800   858 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@dba5c3c
+09-29 22:10:11.208   508  1636 I ImeTracker: com.mcqapp:e6b0d14: onRequestHide at ORIGIN_SERVER_HIDE_INPUT reason HIDE_UNSPECIFIED_WINDOW
+09-29 22:10:11.208   508  1593 W InputManager-JNI: Input channel object 'a2e313d Splash Screen com.mcqapp (client)' was disposed without first being removed with the input manager!
+09-29 22:10:11.209   508  1636 I ImeTracker: com.mcqapp:e6b0d14: onCancelled at PHASE_SERVER_SHOULD_HIDE
+09-29 22:10:11.215  2333  2352 D REPO    : saveQuestion(id=uitest-q1, category=uitest-cat, options=2, correct=[uitest-q1-a], text='UITest uitest-q1?')
+09-29 22:10:11.218  2333  2352 D REPO    : saveQuestion(id=uitest-q1): existing=false, existingSortOrder=null, resolvedSortOrder=0
+09-29 22:10:11.224  2333  2352 D REPO    : saveQuestion(id=uitest-q1): contentHash=eaf4ddf35c08
+09-29 22:10:11.230  2333  2352 D REPO    : saveQuestion(id=uitest-q1): question row upserted
+09-29 22:10:11.242  2333  2352 D REPO    : saveQuestion(id=uitest-q1): 2 options written
+09-29 22:10:11.246  2333  2352 D REPO    : saveQuestion(id=uitest-q1): 1 correct answers written - done
+09-29 22:10:11.248  2333  2352 D REPO    : saveQuestion(id=uitest-q2, category=uitest-cat, options=2, correct=[uitest-q2-a], text='UITest uitest-q2?')
+09-29 22:10:11.251  2333  2352 D REPO    : saveQuestion(id=uitest-q2): existing=false, existingSortOrder=null, resolvedSortOrder=1
+09-29 22:10:11.257  2333  2352 D REPO    : saveQuestion(id=uitest-q2): contentHash=a7d6168a0c7c
+09-29 22:10:11.262  2333  2352 D REPO    : saveQuestion(id=uitest-q2): question row upserted
+09-29 22:10:11.267  2333  2352 D REPO    : saveQuestion(id=uitest-q2): 2 options written
+09-29 22:10:11.271  2333  2352 D REPO    : saveQuestion(id=uitest-q2): 1 correct answers written - done
+09-29 22:10:11.273  2333  2352 D REPO    : saveQuestion(id=uitest-q3, category=uitest-cat, options=2, correct=[uitest-q3-a], text='UITest uitest-q3?')
+09-29 22:10:11.276  2333  2352 D REPO    : saveQuestion(id=uitest-q3): existing=false, existingSortOrder=null, resolvedSortOrder=2
+09-29 22:10:11.280  2333  2352 D REPO    : saveQuestion(id=uitest-q3): contentHash=d75e3a45461c
+09-29 22:10:11.283  2333  2352 D REPO    : saveQuestion(id=uitest-q3): question row upserted
+09-29 22:10:11.287  2333  2352 D REPO    : saveQuestion(id=uitest-q3): 2 options written
+09-29 22:10:11.291  2333  2352 D REPO    : saveQuestion(id=uitest-q3): 1 correct answers written - done
+09-29 22:10:11.296  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q1, category=uitest-sr-cat, options=2, correct=[uitest-sr-q1-a], text='UITest uitest-sr-q1?')
+09-29 22:10:11.299  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q1): existing=false, existingSortOrder=null, resolvedSortOrder=0
+09-29 22:10:11.302  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q1): contentHash=b875a69be969
+09-29 22:10:11.305  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q1): question row upserted
+09-29 22:10:11.309  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q1): 2 options written
+09-29 22:10:11.313  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q1): 1 correct answers written - done
+09-29 22:10:11.314  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q2, category=uitest-sr-cat, options=2, correct=[uitest-sr-q2-a], text='UITest uitest-sr-q2?')
+09-29 22:10:11.317  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q2): existing=false, existingSortOrder=null, resolvedSortOrder=1
+09-29 22:10:11.321  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q2): contentHash=509f654707fa
+09-29 22:10:11.323  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q2): question row upserted
+09-29 22:10:11.327  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q2): 2 options written
+09-29 22:10:11.332  2333  2352 D REPO    : saveQuestion(id=uitest-sr-q2): 1 correct answers written - done
+09-29 22:10:11.363  2333  2333 E LIBVM   : getStudyCounts failed
+09-29 22:10:11.475  2333  2333 D REPO    : getAttempts()
+09-29 22:10:11.479  2333  2333 D REPO    : getAllQuestionResults()
+09-29 22:10:11.481  2333  2333 D REPO    : getQuestionsForPaper(uitest-sr)
+09-29 22:10:11.486  2333  2333 D REPO    : getQuestionsForCategories(1 categories)
+09-29 22:10:11.493  2333  2333 D REPO    : getQuestionsForCategories returned 2 questions
+09-29 22:10:11.631  2333  2333 I REPO    : seeded 2 card_state rows for uitest-sr
+09-29 22:10:11.633  2333  2333 D REPO    : getQuestionsForPaper(uitest-paper)
+09-29 22:10:11.638  2333  2333 D REPO    : getQuestionsForCategories(1 categories)
+09-29 22:10:11.644  2333  2333 D REPO    : getQuestionsForCategories returned 3 questions
+09-29 22:10:11.666  2333  2333 I REPO    : seeded 3 card_state rows for uitest-paper
+09-29 22:10:11.742  2333  2352 D REPO    : deletePaper(uitest-paper)
+09-29 22:10:11.757   800   859 D SplashScreenView: Build android.window.SplashScreenView{90ea570 V.E...... ......ID 0,0-0,0}
+09-29 22:10:11.757   800   859 D SplashScreenView: Icon: view: null drawable: null size: 0
+09-29 22:10:11.757   800   859 D SplashScreenView: Branding: view: android.view.View{644c0e9 G.ED..... ......I. 0,0-0,0 #10204ef android:id/splashscreen_branding_view} drawable: null size w: 0 h: 0
+09-29 22:10:11.762  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: PAUSED
+09-29 22:10:11.762  2333  2333 V ActivityScenario: Update currentActivityStage to PAUSED, currentActivity=androidx.activity.ComponentActivity@ab94426
+09-29 22:10:11.769  2333  2333 D REPO    : getQuestionsForPaper(uitest-sr)
+09-29 22:10:11.770   390   390 I BpBinder: onLastStrongRef automatically unlinking death recipients: 
+09-29 22:10:11.783  2333  2333 D REPO    : getQuestionsForCategories(1 categories)
+09-29 22:10:11.792  2333  2333 D REPO    : getQuestionsForCategories returned 2 questions
+09-29 22:10:11.798  2380  2399 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+09-29 22:10:11.845   800   865 D EGL_emulation: app_time_stats: avg=295.05ms min=13.37ms max=603.86ms count=4
+09-29 22:10:11.847  2333  2333 D REPO    : getQuestionsForPaper(uitest-paper)
+09-29 22:10:11.850  2333  2333 D REPO    : getQuestionsForCategories(0 categories)
+09-29 22:10:11.851  2333  2333 D REPO    : getQuestionsForCategories returned 0 questions
+09-29 22:10:11.868  2333  2333 D REPO    : getQuestionsForPaper(uitest-sr)
+09-29 22:10:12.041   508   525 W ziparchive: Unable to open '/data/app/~~FbvmeDbO12XKvcQRR_D0WQ==/com.mcqapp.test-96nIwqY7VmTYYPH22wS4rQ==/base.dm': No such file or directory
+09-29 22:10:12.042   508   525 I ActivityTaskManager: Displayed com.mcqapp.test/androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity for user 0: +289ms
+09-29 22:10:12.060  2333  2333 D REPO    : getQuestionsForCategories(1 categories)
+09-29 22:10:12.062   800   858 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@bc9ee2b
+09-29 22:10:12.063   508   570 W InputManager-JNI: Input channel object '4d50390 Splash Screen com.mcqapp.test (client)' was disposed without first being removed with the input manager!
+09-29 22:10:12.070   390   390 I BpBinder: onLastStrongRef automatically unlinking death recipients: 
+09-29 22:10:12.073  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: STOPPED
+09-29 22:10:12.074  2333  2333 V ActivityScenario: Update currentActivityStage to STOPPED, currentActivity=androidx.activity.ComponentActivity@ab94426
+09-29 22:10:12.091   508  1162 I ImeTracker: com.android.launcher3:418b0114: onRequestHide at ORIGIN_SERVER_HIDE_INPUT reason HIDE_UNSPECIFIED_WINDOW
+09-29 22:10:12.091   508  1162 I ImeTracker: com.android.launcher3:418b0114: onCancelled at PHASE_SERVER_SHOULD_HIDE
+09-29 22:10:12.116  2380  2380 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@f322410
+09-29 22:10:12.117   508  1162 W InputManager-JNI: Input channel object '4014bc1 com.mcqapp.test/androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity (client)' was disposed without first being removed with the input manager!
+09-29 22:10:12.164  2333  2333 D LifecycleMonitor: Lifecycle status change: androidx.activity.ComponentActivity@ab94426 in: DESTROYED
+09-29 22:10:12.164  2333  2333 V ActivityScenario: Update currentActivityStage to DESTROYED, currentActivity=null
+09-29 22:10:12.165  2333  2333 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@cdd5d5f
+09-29 22:10:12.167   508  1162 W InputManager-JNI: Input channel object '2511318 com.mcqapp/androidx.activity.ComponentActivity (client)' was disposed without first being removed with the input manager!
+09-29 22:10:12.170  2333  2333 E LIBVM   : getStudyCounts failed
+09-29 22:10:12.180  2333  2352 D IdlingRegistry: Unregistering idling resources: [androidx.compose.ui.test.EspressoLink@e774f02]
+09-29 22:10:12.182  2333  2421 D ProfileInstaller: Installing profile for com.mcqapp
+09-29 22:10:12.184  2333  2352 E TestRunner: failed: studyGradesAndSchedulesTheNextReview(com.mcqapp.CriticalPathTest)
+09-29 22:10:12.191  2333  2352 E TestRunner: ----- begin exception -----
+09-29 22:10:12.191  2333  2352 E TestRunner: java.lang.AssertionError: Failed to perform checkIsDisplayed check: Expected at most 1 node but found 2 nodes that satisfy (Text + InputText + EditableText contains 'UISR Paper' (ignoreCase: false))
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidAssertions_androidKt.checkIsDisplayed(AndroidAssertions.android.kt:35)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AssertionsKt.isDisplayed(Assertions.kt:380)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:33)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at com.mcqapp.CriticalPathTest.studyGradesAndSchedulesTheNextReview(CriticalPathTest.kt:110)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at java.lang.reflect.Method.invoke(Native Method)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.test.internal.runner.junit4.statement.RunBefores.evaluate(RunBefores.java:80)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.test.internal.runner.junit4.statement.RunAfters.evaluate(RunAfters.java:61)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.junit4.AndroidComposeTestRule$apply$testWithDisposal$1.evaluate(AndroidComposeTestRule.android.kt:426)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at org.junit.rules.ExternalResource$1.evaluate(ExternalResource.java:54)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.junit4.AndroidComposeTestRule$apply$1$evaluate$1.invokeSuspend(AndroidComposeTestRule.android.kt:448)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.junit4.AndroidComposeTestRule$apply$1$evaluate$1.invoke(Unknown Source:8)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.junit4.AndroidComposeTestRule$apply$1$evaluate$1.invoke(Unknown Source:4)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$runTest$1$1$1$1$1.invokeSuspend(ComposeUiTest.android.kt:689)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$runTest$1$1$1$1$1.invoke(Unknown Source:8)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$runTest$1$1$1$1$1.invoke(Unknown Source:2)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.EspressoLink.withStrategy(EspressoLink.android.kt:69)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$runTest$1$1.invokeSuspend(ComposeUiTest.android.kt:686)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$runTest$1$1.invoke(Unknown Source:8)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$runTest$1$1.invoke(Unknown Source:4)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$1.invokeSuspend(TestBuilders.kt:318)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:101)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestDispatcher.processEvent$kotlinx_coroutines_test(TestDispatcher.kt:24)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestCoroutineScheduler.tryRunNextTaskUnless$kotlinx_coroutines_test(TestCoroutineScheduler.kt:99)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$workRunner$1.invokeSuspend(TestBuilders.kt:327)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:101)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:95)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:69)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:47)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersJvmKt.createTestResult(TestBuildersJvm.kt:10)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0(TestBuilders.kt:310)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0(Unknown Source:1)
+09-29 22:10:12.191  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0(TestBuilders.kt:168)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0(Unknown Source:1)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.runTest(ComposeUiTest.android.kt:665)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at androidx.compose.ui.test.junit4.AndroidComposeTestRule$apply$1.evaluate(AndroidComposeTestRule.android.kt:447)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at androidx.test.ext.junit.runners.AndroidJUnit4.run(AndroidJUnit4.java:162)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.Suite.runChild(Suite.java:128)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.Suite.runChild(Suite.java:27)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runner.JUnitCore.run(JUnitCore.java:137)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at org.junit.runner.JUnitCore.run(JUnitCore.java:115)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at androidx.test.internal.runner.TestExecutor.execute(TestExecutor.java:68)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at androidx.test.internal.runner.TestExecutor.execute(TestExecutor.java:59)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:467)
+09-29 22:10:12.193  2333  2352 E TestRunner: 	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2402)
+09-29 22:10:12.193  2333  2352 E TestRunner: ----- end exception -----
+09-29 22:10:12.196  2333  2352 I TestRunner: finished: studyGradesAndSchedulesTheNextReview(com.mcqapp.CriticalPathTest)

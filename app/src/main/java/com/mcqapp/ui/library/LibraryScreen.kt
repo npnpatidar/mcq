@@ -678,7 +678,7 @@ private fun PaperCard(
                     Text(
                         paper.title,
                         style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.testTag("paper-title")
+                        modifier = Modifier.testTag("paper-title-${paper.id}")
                     )
                     if (paper.description.isNotBlank()) {
                         Text(

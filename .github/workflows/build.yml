@@ -31,10 +31,8 @@ jobs:
 
       - name: Install Android platform and build tools
         run: |
-          echo "--- installed ---"
-          sdkmanager --list_installed 2>/dev/null | grep -E "platforms|build-tools" || true
-          echo "--- installing ---"
-          sdkmanager "platforms;android-37" "build-tools;36.0.0"
+          echo "--- remote platforms ---"
+          sdkmanager --list 2>/dev/null | grep -E "platforms;android-[0-9]+" | sort -u || true
 
       - name: Build debug APK and run unit tests
         # No aapt2 override: the bundled aapt2 runs natively on x86_64

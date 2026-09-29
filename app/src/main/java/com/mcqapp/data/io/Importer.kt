@@ -161,14 +161,23 @@ class Importer(private val db: AppDatabase) {
                         Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
                             "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
 
+                        // Hash above covers the ORIGINAL bytes (preview parity);
+                        // only stored bytes shrink.
+                        val scaled = questionDto.copy(
+                            image = ImageDownscale.downscaleDataUri(questionDto.image),
+                            explanationImage = ImageDownscale.downscaleDataUri(questionDto.explanationImage),
+                            options = questionDto.options.map { o ->
+                                o.copy(image = ImageDownscale.downscaleDataUri(o.image))
+                            }
+                        )
                         db.questionDao().upsert(
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
                                 text = questionDto.text,
-                                image = questionDto.image,
+                                image = scaled.image,
                                 explanation = questionDto.explanation,
-                                explanationImage = questionDto.explanationImage,
+                                explanationImage = scaled.explanationImage,
                                 difficulty = questionDto.difficulty,
                                 marks = questionDto.marks,
                                 tags = questionDto.tags.joinToString(","),
@@ -180,7 +189,7 @@ class Importer(private val db: AppDatabase) {
 
                         db.optionDao().deleteByQuestion(questionDto.id)
                         db.optionDao().upsertAll(
-                            questionDto.options.mapIndexed { index, o ->
+                            scaled.options.mapIndexed { index, o ->
                                 OptionEntity(
                                     id = o.id,
                                     questionId = questionDto.id,

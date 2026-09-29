@@ -125,6 +125,7 @@ Worth reading before you trust an import:
 - **Preview edits are in-memory only** until you tap the Import button: the editor round-trips through a holder, and only `Import` writes to the database. Tapping Import shows a result dialog (`X new, Y updated, Z skipped`) instead of silently navigating away.
 - **Sort order survives editing**: saving a question never resets its position.
 - **Tolerant by design**: empty option lists, missing answers/explanations/ids/difficulty/tags all import (see the `Edge Cases` demo category). Blank text fields become `null` images on save; option/field text is trimmed.
+- **Embedded images shrink at import**: `data:` URIs over 1280px on the long edge are downscaled (format preserved, JPEG quality 85); unparseable images pass through untouched. Duplicate matching still uses the original bytes, so re-imports line up. Payloads over ~256 KB also raise a preview warning (see `tools/stress/gen_stress.py` for load testing).
 
 ## Editor Prev/Next
 

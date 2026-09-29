@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,6 +65,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.AnswerReview
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.ExamMode
 import com.mcqapp.domain.Feedback
@@ -104,6 +106,7 @@ fun TestSessionScreen(
 
     var showPalette by remember { mutableStateOf(false) }
     var showSubmitDialog by remember { mutableStateOf(false) }
+    var showAnswerReview by remember { mutableStateOf(false) }
     var ungradedDismissed by remember { mutableStateOf(false) }
     val ungradedTotal = remember(state.questions) {
         state.questions.count { it.correctOptionIds.isEmpty() }
@@ -441,7 +444,15 @@ fun TestSessionScreen(
             onDismissRequest = { showSubmitDialog = false },
             title = { Text("Submit test?") },
             text = {
-                Text(SubmitSummary.lines(summary).joinToString("\n"))
+                Column {
+                    Text(SubmitSummary.lines(summary).joinToString("\n"))
+                    TextButton(onClick = {
+                        showSubmitDialog = false
+                        showAnswerReview = true
+                    }) {
+                        Text("Review answers")
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -458,6 +469,67 @@ fun TestSessionScreen(
                 } else {
                     TextButton(onClick = { showSubmitDialog = false }) { Text("Cancel") }
                 }
+            }
+        )
+    }
+
+    if (showAnswerReview) {
+        val reviewRows = remember(state.questions, state.selections, state.flagged) {
+            AnswerReview.rows(state.questions, state.selections, state.flagged)
+        }
+        AlertDialog(
+            onDismissRequest = { showAnswerReview = false },
+            title = { Text("Your answers") },
+            text = {
+                LazyColumn(modifier = Modifier.height(320.dp)) {
+                    items(reviewRows, key = { it.questionId }) { row ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showAnswerReview = false
+                                    viewModel.goTo(row.number - 1)
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Q${row.number}",
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.width(44.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    row.summary,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    buildString {
+                                        append(
+                                            when (row.status) {
+                                                AnswerReview.Status.ANSWERED -> "answered"
+                                                AnswerReview.Status.UNANSWERED -> "unanswered"
+                                                AnswerReview.Status.UNGRADED -> "not scored"
+                                            }
+                                        )
+                                        if (row.flagged) append(" · flagged")
+                                    },
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showAnswerReview = false
+                    showSubmitDialog = true
+                }) { Text("Back to submit") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAnswerReview = false }) { Text("Close") }
             }
         )
     }

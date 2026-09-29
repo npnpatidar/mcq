@@ -2,35 +2,107 @@
 
 An offline-first Android app for practicing multiple-choice questions: build papers with
 recursive categories, import question banks from JSON, take timed tests with negative
-marking, review explanations, and export papers as JSON, ZIP, HTML, or PDF.
+marking and per-question weights, study in practice/strict/mistakes modes, review
+explanations, track mastery over time, and export papers as JSON, ZIP, HTML, or PDF.
 
 - **Stack:** Kotlin, Jetpack Compose (Material 3), Room, Navigation-Compose, DataStore, Coil, kotlinx.serialization
 - **Requires:** Android 8.0+ (minSdk 26), targetSdk 36. Version 1.0.0.
 - **Offline:** fully usable without network. The only thing that needs network is loading
   remote-URL images (see [Images](#images)).
+- **Tests:** ~110 JVM unit tests + 1 on-device critical-path UI test; CI runs both on every push (see [Development](#development--ci)).
 
 ## Screens
 
 | Screen | What it does |
 |---|---|
-| Library | Paper cards with Start / Browse / Export / Manage; drawer with History, Bookmarks, Settings, per-paper category trees, test-by-category, JSON import |
-| Browse | Per-paper question list with filters (All, No answer, No explanation, No category); edit, delete, reorder-safe saves |
-| Test | Timed session with per-question navigation, flagging, mid-test reveal, submit confirmation, auto-submit at zero |
-| Results / Review | Score breakdown plus per-question review with your vs correct answers and explanations (review is also reachable later from History) |
-| History | Past attempts; delete attempts; open any attempt in review mode |
-| Bookmarks | Toggle bookmarks from Browse; tap a bookmark to edit the question |
-| Editor | Edit everything about a question, with Prev/Next queue navigation (see below) |
-| Import | Paste/file-pick JSON → preview split into New / Changed / Duplicates → edit in place → import with a result report |
-| Settings | Theme (system/light/dark), export-all-data JSON, export diagnostic logs, about |
+| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)** button per paper with prior errors; drawer with History, Bookmarks, Settings, per-paper category trees, test-by-category, JSON import |
+| Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); edit, duplicate, delete; **selection mode** for bulk delete / move / copy (incl. cross-paper); manual up/down reorder |
+| Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume |
+| Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
+| History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
+| Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to edit; export all bookmarks in any format |
+| Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
+| Import | Paste/file-pick JSON → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups) |
+| Settings | Theme; Test options (shuffle, practice, strict, auto-advance); full backup; Storage breakdown; export diagnostic logs; about |
 
 ## Question model
 
 A question has: text, optional question image, 2+ options (each with id, text, optional
-image), a set of correct option ids (empty = unanswered-key, multiple = multi-correct),
-explanation text, optional explanation image, difficulty, tags, and an owning category.
+image), a set of correct option ids (empty = no answer key, multiple = multi-correct),
+**marks** (weight, default 1), explanation text, optional explanation image, difficulty,
+tags, and an owning category.
 
 Editor validation (shared by Save and Prev/Next): non-blank text, at least 2 options,
-no blank option. Buttons stay disabled until the form is valid.
+no blank option. Buttons stay disabled until the form is valid. Invalid marks fall back
+to 1 (never blocks saving).
+
+## Test modes & options (Settings → Test)
+
+All default off; they compose, with strict winning contradictions:
+
+- **Shuffle question order** — random question order per attempt (seed logged). **Shuffle
+  options** — random option order. Review always shows your presented order; scoring is
+  by option id, so shuffling never changes correctness.
+- **Practice mode** — options color live as you tap and explanations auto-expand; the
+  Show-answer button hides (nothing left to reveal). Selections stay changeable.
+- **Strict exam mode** — hides Show-answer, flagging, and the question palette (a plain
+  position counter remains); suppresses practice feedback. For a real exam feel.
+- **Auto-advance** — jumps to the next question after answering (single-answer questions
+  only; multi-correct needs several taps, the last question stays put).
+- **Practice mistakes** (per-paper Library button) — a round built from questions you
+  previously got wrong, most-recently-missed first. Appears only when mistakes exist.
+
+## Taking a test
+
+- **Palette** (answered-count button) jumps between questions; cells show current /
+  answered / flagged states with TalkBack descriptions.
+- **Flag** questions for later; **bookmark** any question (top bar) — bookmarks persist
+  independently of the attempt.
+- **Show answer** reveals correctness and locks the question (exam mode only; hidden in
+  practice/strict). Ungraded questions never color — there is no key to check against.
+- **Timer warnings** at 5 minutes and 1 minute (dismissible banners); auto-submit at zero.
+  Per-question dwell time is tracked for timed and untimed papers alike.
+- **Crash resume**: progress (order, selections, reveals, flags, position, timer, dwell)
+  persists on every change; killing the app offers Resume / Start-fresh next launch for
+  the same paper + categories.
+- **Submit dialog** lists answered/unanswered (score-0 warning), flagged, not-scored, and
+  longest-dwell counts, with Review-flagged and **Review answers** actions — the review
+  lists every pick, tappable to jump, with a Back-to-submit return.
+
+## Tests and scoring
+
+- **All-or-nothing per question**: selected set must equal the correct set exactly.
+- **Weighted**: correct = `+marks`; wrong = `−marks × negativeMarking`; skipped = 0.
+  `maxScore` is the sum of graded marks (0-mark questions count as answered but add nothing).
+- **Ungraded (no answer key)**: excluded entirely — no credit, no penalty, out of
+  `maxScore` and counts. Skipping one is always safe; answering one is practice only.
+- Single-correct questions single-select; multi-correct toggle independently.
+- Duration 0 = untimed; otherwise the countdown **auto-submits at zero**.
+- Attempts (with per-question snapshots of options/selections/correctness/explanations/
+  dwell) persist to History and stay reviewable even if the paper later changes.
+
+## Results, History & mastery
+
+- **Results header**: score, percentage bar, Correct/Wrong/Skipped (+Ungraded when present),
+  time taken, and **average time per question**. Each card shows its own time spent.
+- **Review filters**: All, Correct, Wrong, Skipped, Ungraded, Saved (bookmarked) — the
+  last two appear only when applicable.
+- **History**: per-paper **trend cards** (attempts, best, latest, ▲/▼/= delta), **weakest
+  categories** with mastery bars, **hardest questions** with wrong/skip rates, then the
+  attempt list. Ungraded rows never pollute difficulty signals.
+
+## Browse: search, filters, bulk ops
+
+- **Search** matches text, tags, and option texts (case-insensitive), composed with the
+  attribute chips.
+- **Uncategorized** chip shows top-level questions (kept in a category literally titled
+  `Uncategorized`) plus any blank-`categoryId` rows (which imports never produce).
+- **Select mode**: checkbox multiple questions, then Delete (with confirmation) or
+  Move/Copy — the move dialog offers Move vs Copy chips, a paper picker, and that
+  paper's categories. Cross-paper moves reuse import-grade id namespacing.
+- **Reorder**: up/down arrows on the unfiltered list swap same-category neighbours
+  (shown only where neighbours are real siblings); the observed list refreshes live.
+- Per-card Edit (arms the Prev/Next queue), Duplicate (`-copy` ids), Delete.
 
 ## Images
 
@@ -57,6 +129,7 @@ Explanations support an image alongside the text, end to end:
 ## Import: supported JSON
 
 Three shapes are accepted. Missing ids are filled in; unknown fields are ignored.
+Malformed rows are skipped, never fatal (a 1000-case seeded fuzzer pins this).
 
 **1. Bare array** (simplest — e.g. `simple_questions.json`):
 
@@ -86,7 +159,9 @@ Three shapes are accepted. Missing ids are filled in; unknown fields are ignored
       }]
     }],
     "questions": [ /* optional top-level questions, kept in an "Uncategorized" category */ ]
-  }]
+  }],
+  "bookmarks": ["q-s1"],
+  "attempts": [ /* full backups only; restored with history, see below */ ]
 }
 ```
 
@@ -105,26 +180,29 @@ Three shapes are accepted. Missing ids are filled in; unknown fields are ignored
 | explanation | `explanation`, `explain`, `reason` |
 | option text | `text`, `value` (plain strings also accepted as options) |
 | tags | array, or comma-separated string |
-| correct answer | `correctOptionIds` (array or comma string) → `correctIndex` → `answer` / `correct` / `correctAnswer`, resolved as option id first, then option text (case-insensitive), then numeric index. Absent = no answer key. |
+| correct answer | `correctOptionIds` (array or comma string) → `correctIndex` → `answer` / `correct` / `correctAnswer`, resolved as option id first, then option text (case-insensitive), then numeric index. Absent = no answer key. Dangling ids are dropped (question becomes ungraded). |
 | marks | `marks`, `points`, `weight` (default `1`; invalid/negative → `1`). A correct answer scores `marks`; a wrong one deducts `marks × negativeMarking`. `maxScore` is the sum of graded marks. |
 
 ## Import semantics and nuances
 
 Worth reading before you trust an import:
 
-- **Duplicate = same content hash**, where the hash covers **question text + option texts + option images only**. Correct answers, explanations, difficulty, tags, and category/paper assignment do **not** affect it.
+- **Validation warnings** flag what imports fine but misbehaves later: blank text, <2
+  options, missing answer key, dangling key ids, 0 marks, >256 KB image payloads.
+  They recompute live as preview rows are edited.
+- **Duplicate = same content hash**, where the hash covers **question text + option texts + option images only**. Correct answers, explanations, difficulty, tags, marks, and category/paper assignment do **not** affect it.
   - Consequence 1: editing *only* the correct answer never counts as a change — re-importing it is a no-op for that question.
   - Consequence 2: image changes *do* count (option images are hashed), even though generated question ids ignore images.
 - **Missing question ids are deterministic:** `SHA-256(text + options)` truncated. Re-parsing identical JSON yields identical ids, so re-imports line up; identical questions in one file get `-2`, `-3` suffixes. Explicit ids are always preserved.
 - **Papers merge by id, then title** (oldest match wins). Re-importing the same file updates the existing paper instead of creating a same-named stub. Same for categories (id, then title within the paper); a category id owned by another paper is namespaced, never stolen.
-- **New questions append** after existing ones (`max(sortOrder)+1`); **updates keep their position** — re-imports never reorder your list.
+- **New questions append** after existing ones (`max(sortOrder)+1`); **updates keep their position** — re-imports never reorder your list (use Browse arrows to reorder by hand).
 - **A brand-new paper whose questions all already exist is skipped entirely** (no empty stub in the library).
 - **Top-level `questions` are kept**: with no categories they form a category named after the paper; alongside categories they form an `Uncategorized` root category. (They used to be silently dropped in the second case.)
 - **Writes are non-destructive**: papers/categories use insert-or-update, never `REPLACE` (which would cascade-delete questions). The duplicate-hash snapshot is taken before any write.
 - **Import preview** splits the file into **New** (will be added), **Changed** (same id, new content — will update in place), and **Duplicates** (skipped), computed with the exact hash the importer uses. Editing preview rows updates their section live.
-- **Preview edits are in-memory only** until you tap the Import button: the editor round-trips through a holder, and only `Import` writes to the database. Tapping Import shows a result dialog (`X new, Y updated, Z skipped`) instead of silently navigating away.
+- **Preview edits are in-memory only** until you tap the Import button: the editor round-trips through a holder, and only `Import` writes to the database. Tapping Import shows a result dialog (`X new, Y updated, Z skipped`, plus restored history for backups) instead of silently navigating away.
 - **Sort order survives editing**: saving a question never resets its position.
-- **Tolerant by design**: empty option lists, missing answers/explanations/ids/difficulty/tags all import (see the `Edge Cases` demo category). Blank text fields become `null` images on save; option/field text is trimmed.
+- **Tolerant by design**: empty option lists, missing answers/explanations/ids/difficulty/tags/marks all import (see the `Edge Cases` demo category). Blank text fields become `null` images on save; option/field text is trimmed. Corrupt files show an error dialog instead of hanging.
 - **Embedded images shrink at import**: `data:` URIs over 1280px on the long edge are downscaled (format preserved, JPEG quality 85); unparseable images pass through untouched. Duplicate matching still uses the original bytes, so re-imports line up. Payloads over ~256 KB also raise a preview warning (see `tools/stress/gen_stress.py` for load testing).
 
 ## Editor Prev/Next
@@ -143,27 +221,30 @@ respects the active filter; Import uses preview order). The top bar shows positi
 - Library, bookmarks, and new-question entries clear the queue, so the buttons only
   appear where a list exists.
 
-## Export formats (per paper)
+## Export formats (per paper, per category, bookmarks)
 
-Tapping Export on a paper asks for one of six formats (Settings keeps a JSON export-all):
+Tapping Export on a paper — or the share icon on a category row or the Bookmarks
+screen — asks for one of six formats (Settings keeps a JSON full backup):
 
 | Format | Contents |
 |---|---|
 | JSON (images inline) | Canonical schema, data-URI images in place. **Re-importable.** |
 | ZIP (JSON + images) | `paper.json` (same schema) + `images/img001.jpg…` referenced by relative path; identical bytes deduped; remote URLs left as-is. Re-imports as questions, but the image files won't resolve back. |
-| Web page (answers shown) | Self-contained `.html`: inline CSS, embedded images, correct options highlighted, answers + explanations visible. |
+| Web page (answers shown) | Self-contained `.html`: inline CSS, embedded images, correct options highlighted, answers + explanations visible. Non-default marks shown per question. |
 | Web page (quiz mode) | Same page with answers hidden: per-question **Show answer** toggles plus Show/Hide-all, inline JS, no network needed (`file://` works). Suggested filename `*-quiz.html`. |
 | PDF (answers inline) | A4 via framework `PdfDocument`: questions, ✓/○ options, answers under each question, embedded images scaled to page width, page numbers. |
 | PDF (answer key at end) | Questions print unmarked; all answers + explanations move to an **Answer Key** section for self-testing. Suggested filename `*-answer-key.pdf`. |
 
-Quirks: nested category trees render flat; remote-URL images render as an `[image: url]` line in PDF (no offline fetch); filenames are sanitized from the paper title.
+Quirks: nested category trees render flat; remote-URL images render as an `[image: url]` line in PDF (no offline fetch); filenames are sanitized from the paper/category title. Category exports include descendants; bookmark exports group by source paper and keep original ids (re-import merges).
 
-## Tests and scoring
+## Backup & restore
 
-- **All-or-nothing per question**: selected set must equal the correct set exactly. Correct = +1. Wrong = −negativeMarking. Skipped = 0. Max = number of questions.
-- Single-correct questions single-select; multi-correct toggle independently.
-- Duration 0 = untimed; otherwise the countdown **auto-submits at zero** (submit also asks for confirmation). Mid-test you can flag questions and reveal the current one to study its explanation.
-- Attempts (with per-question snapshots of options/selections/correctness/explanations) persist to History and stay reviewable even if the paper later changes.
+Settings → Data → **Export all data** writes one JSON file with every paper **plus
+bookmarks and full attempt history**. Re-importing that file anywhere restores content
+and history: bookmarks merge idempotently, attempts restore with fresh ids (re-imports
+are deduped, never doubled), and the result dialog reports restored counts.
+Settings → **Storage** shows database size, row counts, and per-paper question/image
+weight with refresh.
 
 ## Demo data
 
@@ -184,6 +265,10 @@ deletes its categories; deleting a category deletes its questions (FK cascades) 
 go with their question. Deleting attempts, bookmarks, or papers never orphans history
 snapshots (attempts embed their own copies).
 
+Test progress snapshots live in DataStore (single `in_progress_test` key, cleared on
+submit); test display options (shuffle, practice, strict, auto-advance) and theme are
+DataStore preferences.
+
 ## Edge cases & gotchas (observed, not theoretical)
 
 - **Answer-only edits don't re-import.** Hash excludes answers, so fixing just a key and
@@ -198,15 +283,39 @@ snapshots (attempts embed their own copies).
   title. Missing category ids are random per parse; missing question ids are stable.
 - **Whitespace is trimmed on save** (text, options, tags); blank images become `null`.
 - **Correct-answer matching is forgiving**: id → text (case-insensitive) → numeric index.
-- **The `Uncategorized` browse filter** shows top-level questions (kept in a category
-  literally titled `Uncategorized`) plus any blank-`categoryId` rows, which imports
-  never produce since every import assigns a category.
+- **The `Uncategorized` browse filter** shows top-level questions plus any
+  blank-`categoryId` rows (which imports never produce).
 - **Timer at 0 with duration set** auto-submits; untimed papers (duration 0) never count down.
+- **Strict + practice contradict** — strict wins (no live feedback, no aids).
+- **Auto-advance** never fires on multi-correct questions or the last question.
+- **Resume** only offers for the exact same paper + category selection; submitting or
+  reinstalling clears it.
+- **Dwell times exist only for attempts finished after the v6 update**; old reviews show
+  no per-question times.
+- **Shuffle changes review order** — review shows your presented order, not library order,
+  by design.
 
 ## Logs & debugging
 
-File logging with thread names to `logs/app.log` (external files dir, else internal).
-In-app: Settings → **Export Logs** (shares the file). Key tags: `IMPORTVM` (preview),
-`IMPORT` (database import), `EDITORVM`, `IMPORTSCREEN`, `REPO`, `BROWSEVM`, `NAV`,
-`LIB`/`LIBVM`, `TESTVM`, `EXPORT`. Log rot
-...[truncated 1093 chars]
+File logging with thread names to `logs/app.log` (external files dir, else internal;
+never crashes its caller). In-app: Settings → **Export Logs** (shares the file).
+Key tags: `IMPORTVM` (preview), `IMPORT` (database import), `EDITORVM`, `IMPORTSCREEN`,
+`REPO`, `BROWSEVM`, `NAV`, `LIB`/`LIBVM`, `BOOKVM`, `RESULTVM`, `HISTVM`, `TESTVM`,
+`EXPORT`, `SETTINGS`, `DOWNSCALE`. Browse observation cancellations on navigation are
+expected noise. Log rotation at 8 MB.
+
+## Development & CI
+
+Local builds need the Android SDK and a QEMU aapt2 wrapper on ARM64 hosts (see
+`BUILDING.md` for the exact command). CI (`.github/workflows/build.yml`, x86_64) runs
+on every push/PR:
+
+- **build**: `assembleDebug` + full JVM unit test suite (~110 tests: scoring, parser +
+  1000-case seeded fuzz, import/export writers, domain rules), uploads APK + results.
+- **ui-test**: boots an API-34 emulator (KVM enabled) and runs the critical-path test
+  (library → start → answer/skip/wrong → submit → results score).
+
+Robolectric DB tests (`RepositoryTest`) run on CI only — neither Robolectric's native
+runtime nor Conscrypt ship Linux-ARM64 binaries, so they fail on ARM64 hosts by
+environment, not by code. Stress banks: `tools/stress/gen_stress.py` generates
+large/degenerate papers (`--questions`, `--options`, `--image-every`, `--img-dim`).

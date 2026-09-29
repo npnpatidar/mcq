@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -97,6 +98,7 @@ fun LibraryScreen(
     var categoryDialogPaperId by remember { mutableStateOf("") }
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
     var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
+    var pendingExportCategory by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
     var showExportFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
@@ -105,12 +107,19 @@ fun LibraryScreen(
     // dialog, so anything baked into the callback itself goes stale.
     fun onExportDocument(uri: Uri?) {
         val paperId = pendingExportPaperId
+        val category = pendingExportCategory
         val format = pendingExportFormat
         pendingExportPaperId = null
+        pendingExportCategory = null
         pendingExportFormat = null
         uri?.let {
-            if (paperId != null && format != null) viewModel.exportPaperAs(it, paperId, format)
-            else if (paperId == null) viewModel.exportAll(it)
+            if (category != null && format != null) {
+                viewModel.exportCategoryAs(it, category.first, category.second, format)
+            } else if (paperId != null && format != null) {
+                viewModel.exportPaperAs(it, paperId, format)
+            } else if (paperId == null && category == null) {
+                viewModel.exportAll(it)
+            }
         }
     }
 
@@ -271,6 +280,12 @@ fun LibraryScreen(
                                     navController.navigate(
                                         "editor?questionId=&paperId=${paper.id}&categoryId=$categoryId"
                                     )
+                                },
+                                onExportCategory = { categoryId, title ->
+                                    pendingExportPaperId = null
+                                    pendingExportCategory = Triple(paper.id, categoryId, title)
+                                    exportFormat = ExportFormat.JSON_INLINE
+                                    showExportFormatDialog = true
                                 }
                             )
                         }
@@ -319,9 +334,18 @@ fun LibraryScreen(
             onDismissRequest = {
                 showExportFormatDialog = false
                 pendingExportPaperId = null
+                pendingExportCategory = null
                 pendingExportFormat = null
             },
-            title = { Text("Export format") },
+            title = {
+                Text(
+                    if (pendingExportCategory != null) {
+                        "Export ${pendingExportCategory!!.third}"
+                    } else {
+                        "Export format"
+                    }
+                )
+            },
             text = {
                 Column {
                     ExportFormat.entries.forEach { format ->
@@ -351,14 +375,20 @@ fun LibraryScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
+                    val category = pendingExportCategory
                     val paper = papers.firstOrNull { it.id == pendingExportPaperId }
                     showExportFormatDialog = false
-                    if (paper != null) {
+                    if (category != null) {
+                        pendingExportFormat = exportFormat
+                        exportSaver(exportFormat)
+                            .launch(PaperExporter.fileNameFor(category.third, exportFormat))
+                    } else if (paper != null) {
                         pendingExportFormat = exportFormat
                         exportSaver(exportFormat)
                             .launch(PaperExporter.fileNameFor(paper.title, exportFormat))
                     } else {
                         pendingExportPaperId = null
+                        pendingExportCategory = null
                         pendingExportFormat = null
                     }
                 }) { Text("Export") }
@@ -367,6 +397,7 @@ fun LibraryScreen(
                 TextButton(onClick = {
                     showExportFormatDialog = false
                     pendingExportPaperId = null
+                    pendingExportCategory = null
                     pendingExportFormat = null
                 }) { Text("Cancel") }
             }
@@ -569,7 +600,8 @@ private fun PaperCard(
     onDelete: () -> Unit,
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
-    onAddQuestion: (String) -> Unit
+    onAddQuestion: (String) -> Unit,
+    onExportCategory: (String, String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -628,7 +660,8 @@ private fun PaperCard(
                             node = node,
                             depth = 0,
                             onEditQuestion = onEditQuestion,
-                            onAddQuestion = onAddQuestion
+                            onAddQuestion = onAddQuestion,
+                            onExportCategory = onExportCategory
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -654,7 +687,8 @@ private fun CategoryRow(
     node: CategoryNode,
     depth: Int,
     onEditQuestion: (String, String) -> Unit,
-    onAddQuestion: (String) -> Unit
+    onAddQuestion: (String) -> Unit,
+    onExportCategory: (String, String) -> Unit
 ) {
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -663,6 +697,9 @@ private fun CategoryRow(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f)
             )
+            IconButton(onClick = { onExportCategory(node.id, node.title) }, modifier = Modifier.height(32.dp)) {
+                Icon(Icons.Default.Share, contentDescription = "Export category", modifier = Modifier.padding(0.dp))
+            }
             IconButton(onClick = { onAddQuestion(node.id) }, modifier = Modifier.height(32.dp)) {
                 Icon(Icons.Default.Add, contentDescription = "Add question", modifier = Modifier.padding(0.dp))
             }
@@ -672,7 +709,8 @@ private fun CategoryRow(
                 node = child,
                 depth = depth + 1,
                 onEditQuestion = onEditQuestion,
-                onAddQuestion = onAddQuestion
+                onAddQuestion = onAddQuestion,
+                onExportCategory = onExportCategory
             )
         }
     }

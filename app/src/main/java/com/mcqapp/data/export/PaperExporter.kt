@@ -2,6 +2,7 @@ package com.mcqapp.data.export
 
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.McqFileDto
+import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
@@ -20,8 +21,22 @@ class PaperExporter(private val db: AppDatabase) {
     suspend fun exportPaper(paperId: String, format: ExportFormat): ExportResult {
         val dto = Exporter(db).getPaperDto(paperId)
             ?: throw IllegalStateException("Paper not found")
-        val base = baseName(dto.title)
         Logger.i("EXPORT", "Exporting paper '${dto.title}' as ${format.name}")
+        return render(dto, dto.title, format)
+    }
+
+    /** Single category (with descendants) through the same format writers. */
+    suspend fun exportCategory(paperId: String, categoryId: String, format: ExportFormat): ExportResult {
+        val dto = Exporter(db).getCategoriesDto(paperId, setOf(categoryId))
+            ?.takeIf { it.categories.isNotEmpty() }
+            ?: throw IllegalStateException("Category not found or empty")
+        val title = dto.categories.firstOrNull()?.title ?: dto.title
+        Logger.i("EXPORT", "Exporting category '$title' as ${format.name}")
+        return render(dto, title, format)
+    }
+
+    private fun render(dto: PaperDto, title: String, format: ExportFormat): ExportResult {
+        val base = baseName(title)
         return when (format) {
             ExportFormat.JSON_INLINE -> ExportResult(
                 "$base.json",

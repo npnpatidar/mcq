@@ -41,26 +41,32 @@ class Exporter(private val db: AppDatabase) {
     }
 
     suspend fun exportCategories(paperId: String, rootCategoryIds: Set<String>): String {
-        val allCategories = db.categoryDao().getByPaper(paperId)
-        val byId = allCategories.associateBy { it.id }
-        val selected = mutableSetOf<String>()
-        for (rootId in rootCategoryIds) {
-            collectWithDescendants(rootId, byId, selected)
-        }
-        val paper = db.paperDao().getById(paperId)
-        val paperDto = PaperDto(
+        val paperDto = getCategoriesDto(paperId, rootCategoryIds) ?: PaperDto(
             id = paperId,
-            title = paper?.title ?: "Paper",
-            description = paper?.description ?: "",
-            durationMinutes = paper?.durationMinutes ?: 0,
-            negativeMarking = paper?.negativeMarking ?: 0.0,
-            categories = allCategories.filter { it.id in selected }.map { category ->
-                exportCategoryDto(category)
-            }
+            title = "Paper"
         )
         return json.encodeToString(
             McqFileDto.serializer(),
             McqFileDto(version = 1, papers = listOf(paperDto))
+        )
+    }
+
+    /** Paper DTO restricted to the given category subtrees (descendants included). */
+    suspend fun getCategoriesDto(paperId: String, rootCategoryIds: Set<String>): PaperDto? {
+        val paper = db.paperDao().getById(paperId) ?: return null
+        val allCategories = db.categoryDao().getByPaper(paperId)
+        val selected = rootCategoryIds.flatMapTo(mutableSetOf()) { rootId ->
+            CategoryFilter.subtreeIds(allCategories, rootId)
+        }
+        return PaperDto(
+            id = paperId,
+            title = paper.title,
+            description = paper.description,
+            durationMinutes = paper.durationMinutes,
+            negativeMarking = paper.negativeMarking,
+            categories = allCategories.filter { it.id in selected }.map { category ->
+                exportCategoryDto(category)
+            }
         )
     }
 
@@ -106,19 +112,6 @@ class Exporter(private val db: AppDatabase) {
                 marks = entity.marks,
                 tags = entity.tags.split(",").filter { it.isNotBlank() }
             )
-        }
-    }
-
-    private fun collectWithDescendants(
-        categoryId: String,
-        byId: Map<String, CategoryEntity>,
-        sink: MutableSet<String>
-    ) {
-        if (!sink.add(categoryId)) return
-        for ((id, category) in byId) {
-            if (category.parentId == categoryId) {
-                collectWithDescendants(id, byId, sink)
-            }
         }
     }
 }

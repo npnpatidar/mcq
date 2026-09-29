@@ -24,9 +24,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list includes the long-removed
+          # `tools` package and fails; install only what exists.
+          packages: platform-tools
 
       - name: Install Android 37 platform
-        run: sdkmanager "platforms;android-37"
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
 
       - name: Build debug APK and run unit tests
         # No aapt2 override: the bundled aapt2 runs natively on x86_64

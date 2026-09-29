@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.Reorder
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,5 +38,31 @@ class ReorderTest {
         assertFalse(Reorder.canMove(questions, -1, +1))
         assertFalse(Reorder.canMove(questions, 3, -1))
         assertFalse(Reorder.canMove(emptyList(), 0, +1))
+    }
+
+    @Test
+    fun normalizedOrderMovesAndRenumbers() {
+        val ids = listOf("a", "b", "c", "d")
+        assertEquals(
+            mapOf("a" to 0, "c" to 1, "b" to 2, "d" to 3),
+            Reorder.normalizedOrder(ids, 1, +1)
+        )
+        assertEquals(
+            mapOf("a" to 0, "b" to 1, "c" to 2, "d" to 3),
+            Reorder.normalizedOrder(ids, 0, -1)
+        )
+    }
+
+    @Test
+    fun normalizedOrderClampsAndIgnoresBadIndex() {
+        val ids = listOf("a", "b", "c")
+        assertEquals(
+            mapOf("b" to 0, "c" to 1, "a" to 2),
+            Reorder.normalizedOrder(ids, 0, +99)
+        )
+        assertEquals(
+            mapOf("a" to 0, "b" to 1, "c" to 2),
+            Reorder.normalizedOrder(ids, 9, +1)
+        )
     }
 }

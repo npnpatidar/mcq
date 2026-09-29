@@ -145,6 +145,17 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { repository.addCategory(paperId, title, parentId) }
     }
 
+    fun moveCategory(categoryId: String, delta: Int) {
+        viewModelScope.launch {
+            try {
+                repository.moveCategory(categoryId, delta)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Move category failed", e)
+                _exportError.value = "Move failed: ${e.message}"
+            }
+        }
+    }
+
     fun deleteCategory(categoryId: String) {
         Logger.i("LIBVM", "deleteCategory($categoryId)")
         viewModelScope.launch { repository.deleteCategory(categoryId) }

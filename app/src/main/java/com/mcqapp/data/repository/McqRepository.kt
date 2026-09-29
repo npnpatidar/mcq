@@ -411,6 +411,23 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
     }
 
+    /** Moves a category up/down among same-paper, same-parent siblings. */
+    suspend fun moveCategory(categoryId: String, delta: Int): Boolean {
+        val category = db.categoryDao().getById(categoryId) ?: return false
+        val siblings = db.categoryDao().getByPaper(category.paperId)
+            .filter { it.parentId == category.parentId }
+        val fromIndex = siblings.indexOfFirst { it.id == categoryId }
+        if (fromIndex < 0) return false
+        val target = (fromIndex + delta).coerceIn(siblings.indices)
+        if (target == fromIndex) return false
+        val order = com.mcqapp.domain.Reorder.normalizedOrder(
+            siblings.map { it.id }, fromIndex, delta
+        )
+        order.forEach { (id, sortOrder) -> db.categoryDao().updateSortOrder(id, sortOrder) }
+        Logger.i("REPO", "moveCategory($categoryId by $delta)")
+        return true
+    }
+
     /** Deep-clones a paper (categories, questions, options, keys, marks). */
     suspend fun duplicatePaper(paperId: String): String? {
         val paper = db.paperDao().getById(paperId) ?: return null

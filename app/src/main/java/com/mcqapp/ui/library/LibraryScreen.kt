@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -306,6 +307,9 @@ fun LibraryScreen(
                                     pendingExportCategory = Triple(paper.id, categoryId, title)
                                     exportFormat = ExportFormat.JSON_INLINE
                                     showExportFormatDialog = true
+                                },
+                                onMoveCategory = { categoryId, delta ->
+                                    viewModel.moveCategory(categoryId, delta)
                                 }
                             )
                         }
@@ -640,6 +644,7 @@ private fun PaperCard(
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit,
+    onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onPracticeMistakes: () -> Unit = {},
     onDrill: (Int, Int) -> Unit = { _, _ -> },
     mistakeCount: Int = 0
@@ -760,10 +765,13 @@ private fun PaperCard(
                 Column {
                     Spacer(Modifier.height(8.dp))
                     Text("Categories", style = MaterialTheme.typography.labelLarge)
-                    paper.categories.forEach { node ->
+                    paper.categories.forEachIndexed { index, node ->
                         CategoryRow(
                             node = node,
                             depth = 0,
+                            canMoveUp = index > 0,
+                            canMoveDown = index < paper.categories.lastIndex,
+                            onMoveCategory = onMoveCategory,
                             onEditQuestion = onEditQuestion,
                             onAddQuestion = onAddQuestion,
                             onExportCategory = onExportCategory
@@ -796,6 +804,9 @@ private fun PaperCard(
 private fun CategoryRow(
     node: CategoryNode,
     depth: Int,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit
@@ -807,6 +818,22 @@ private fun CategoryRow(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f)
             )
+            if (canMoveUp || canMoveDown) {
+                IconButton(
+                    onClick = { onMoveCategory(node.id, -1) },
+                    enabled = canMoveUp,
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.padding(0.dp))
+                }
+                IconButton(
+                    onClick = { onMoveCategory(node.id, +1) },
+                    enabled = canMoveDown,
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down", modifier = Modifier.padding(0.dp))
+                }
+            }
             IconButton(onClick = { onExportCategory(node.id, node.title) }, modifier = Modifier.height(32.dp)) {
                 Icon(Icons.Default.Share, contentDescription = "Export category", modifier = Modifier.padding(0.dp))
             }
@@ -814,10 +841,13 @@ private fun CategoryRow(
                 Icon(Icons.Default.Add, contentDescription = "Add question", modifier = Modifier.padding(0.dp))
             }
         }
-        node.children.forEach { child ->
+        node.children.forEachIndexed { index, child ->
             CategoryRow(
                 node = child,
                 depth = depth + 1,
+                canMoveUp = index > 0,
+                canMoveDown = index < node.children.lastIndex,
+                onMoveCategory = onMoveCategory,
                 onEditQuestion = onEditQuestion,
                 onAddQuestion = onAddQuestion,
                 onExportCategory = onExportCategory

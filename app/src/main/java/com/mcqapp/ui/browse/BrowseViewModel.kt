@@ -9,8 +9,10 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -91,6 +93,16 @@ class BrowseViewModel(
     fun swapQuestions(firstId: String, secondId: String) {
         viewModelScope.launch {
             repository.swapQuestionOrder(firstId, secondId)
+        }
+    }
+
+    val papers: StateFlow<List<Paper>> = repository.observePapers()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun copyQuestions(questionIds: Set<String>, targetCategoryId: String) {
+        viewModelScope.launch {
+            repository.copyQuestionsToCategory(questionIds, targetCategoryId)
+            Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
         }
     }
 }

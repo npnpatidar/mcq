@@ -372,6 +372,21 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         }
     }
 
+    /** Deep-copies questions into another category (appended after siblings). */
+    suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
+        val existing = db.questionDao().getAll().map { it.id }.toHashSet()
+        var count = 0
+        questionIds.forEach { id ->
+            getQuestion(id)?.let { q ->
+                val newId = com.mcqapp.domain.BulkOps.copyId(existing, id)
+                existing.add(newId)
+                saveQuestion(q.copy(id = newId, categoryId = targetCategoryId))
+                count++
+            }
+        }
+        Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
+    }
+
     /** Swaps the positions of two same-category questions. */
     suspend fun swapQuestionOrder(firstId: String, secondId: String): Boolean {
         val a = db.questionDao().getById(firstId) ?: return false

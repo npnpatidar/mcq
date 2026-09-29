@@ -25,8 +25,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +73,7 @@ fun BrowseScreen(
     )
 ) {
     val state by viewModel.state.collectAsState()
+    val allPapers by viewModel.papers.collectAsState()
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -268,18 +274,77 @@ fun BrowseScreen(
         }
 
         if (showMoveDialog) {
-            val targets = remember(state.paper) {
-                flattenCategories(state.paper?.categories ?: emptyList())
+            // Local to the dialog: forgotten on dismiss, so every open starts fresh.
+            var moveIsCopy by remember { mutableStateOf(false) }
+            var movePaperId by remember { mutableStateOf(paperId) }
+            var paperMenuOpen by remember { mutableStateOf(false) }
+            val movePaper = remember(allPapers, movePaperId) {
+                allPapers.find { it.id == movePaperId }
+            }
+            val targets = remember(movePaper) {
+                flattenCategories(movePaper?.categories ?: emptyList())
             }
             AlertDialog(
                 onDismissRequest = { showMoveDialog = false },
-                title = { Text("Move ${selectedIds.size} questions to…") },
+                title = {
+                    Text("${if (moveIsCopy) "Copy" else "Move"} ${selectedIds.size} questions to…")
+                },
                 text = {
                     Column {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = !moveIsCopy,
+                                onClick = { moveIsCopy = false },
+                                label = { Text("Move") }
+                            )
+                            FilterChip(
+                                selected = moveIsCopy,
+                                onClick = { moveIsCopy = true },
+                                label = { Text("Copy") }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        ExposedDropdownMenuBox(
+                            expanded = paperMenuOpen,
+                            onExpandedChange = { paperMenuOpen = it }
+                        ) {
+                            OutlinedTextField(
+                                value = movePaper?.title ?: "Select paper",
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                label = { Text("Paper") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = paperMenuOpen)
+                                },
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .fillMaxWidth()
+                            )
+                            DropdownMenu(
+                                expanded = paperMenuOpen,
+                                onDismissRequest = { paperMenuOpen = false }
+                            ) {
+                                allPapers.forEach { paper ->
+                                    DropdownMenuItem(
+                                        text = { Text(paper.title) },
+                                        onClick = {
+                                            movePaperId = paper.id
+                                            paperMenuOpen = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
                         targets.forEach { (node, depth) ->
                             TextButton(
                                 onClick = {
-                                    viewModel.moveQuestions(selectedIds, node.id)
+                                    if (moveIsCopy) {
+                                        viewModel.copyQuestions(selectedIds, node.id)
+                                    } else {
+                                        viewModel.moveQuestions(selectedIds, node.id)
+                                    }
                                     selectedIds = emptySet()
                                     selectionMode = false
                                     showMoveDialog = false

@@ -78,6 +78,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setStrictMode(enabled) }
     }
 
+    private val _autoAdvance = MutableStateFlow(false)
+    val autoAdvance: StateFlow<Boolean> = _autoAdvance.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.autoAdvance().collect { _autoAdvance.value = it }
+        }
+    }
+
+    fun setAutoAdvance(enabled: Boolean) {
+        viewModelScope.launch { repository.setAutoAdvance(enabled) }
+    }
+
     private val _storage = MutableStateFlow<com.mcqapp.domain.StorageInfo.Report?>(null)
     val storage: StateFlow<com.mcqapp.domain.StorageInfo.Report?> = _storage.asStateFlow()
 

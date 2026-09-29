@@ -56,6 +56,7 @@ fun SettingsScreen(
     val shuffleOptions by viewModel.shuffleOptions.collectAsState()
     val practiceMode by viewModel.practiceMode.collectAsState()
     val strictMode by viewModel.strictMode.collectAsState()
+    val autoAdvance by viewModel.autoAdvance.collectAsState()
     val storage by viewModel.storage.collectAsState()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -182,6 +183,23 @@ fun SettingsScreen(
                         Switch(
                             checked = strictMode,
                             onCheckedChange = { viewModel.setStrictMode(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Auto-advance")
+                            Text(
+                                "Move to the next question after answering (single-answer only)",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = autoAdvance,
+                            onCheckedChange = { viewModel.setAutoAdvance(it) }
                         )
                     }
                     Spacer(Modifier.height(4.dp))

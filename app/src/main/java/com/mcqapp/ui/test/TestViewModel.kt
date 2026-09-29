@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.AutoAdvance
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
@@ -36,6 +37,7 @@ data class TestUiState(
     val attemptId: Long? = null,
     val practiceMode: Boolean = false,
     val strictMode: Boolean = false,
+    val autoAdvance: Boolean = false,
     val mistakesOnly: Boolean = false,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
@@ -96,6 +98,7 @@ class TestViewModel(
                 val totalSeconds = (paper?.durationMinutes ?: 0) * 60
                 val practice = repository.practiceMode().first()
                 val strict = repository.strictMode().first()
+                val advance = repository.autoAdvance().first()
                 if (practice && !strict) Logger.i("TESTVM", "Practice mode on: live feedback enabled")
                 if (strict) Logger.i("TESTVM", "Strict exam mode on: aids hidden")
                 _state.update {
@@ -107,6 +110,7 @@ class TestViewModel(
                         remainingSeconds = totalSeconds,
                         practiceMode = practice,
                         strictMode = strict,
+                        autoAdvance = advance,
                         mistakesOnly = mistakesOnly
                     )
                 }
@@ -175,6 +179,13 @@ class TestViewModel(
             state.copy(selections = state.selections + (question.id to updated))
         }
         persistProgress()
+        val current = _state.value
+        AutoAdvance.nextIndex(
+            current.autoAdvance,
+            question.isMultiCorrect,
+            current.currentIndex,
+            current.questions.size
+        )?.let { goTo(it) }
     }
 
     fun revealCurrent() {

@@ -83,6 +83,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it[strictModeKey] = enabled }
     }
 
+    private val autoAdvanceKey = booleanPreferencesKey("auto_advance")
+
+    fun autoAdvance(): Flow<Boolean> =
+        context.dataStore.data.map { it[autoAdvanceKey] ?: false }
+
+    suspend fun setAutoAdvance(enabled: Boolean) {
+        context.dataStore.edit { it[autoAdvanceKey] = enabled }
+    }
+
     private val progressKey = stringPreferencesKey("in_progress_test")
 
     suspend fun saveTestProgress(json: String) {

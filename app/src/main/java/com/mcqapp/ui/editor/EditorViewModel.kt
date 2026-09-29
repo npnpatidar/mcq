@@ -27,6 +27,7 @@ data class EditorUiState(
     val explanation: String = "",
     val explanationImage: String = "",
     val difficulty: Difficulty = Difficulty.MEDIUM,
+    val marks: String = "1",
     val tags: String = "",
     val options: List<OptionEditorState> = emptyList(),
     val categories: List<CategoryNode> = emptyList(),
@@ -77,7 +78,8 @@ class EditorViewModel(
             .joinToString(",")
         return listOf(
             s.text.trim(), normImage(s.image), s.explanation.trim(),
-            normImage(s.explanationImage), s.difficulty.label, tags, s.categoryId
+            normImage(s.explanationImage), s.difficulty.label,
+            s.marks.trim(), tags, s.categoryId
         ).joinToString("\n") + "\n" + opts.joinToString("\n")
     }
 
@@ -104,6 +106,7 @@ class EditorViewModel(
                 explanation = pendingEdit.explanation,
                 explanationImage = pendingEdit.explanationImage.orEmpty(),
                 difficulty = Difficulty.fromLabel(pendingEdit.difficulty),
+                marks = formatMarks(pendingEdit.marks),
                 tags = pendingEdit.tags.joinToString(", "),
                 options = pendingEdit.options.map { o ->
                     OptionEditorState(
@@ -133,6 +136,7 @@ class EditorViewModel(
                         explanation = question.explanation,
                         explanationImage = question.explanationImage.orEmpty(),
                         difficulty = question.difficulty,
+                        marks = formatMarks(question.marks),
                         tags = question.tags.joinToString(", "),
                         options = question.options.map { o ->
                             OptionEditorState(
@@ -173,6 +177,7 @@ class EditorViewModel(
     fun updateExplanationImage(value: String) = updateState { it.copy(explanationImage = value) }
     fun updateTags(value: String) = updateState { it.copy(tags = value) }
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
+    fun updateMarks(value: String) = updateState { it.copy(marks = value) }
     fun updateCategory(value: String) = updateState { it.copy(categoryId = value) }
 
     fun updateOptionText(optionId: String, value: String) = updateState {
@@ -221,6 +226,20 @@ class EditorViewModel(
         _state.update(block)
     }
 
+    companion object {
+        /** Display whole marks without a decimal point ("2", not "2.0"). */
+        fun formatMarks(marks: Double): String =
+            if (marks == kotlin.math.floor(marks) && !marks.isInfinite()) {
+                marks.toLong().toString()
+            } else {
+                marks.toString()
+            }
+
+        /** Invalid, non-finite or negative input falls back to 1 mark. */
+        fun parseMarks(raw: String): Double =
+            raw.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 } ?: 1.0
+    }
+
     private fun buildDto(): QuestionDto? {
         val s = _state.value
         if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) return null
@@ -234,6 +253,7 @@ class EditorViewModel(
             explanation = s.explanation.trim(),
             explanationImage = s.explanationImage.trim().ifBlank { null },
             difficulty = s.difficulty.label,
+            marks = parseMarks(s.marks),
             tags = s.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() }
         )
     }
@@ -249,6 +269,7 @@ class EditorViewModel(
             explanation = dto.explanation,
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
+            marks = dto.marks,
             tags = dto.tags
         )
     }
@@ -336,6 +357,7 @@ class EditorViewModel(
                     explanation = next.explanation,
                     explanationImage = next.explanationImage.orEmpty(),
                     difficulty = Difficulty.fromLabel(next.difficulty),
+                    marks = formatMarks(next.marks),
                     tags = next.tags.joinToString(", "),
                     options = next.options.map { o ->
                         OptionEditorState(
@@ -373,6 +395,7 @@ class EditorViewModel(
                             explanation = next.explanation,
                             explanationImage = next.explanationImage.orEmpty(),
                             difficulty = next.difficulty,
+                            marks = formatMarks(next.marks),
                             tags = next.tags.joinToString(", "),
                             options = next.options.map { o ->
                                 OptionEditorState(

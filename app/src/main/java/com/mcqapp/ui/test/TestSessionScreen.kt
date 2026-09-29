@@ -219,7 +219,9 @@ fun TestSessionScreen(
                     .padding(16.dp)
             ) {
                 Text(
-                    "Question ${state.currentIndex + 1} of ${state.questions.size}",
+                    "Question ${state.currentIndex + 1} of ${state.questions.size}" +
+                        " · ${formatMarks(question.marks)} " +
+                        if (question.marks == 1.0) "mark" else "marks",
                     style = MaterialTheme.typography.labelMedium
                 )
                 if (question.isMultiCorrect) {
@@ -333,6 +335,13 @@ fun TestSessionScreen(
         )
     }
 }
+
+private fun formatMarks(marks: Double): String =
+    if (marks == kotlin.math.floor(marks) && marks.isFinite()) {
+        marks.toLong().toString()
+    } else {
+        marks.toString()
+    }
 
 @Composable
 private fun OptionRow(

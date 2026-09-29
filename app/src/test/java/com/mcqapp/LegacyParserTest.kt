@@ -45,6 +45,39 @@ class LegacyParserTest {
     }
 
     @Test
+    fun parsesMarksWithAliasesAndFallbacks() {
+        val json = """
+        {
+          "papers": [{
+            "id": "p1",
+            "title": "Paper",
+            "categories": [{
+              "id": "c1",
+              "title": "Cat",
+              "questions": [
+                {"id": "q1", "text": "A?", "options": ["X", "Y"], "marks": 3},
+                {"id": "q2", "text": "B?", "options": ["X", "Y"], "points": 2.5},
+                {"id": "q3", "text": "C?", "options": ["X", "Y"], "weight": 0},
+                {"id": "q4", "text": "D?", "options": ["X", "Y"]},
+                {"id": "q5", "text": "E?", "options": ["X", "Y"], "marks": -2},
+                {"id": "q6", "text": "F?", "options": ["X", "Y"], "marks": "lots"}
+              ]
+            }]
+          }]
+        }
+        """.trimIndent()
+
+        val questions = LegacyParser.parse(json).papers.single()
+            .categories.single().questions
+        assertEquals(3.0, questions[0].marks, 0.0001)
+        assertEquals(2.5, questions[1].marks, 0.0001)
+        assertEquals(0.0, questions[2].marks, 0.0001)
+        assertEquals(1.0, questions[3].marks, 0.0001)
+        assertEquals(1.0, questions[4].marks, 0.0001)
+        assertEquals(1.0, questions[5].marks, 0.0001)
+    }
+
+    @Test
     fun parsesLegacyStringOptionsWithAnswerField() {
         val json = """
         {
@@ -207,6 +240,12 @@ class LegacyParserTest {
         assertTrue("expected question images, got $questionImages", questionImages >= 2)
         assertTrue("expected option images, got $optionImages", optionImages >= 5)
         assertTrue("expected explanation images, got $explanationImages", explanationImages >= 1)
+        // Order Check questions carry varied weights for shuffle/marks verification.
+        val orderMarks = paper.categories.single { it.title == "Order Check" }
+            .questions.associate { it.id to it.marks }
+        assertEquals(2.0, orderMarks["q-o1"]!!, 0.0001)
+        assertEquals(1.0, orderMarks["q-o2"]!!, 0.0001)
+        assertEquals(3.0, orderMarks["q-o3"]!!, 0.0001)
     }
 
     private fun isPngDataUri(src: String?): Boolean {

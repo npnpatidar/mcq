@@ -103,6 +103,7 @@ class Exporter(private val db: AppDatabase) {
                 explanation = entity.explanation,
                 explanationImage = entity.explanationImage,
                 difficulty = entity.difficulty,
+                marks = entity.marks,
                 tags = entity.tags.split(",").filter { it.isNotBlank() }
             )
         }

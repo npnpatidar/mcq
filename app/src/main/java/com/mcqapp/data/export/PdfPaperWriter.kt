@@ -58,8 +58,18 @@ object PdfPaperWriter {
                 w.paragraph(category.title, 14f, Typeface.BOLD, Color.BLACK, spaceBefore = 10f)
                 for (question in category.questions) {
                     number++
+                    val title = if (question.marks == 1.0) {
+                        "Q$number. ${question.text}"
+                    } else {
+                        val display = if (question.marks == kotlin.math.floor(question.marks)) {
+                            question.marks.toLong().toString()
+                        } else {
+                            question.marks.toString()
+                        }
+                        "Q$number. ${question.text} [$display marks]"
+                    }
                     w.paragraph(
-                        "Q$number. ${question.text}",
+                        title,
                         12f, Typeface.BOLD, Color.BLACK, spaceBefore = 8f
                     )
                     w.image(question.image)

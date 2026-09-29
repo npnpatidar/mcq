@@ -60,6 +60,7 @@ data class QuestionEntity(
     val explanation: String = "",
     val explanationImage: String? = null,
     val difficulty: String = "medium",
+    val marks: Double = 1.0,
     val tags: String = "",
     val sortOrder: Int = 0,
     val contentHash: String = ""

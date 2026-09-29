@@ -82,7 +82,7 @@ Three shapes are accepted. Missing ids are filled in; unknown fields are ignored
         "options": [{ "id": "a", "text": "Venus" }],
         "correctOptionIds": ["b"],
         "explanation": "...", "explanationImage": null,
-        "difficulty": "easy", "tags": ["space"]
+        "difficulty": "easy", "marks": 2, "tags": ["space"]
       }]
     }],
     "questions": [ /* optional top-level questions, kept in an "Uncategorized" category */ ]
@@ -106,6 +106,7 @@ Three shapes are accepted. Missing ids are filled in; unknown fields are ignored
 | option text | `text`, `value` (plain strings also accepted as options) |
 | tags | array, or comma-separated string |
 | correct answer | `correctOptionIds` (array or comma string) → `correctIndex` → `answer` / `correct` / `correctAnswer`, resolved as option id first, then option text (case-insensitive), then numeric index. Absent = no answer key. |
+| marks | `marks`, `points`, `weight` (default `1`; invalid/negative → `1`). A correct answer scores `marks`; a wrong one deducts `marks × negativeMarking`. `maxScore` is the sum of graded marks. |
 
 ## Import semantics and nuances
 
@@ -165,16 +166,18 @@ Quirks: nested category trees render flat; remote-URL images render as an `[imag
 
 ## Demo data
 
-`Load sample paper` imports `assets/sample_paper.json` — **General Knowledge Demo**, 22
-questions in 8 categories: Science (+ nested Physics), History, Geography, Sports, Visual
-Round (question/option images, a bar-chart interpretation), and **Edge Cases** (missing
-answer, missing explanation, missing id, empty options) plus a top-level Titanic question
-landing in Uncategorized. Re-loading merges by stable ids — never duplicates.
+`Load sample paper` imports `assets/sample_paper.json` — **General Knowledge Demo**, 27
+questions in 9 categories: Science (+ nested Physics), History, Geography, Sports, Visual
+Round (question/option images, a bar-chart interpretation), **Order Check** (sequentially
+titled steps with varied `marks`, for verifying shuffle and weighting), and **Edge Cases**
+(missing answer, missing explanation, missing id, empty options) plus a top-level Titanic
+question landing in Uncategorized. Re-loading merges by stable ids — never duplicates.
 
 ## Data & storage
 
-Room database `mcq.db`, **version 4** (`MIGRATION_3_4` adds `explanationImage` to
-`questions` and `question_results`; existing installs migrate in place). Deleting a paper
+Room database `mcq.db`, **version 5** (`MIGRATION_3_4` adds `explanationImage` to
+`questions` and `question_results`; `MIGRATION_4_5` adds `marks` to `questions`,
+default `1.0`; existing installs migrate in place). Deleting a paper
 deletes its categories; deleting a category deletes its questions (FK cascades) — options
 go with their question. Deleting attempts, bookmarks, or papers never orphans history
 snapshots (attempts embed their own copies).

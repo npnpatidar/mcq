@@ -272,6 +272,14 @@ fun QuestionEditorScreen(
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
+                value = state.marks,
+                onValueChange = viewModel::updateMarks,
+                label = { Text("Marks (default 1)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
                 value = state.explanation,
                 onValueChange = viewModel::updateExplanation,
                 label = { Text("Explanation") },

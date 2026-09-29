@@ -19,6 +19,7 @@ data class QuestionDto(
     val explanation: String = "",
     val explanationImage: String? = null,
     val difficulty: String = "medium",
+    val marks: Double = 1.0,
     val tags: List<String> = emptyList()
 )
 

@@ -151,6 +151,10 @@ object LegacyParser {
             ?: obj["explainImage"]?.jsonPrimitive?.contentOrNull
             ?: obj["explanationImageUrl"]?.jsonPrimitive?.contentOrNull
         val difficulty = obj["difficulty"]?.jsonPrimitive?.contentOrNull ?: "medium"
+        // Weight of a correct answer; absent/invalid/negative values fall back to 1.
+        val marks = (obj["marks"] ?: obj["points"] ?: obj["weight"])
+            ?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() && it >= 0.0 } ?: 1.0
         val tags = when (val t = obj["tags"]) {
             is JsonArray -> t.mapNotNull { it.jsonPrimitive.contentOrNull }
             is JsonPrimitive -> t.contentOrNull?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
@@ -171,6 +175,7 @@ object LegacyParser {
             explanation = explanation,
             explanationImage = explanationImage,
             difficulty = difficulty,
+            marks = marks,
             tags = tags
         )
     }

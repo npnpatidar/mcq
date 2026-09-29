@@ -170,6 +170,7 @@ class Importer(private val db: AppDatabase) {
                                 explanation = questionDto.explanation,
                                 explanationImage = questionDto.explanationImage,
                                 difficulty = questionDto.difficulty,
+                                marks = questionDto.marks,
                                 tags = questionDto.tags.joinToString(","),
                                 sortOrder = resolvedSortOrder,
                                 contentHash = contentHash

@@ -8,10 +8,15 @@ object Scoring {
     fun isCorrect(selected: Set<String>, correct: Set<String>): Boolean =
         selected.isNotEmpty() && selected == correct
 
-    fun scoreQuestion(selected: Set<String>, correct: Set<String>, negativeMarking: Double): Double {
+    fun scoreQuestion(
+        selected: Set<String>,
+        correct: Set<String>,
+        negativeMarking: Double,
+        marks: Double = 1.0
+    ): Double {
         if (correct.isEmpty()) return 0.0
         if (selected.isEmpty()) return 0.0
-        return if (isCorrect(selected, correct)) 1.0 else -negativeMarking
+        return if (isCorrect(selected, correct)) marks else -marks * negativeMarking
     }
 
     data class Summary(
@@ -33,24 +38,26 @@ object Scoring {
         var skipped = 0
         var ungraded = 0
         var score = 0.0
+        var maxScore = 0.0
         for (q in questions) {
             if (q.correctOptionIds.isEmpty()) {
                 ungraded++
                 continue
             }
+            maxScore += q.marks
             val selected = selections[q.id].orEmpty()
             when {
                 selected.isEmpty() -> skipped++
                 isCorrect(selected, q.correctOptionIds) -> {
                     correct++
-                    score += 1.0
+                    score += q.marks
                 }
                 else -> {
                     wrong++
-                    score -= negativeMarking
+                    score -= q.marks * negativeMarking
                 }
             }
         }
-        return Summary(correct, wrong, skipped, score, (correct + wrong + skipped).toDouble(), ungraded)
+        return Summary(correct, wrong, skipped, score, maxScore, ungraded)
     }
 }

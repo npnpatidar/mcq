@@ -140,6 +140,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                         explanation = it.explanation,
                         explanationImage = it.explanationImage,
                         difficulty = Difficulty.fromLabel(it.difficulty),
+                        marks = it.marks,
                         tags = it.tags.split(",").filter { t -> t.isNotBlank() }
                     )
                 }
@@ -170,6 +171,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 correctOptionIds = correctIds,
                 explanation = entity.explanation,
                 difficulty = Difficulty.fromLabel(entity.difficulty),
+                marks = entity.marks,
                 tags = entity.tags.split(",").filter { it.isNotBlank() }
             )
         }
@@ -199,6 +201,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             explanation = explanation,
             explanationImage = explanationImage,
             difficulty = Difficulty.fromLabel(difficulty),
+            marks = marks,
             tags = tags.split(",").filter { it.isNotBlank() }
         )
     }
@@ -240,6 +243,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 explanation = question.explanation,
                 explanationImage = question.explanationImage,
                 difficulty = question.difficulty.label,
+                marks = question.marks,
                 tags = question.tags.joinToString(","),
                 sortOrder = sortOrder,
                 contentHash = contentHash
@@ -343,6 +347,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         var skipped = 0
         var ungraded = 0
         var score = 0.0
+        var maxScore = 0.0
         val results = mutableListOf<QuestionResultEntity>()
         for (q in questions) {
             val selected = selections[q.id].orEmpty()
@@ -350,16 +355,17 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 // No answer key: excluded from scoring entirely (no credit, no penalty).
                 ungraded++
             } else {
+                maxScore += q.marks
                 val isCorrect = selected.isNotEmpty() && selected == q.correctOptionIds
                 when {
                     selected.isEmpty() -> skipped++
                     isCorrect -> {
                         correct++
-                        score += 1.0
+                        score += q.marks
                     }
                     else -> {
                         wrong++
-                        score -= negativeMarking
+                        score -= q.marks * negativeMarking
                     }
                 }
             }
@@ -383,7 +389,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             )
         }
         Logger.d("REPO", "saveAttempt(paper=$paperId, questions=${questions.size}, " +
-            "correct=$correct, wrong=$wrong, skipped=$skipped, ungraded=$ungraded, score=$score)")
+            "correct=$correct, wrong=$wrong, skipped=$skipped, ungraded=$ungraded, " +
+            "score=$score/maxScore=$maxScore)")
         val attemptId = db.attemptDao().insertAttempt(
             AttemptEntity(
                 paperId = paperId,
@@ -393,7 +400,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 wrongCount = wrong,
                 skippedCount = skipped,
                 score = score,
-                maxScore = (correct + wrong + skipped).toDouble(),
+                maxScore = maxScore,
                 durationSeconds = durationSeconds,
                 finishedAt = finishedAt
             )

@@ -109,4 +109,66 @@ class ScoringTest {
         assertEquals(0.0, Scoring.scoreQuestion(setOf("a"), emptySet(), 0.33), 0.0001)
         assertEquals(0.0, Scoring.scoreQuestion(emptySet(), emptySet(), 0.33), 0.0001)
     }
+
+    @Test
+    fun correctScoresMarks() {
+        assertEquals(3.0, Scoring.scoreQuestion(setOf("a", "c"), correct, 0.33, 3.0), 0.0001)
+    }
+
+    @Test
+    fun wrongDeductsScaledNegativeMarking() {
+        assertEquals(-0.75, Scoring.scoreQuestion(setOf("a"), correct, 0.25, 3.0), 0.0001)
+    }
+
+    @Test
+    fun summarizeWeightsScoreAndMaxScore() {
+        val questions = listOf(
+            com.mcqapp.domain.Question(
+                id = "q1", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = setOf("a"), marks = 2.0
+            ),
+            com.mcqapp.domain.Question(
+                id = "q2", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = setOf("b"), marks = 3.0
+            ),
+            com.mcqapp.domain.Question(
+                id = "q3", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = setOf("c"), marks = 5.0
+            ),
+            com.mcqapp.domain.Question(
+                id = "q4", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = emptySet(), marks = 4.0
+            )
+        )
+        val summary = Scoring.summarize(
+            selections = mapOf("q1" to setOf("a"), "q2" to setOf("a"), "q4" to setOf("x")),
+            questions = questions,
+            negativeMarking = 0.25
+        )
+        assertEquals(1, summary.correctCount)
+        assertEquals(1, summary.wrongCount)
+        assertEquals(1, summary.skippedCount)
+        assertEquals(1, summary.ungradedCount)
+        // +2 correct, -3*0.25 wrong, ungraded 4-mark question excluded entirely.
+        assertEquals(1.25, summary.score, 0.0001)
+        assertEquals(10.0, summary.maxScore, 0.0001)
+    }
+
+    @Test
+    fun zeroMarksQuestionAddsNothingToMaxScore() {
+        val questions = listOf(
+            com.mcqapp.domain.Question(
+                id = "q1", categoryId = "c", text = "t",
+                options = emptyList(), correctOptionIds = setOf("a"), marks = 0.0
+            )
+        )
+        val summary = Scoring.summarize(
+            selections = mapOf("q1" to setOf("a")),
+            questions = questions,
+            negativeMarking = 0.0
+        )
+        assertEquals(1, summary.correctCount)
+        assertEquals(0.0, summary.score, 0.0001)
+        assertEquals(0.0, summary.maxScore, 0.0001)
+    }
 }

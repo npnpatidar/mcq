@@ -27,6 +27,7 @@ data class Question(
     val explanation: String = "",
     val explanationImage: String? = null,
     val difficulty: Difficulty = Difficulty.MEDIUM,
+    val marks: Double = 1.0,
     val tags: List<String> = emptyList()
 ) {
     val isMultiCorrect: Boolean get() = correctOptionIds.size > 1

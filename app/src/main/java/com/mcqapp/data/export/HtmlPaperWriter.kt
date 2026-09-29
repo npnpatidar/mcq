@@ -73,7 +73,7 @@ object HtmlPaperWriter {
     private fun appendQuizQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
         sb.append("<div class=\"q\">\n")
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
-            .append(esc(question.text)).append("</p>\n")
+            .append(esc(question.text)).append(marksSuffix(question)).append("</p>\n")
         appendImage(sb, question.image)
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
@@ -102,7 +102,8 @@ object HtmlPaperWriter {
     private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
         sb.append("<div class=\"q\">\n")
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
-            .append(esc(question.text)).append("</p>\n")
+            .append(esc(question.text)).append(marksSuffix(question)).append("</p>\n")
+        appendImage(sb, question.image)
         appendImage(sb, question.image)
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
@@ -149,6 +150,17 @@ object HtmlPaperWriter {
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
+
+    /** Shown only for non-default weights so existing output is byte-identical. */
+    private fun marksSuffix(question: QuestionDto): String {
+        if (question.marks == 1.0) return ""
+        val display = if (question.marks == kotlin.math.floor(question.marks)) {
+            question.marks.toLong().toString()
+        } else {
+            question.marks.toString()
+        }
+        return " [$display marks]"
+    }
 
     private const val CSS = """
 body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 16px; color: #222; }

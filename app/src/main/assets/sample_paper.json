@@ -370,6 +370,7 @@
                 "Delta"
               ],
               "correctIndex": 0,
+              "marks": 2,
               "explanation": "First step, first option.",
               "difficulty": "easy",
               "tags": [
@@ -386,6 +387,7 @@
                 "Delta"
               ],
               "correctIndex": 1,
+              "marks": 1,
               "explanation": "Second step, second option.",
               "difficulty": "easy",
               "tags": [
@@ -402,6 +404,7 @@
                 "Delta"
               ],
               "correctIndex": 2,
+              "marks": 3,
               "explanation": "Third step, third option.",
               "difficulty": "easy",
               "tags": [
@@ -418,6 +421,7 @@
                 "Delta"
               ],
               "correctIndex": 3,
+              "marks": 1,
               "explanation": "Fourth step, fourth option.",
               "difficulty": "easy",
               "tags": [
@@ -434,6 +438,7 @@
                 "Delta"
               ],
               "correctIndex": 0,
+              "marks": 2,
               "explanation": "Final step, back to the first option.",
               "difficulty": "easy",
               "tags": [

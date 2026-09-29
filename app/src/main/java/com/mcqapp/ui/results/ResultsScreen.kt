@@ -117,6 +117,10 @@ fun ResultsScreen(
         val filterValue = filter.value
         val bookmarked = state.bookmarked
         val ungradedCount = remember(results) { results.count { it.correctOptionIds.isEmpty() } }
+        // Old attempts (finished before per-question timing existed)
+        // carry all-zero dwell: hide times entirely rather than
+        // showing a wall of 0:00.
+        val showDwell = remember(results) { results.any { it.dwellSeconds > 0 } }
         val filtered = remember(results, filterValue, bookmarked) {
             ReviewFilters.apply(results, filterValue, bookmarked)
         }
@@ -262,7 +266,8 @@ fun ResultsScreen(
                         index = index + 1,
                         result = result,
                         bookmarked = result.questionId in bookmarked,
-                        onToggleBookmark = { viewModel.toggleBookmark(result.questionId) }
+                        onToggleBookmark = { viewModel.toggleBookmark(result.questionId) },
+                        showDwell = showDwell
                     )
                 }
             }
@@ -283,7 +288,8 @@ private fun ResultCard(
     index: Int,
     result: QuestionResult,
     bookmarked: Boolean,
-    onToggleBookmark: () -> Unit
+    onToggleBookmark: () -> Unit,
+    showDwell: Boolean = false
 ) {
     val ungraded = result.correctOptionIds.isEmpty()
     Card(
@@ -350,7 +356,7 @@ private fun ResultCard(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            if (result.dwellSeconds > 0) {
+            if (showDwell) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Time spent: ${com.mcqapp.domain.Dwell.format(result.dwellSeconds)}",

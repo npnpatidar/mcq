@@ -25,13 +25,16 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.Trends
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,6 +77,18 @@ fun HistoryScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                val trends = Trends.perPaper(attempts)
+                if (trends.isNotEmpty()) {
+                    item {
+                        Text("Trends", style = MaterialTheme.typography.titleSmall)
+                    }
+                    items(trends, key = { "trend-${it.paperId}" }) { trend ->
+                        TrendCard(trend = trend)
+                    }
+                    item {
+                        Text("Attempts", style = MaterialTheme.typography.titleSmall)
+                    }
+                }
                 items(attempts, key = { it.id }) { attempt ->
                     Card(
                         modifier = Modifier
@@ -107,6 +122,46 @@ fun HistoryScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrendCard(trend: Trends.PaperTrend) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(trend.title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "${trend.attempts} attempt${if (trend.attempts == 1) "" else "s"}" +
+                        " · best ${"%.0f%%".format(trend.bestPercent)}",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "%.0f%%".format(trend.latestPercent),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (trend.attempts > 1) {
+                    val (arrow, color) = when {
+                        trend.deltaPoints > 0.005 -> "▲" to Color(0xFF2E7D32)
+                        trend.deltaPoints < -0.005 -> "▼" to Color(0xFFC62828)
+                        else -> "=" to Color.Gray
+                    }
+                    Text(
+                        "$arrow ${"%.0f".format(kotlin.math.abs(trend.deltaPoints))} pts",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = color
+                    )
                 }
             }
         }

@@ -67,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -616,7 +617,11 @@ private fun PaperCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(paper.title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        paper.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.testTag("paper-title")
+                    )
                     if (paper.description.isNotBlank()) {
                         Text(
                             paper.description,

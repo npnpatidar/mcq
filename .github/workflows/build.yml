@@ -52,3 +52,38 @@ jobs:
         with:
           name: test-results
           path: app/build/test-results/testDebugUnitTest/
+
+  ui-test:
+    # Emulator UI test: boots an x86_64 emulator and runs the critical
+    # path (library -> test -> submit -> results). Separate job so JVM
+    # unit-test results never depend on emulator boot time.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Run UI tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon
+
+      - name: Upload UI test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: app/build/outputs/androidTest-results/

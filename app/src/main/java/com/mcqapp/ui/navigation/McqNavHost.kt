@@ -27,22 +27,29 @@ fun McqNavHost(repository: McqRepository) {
             LibraryScreen(repository = repository, navController = navController)
         }
         composable(
-            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}",
+            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
                 navArgument("categories") { type = NavType.StringType; defaultValue = "" },
-                navArgument("mistakes") { type = NavType.BoolType; defaultValue = false }
+                navArgument("mistakes") { type = NavType.BoolType; defaultValue = false },
+                navArgument("drillCount") { type = NavType.IntType; defaultValue = 0 },
+                navArgument("drillMinutes") { type = NavType.IntType; defaultValue = 0 }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
             val categories = entry.arguments?.getString("categories").orEmpty()
             val mistakes = entry.arguments?.getBoolean("mistakes") ?: false
-            Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories', mistakes=$mistakes")
+            val drillCount = entry.arguments?.getInt("drillCount") ?: 0
+            val drillMinutes = entry.arguments?.getInt("drillMinutes") ?: 0
+            Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories', " +
+                "mistakes=$mistakes, drill=$drillCount/${drillMinutes}min")
             TestSessionScreen(
                 repository = repository,
                 paperId = paperId,
                 categoryIds = categories.split(",").filter { it.isNotBlank() },
                 mistakesOnly = mistakes,
+                drillCount = drillCount,
+                drillMinutes = drillMinutes,
                 navController = navController
             )
         }

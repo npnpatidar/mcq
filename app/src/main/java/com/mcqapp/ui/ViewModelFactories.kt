@@ -12,11 +12,13 @@ class TestViewModelFactory(
     private val application: Application,
     private val paperId: String,
     private val categoryIds: List<String>,
-    private val mistakesOnly: Boolean = false
+    private val mistakesOnly: Boolean = false,
+    private val drillCount: Int = 0,
+    private val drillMinutes: Int = 0
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return TestViewModel(application, paperId, categoryIds, mistakesOnly) as T
+        return TestViewModel(application, paperId, categoryIds, mistakesOnly, drillCount, drillMinutes) as T
     }
 }
 

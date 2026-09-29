@@ -39,6 +39,7 @@ data class TestUiState(
     val strictMode: Boolean = false,
     val autoAdvance: Boolean = false,
     val mistakesOnly: Boolean = false,
+    val isDrill: Boolean = false,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
     val timeWarning: String? = null,
@@ -53,7 +54,9 @@ class TestViewModel(
     application: Application,
     private val paperId: String,
     private val categoryIds: List<String>,
-    private val mistakesOnly: Boolean = false
+    private val mistakesOnly: Boolean = false,
+    private val drillCount: Int = 0,
+    private val drillMinutes: Int = 0
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -95,7 +98,19 @@ class TestViewModel(
                     Logger.i("TESTVM", "Shuffled attempt: seed=$seed, " +
                         "questions=$shuffleQ, options=$shuffleO")
                 }
-                val totalSeconds = (paper?.durationMinutes ?: 0) * 60
+                val isDrill = drillCount > 0
+                val drilled = if (isDrill) {
+                    val seed = Random.nextLong()
+                    Logger.i("TESTVM", "Drill: sampling $drillCount of ${ordered.size}, seed=$seed")
+                    com.mcqapp.domain.Drill.sample(ordered, drillCount, seed)
+                } else {
+                    ordered
+                }
+                val totalSeconds = if (isDrill && drillMinutes > 0) {
+                    drillMinutes * 60
+                } else {
+                    (paper?.durationMinutes ?: 0) * 60
+                }
                 val practice = repository.practiceMode().first()
                 val strict = repository.strictMode().first()
                 val advance = repository.autoAdvance().first()
@@ -105,13 +120,14 @@ class TestViewModel(
                     it.copy(
                         loading = false,
                         paper = paper,
-                        questions = ordered,
+                        questions = drilled,
                         totalSeconds = totalSeconds,
                         remainingSeconds = totalSeconds,
                         practiceMode = practice,
                         strictMode = strict,
                         autoAdvance = advance,
-                        mistakesOnly = mistakesOnly
+                        mistakesOnly = mistakesOnly,
+                        isDrill = isDrill
                     )
                 }
                 checkResumeOffer()

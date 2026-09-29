@@ -83,16 +83,20 @@ fun TestSessionScreen(
     paperId: String,
     categoryIds: List<String>,
     mistakesOnly: Boolean = false,
+    drillCount: Int = 0,
+    drillMinutes: Int = 0,
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
-        key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly",
+        key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly-drill=$drillCount/$drillMinutes",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
             categoryIds,
-            mistakesOnly
+            mistakesOnly,
+            drillCount,
+            drillMinutes
         )
     )
     val state by viewModel.state.collectAsState()
@@ -322,6 +326,13 @@ fun TestSessionScreen(
                 if (state.mistakesOnly) {
                     Text(
                         "Mistakes round — previously missed questions",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+                if (state.isDrill) {
+                    Text(
+                        "Drill — ${state.questions.size} questions on the clock",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )

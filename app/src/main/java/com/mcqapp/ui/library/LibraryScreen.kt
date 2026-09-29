@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -261,6 +262,12 @@ fun LibraryScreen(
                                 onStart = { navController.navigate("test?paperId=${paper.id}&categories=") },
                                 onPracticeMistakes = {
                                     navController.navigate("test?paperId=${paper.id}&categories=&mistakes=true")
+                                },
+                                onDrill = { count, minutes ->
+                                    navController.navigate(
+                                        "test?paperId=${paper.id}&categories=&mistakes=false" +
+                                            "&drillCount=$count&drillMinutes=$minutes"
+                                    )
                                 },
                                 mistakeCount = mistakeCounts[paper.id] ?: 0,
                                 onBrowse = { navController.navigate("browse/${paper.id}") },
@@ -609,8 +616,12 @@ private fun PaperCard(
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit,
     onPracticeMistakes: () -> Unit = {},
+    onDrill: (Int, Int) -> Unit = { _, _ -> },
     mistakeCount: Int = 0
 ) {
+    var showDrillDialog by remember { mutableStateOf(false) }
+    var drillCount by remember { mutableStateOf(10) }
+    var drillMinutes by remember { mutableStateOf(5) }
     var expanded by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -662,14 +673,63 @@ private fun PaperCard(
                 OutlinedButton(onClick = onBrowse) {
                     Text("Browse")
                 }
+                OutlinedButton(onClick = { showDrillDialog = true }) {
+                    Text("Drill")
+                }
                 if (mistakeCount > 0) {
                     OutlinedButton(onClick = {
-                        Logger.i("LIB", "Practice mistakes: paperId=${paper.id}, count=$mistakeCount")
+                        Logger.i("LIB", "Start paper: paperId=${paper.id}")
                         onPracticeMistakes()
                     }) {
                         Text("Mistakes ($mistakeCount)")
                     }
                 }
+            }
+            if (showDrillDialog) {
+                AlertDialog(
+                    onDismissRequest = { showDrillDialog = false },
+                    title = { Text("Quick drill") },
+                    text = {
+                        Column {
+                            Text("Questions", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(5, 10, 20).forEach { n ->
+                                    FilterChip(
+                                        selected = drillCount == n,
+                                        onClick = { drillCount = n },
+                                        label = { Text("$n") }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text("Minutes", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(3, 5, 10).forEach { m ->
+                                    FilterChip(
+                                        selected = drillMinutes == m,
+                                        onClick = { drillMinutes = m },
+                                        label = { Text("$m") }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "$drillCount random questions, $drillMinutes:00 on the clock.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showDrillDialog = false
+                            Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes")
+                            onDrill(drillCount, drillMinutes)
+                        }) { Text("Start drill") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDrillDialog = false }) { Text("Cancel") }
+                    }
+                )
             }
             AnimatedVisibility(visible = expanded) {
                 Column {

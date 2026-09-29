@@ -18,6 +18,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -48,6 +49,7 @@ fun HistoryScreen(
 ) {
     val attempts by viewModel.attempts.collectAsState()
     val hardest by viewModel.hardest.collectAsState()
+    val weakest by viewModel.weakest.collectAsState()
 
     Scaffold(
         topBar = {
@@ -88,6 +90,36 @@ fun HistoryScreen(
                     }
                     item {
                         Text("Attempts", style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+                if (weakest.isNotEmpty()) {
+                    item {
+                        Text("Weakest categories", style = MaterialTheme.typography.titleSmall)
+                    }
+                    items(weakest, key = { "weak-${it.paperId}-${it.categoryTitle}" }) { mastery ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                            ) {
+                                Text(
+                                    mastery.categoryTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    "${mastery.paperTitle} · ${"%.0f%%".format(mastery.rate * 100)}" +
+                                        " · ${mastery.correct}/${mastery.graded}",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                LinearProgressIndicator(
+                                    progress = { mastery.rate.toFloat().coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
                     }
                 }
                 if (hardest.isNotEmpty()) {

@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
@@ -103,6 +104,23 @@ class BrowseViewModel(
         viewModelScope.launch {
             repository.copyQuestionsToCategory(questionIds, targetCategoryId)
             Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
+        }
+    }
+
+    fun bulkEdit(
+        questionIds: Set<String>,
+        marksText: String,
+        difficulty: Difficulty?,
+        tagsText: String
+    ) {
+        viewModelScope.launch {
+            val marks = marksText.trim().takeIf { it.isNotEmpty() }?.let { raw ->
+                raw.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+            }
+            val tags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                .takeIf { tagsText.isNotBlank() }
+            repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
+            Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
         }
     }
 }

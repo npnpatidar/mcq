@@ -78,6 +78,10 @@ fun BrowseScreen(
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
+    var showBulkDialog by remember { mutableStateOf(false) }
+    var bulkMarks by remember { mutableStateOf("") }
+    var bulkTags by remember { mutableStateOf("") }
+    var bulkDifficulty by remember { mutableStateOf<com.mcqapp.domain.Difficulty?>(null) }
 
     Scaffold(
         topBar = {
@@ -106,6 +110,15 @@ fun BrowseScreen(
                 },
                 actions = {
                     if (selectionMode) {
+                        TextButton(
+                            onClick = {
+                                bulkMarks = ""
+                                bulkTags = ""
+                                bulkDifficulty = null
+                                showBulkDialog = true
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) { Text("Edit") }
                         TextButton(
                             onClick = { showMoveDialog = true },
                             enabled = selectedIds.isNotEmpty()
@@ -252,6 +265,66 @@ fun BrowseScreen(
                     onDuplicate = { viewModel.duplicateQuestion(question.id) }
                 )
             }
+        }
+
+        if (showBulkDialog) {
+            AlertDialog(
+                onDismissRequest = { showBulkDialog = false },
+                title = { Text("Edit ${selectedIds.size} questions") },
+                text = {
+                    Column {
+                        Text(
+                            "Blank fields keep existing values.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.OutlinedTextField(
+                            value = bulkMarks,
+                            onValueChange = { bulkMarks = it },
+                            label = { Text("Marks (blank = keep)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("Difficulty", style = MaterialTheme.typography.labelLarge)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = bulkDifficulty == null,
+                                onClick = { bulkDifficulty = null },
+                                label = { Text("Keep") }
+                            )
+                            com.mcqapp.domain.Difficulty.entries.forEach { d ->
+                                FilterChip(
+                                    selected = bulkDifficulty == d,
+                                    onClick = { bulkDifficulty = d },
+                                    label = { Text(d.label) }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.OutlinedTextField(
+                            value = bulkTags,
+                            onValueChange = { bulkTags = it },
+                            label = { Text("Tags, comma separated (blank = keep)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.bulkEdit(selectedIds, bulkMarks, bulkDifficulty, bulkTags)
+                        selectedIds = emptySet()
+                        selectionMode = false
+                        showBulkDialog = false
+                    }) { Text("Apply") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBulkDialog = false }) { Text("Cancel") }
+                }
+            )
         }
 
         if (showDeleteConfirm) {

@@ -411,6 +411,29 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
     }
 
+    /** Bulk-sets marks/difficulty/tags on questions; null fields are kept. */
+    suspend fun bulkUpdateQuestions(
+        questionIds: Collection<String>,
+        marks: Double?,
+        difficulty: Difficulty?,
+        tags: List<String>?
+    ) {
+        var count = 0
+        questionIds.forEach { id ->
+            getQuestion(id)?.let { q ->
+                saveQuestion(
+                    q.copy(
+                        marks = marks ?: q.marks,
+                        difficulty = difficulty ?: q.difficulty,
+                        tags = tags ?: q.tags
+                    )
+                )
+                count++
+            }
+        }
+        Logger.i("REPO", "bulkUpdateQuestions($count ids)")
+    }
+
     /** Swaps the positions of two same-category questions. */
     suspend fun swapQuestionOrder(firstId: String, secondId: String): Boolean {
         val a = db.questionDao().getById(firstId) ?: return false

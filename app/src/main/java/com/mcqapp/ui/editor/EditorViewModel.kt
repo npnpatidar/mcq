@@ -228,16 +228,10 @@ class EditorViewModel(
 
     companion object {
         /** Display whole marks without a decimal point ("2", not "2.0"). */
-        fun formatMarks(marks: Double): String =
-            if (marks == kotlin.math.floor(marks) && !marks.isInfinite()) {
-                marks.toLong().toString()
-            } else {
-                marks.toString()
-            }
+        fun formatMarks(marks: Double): String = com.mcqapp.domain.Marks.format(marks)
 
         /** Invalid, non-finite or negative input falls back to 1 mark. */
-        fun parseMarks(raw: String): Double =
-            raw.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 } ?: 1.0
+        fun parseMarks(raw: String): Double = com.mcqapp.domain.Marks.parse(raw)
     }
 
     private fun buildDto(): QuestionDto? {

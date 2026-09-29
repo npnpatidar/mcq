@@ -176,6 +176,13 @@ fun ResultsScreen(
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(top = 8.dp)
                     )
+                    val totalDwell = results.sumOf { it.dwellSeconds }
+                    if (results.isNotEmpty() && totalDwell > 0) {
+                        Text(
+                            "Avg ${com.mcqapp.domain.Dwell.format(totalDwell / results.size)} per question",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
                 }
             }
 
@@ -341,6 +348,13 @@ private fun ResultCard(
                 Text(
                     "Explanation: ${result.explanation}",
                     style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (result.dwellSeconds > 0) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Time spent: ${com.mcqapp.domain.Dwell.format(result.dwellSeconds)}",
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
             QuestionImage(src = result.explanationImage)

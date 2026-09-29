@@ -461,7 +461,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         selections: Map<String, Set<String>>,
         negativeMarking: Double,
         durationSeconds: Long,
-        finishedAt: Long
+        finishedAt: Long,
+        dwellSeconds: Map<String, Long> = emptyMap()
     ): Long {
         var correct = 0
         var wrong = 0
@@ -505,7 +506,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     selectedOptionIds = selected.joinToString(","),
                     isCorrect = isCorrect,
                     explanation = q.explanation,
-                    explanationImage = q.explanationImage
+                    explanationImage = q.explanationImage,
+                    dwellSeconds = dwellSeconds[q.id] ?: 0L
                 )
             )
         }
@@ -589,6 +591,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val options = json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), optionsJson)
         return QuestionResult(
             attemptId = attemptId,
+            dwellSeconds = dwellSeconds,
             questionId = questionId,
             categoryTitle = categoryTitle,
             text = text,

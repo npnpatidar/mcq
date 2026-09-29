@@ -252,7 +252,8 @@ class TestViewModel(
                 selections = current.selections,
                 negativeMarking = current.paper?.negativeMarking ?: 0.0,
                 durationSeconds = durationSeconds,
-                finishedAt = System.currentTimeMillis()
+                finishedAt = System.currentTimeMillis(),
+                dwellSeconds = current.dwellSeconds
             )
             Logger.i("TESTVM", "Attempt saved: attemptId=$attemptId")
             _state.update { it.copy(attemptId = attemptId) }

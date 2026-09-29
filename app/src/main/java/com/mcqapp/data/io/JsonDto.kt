@@ -54,7 +54,8 @@ data class AttemptResultDto(
     val selectedOptionIds: String = "",
     val isCorrect: Boolean = false,
     val explanation: String = "",
-    val explanationImage: String? = null
+    val explanationImage: String? = null,
+    val dwellSeconds: Long = 0
 )
 
 @Serializable

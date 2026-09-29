@@ -141,5 +141,6 @@ data class QuestionResultEntity(
     val selectedOptionIds: String,
     val isCorrect: Boolean,
     val explanation: String,
-    val explanationImage: String? = null
+    val explanationImage: String? = null,
+    val dwellSeconds: Long = 0
 )

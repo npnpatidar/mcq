@@ -254,7 +254,8 @@ class Importer(private val db: AppDatabase) {
                             selectedOptionIds = r.selectedOptionIds,
                             isCorrect = r.isCorrect,
                             explanation = r.explanation,
-                            explanationImage = r.explanationImage
+                            explanationImage = r.explanationImage,
+                            dwellSeconds = r.dwellSeconds
                         )
                     }
                 )

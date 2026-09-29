@@ -81,7 +81,8 @@ class RepositoryTest {
             selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("nope"), "q3" to setOf("x")),
             negativeMarking = 0.25,
             durationSeconds = 60,
-            finishedAt = System.currentTimeMillis()
+            finishedAt = System.currentTimeMillis(),
+            dwellSeconds = mapOf("q1" to 30L, "q2" to 90L)
         )
         val attempt = repository.getAttempt(attemptId)!!
         assertEquals(1, attempt.correctCount)
@@ -91,6 +92,10 @@ class RepositoryTest {
         assertEquals(5.0, attempt.maxScore, 0.0001)
         val results = repository.getAttemptResults(attemptId)
         assertEquals(3, results.size)
+        val dwellById = results.associate { it.questionId to it.dwellSeconds }
+        assertEquals(30L, dwellById["q1"])
+        assertEquals(90L, dwellById["q2"])
+        assertEquals(0L, dwellById["q3"])
     }
 
     @Test

@@ -176,9 +176,10 @@ question landing in Uncategorized. Re-loading merges by stable ids — never dup
 
 ## Data & storage
 
-Room database `mcq.db`, **version 5** (`MIGRATION_3_4` adds `explanationImage` to
+Room database `mcq.db`, **version 6** (`MIGRATION_3_4` adds `explanationImage` to
 `questions` and `question_results`; `MIGRATION_4_5` adds `marks` to `questions`,
-default `1.0`; existing installs migrate in place). Deleting a paper
+default `1.0`; `MIGRATION_5_6` adds `dwellSeconds` to `question_results`, default
+`0`; existing installs migrate in place). Deleting a paper
 deletes its categories; deleting a category deletes its questions (FK cascades) — options
 go with their question. Deleting attempts, bookmarks, or papers never orphans history
 snapshots (attempts embed their own copies).

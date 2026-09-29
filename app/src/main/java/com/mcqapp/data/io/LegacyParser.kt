@@ -91,7 +91,8 @@ object LegacyParser {
                     selectedOptionIds = r["selectedOptionIds"]?.jsonPrimitive?.contentOrNull ?: "",
                     isCorrect = r["isCorrect"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false,
                     explanation = r["explanation"]?.jsonPrimitive?.contentOrNull ?: "",
-                    explanationImage = r["explanationImage"]?.jsonPrimitive?.contentOrNull
+                    explanationImage = r["explanationImage"]?.jsonPrimitive?.contentOrNull,
+                    dwellSeconds = r["dwellSeconds"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
                 )
             }
         )

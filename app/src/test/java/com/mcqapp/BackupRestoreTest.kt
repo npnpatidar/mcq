@@ -51,7 +51,8 @@ class BackupRestoreTest {
                             text = "Q?",
                             selectedOptionIds = "a",
                             correctOptionIds = "a",
-                            isCorrect = true
+                            isCorrect = true,
+                            dwellSeconds = 42
                         )
                     )
                 )
@@ -67,6 +68,7 @@ class BackupRestoreTest {
         assertEquals(1700000000000, attempt.finishedAt)
         assertEquals(1, attempt.results.size)
         assertTrue(attempt.results.single().isCorrect)
+        assertEquals(42, attempt.results.single().dwellSeconds)
     }
 
     @Test

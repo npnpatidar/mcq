@@ -73,6 +73,7 @@ data class Attempt(
 
 data class QuestionResult(
     val attemptId: Long = 0,
+    val dwellSeconds: Long = 0,
     val questionId: String,
     val categoryTitle: String,
     val text: String,

@@ -18,8 +18,13 @@ object LegacyParser {
 
     fun parse(json: String): McqFileDto {
         val element = Json.parseToJsonElement(json)
+        // Scalar/null roots carry no questions; empty file beats a crash
+        // (the import screen reports "No papers found").
+        if (element !is JsonObject && element !is JsonArray) {
+            return McqFileDto(version = 1)
+        }
         if (element is JsonArray) {
-            val questions = uniqueIds(element.map { parseQuestion(it.jsonObject) })
+            val questions = uniqueIds(element.mapNotNull { safeQuestion(it) })
             val paperId = "paper-" + System.currentTimeMillis().toString(36)
             val paper = PaperDto(
                 id = paperId,
@@ -38,7 +43,13 @@ object LegacyParser {
         val root = element.jsonObject
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 1
         val papersJson = root["papers"] as? JsonArray ?: JsonArray(emptyList())
-        val papers = papersJson.map { parsePaper(it.jsonObject) }
+        val papers = papersJson.mapNotNull {
+            try {
+                parsePaper(it.jsonObject)
+            } catch (_: Exception) {
+                null
+            }
+        }
         val bookmarks = (root["bookmarks"] as? JsonArray)
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.filter { it.isNotBlank() }
             ?: emptyList()
@@ -105,9 +116,15 @@ object LegacyParser {
             ?: obj["sections"] as? JsonArray
             ?: obj["subjects"] as? JsonArray
             ?: JsonArray(emptyList())
-        val categories = categoriesJson.map { parseCategory(it.jsonObject) }
+        val categories = categoriesJson.mapNotNull {
+            try {
+                parseCategory(it.jsonObject)
+            } catch (_: Exception) {
+                null
+            }
+        }
         val topLevelQuestions = obj["questions"] as? JsonArray
-        val parsedTopLevel = topLevelQuestions?.let { uniqueIds(it.map { q -> parseQuestion(q.jsonObject) }) }
+        val parsedTopLevel = topLevelQuestions?.let { uniqueIds(it.mapNotNull { q -> safeQuestion(q) }) }
             ?: emptyList()
         // Top-level questions land in their own category instead of being
         // silently dropped when the paper also defines categories.
@@ -151,8 +168,15 @@ object LegacyParser {
             id = id,
             title = title,
             parentId = parentId,
-            questions = uniqueIds(questionsJson.map { parseQuestion(it.jsonObject) })
+            questions = uniqueIds(questionsJson.mapNotNull { safeQuestion(it) })
         )
+    }
+
+    /** Malformed rows are skipped, never fatal: one bad question must not kill a bank. */
+    private fun safeQuestion(element: JsonElement): QuestionDto? = try {
+        parseQuestion(element.jsonObject)
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -252,14 +276,31 @@ object LegacyParser {
         }
     }
 
-    private fun parseCorrectIds(obj: JsonObject, options: List<OptionDto>): List<String> {
+    private fun parseCorrectIds(obj: JsonObject, options: List<OptionDto>): List<String> = try {
+        parseCorrectIdsUnsafe(obj, options)
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun parseCorrectIdsUnsafe(obj: JsonObject, options: List<OptionDto>): List<String> {
+        val optionIds = options.map { it.id }.toSet()
         obj["correctOptionIds"]?.let { v ->
             val ids = when (v) {
-                is JsonArray -> v.mapNotNull { it.jsonPrimitive.contentOrNull }
+                is JsonArray -> v.mapNotNull {
+                    try {
+                        it.jsonPrimitive.contentOrNull
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
                 is JsonPrimitive -> v.contentOrNull?.split(",")?.map { it.trim() }
                 else -> null
             }
-            if (!ids.isNullOrEmpty()) return ids
+            // Dangling keys reference nothing answerable; dropping them turns
+            // the question ungraded (with a preview warning) instead of
+            // silently unwinnable.
+            val resolved = ids?.filter { it in optionIds }
+            if (!resolved.isNullOrEmpty()) return resolved
         }
         obj["correctIndex"]?.jsonPrimitive?.intOrNull?.let { idx ->
             return listOfNotNull(options.getOrNull(idx)?.id)

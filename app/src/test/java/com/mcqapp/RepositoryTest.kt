@@ -200,11 +200,16 @@ class RepositoryTest {
             finishedAt = 5000L,
             dwellSeconds = mapOf("q1" to 15L)
         )
-        val queue = repository.getStudyQueue("p1", now = 6000L)
+        // The seeded card is scheduled for tomorrow, so it is not due yet.
+        assertTrue(repository.getStudyQueue("p1", now = 6000L).isEmpty())
+        val stored = db.cardStateDao().get("p1", "q1")!!
+        assertEquals("history must seed a card, not leave it new", 1, stored.reps)
+        assertEquals(5000L + com.mcqapp.domain.Sm2Scheduler.DAY_MS, stored.dueAt)
+        // And it becomes due once that date passes.
+        val later = 5000L + com.mcqapp.domain.Sm2Scheduler.DAY_MS
+        val queue = repository.getStudyQueue("p1", now = later)
         assertEquals(1, queue.size)
-        val card = queue.first()
-        assertEquals(com.mcqapp.domain.StudyReason.DUE, card.reason)
-        assertTrue(card.state.reps >= 1)
+        assertEquals(com.mcqapp.domain.StudyReason.DUE, queue.first().reason)
     }
 
     @Test

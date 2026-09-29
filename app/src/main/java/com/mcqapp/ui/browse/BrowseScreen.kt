@@ -19,6 +19,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -209,12 +211,23 @@ fun BrowseScreen(
                     )
                 }
             }
+            val reorderEnabled = filterValue == "All" && searchQuery.isBlank()
             itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
                 BrowseQuestionCard(
                     index = index + 1,
                     question = question,
                     selectionMode = selectionMode,
                     selected = question.id in selectedIds,
+                    canMoveUp = reorderEnabled &&
+                        com.mcqapp.domain.Reorder.canMove(filtered, index, -1),
+                    canMoveDown = reorderEnabled &&
+                        com.mcqapp.domain.Reorder.canMove(filtered, index, +1),
+                    onMoveUp = {
+                        viewModel.swapQuestions(question.id, filtered[index - 1].id)
+                    },
+                    onMoveDown = {
+                        viewModel.swapQuestions(question.id, filtered[index + 1].id)
+                    },
                     onToggleSelect = {
                         selectedIds = selectedIds.toMutableSet().apply {
                             if (!add(question.id)) remove(question.id)
@@ -295,6 +308,10 @@ private fun BrowseQuestionCard(
     question: com.mcqapp.domain.Question,
     selectionMode: Boolean = false,
     selected: Boolean = false,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
     onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -352,6 +369,14 @@ private fun BrowseQuestionCard(
             Spacer(Modifier.height(8.dp))
             if (!selectionMode) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (canMoveUp || canMoveDown) {
+                        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
+                        }
+                        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
+                        }
+                    }
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit question")
                     }

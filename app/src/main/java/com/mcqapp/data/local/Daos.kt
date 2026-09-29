@@ -79,6 +79,9 @@ interface QuestionDao {
     @Query("SELECT MAX(sortOrder) FROM questions WHERE categoryId = :categoryId")
     suspend fun getMaxSortOrder(categoryId: String): Int?
 
+    @Query("UPDATE questions SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Int)
+
     @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' OR tags LIKE '%' || :query || '%' ORDER BY rowid DESC")
     suspend fun search(query: String): List<QuestionEntity>
 

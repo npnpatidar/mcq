@@ -372,6 +372,17 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         }
     }
 
+    /** Swaps the positions of two same-category questions. */
+    suspend fun swapQuestionOrder(firstId: String, secondId: String): Boolean {
+        val a = db.questionDao().getById(firstId) ?: return false
+        val b = db.questionDao().getById(secondId) ?: return false
+        if (a.categoryId != b.categoryId) return false
+        db.questionDao().updateSortOrder(a.id, b.sortOrder)
+        db.questionDao().updateSortOrder(b.id, a.sortOrder)
+        Logger.i("REPO", "swapQuestionOrder(${a.id} <-> ${b.id})")
+        return true
+    }
+
     suspend fun savePaper(paper: Paper) {
         Logger.d("REPO", "savePaper(${paper.id}, '${paper.title}')")
         db.paperDao().upsert(

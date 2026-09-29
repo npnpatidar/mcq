@@ -87,4 +87,10 @@ class BrowseViewModel(
             Logger.i("BROWSEVM", "Moved ${questionIds.size} questions to $targetCategoryId")
         }
     }
+
+    fun swapQuestions(firstId: String, secondId: String) {
+        viewModelScope.launch {
+            repository.swapQuestionOrder(firstId, secondId)
+        }
+    }
 }

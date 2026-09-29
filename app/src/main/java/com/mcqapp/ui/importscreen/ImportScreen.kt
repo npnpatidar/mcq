@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.mcqapp.domain.ImportWarnings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 
@@ -65,6 +66,10 @@ fun ImportScreen(
     }
     val dupQuestions = remember(state.questions, state.duplicateIds) {
         state.questions.filter { it.id in state.duplicateIds }
+    }
+    // Advisory validation recomputes live as preview rows are edited.
+    val warnings = remember(state.questions) {
+        ImportWarnings.forFile(state.questions)
     }
     val report = state.importReport
     if (state.importDone && report != null) {
@@ -241,7 +246,52 @@ fun ImportScreen(
                     )
                     Spacer(Modifier.height(4.dp))
                 }
-
+                if (warnings.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Warnings (${warnings.size}) — imports fine, but check these",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    items(warnings.take(20), key = { it.questionId + "|" + it.message }) { warning ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    warning.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                                Text(
+                                    warning.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                    if (warnings.size > 20) {
+                        item {
+                            Text(
+                                "+${warnings.size - 20} more warnings",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
                 items(newQuestions, key = { it.id }) { question ->
                     PreviewQuestionCard(
                         question = question,

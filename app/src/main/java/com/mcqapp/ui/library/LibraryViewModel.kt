@@ -110,6 +110,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         _exportError.value = null
     }
 
+    fun duplicatePaper(paperId: String) {
+        viewModelScope.launch {
+            try {
+                repository.duplicatePaper(paperId)
+                Logger.i("LIBVM", "Duplicated paper $paperId")
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Duplicate failed", e)
+                _exportError.value = "Duplicate failed: ${e.message}"
+            }
+        }
+    }
+
     fun deletePaper(paperId: String) {
         viewModelScope.launch { repository.deletePaper(paperId) }
     }

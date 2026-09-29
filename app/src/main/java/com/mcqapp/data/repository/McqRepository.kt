@@ -411,6 +411,35 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
     }
 
+    /** Deep-clones a paper (categories, questions, options, keys, marks). */
+    suspend fun duplicatePaper(paperId: String): String? {
+        val paper = db.paperDao().getById(paperId) ?: return null
+        val existingPaperIds = db.paperDao().getAll().map { it.id }.toHashSet()
+        val newPaperId = com.mcqapp.data.io.PaperClone.copyPaperId(existingPaperIds, paperId)
+        db.paperDao().insertIgnore(
+            paper.copy(
+                id = newPaperId,
+                title = "${paper.title} (copy)",
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        val remapped = com.mcqapp.data.io.PaperClone.remapCategories(
+            db.categoryDao().getByPaper(paperId),
+            newPaperId
+        )
+        remapped.values.forEach { db.categoryDao().insertIgnore(it) }
+        val existingQ = db.questionDao().getAll().map { it.id }.toHashSet()
+        for ((oldCatId, newCat) in remapped) {
+            for (q in getQuestionsForCategories(listOf(oldCatId))) {
+                val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
+                existingQ.add(newQId)
+                saveQuestion(q.copy(id = newQId, categoryId = newCat.id))
+            }
+        }
+        Logger.i("REPO", "duplicatePaper($paperId -> $newPaperId)")
+        return newPaperId
+    }
+
     /** Bulk-sets marks/difficulty/tags on questions; null fields are kept. */
     suspend fun bulkUpdateQuestions(
         questionIds: Collection<String>,

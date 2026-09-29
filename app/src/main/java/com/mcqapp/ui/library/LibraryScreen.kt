@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
@@ -282,6 +283,7 @@ fun LibraryScreen(
                                     showExportFormatDialog = true
                                 },
                                 onDelete = { viewModel.deletePaper(paper.id) },
+                                onDuplicate = { viewModel.duplicatePaper(paper.id) },
                                 onAddCategory = {
                                     categoryDialogPaperId = paper.id
                                     categoryDialogParentId = null
@@ -633,6 +635,7 @@ private fun PaperCard(
     onBrowse: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
+    onDuplicate: () -> Unit,
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
@@ -771,6 +774,11 @@ private fun PaperCard(
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
                             Text("Add category")
+                        }
+                        TextButton(onClick = onDuplicate, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Duplicate")
                         }
                         TextButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.Delete, contentDescription = null)

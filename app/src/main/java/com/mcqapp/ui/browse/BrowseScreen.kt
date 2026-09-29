@@ -63,6 +63,7 @@ import com.mcqapp.util.QuestionImage
 fun BrowseScreen(
     repository: McqRepository,
     paperId: String,
+    focusQuestionId: String = "",
     navController: NavController,
     viewModel: BrowseViewModel = viewModel(
         key = "browse-$paperId",
@@ -185,7 +186,17 @@ fun BrowseScreen(
             }
         }
         val filteredIds = remember(filtered) { filtered.map { it.id } }
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        // Deep link from global search: highlight persists on screen.
+        var highlightId by remember(focusQuestionId) { mutableStateOf(focusQuestionId) }
+        androidx.compose.runtime.LaunchedEffect(focusQuestionId, filtered) {
+            if (focusQuestionId.isBlank() || filtered.isEmpty()) return@LaunchedEffect
+            val index = filtered.indexOfFirst { it.id == focusQuestionId }
+            // +1 for the header item above the cards.
+            if (index >= 0) listState.scrollToItem(index + 1)
+        }
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
@@ -237,6 +248,7 @@ fun BrowseScreen(
                     question = question,
                     selectionMode = selectionMode,
                     selected = question.id in selectedIds,
+                    highlighted = question.id == highlightId,
                     canMoveUp = reorderEnabled &&
                         com.mcqapp.domain.Reorder.canMove(filtered, index, -1),
                     canMoveDown = reorderEnabled &&
@@ -453,9 +465,16 @@ private fun BrowseQuestionCard(
     onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onDuplicate: () -> Unit = {}
+    onDuplicate: () -> Unit = {},
+    highlighted: Boolean = false
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = if (highlighted) MaterialTheme.colorScheme.tertiaryContainer
+            else MaterialTheme.colorScheme.surface
+        )
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {

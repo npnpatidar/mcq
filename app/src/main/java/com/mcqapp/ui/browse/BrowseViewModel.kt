@@ -67,4 +67,24 @@ class BrowseViewModel(
             Logger.i("BROWSEVM", "Deleted question $questionId")
         }
     }
+
+    fun duplicateQuestion(questionId: String) {
+        viewModelScope.launch {
+            repository.duplicateQuestion(questionId)
+        }
+    }
+
+    fun deleteQuestions(questionIds: Set<String>) {
+        viewModelScope.launch {
+            repository.deleteQuestions(questionIds)
+            Logger.i("BROWSEVM", "Deleted ${questionIds.size} questions")
+        }
+    }
+
+    fun moveQuestions(questionIds: Set<String>, targetCategoryId: String) {
+        viewModelScope.launch {
+            repository.moveQuestionsToCategory(questionIds, targetCategoryId)
+            Logger.i("BROWSEVM", "Moved ${questionIds.size} questions to $targetCategoryId")
+        }
+    }
 }

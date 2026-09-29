@@ -300,6 +300,29 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         db.questionDao().deleteById(questionId)
     }
 
+    suspend fun deleteQuestions(questionIds: Collection<String>) {
+        Logger.i("REPO", "deleteQuestions(${questionIds.size} ids)")
+        questionIds.forEach { db.questionDao().deleteById(it) }
+    }
+
+    /** Deep-copies a question (options, key, explanation, marks) after siblings. */
+    suspend fun duplicateQuestion(questionId: String): String? {
+        val source = getQuestion(questionId) ?: return null
+        val existing = db.questionDao().getAll().map { it.id }.toHashSet()
+        val newId = com.mcqapp.domain.BulkOps.copyId(existing, questionId)
+        saveQuestion(source.copy(id = newId))
+        Logger.i("REPO", "duplicateQuestion($questionId -> $newId)")
+        return newId
+    }
+
+    /** Moves questions into another category, appended after its siblings. */
+    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
+        Logger.i("REPO", "moveQuestionsToCategory(${questionIds.size} ids -> $targetCategoryId)")
+        questionIds.forEach { id ->
+            getQuestion(id)?.let { saveQuestion(it.copy(categoryId = targetCategoryId)) }
+        }
+    }
+
     suspend fun savePaper(paper: Paper) {
         Logger.d("REPO", "savePaper(${paper.id}, '${paper.title}')")
         db.paperDao().upsert(

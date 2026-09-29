@@ -17,8 +17,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -26,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -61,14 +66,48 @@ fun BrowseScreen(
     )
 ) {
     val state by viewModel.state.collectAsState()
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showMoveDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(state.paper?.title ?: "Browse questions") },
+                title = {
+                    Text(
+                        if (selectionMode) "${selectedIds.size} selected"
+                        else state.paper?.title ?: "Browse questions"
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    IconButton(onClick = {
+                        if (selectionMode) {
+                            selectionMode = false
+                            selectedIds = emptySet()
+                        } else {
+                            navController.popBackStack()
+                        }
+                    }) {
+                        Icon(
+                            if (selectionMode) Icons.Default.Close
+                            else Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    if (selectionMode) {
+                        TextButton(
+                            onClick = { showMoveDialog = true },
+                            enabled = selectedIds.isNotEmpty()
+                        ) { Text("Move") }
+                        TextButton(
+                            onClick = { showDeleteConfirm = true },
+                            enabled = selectedIds.isNotEmpty()
+                        ) { Text("Delete") }
+                    } else {
+                        TextButton(onClick = { selectionMode = true }) { Text("Select") }
                     }
                 }
             )
@@ -152,6 +191,13 @@ fun BrowseScreen(
                 BrowseQuestionCard(
                     index = index + 1,
                     question = question,
+                    selectionMode = selectionMode,
+                    selected = question.id in selectedIds,
+                    onToggleSelect = {
+                        selectedIds = selectedIds.toMutableSet().apply {
+                            if (!add(question.id)) remove(question.id)
+                        }
+                    },
                     onEdit = {
                         com.mcqapp.ui.editor.EditorSession.start(
                             ids = filteredIds,
@@ -161,9 +207,62 @@ fun BrowseScreen(
                             "editor?questionId=${question.id}&paperId=$paperId&categoryId=${question.categoryId}"
                         )
                     },
-                    onDelete = { viewModel.deleteQuestion(question.id) }
+                    onDelete = { viewModel.deleteQuestion(question.id) },
+                    onDuplicate = { viewModel.duplicateQuestion(question.id) }
                 )
             }
+        }
+
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text("Delete ${selectedIds.size} questions?") },
+                text = { Text("This cannot be undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.deleteQuestions(selectedIds)
+                        selectedIds = emptySet()
+                        selectionMode = false
+                        showDeleteConfirm = false
+                    }) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                }
+            )
+        }
+
+        if (showMoveDialog) {
+            val targets = remember(state.paper) {
+                flattenCategories(state.paper?.categories ?: emptyList())
+            }
+            AlertDialog(
+                onDismissRequest = { showMoveDialog = false },
+                title = { Text("Move ${selectedIds.size} questions to…") },
+                text = {
+                    Column {
+                        targets.forEach { (node, depth) ->
+                            TextButton(
+                                onClick = {
+                                    viewModel.moveQuestions(selectedIds, node.id)
+                                    selectedIds = emptySet()
+                                    selectionMode = false
+                                    showMoveDialog = false
+                                }
+                            ) {
+                                Text(
+                                    "${"— ".repeat(depth)}${node.title} (${node.questionCount})",
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showMoveDialog = false }) { Text("Cancel") }
+                }
+            )
         }
     }
 }
@@ -172,17 +271,25 @@ fun BrowseScreen(
 private fun BrowseQuestionCard(
     index: Int,
     question: com.mcqapp.domain.Question,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onDuplicate: () -> Unit = {}
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "$index.",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
+                if (selectionMode) {
+                    Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
+                } else {
+                    Text(
+                        "$index.",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
                 Text(
                     question.text,
                     style = MaterialTheme.typography.titleSmall,
@@ -221,14 +328,29 @@ private fun BrowseQuestionCard(
             QuestionImage(src = question.explanationImage)
 
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit question")
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete question")
+            if (!selectionMode) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit question")
+                    }
+                    IconButton(onClick = onDuplicate) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate question")
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete question")
+                    }
                 }
             }
         }
+    }
+}
+
+private fun flattenCategories(
+    nodes: List<com.mcqapp.domain.CategoryNode>,
+    depth: Int = 0
+): List<Pair<com.mcqapp.domain.CategoryNode, Int>> = buildList {
+    for (node in nodes) {
+        add(node to depth)
+        addAll(flattenCategories(node.children, depth + 1))
     }
 }

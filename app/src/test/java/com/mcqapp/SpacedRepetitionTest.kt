@@ -77,6 +77,57 @@ class SpacedRepetitionTest {
         assertTrue(card.isScheduled)
     }
 
+    // --- relearning is not a new card ---
+
+    @Test
+    fun `a failed card is relearning rather than new`() {
+        val graduated = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD))
+        val failed = Sm2Scheduler.next(graduated, ReviewGrade.AGAIN, now)
+        assertFalse(failed.isNew)
+        assertTrue(failed.isLearning)
+    }
+
+    @Test
+    fun `a relearning card is hidden until its due time`() {
+        val failed = Sm2Scheduler.next(
+            graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD)), ReviewGrade.AGAIN, now
+        )
+        val early = Study.queue(
+            Sm2Scheduler, listOf("q1"), mapOf("q1" to failed), now = now
+        )
+        assertTrue(early.isEmpty())
+    }
+
+    @Test
+    fun `a relearning card comes back the same day once due`() {
+        val failed = Sm2Scheduler.next(
+            graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD)), ReviewGrade.AGAIN, now
+        )
+        val later = now + Sm2Scheduler.RELEARN_MS
+        val queue = Study.queue(
+            Sm2Scheduler, listOf("q1"), mapOf("q1" to failed), now = later
+        )
+        assertEquals(1, queue.size)
+        assertEquals(StudyReason.DUE, queue.first().reason)
+    }
+
+    @Test
+    fun `the new limit does not hide a relearning card`() {
+        val failed = Sm2Scheduler.next(
+            graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD)), ReviewGrade.AGAIN, now
+        )
+        val later = now + Sm2Scheduler.RELEARN_MS
+        val queue = Study.queue(
+            Sm2Scheduler,
+            listOf("q1", "q2", "q3"),
+            mapOf("q1" to failed, "q2" to Sm2Scheduler.initial("q2")),
+            now = later,
+            newLimit = 0
+        )
+        assertEquals(1, queue.size)
+        assertEquals("q1", queue.first().questionId)
+    }
+
     // --- failure path ---
 
     @Test

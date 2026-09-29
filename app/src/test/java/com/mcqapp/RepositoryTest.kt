@@ -186,6 +186,21 @@ class RepositoryTest {
     }
 
     @Test
+    fun `a rewritten question is reset once, not on every load`() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q1", setOf("q1-a")).copy(text = "Rewritten"))
+        repository.getStudyQueue("p1")
+        // The reset must store the new hash, otherwise the next load sees a
+        // stale hash again and wipes any progress made since.
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 5000L)
+        val progress = db.cardStateDao().get("p1", "q1")!!
+        assertTrue(progress.reps >= 1)
+        repository.getStudyQueue("p1")
+        assertEquals(progress, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
     fun historySeedsNewCardsSoAnInstallStartsWarm() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))

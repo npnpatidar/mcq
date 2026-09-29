@@ -23,8 +23,15 @@ data class CardState(
     val leech: Boolean = false,
     val lastReviewedAt: Long = 0L
 ) {
-    /** Never studied, or failed and awaiting relearning. */
-    val isNew: Boolean get() = reps == 0
+    /**
+     * Never studied: no reviews and no due date. An "Again" answer also leaves
+     * [reps] at zero, but it does set [dueAt], which keeps relearning cards out
+     * of the new-card limit so they still come back the same day.
+     */
+    val isNew: Boolean get() = reps == 0 && dueAt == 0L
+
+    /** Failed, waiting on a short relearning interval rather than a new card. */
+    val isLearning: Boolean get() = reps == 0 && dueAt != 0L
 
     /** Has a due date at all (new cards are due by definition, not by date). */
     val isScheduled: Boolean get() = dueAt != 0L
@@ -231,12 +238,14 @@ object Study {
         questionIds.forEach { id ->
             val state = states[id]
             when {
-                state == null || state.reps == 0 -> {
+                state == null || state.isNew -> {
                     if (newTaken < newLimit) {
                         fresh.add(StudyCard(id, StudyReason.NEW, state ?: scheduler.initial(id)))
                         newTaken++
                     }
                 }
+                // isLearning cards fall through here: they are due in minutes, not
+                // new, so the new-card limit must not hide them.
                 state.leech && state.dueAt <= now -> leeches.add(StudyCard(id, StudyReason.LEECH, state))
                 state.dueAt <= now -> due.add(StudyCard(id, StudyReason.DUE, state))
             }
@@ -247,10 +256,10 @@ object Study {
     }
 
     fun dueCount(states: Collection<CardState>, now: Long): Int =
-        states.count { it.reps > 0 && it.dueAt <= now }
+        states.count { !it.isNew && it.dueAt <= now }
 
     fun newCount(questionIds: List<String>, states: Map<String, CardState>): Int =
-        questionIds.count { (states[it]?.reps ?: 0) == 0 }
+        questionIds.count { states[it]?.isNew ?: true }
 
     fun leechCount(states: Collection<CardState>): Int = states.count { it.leech }
 }

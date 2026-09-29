@@ -38,9 +38,10 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 /** Spaced repetition badges for a paper in the library list. */
 data class StudyCounts(
     val due: Int = 0,
-    val leeches: Int = 0
+    val leeches: Int = 0,
+    val fresh: Int = 0
 ) {
-    val isEmpty: Boolean get() = due == 0 && leeches == 0
+    val isEmpty: Boolean get() = due == 0 && leeches == 0 && fresh == 0
 }
 
 class McqRepository(private val db: AppDatabase, private val context: Context) {
@@ -414,8 +415,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** Moves questions into another category, appended after its siblings. */
     suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
         Logger.i("REPO", "moveQuestionsToCategory(${questionIds.size} ids -> $targetCategoryId)")
+        val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
         questionIds.forEach { id ->
-            getQuestion(id)?.let { saveQuestion(it.copy(categoryId = targetCategoryId)) }
+            getQuestion(id)?.let { question ->
+                val sourcePaperId = db.categoryDao().getById(question.categoryId)?.paperId
+                saveQuestion(question.copy(categoryId = targetCategoryId))
+                // A schedule is keyed to a paper. Moving a question into another
+                // paper makes the old row an orphan that would still inflate the
+                // source paper's due count, so start the card over instead.
+                if (targetPaperId != null && targetPaperId != sourcePaperId) {
+                    db.cardStateDao().deleteByQuestion(id)
+                }
+            }
         }
     }
 
@@ -601,7 +612,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 if (existing.contentHash != contentHashOf(q)) {
                     val reset = com.mcqapp.domain.Sm2Scheduler.initial(q.id)
                     states[q.id] = reset
-                    seeded += reset.toEntity(paperId, existing.contentHash)
+                    // Persist the new hash, otherwise the edit looks stale again
+                    // on the next load and the card is reset every time.
+                    seeded += reset.toEntity(paperId, contentHashOf(q))
                 } else {
                     states[q.id] = existing.toDomain()
                 }
@@ -635,9 +648,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): StudyCounts {
         val stored = db.cardStateDao().getByPaper(paperId)
         val states = stored.map { it.toDomain() }
+        val questionIds = getQuestionsForPaper(paperId).map { it.id }
         return StudyCounts(
             due = com.mcqapp.domain.Study.dueCount(states, now),
-            leeches = com.mcqapp.domain.Study.leechCount(states)
+            leeches = com.mcqapp.domain.Study.leechCount(states),
+            // Questions with no card_state row at all have never been studied.
+            fresh = com.mcqapp.domain.Study.newCount(
+                questionIds,
+                states.associateBy { it.questionId }
+            )
         )
     }
 

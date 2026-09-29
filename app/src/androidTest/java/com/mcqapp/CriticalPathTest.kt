@@ -66,9 +66,11 @@ class CriticalPathTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         // Library -> start the seeded paper (drawer holds a duplicate title).
+        // The tag assert proves layout is done, so the adjacent Start click
+        // needs no scroll synchronization.
         waitFor("UITest Paper")
         compose.onNodeWithTag("paper-title").assertIsDisplayed()
-        compose.onNodeWithText("Start", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Start", substring = false).performClick()
 
         // Q1 correct, Q2 skipped, Q3 wrong.
         waitFor("Question 1 of 3")

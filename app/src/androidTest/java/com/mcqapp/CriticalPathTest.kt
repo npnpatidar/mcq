@@ -36,9 +36,9 @@ class CriticalPathTest {
     private val repository
         get() = (ApplicationProvider.getApplicationContext() as McqApplication).repository
 
-    private fun question(id: String) = Question(
+    private fun question(id: String, categoryId: String = "uitest-cat") = Question(
         id = id,
-        categoryId = "uitest-cat",
+        categoryId = categoryId,
         text = "UITest $id?",
         options = listOf(QuestionOption("$id-a", "Alpha"), QuestionOption("$id-b", "Beta")),
         correctOptionIds = setOf("$id-a")
@@ -96,12 +96,20 @@ class CriticalPathTest {
 
     @Test
     fun studyGradesAndSchedulesTheNextReview() {
+        // This test needs a paper whose cards have never been scheduled. The
+        // other test in this class submits an attempt on uitest-paper, which
+        // would seed card_state from that history, so use a separate paper.
+        runBlocking {
+            repository.ensurePaperAndCategory("uitest-sr", "UISR Paper", "uitest-sr-cat", "UISR Cat")
+            repository.saveQuestion(question("uitest-sr-q1", "uitest-sr-cat"))
+            repository.saveQuestion(question("uitest-sr-q2", "uitest-sr-cat"))
+        }
         compose.setContent { McqNavHost(repository = repository) }
 
-        waitFor("UITest Paper")
-        compose.onNodeWithTag("paper-title").assertIsDisplayed()
-        // A fresh paper offers all three questions as new cards.
-        compose.onNodeWithText("Study (3 new)", substring = false).performClick()
+        waitFor("UISR Paper")
+        compose.onNodeWithText("UISR Paper", substring = false).assertIsDisplayed()
+        // Never-studied cards are counted as new rather than due.
+        compose.onNodeWithText("Study (2 new)", substring = false).performClick()
 
         waitFor("Show answer")
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
@@ -115,10 +123,21 @@ class CriticalPathTest {
         // The schedule is persisted, so the card is no longer new and is not
         // due until its first interval elapses.
         val scheduled = runBlocking {
-            repository.cardState("uitest-paper", "uitest-q1")
+            repository.cardState("uitest-sr", "uitest-sr-q1")
         }
         assertNotNull(scheduled)
         assertEquals(1, scheduled!!.reps)
         assertTrue(scheduled.dueAt > System.currentTimeMillis())
+
+        // The queue is per session, so only one card is graded; the other
+        // stays new and is untouched until its turn.
+        val untouched = runBlocking {
+            repository.cardState("uitest-sr", "uitest-sr-q2")
+        }
+        assertNotNull(untouched)
+        assertEquals(0, untouched!!.reps)
+        assertTrue(untouched.isNew)
+
+        runBlocking { repository.deletePaper("uitest-sr") }
     }
 }

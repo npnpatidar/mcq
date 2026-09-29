@@ -600,6 +600,31 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): List<com.mcqapp.domain.StudyCard> {
         val questions = getQuestionsForPaper(paperId)
         if (questions.isEmpty()) return emptyList()
+        val states = resolveStudyStates(paperId, questions)
+        Logger.i(
+            "REPO",
+            "getStudyQueue($paperId): ${questions.size} questions, " +
+                "due=${com.mcqapp.domain.Study.dueCount(states.values, now)}"
+        )
+        return com.mcqapp.domain.Study.queue(
+            com.mcqapp.domain.Sm2Scheduler,
+            questions.map { it.id },
+            states,
+            now,
+            newLimit
+        )
+    }
+
+    /**
+     * Resolves every question's card state, seeding anything missing from
+     * attempt history and resetting questions whose text has changed. Both the
+     * queue and the library badges go through here, so the badge can never
+     * disagree with what the queue would actually offer.
+     */
+    private suspend fun resolveStudyStates(
+        paperId: String,
+        questions: List<Question>
+    ): Map<String, com.mcqapp.domain.CardState> {
         val stored = db.cardStateDao().getByPaper(paperId).associate { it.questionId to it }
         val history = historySignalsFor(paperId, questions.map { it.id })
         val states = mutableMapOf<String, com.mcqapp.domain.CardState>()
@@ -626,19 +651,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 seeded += rebuilt.toEntity(paperId, contentHashOf(q))
             }
         }
-        if (seeded.isNotEmpty()) seeded.forEach { db.cardStateDao().upsert(it) }
-        Logger.i(
-            "REPO",
-            "getStudyQueue($paperId): ${questions.size} questions, " +
-                "${seeded.size} seeded/reset, due=${states.values.count { it.reps > 0 && it.dueAt <= now }}"
-        )
-        return com.mcqapp.domain.Study.queue(
-            com.mcqapp.domain.Sm2Scheduler,
-            questions.map { it.id },
-            states,
-            now,
-            newLimit
-        )
+        if (seeded.isNotEmpty()) {
+            seeded.forEach { db.cardStateDao().upsert(it) }
+            Logger.i("REPO", "seeded ${seeded.size} card_state rows for $paperId")
+        }
+        return states
     }
 
     /** Due / new / leech counts for a paper's library badge. */
@@ -646,17 +663,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId: String,
         now: Long = System.currentTimeMillis()
     ): StudyCounts {
-        val stored = db.cardStateDao().getByPaper(paperId)
-        val states = stored.map { it.toDomain() }
-        val questionIds = getQuestionsForPaper(paperId).map { it.id }
+        val questions = getQuestionsForPaper(paperId)
+        if (questions.isEmpty()) return StudyCounts()
+        val states = resolveStudyStates(paperId, questions)
         return StudyCounts(
-            due = com.mcqapp.domain.Study.dueCount(states, now),
-            leeches = com.mcqapp.domain.Study.leechCount(states),
-            // Questions with no card_state row at all have never been studied.
-            fresh = com.mcqapp.domain.Study.newCount(
-                questionIds,
-                states.associateBy { it.questionId }
-            )
+            due = com.mcqapp.domain.Study.dueCount(states.values, now),
+            leeches = com.mcqapp.domain.Study.leechCount(states.values),
+            fresh = com.mcqapp.domain.Study.newCount(questions.map { it.id }, states)
         )
     }
 

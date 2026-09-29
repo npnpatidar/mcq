@@ -3,21 +3,23 @@
 An offline-first Android app for practicing multiple-choice questions: build papers with
 recursive categories, import question banks from JSON, take timed tests with negative
 marking and per-question weights, study in practice/strict/mistakes modes, review
-explanations, track mastery over time, and export papers as JSON, ZIP, HTML, or PDF.
+explanations, track mastery over time, keep questions fresh with SM-2 spaced repetition,
+and export papers as JSON, ZIP, HTML, or PDF.
 
 - **Stack:** Kotlin, Jetpack Compose (Material 3), Room, Navigation-Compose, DataStore, Coil, kotlinx.serialization
 - **Requires:** Android 8.0+ (minSdk 26), targetSdk 36. Version 1.0.0.
 - **Offline:** fully usable without network. The only thing that needs network is loading
   remote-URL images (see [Images](#images)).
-- **Tests:** ~110 JVM unit tests + 1 on-device critical-path UI test; CI runs both on every push (see [Development](#development--ci)).
+- **Tests:** ~200 JVM unit tests + on-device critical-path UI tests; CI runs both on every push (see [Development](#development--ci)).
 
 ## Screens
 
 | Screen | What it does |
 |---|---|
-| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)** button per paper with prior errors; drawer with History, Bookmarks, Settings, per-paper category trees, test-by-category, JSON import |
+| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Settings, per-paper category trees (reorderable), test-by-category, JSON import |
 | Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); edit, duplicate, delete; **selection mode** for bulk delete / move / copy (incl. cross-paper); manual up/down reorder |
 | Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume |
+| Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. SM-2 schedules the next review (see below) |
 | Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to edit; export all bookmarks in any format |
@@ -51,6 +53,48 @@ All default off; they compose, with strict winning contradictions:
   only; multi-correct needs several taps, the last question stays put).
 - **Practice mistakes** (per-paper Library button) — a round built from questions you
   previously got wrong, most-recently-missed first. Appears only when mistakes exist.
+- **Quick drills** (per-paper Library button) — a short round of `n` questions with a
+  `m`-minute limit. `n` is capped at 1–50, `m` at 1–180, and both are remembered between
+  openings. Drill results are not saved to History.
+- **Study** (per-paper Library button) — spaced repetition, see below.
+
+## Spaced repetition (Study)
+
+Study is a separate mode from taking a test. It never marks, never scores, and never
+writes an attempt: it only schedules *when you should see a question again*.
+
+- Each paper's Library card shows a **Study** button with counts, e.g. `Study (3 due,
+  12 new)`, plus a "N tricky" hint for leeches. A paper with nothing left just says
+  `Study`.
+- The screen shows **one question at a time**. Pick an answer, hit **Show answer** to see
+  the correct one and its explanation, then self-grade with **Again / Hard / Good / Easy**.
+  Grading is self-reported because you see the answer first — that is what makes the
+  four buttons meaningful.
+- **Scheduling is SM-2.** Good graduates a card to 1 day, then 6 days, then ~3× the
+  previous interval; Easy jumps to 4 days on the first review. Hard grows the interval by
+  the smaller of +1 day and +20%. Again drops the card to zero reps and re-queues it in
+  **10 minutes**, so a failed card still comes back the same session.
+- **Ease** starts at 2.5 and is clamped to 1.3–3.0. It drops on Again/Hard and rises on
+  Easy, so easy questions stretch out and hard ones come back more often.
+- **New-card limit** is 20 per paper per day; due and relearning cards are never counted
+  against it.
+- **Leeches** are cards failed 8 times or more. They are labelled `tricky` in the library
+  and are surfaced first in the queue.
+- **Editing a question resets its schedule.** An interval describes memory of *that*
+  text, so changing the question text or options starts the card over. Bookmarks, history
+  and results are untouched.
+- An existing install starts warm: correct and wrong answers in past attempts are replayed
+  through the scheduler to rebuild each card's position, so the first Study session is
+  already scheduled rather than showing everything as new.
+
+**Where the schedule lives.** A `card_state` row per question, added in Room schema v7.
+Migration is automatic and preserves everything else. A card belongs to a paper, so
+deleting a paper, or a question, removes its schedule; moving a question to another paper
+starts it fresh.
+
+**Roadmap.** The scheduler sits behind a `Scheduler` interface, so FSRS can be added
+later as another implementation — it would slot in without changing storage or the study
+UI.
 
 ## Taking a test
 
@@ -80,6 +124,8 @@ All default off; they compose, with strict winning contradictions:
 - Duration 0 = untimed; otherwise the countdown **auto-submits at zero**.
 - Attempts (with per-question snapshots of options/selections/correctness/explanations/
   dwell) persist to History and stay reviewable even if the paper later changes.
+- **Study never touches any of this.** It runs outside the attempt path entirely, so a
+  study session cannot add to History, change a score, or affect mastery stats.
 
 ## Results, History & mastery
 
@@ -257,10 +303,12 @@ question landing in Uncategorized. Re-loading merges by stable ids — never dup
 
 ## Data & storage
 
-Room database `mcq.db`, **version 6** (`MIGRATION_3_4` adds `explanationImage` to
+Room database `mcq.db`, **version 7** (`MIGRATION_3_4` adds `explanationImage` to
 `questions` and `question_results`; `MIGRATION_4_5` adds `marks` to `questions`,
 default `1.0`; `MIGRATION_5_6` adds `dwellSeconds` to `question_results`, default
-`0`; existing installs migrate in place). Deleting a paper
+`0`; `MIGRATION_6_7` adds the `card_state` table used by Study, starting empty so the
+first session rebuilds schedules from attempt history; existing installs migrate in
+place, and the 3→7 chain is covered by a migration test). Deleting a paper
 deletes its categories; deleting a category deletes its questions (FK cascades) — options
 go with their question. Deleting attempts, bookmarks, or papers never orphans history
 snapshots (attempts embed their own copies).
@@ -268,6 +316,10 @@ snapshots (attempts embed their own copies).
 Test progress snapshots live in DataStore (single `in_progress_test` key, cleared on
 submit); test display options (shuffle, practice, strict, auto-advance) and theme are
 DataStore preferences.
+
+Card schedules live in Room, not DataStore, because they need to survive a paper edit,
+be deleted along with the paper, and be rebuilt from attempt history. See
+[Spaced repetition](#spaced-repetition-study).
 
 ## Edge cases & gotchas (observed, not theoretical)
 
@@ -294,6 +346,15 @@ DataStore preferences.
   no per-question times.
 - **Shuffle changes review order** — review shows your presented order, not library order,
   by design.
+- **"Study (0 due)" does not mean there is nothing to do.** A brand-new paper shows all
+  its questions as *new* instead, because nothing is due until a card has been studied.
+- **A Study queue is frozen when you open it.** Cards you grade inside the session
+  finish there; they come back on a later visit once their new date arrives. Grading the
+  same card twice is not possible — the grade buttons lock until the write completes.
+- **An edited question is forgotten by the scheduler on purpose**, so a rewritten option
+  is studied from scratch even if you had it scheduled for next month.
+- **Ungraded questions (no answer key) still appear in Study.** There is no correct answer
+  to reveal, but you can still grade yourself on recall of the options.
 
 ## Logs & debugging
 
@@ -301,8 +362,8 @@ File logging with thread names to `logs/app.log` (external files dir, else inter
 never crashes its caller). In-app: Settings → **Export Logs** (shares the file).
 Key tags: `IMPORTVM` (preview), `IMPORT` (database import), `EDITORVM`, `IMPORTSCREEN`,
 `REPO`, `BROWSEVM`, `NAV`, `LIB`/`LIBVM`, `BOOKVM`, `RESULTVM`, `HISTVM`, `TESTVM`,
-`EXPORT`, `SETTINGS`, `DOWNSCALE`. Browse observation cancellations on navigation are
-expected noise. Log rotation at 8 MB.
+`EXPORT`, `SETTINGS`, `DOWNSCALE`, `STUDY`. Browse observation cancellations on navigation
+are expected noise. Log rotation at 8 MB.
 
 ## Development & CI
 
@@ -310,12 +371,16 @@ Local builds need the Android SDK and a QEMU aapt2 wrapper on ARM64 hosts (see
 `BUILDING.md` for the exact command). CI (`.github/workflows/build.yml`, x86_64) runs
 on every push/PR:
 
-- **build**: `assembleDebug` + full JVM unit test suite (~110 tests: scoring, parser +
-  1000-case seeded fuzz, import/export writers, domain rules), uploads APK + results.
-- **ui-test**: boots an API-34 emulator (KVM enabled) and runs the critical-path test
-  (library → start → answer/skip/wrong → submit → results score).
+- **build**: `assembleDebug` + full JVM unit test suite (~200 tests: scoring, parser +
+  1000-case seeded fuzz, import/export writers, domain rules, SM-2 scheduling), uploads
+  APK + results.
+- **ui-test**: boots an API-34 emulator (KVM enabled) and runs the critical-path tests
+  (library → start → answer/skip/wrong → submit → results score, and library → study →
+  reveal → grade → schedule persisted).
 
-Robolectric DB tests (`RepositoryTest`) run on CI only — neither Robolectric's native
-runtime nor Conscrypt ship Linux-ARM64 binaries, so they fail on ARM64 hosts by
-environment, not by code. Stress banks: `tools/stress/gen_stress.py` generates
-large/degenerate papers (`--questions`, `--options`, `--image-every`, `--img-dim`).
+Robolectric DB tests (`RepositoryTest`, `MigrationTest`) run on CI only — neither
+Robolectric's native runtime nor Conscrypt ship Linux-ARM64 binaries, so they fail on
+ARM64 hosts by environment, not by code. This is why Room migrations get raw-SQLite
+tests driven from a hand-built old-version database rather than only through Room.
+Stress banks: `tools/stress/gen_stress.py` generates large/degenerate papers
+(`--questions`, `--options`, `--image-every`, `--img-dim`).

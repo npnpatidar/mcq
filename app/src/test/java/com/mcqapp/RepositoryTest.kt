@@ -158,6 +158,39 @@ class RepositoryTest {
     }
 
     @Test
+    fun badgeCountsAgreeWithWhatTheQueueOffers() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        // A past correct answer must be reflected in the badge even before any
+        // study session has run, otherwise the library promises cards that the
+        // queue then refuses to show.
+        val questions = repository.getQuestionsForPaper("p1")
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = questions,
+            selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("q2-b")),
+            negativeMarking = 0.0,
+            durationSeconds = 30,
+            finishedAt = 5000L,
+            dwellSeconds = mapOf("q1" to 15L, "q2" to 15L)
+        )
+        val counts = repository.getStudyCounts("p1", now = 6000L)
+        // q1 graded correct -> scheduled into the future, so not new and not due.
+        // q2 graded wrong -> relearning later today, so also not due yet.
+        assertEquals(0, counts.due)
+        assertEquals(0, counts.fresh)
+
+        // Once the relearning window opens, the badge and the queue agree.
+        val dueAt = 5000L + com.mcqapp.domain.Sm2Scheduler.RELEARN_MS
+        val later = repository.getStudyCounts("p1", now = dueAt)
+        assertEquals(1, later.due)
+        val queue = repository.getStudyQueue("p1", now = dueAt)
+        assertEquals(later.due, queue.count { it.reason != com.mcqapp.domain.StudyReason.NEW })
+    }
+
+    @Test
     fun aFailedReviewLeavesTheQuestionNewAndNotDue() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))

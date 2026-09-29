@@ -62,6 +62,7 @@ import android.app.Application
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Feedback
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SubmitSummary
 import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
@@ -354,14 +355,18 @@ fun TestSessionScreen(
     }
 
     if (showSubmitDialog) {
+        val summary = SubmitSummary.Summary(
+            answered = state.answeredCount,
+            total = state.questions.size,
+            flagged = state.flagged.size,
+            ungraded = ungradedTotal
+        )
+        val firstFlagged = state.questions.indexOfFirst { it.id in state.flagged }
         AlertDialog(
             onDismissRequest = { showSubmitDialog = false },
             title = { Text("Submit test?") },
             text = {
-                Text(
-                    "Answered: ${state.answeredCount} of ${state.questions.size}\n" +
-                        "Unanswered: ${state.questions.size - state.answeredCount}"
-                )
+                Text(SubmitSummary.lines(summary).joinToString("\n"))
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -370,7 +375,14 @@ fun TestSessionScreen(
                 }) { Text("Submit") }
             },
             dismissButton = {
-                TextButton(onClick = { showSubmitDialog = false }) { Text("Cancel") }
+                if (firstFlagged >= 0) {
+                    TextButton(onClick = {
+                        showSubmitDialog = false
+                        viewModel.goTo(firstFlagged)
+                    }) { Text("Review flagged") }
+                } else {
+                    TextButton(onClick = { showSubmitDialog = false }) { Text("Cancel") }
+                }
             }
         )
     }

@@ -65,6 +65,7 @@ import androidx.navigation.NavController
 import android.app.Application
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Dwell
+import com.mcqapp.domain.ExamMode
 import com.mcqapp.domain.Feedback
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SubmitSummary
@@ -198,6 +199,15 @@ fun TestSessionScreen(
                     }
                     val question = state.currentQuestion
                     if (question != null) {
+                        if (ExamMode.canFlag(state.strictMode)) {
+                            IconButton(onClick = { viewModel.toggleFlag() }) {
+                                Icon(
+                                    Icons.Default.Flag,
+                                    contentDescription = "Flag question",
+                                    tint = if (question.id in state.flagged) Color(0xFFE65100) else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
                         IconButton(onClick = { viewModel.toggleBookmarkCurrent() }) {
                             Icon(
                                 if (question.id in state.bookmarked) Icons.Default.Bookmark
@@ -205,13 +215,6 @@ fun TestSessionScreen(
                                 contentDescription = "Bookmark question",
                                 tint = if (question.id in state.bookmarked) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        IconButton(onClick = { viewModel.toggleFlag() }) {
-                            Icon(
-                                Icons.Default.Flag,
-                                contentDescription = "Flag question",
-                                tint = if (question.id in state.flagged) Color(0xFFE65100) else MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -297,11 +300,19 @@ fun TestSessionScreen(
                         " · ${Dwell.format(state.dwellSeconds[question.id] ?: 0L)} here",
                     style = MaterialTheme.typography.labelMedium
                 )
-                if (state.practiceMode) {
+                val practice = ExamMode.effectivePractice(state.practiceMode, state.strictMode)
+                if (practice) {
                     Text(
                         "Practice — answers shown instantly",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+                if (state.strictMode) {
+                    Text(
+                        "Strict exam — aids hidden until submit",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
                 if (state.mistakesOnly) {
@@ -335,7 +346,7 @@ fun TestSessionScreen(
                 question.options.forEach { option ->
                     val selected = option.id in (state.selections[question.id] ?: emptySet())
                     val revealed = Feedback.liveReveal(
-                        state.practiceMode, manuallyRevealed, questionUngraded
+                        practice, manuallyRevealed, questionUngraded
                     )
                     val isCorrectOption = option.id in question.correctOptionIds
                     OptionRow(
@@ -350,7 +361,7 @@ fun TestSessionScreen(
                     Spacer(Modifier.height(8.dp))
                 }
 
-                if (Feedback.showExplanation(state.practiceMode, manuallyRevealed)) {
+                if (Feedback.showExplanation(practice, manuallyRevealed)) {
                     Spacer(Modifier.height(8.dp))
                     ExplanationCard(question = question)
                 }
@@ -369,8 +380,15 @@ fun TestSessionScreen(
                 ) {
                     Text("Previous")
                 }
-                TextButton(onClick = { showPalette = !showPalette }) {
-                    Text("${state.answeredCount}/${state.questions.size} answered")
+                if (ExamMode.canOpenPalette(state.strictMode)) {
+                    TextButton(onClick = { showPalette = !showPalette }) {
+                        Text("${state.answeredCount}/${state.questions.size} answered")
+                    }
+                } else {
+                    Text(
+                        "${state.currentIndex + 1}/${state.questions.size}",
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
                 if (state.currentIndex < state.questions.size - 1) {
                     Button(onClick = { viewModel.next() }) { Text("Next") }
@@ -386,7 +404,7 @@ fun TestSessionScreen(
                     .padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (!state.practiceMode) {
+                if (ExamMode.canReveal(state.practiceMode, state.strictMode)) {
                     OutlinedButton(
                         onClick = { viewModel.revealCurrent() },
                         enabled = question.id !in state.revealed,

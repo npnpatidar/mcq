@@ -74,6 +74,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it[practiceModeKey] = enabled }
     }
 
+    private val strictModeKey = booleanPreferencesKey("strict_mode")
+
+    fun strictMode(): Flow<Boolean> =
+        context.dataStore.data.map { it[strictModeKey] ?: false }
+
+    suspend fun setStrictMode(enabled: Boolean) {
+        context.dataStore.edit { it[strictModeKey] = enabled }
+    }
+
     private val progressKey = stringPreferencesKey("in_progress_test")
 
     suspend fun saveTestProgress(json: String) {

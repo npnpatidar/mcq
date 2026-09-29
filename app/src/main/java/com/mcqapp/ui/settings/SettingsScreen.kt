@@ -55,6 +55,7 @@ fun SettingsScreen(
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsState()
     val shuffleOptions by viewModel.shuffleOptions.collectAsState()
     val practiceMode by viewModel.practiceMode.collectAsState()
+    val strictMode by viewModel.strictMode.collectAsState()
     val storage by viewModel.storage.collectAsState()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -164,6 +165,23 @@ fun SettingsScreen(
                         Switch(
                             checked = practiceMode,
                             onCheckedChange = { viewModel.setPracticeMode(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Strict exam mode")
+                            Text(
+                                "Hides answers, flags and the question palette",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = strictMode,
+                            onCheckedChange = { viewModel.setStrictMode(it) }
                         )
                     }
                     Spacer(Modifier.height(4.dp))

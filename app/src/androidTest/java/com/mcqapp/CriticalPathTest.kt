@@ -72,16 +72,17 @@ class CriticalPathTest {
         compose.onNodeWithTag("paper-title").assertIsDisplayed()
         compose.onNodeWithText("Start", substring = false).performClick()
 
-        // Q1 correct, Q2 skipped, Q3 wrong.
+        // Q1 correct, Q2 skipped, Q3 wrong. Options live in the
+        // scrolling column; Next/Submit sit in the fixed footer.
         waitFor("Question 1 of 3")
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("Next", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("Next", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Next", substring = false).performClick()
+        compose.onNodeWithText("Next", substring = false).performClick()
         compose.onNodeWithText("Beta", substring = false).performScrollTo().performClick()
 
         // Submit through the confirmation dialog (tagged: the screen behind
         // holds another Submit button).
-        compose.onNodeWithText("Submit", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Submit", substring = false).performClick()
         waitFor("Submit test?")
         compose.onNodeWithTag("confirm-submit").performClick()
 

@@ -3,6 +3,7 @@ package com.mcqapp.data.repository
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.mcqapp.data.local.AppDatabase
@@ -90,6 +91,17 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun setAutoAdvance(enabled: Boolean) {
         context.dataStore.edit { it[autoAdvanceKey] = enabled }
+    }
+
+    private val fontScaleKey = floatPreferencesKey("font_scale")
+
+    fun fontScale(): Flow<Float> =
+        context.dataStore.data.map {
+            com.mcqapp.util.FontScale.coerce(it[fontScaleKey] ?: com.mcqapp.util.FontScale.DEFAULT)
+        }
+
+    suspend fun setFontScale(scale: Float) {
+        context.dataStore.edit { it[fontScaleKey] = scale }
     }
 
     private val progressKey = stringPreferencesKey("in_progress_test")

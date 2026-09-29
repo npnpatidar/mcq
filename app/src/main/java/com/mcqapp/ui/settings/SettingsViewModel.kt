@@ -91,6 +91,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setAutoAdvance(enabled) }
     }
 
+    private val _fontScale = MutableStateFlow(com.mcqapp.util.FontScale.DEFAULT)
+    val fontScale: StateFlow<Float> = _fontScale.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.fontScale().collect { _fontScale.value = it }
+        }
+    }
+
+    fun setFontScale(scale: Float) {
+        viewModelScope.launch { repository.setFontScale(scale) }
+    }
+
     private val _storage = MutableStateFlow<com.mcqapp.domain.StorageInfo.Report?>(null)
     val storage: StateFlow<com.mcqapp.domain.StorageInfo.Report?> = _storage.asStateFlow()
 

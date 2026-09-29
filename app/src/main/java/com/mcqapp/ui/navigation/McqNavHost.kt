@@ -1,6 +1,11 @@
 package com.mcqapp.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -22,7 +27,14 @@ import com.mcqapp.util.Logger
 @Composable
 fun McqNavHost(repository: McqRepository) {
     val navController = rememberNavController()
-
+    val fontScale by repository.fontScale().collectAsState(
+        initial = com.mcqapp.util.FontScale.DEFAULT
+    )
+    val density = LocalDensity.current
+    CompositionLocalProvider(
+        LocalDensity provides Density(density.density, fontScale = fontScale),
+        com.mcqapp.util.FontScale.LocalScale provides fontScale
+    ) {
     NavHost(navController = navController, startDestination = "library") {
         composable("library") {
             LibraryScreen(repository = repository, navController = navController)
@@ -126,5 +138,6 @@ fun McqNavHost(repository: McqRepository) {
             Logger.i("NAV", "import screen: direct text import")
             ImportScreen(importText = text, navController = navController)
         }
+    }
     }
 }

@@ -52,6 +52,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val themeMode by viewModel.themeMode.collectAsState()
+    val fontScale by viewModel.fontScale.collectAsState()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsState()
     val shuffleOptions by viewModel.shuffleOptions.collectAsState()
     val practiceMode by viewModel.practiceMode.collectAsState()
@@ -110,6 +111,42 @@ fun SettingsScreen(
                             Text(label, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Text size", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    com.mcqapp.util.FontScale.OPTIONS.forEach { (scale, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = fontScale == scale,
+                                    onClick = { viewModel.setFontScale(scale) }
+                                )
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = fontScale == scale,
+                                onClick = { viewModel.setFontScale(scale) }
+                            )
+                            Text(
+                                label,
+                                modifier = Modifier.padding(start = 8.dp),
+                                fontSize = MaterialTheme.typography.bodyLarge.fontSize *
+                                    (scale / com.mcqapp.util.FontScale.DEFAULT)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Preview: the quick brown fox jumps over 13 lazy dogs.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
 

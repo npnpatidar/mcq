@@ -80,7 +80,13 @@ fun ImportScreen(
                 Text(
                     "• ${report.newQuestions} new questions added\n" +
                         "• ${report.updatedQuestions} updated\n" +
-                        "• ${report.duplicateQuestions} already existed (skipped)"
+                        "• ${report.duplicateQuestions} already existed (skipped)" +
+                        if (report.restoredBookmarks > 0 || report.restoredAttempts > 0) {
+                            "\n• ${report.restoredBookmarks} bookmarks restored\n" +
+                                "• ${report.restoredAttempts} attempts restored"
+                        } else {
+                            ""
+                        }
                 )
             },
             confirmButton = {

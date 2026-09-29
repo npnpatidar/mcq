@@ -124,6 +124,9 @@ interface BookmarkDao {
     @Query("SELECT questionId FROM bookmarks ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<String>>
 
+    @Query("SELECT questionId FROM bookmarks ORDER BY createdAt DESC")
+    suspend fun getAll(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun add(bookmark: BookmarkEntity)
 
@@ -153,6 +156,9 @@ interface AttemptDao {
 
     @Query("SELECT * FROM question_results ORDER BY rowid")
     suspend fun getAllResults(): List<QuestionResultEntity>
+
+    @Query("SELECT * FROM attempts ORDER BY finishedAt ASC")
+    suspend fun getAllAttempts(): List<AttemptEntity>
 
     @Query("DELETE FROM attempts WHERE id = :id")
     suspend fun deleteById(id: Long)

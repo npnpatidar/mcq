@@ -292,7 +292,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     buildPaperDto(s, original)
                 }
 
-                val file = McqFileDto(version = 1, papers = listOf(paperDto))
+                val file = McqFileDto(
+                    version = 1,
+                    papers = listOf(paperDto),
+                    // Backup files carry history: restore it alongside content
+                    // (attempt restore dedupes, bookmarks are idempotent).
+                    bookmarks = original?.bookmarks ?: emptyList(),
+                    attempts = original?.attempts ?: emptyList()
+                )
                 Logger.d("IMPORTVM", "import(): using ${s.questions.size} edited state questions " +
                     "(correct set on ${s.questions.count { it.correctOptionIds.isNotEmpty() }})")
                 // The whole DB import (hashing + writes for every row) stays

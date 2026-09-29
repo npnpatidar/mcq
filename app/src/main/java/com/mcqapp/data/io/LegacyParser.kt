@@ -39,7 +39,51 @@ object LegacyParser {
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 1
         val papersJson = root["papers"] as? JsonArray ?: JsonArray(emptyList())
         val papers = papersJson.map { parsePaper(it.jsonObject) }
-        return McqFileDto(version = version, papers = papers)
+        val bookmarks = (root["bookmarks"] as? JsonArray)
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.filter { it.isNotBlank() }
+            ?: emptyList()
+        val attemptsJson = root["attempts"] as? JsonArray ?: JsonArray(emptyList())
+        val attempts = attemptsJson.mapNotNull {
+            try {
+                parseAttempt(it.jsonObject)
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return McqFileDto(version = version, papers = papers, bookmarks = bookmarks, attempts = attempts)
+    }
+
+    private fun parseAttempt(obj: JsonObject): AttemptDto {
+        fun str(key: String) = obj[key]?.jsonPrimitive?.contentOrNull ?: ""
+        fun int(key: String) = obj[key]?.jsonPrimitive?.intOrNull ?: 0
+        fun long(key: String) = obj[key]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+        fun double(key: String) = obj[key]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: 0.0
+        val resultsJson = obj["results"] as? JsonArray ?: JsonArray(emptyList())
+        return AttemptDto(
+            paperId = str("paperId"),
+            title = str("title").ifBlank { "Test" },
+            totalQuestions = int("totalQuestions"),
+            correctCount = int("correctCount"),
+            wrongCount = int("wrongCount"),
+            skippedCount = int("skippedCount"),
+            score = double("score"),
+            maxScore = double("maxScore"),
+            durationSeconds = long("durationSeconds"),
+            finishedAt = long("finishedAt"),
+            results = resultsJson.map { it.jsonObject }.map { r ->
+                AttemptResultDto(
+                    questionId = r["questionId"]?.jsonPrimitive?.contentOrNull ?: "",
+                    categoryTitle = r["categoryTitle"]?.jsonPrimitive?.contentOrNull ?: "",
+                    text = r["text"]?.jsonPrimitive?.contentOrNull ?: "",
+                    optionsJson = r["optionsJson"]?.jsonPrimitive?.contentOrNull ?: "[]",
+                    correctOptionIds = r["correctOptionIds"]?.jsonPrimitive?.contentOrNull ?: "",
+                    selectedOptionIds = r["selectedOptionIds"]?.jsonPrimitive?.contentOrNull ?: "",
+                    isCorrect = r["isCorrect"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false,
+                    explanation = r["explanation"]?.jsonPrimitive?.contentOrNull ?: "",
+                    explanationImage = r["explanationImage"]?.jsonPrimitive?.contentOrNull
+                )
+            }
+        )
     }
 
     private fun parsePaper(obj: JsonObject): PaperDto {

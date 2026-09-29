@@ -14,7 +14,9 @@ data class ImportReport(
     val updatedPapers: Int,
     val newQuestions: Int,
     val updatedQuestions: Int,
-    val duplicateQuestions: Int
+    val duplicateQuestions: Int,
+    val restoredBookmarks: Int = 0,
+    val restoredAttempts: Int = 0
 )
 
 class Importer(private val db: AppDatabase) {
@@ -27,6 +29,8 @@ class Importer(private val db: AppDatabase) {
         var newQuestions = 0
         var updatedQuestions = 0
         var duplicateQuestions = 0
+        var restoredBookmarks = 0
+        var restoredAttempts = 0
 
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
@@ -206,6 +210,58 @@ class Importer(private val db: AppDatabase) {
                     }
                 }
             }
+
+            // Backup payload: bookmarks restore by id (harmless if the
+            // question doesn't exist — BookmarksScreen skips missing rows);
+            // attempts restore with fresh ids, results remapped onto them.
+            for (questionId in file.bookmarks) {
+                if (questionId.isNotBlank() && !db.bookmarkDao().isBookmarked(questionId)) {
+                    db.bookmarkDao().add(com.mcqapp.data.local.BookmarkEntity(questionId))
+                    restoredBookmarks++
+                }
+            }
+            // Same backup re-imported twice must not double history.
+            val knownAttempts = db.attemptDao().getAllAttempts()
+                .map { Triple(it.paperId, it.finishedAt, it.score) }.toHashSet()
+            for (attempt in file.attempts) {
+                if (!knownAttempts.add(Triple(attempt.paperId, attempt.finishedAt, attempt.score))) {
+                    continue
+                }
+                val attemptId = db.attemptDao().insertAttempt(
+                    com.mcqapp.data.local.AttemptEntity(
+                        paperId = attempt.paperId,
+                        title = attempt.title,
+                        totalQuestions = attempt.totalQuestions,
+                        correctCount = attempt.correctCount,
+                        wrongCount = attempt.wrongCount,
+                        skippedCount = attempt.skippedCount,
+                        score = attempt.score,
+                        maxScore = attempt.maxScore,
+                        durationSeconds = attempt.durationSeconds,
+                        finishedAt = attempt.finishedAt
+                    )
+                )
+                db.attemptDao().insertResults(
+                    attempt.results.map { r ->
+                        com.mcqapp.data.local.QuestionResultEntity(
+                            attemptId = attemptId,
+                            questionId = r.questionId,
+                            categoryTitle = r.categoryTitle,
+                            text = r.text,
+                            optionsJson = r.optionsJson,
+                            correctOptionIds = r.correctOptionIds,
+                            selectedOptionIds = r.selectedOptionIds,
+                            isCorrect = r.isCorrect,
+                            explanation = r.explanation,
+                            explanationImage = r.explanationImage
+                        )
+                    }
+                )
+                restoredAttempts++
+            }
+            if (restoredBookmarks > 0 || restoredAttempts > 0) {
+                Logger.i("IMPORT", "Restored $restoredBookmarks bookmarks, $restoredAttempts attempts")
+            }
         }
         val elapsed = android.os.SystemClock.elapsedRealtime() - started
         val runtime = Runtime.getRuntime()
@@ -213,7 +269,10 @@ class Importer(private val db: AppDatabase) {
         Logger.i("IMPORT", "Import complete: papers $newPapers new/$updatedPapers updated, " +
             "questions $newQuestions new/$updatedQuestions updated, $duplicateQuestions duplicates skipped " +
             "in ${elapsed}ms, heap ${usedMb}MB/${runtime.maxMemory() / 1048576}MB")
-        return ImportReport(newPapers, updatedPapers, newQuestions, updatedQuestions, duplicateQuestions)
+        return ImportReport(
+            newPapers, updatedPapers, newQuestions, updatedQuestions, duplicateQuestions,
+            restoredBookmarks, restoredAttempts
+        )
     }
 
 }

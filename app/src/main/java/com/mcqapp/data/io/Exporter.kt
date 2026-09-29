@@ -16,10 +16,40 @@ class Exporter(private val db: AppDatabase) {
         Logger.i("EXPORT", "Exporting all papers")
         val papers = db.paperDao().getAll()
         val paperDtos = papers.map { paper -> exportPaperDto(paper) }
-        Logger.i("EXPORT", "Exported ${paperDtos.size} papers total")
+        val bookmarks = db.bookmarkDao().getAll()
+        val attemptDtos = db.attemptDao().getAllAttempts().map { attempt ->
+            val results = db.attemptDao().getResults(attempt.id)
+            AttemptDto(
+                paperId = attempt.paperId,
+                title = attempt.title,
+                totalQuestions = attempt.totalQuestions,
+                correctCount = attempt.correctCount,
+                wrongCount = attempt.wrongCount,
+                skippedCount = attempt.skippedCount,
+                score = attempt.score,
+                maxScore = attempt.maxScore,
+                durationSeconds = attempt.durationSeconds,
+                finishedAt = attempt.finishedAt,
+                results = results.map { r ->
+                    AttemptResultDto(
+                        questionId = r.questionId,
+                        categoryTitle = r.categoryTitle,
+                        text = r.text,
+                        optionsJson = r.optionsJson,
+                        correctOptionIds = r.correctOptionIds,
+                        selectedOptionIds = r.selectedOptionIds,
+                        isCorrect = r.isCorrect,
+                        explanation = r.explanation,
+                        explanationImage = r.explanationImage
+                    )
+                }
+            )
+        }
+        Logger.i("EXPORT", "Exported ${paperDtos.size} papers, ${bookmarks.size} bookmarks, " +
+            "${attemptDtos.size} attempts")
         return json.encodeToString(
             McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = paperDtos)
+            McqFileDto(version = 1, papers = paperDtos, bookmarks = bookmarks, attempts = attemptDtos)
         )
     }
 

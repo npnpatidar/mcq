@@ -45,7 +45,37 @@ data class PaperDto(
 }
 
 @Serializable
+data class AttemptResultDto(
+    val questionId: String,
+    val categoryTitle: String = "",
+    val text: String = "",
+    val optionsJson: String = "[]",
+    val correctOptionIds: String = "",
+    val selectedOptionIds: String = "",
+    val isCorrect: Boolean = false,
+    val explanation: String = "",
+    val explanationImage: String? = null
+)
+
+@Serializable
+data class AttemptDto(
+    val paperId: String,
+    val title: String,
+    val totalQuestions: Int = 0,
+    val correctCount: Int = 0,
+    val wrongCount: Int = 0,
+    val skippedCount: Int = 0,
+    val score: Double = 0.0,
+    val maxScore: Double = 0.0,
+    val durationSeconds: Long = 0,
+    val finishedAt: Long = 0,
+    val results: List<AttemptResultDto> = emptyList()
+)
+
+@Serializable
 data class McqFileDto(
     val version: Int = 1,
-    val papers: List<PaperDto> = emptyList()
+    val papers: List<PaperDto> = emptyList(),
+    val bookmarks: List<String> = emptyList(),
+    val attempts: List<AttemptDto> = emptyList()
 )

@@ -209,7 +209,8 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Exports every paper, category and question to a JSON file you can share or re-import.",
+                        "Backs up every paper, bookmark and attempt to one JSON file. " +
+                            "Re-import it anywhere to restore content and history.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }

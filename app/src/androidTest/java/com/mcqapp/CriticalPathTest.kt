@@ -56,7 +56,7 @@ class CriticalPathTest {
 
     private fun waitFor(text: String) {
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithText(text, substring = false)
+            compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
     }

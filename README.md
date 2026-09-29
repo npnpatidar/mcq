@@ -197,9 +197,9 @@ snapshots (attempts embed their own copies).
   title. Missing category ids are random per parse; missing question ids are stable.
 - **Whitespace is trimmed on save** (text, options, tags); blank images become `null`.
 - **Correct-answer matching is forgiving**: id → text (case-insensitive) → numeric index.
-- **The `No category` browse filter** matches only blank-`categoryId` rows, which imports
-  never produce (every import assigns a category) — top-level questions land in
-  Uncategorized instead.
+- **The `Uncategorized` browse filter** shows top-level questions (kept in a category
+  literally titled `Uncategorized`) plus any blank-`categoryId` rows, which imports
+  never produce since every import assigns a category.
 - **Timer at 0 with duration set** auto-submits; untimed papers (duration 0) never count down.
 
 ## Logs & debugging

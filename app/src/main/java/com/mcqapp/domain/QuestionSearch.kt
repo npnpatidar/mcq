@@ -17,4 +17,17 @@ object QuestionSearch {
                 question.options.any { it.text.lowercase().contains(q) }
         }
     }
+
+    /**
+     * The "Uncategorized" filter: imports always assign a category, so
+     * blank ids never occur — top-level questions land in a category
+     * literally titled "Uncategorized". Both count.
+     */
+    fun filterUncategorized(
+        questions: List<Question>,
+        titlesByCategoryId: Map<String, String>
+    ): List<Question> =
+        questions.filter { q ->
+            q.categoryId.isBlank() || titlesByCategoryId[q.categoryId] == "Uncategorized"
+        }
 }

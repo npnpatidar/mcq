@@ -44,4 +44,32 @@ class QuestionSearchTest {
     fun noMatchReturnsEmpty() {
         assertEquals(emptyList<Question>(), QuestionSearch.filter(questions, "titanic"))
     }
+
+    @Test
+    fun uncategorizedMatchesTitleAndBlankIds() {
+        val mixed = listOf(
+            Question(
+                id = "q1", categoryId = "", text = "Orphan",
+                options = emptyList(), correctOptionIds = emptySet()
+            ),
+            Question(
+                id = "q2", categoryId = "u1", text = "Top level",
+                options = emptyList(), correctOptionIds = emptySet()
+            ),
+            Question(
+                id = "q3", categoryId = "c9", text = "Filed",
+                options = emptyList(), correctOptionIds = emptySet()
+            )
+        )
+        val titles = mapOf("u1" to "Uncategorized", "c9" to "Science")
+        assertEquals(
+            listOf("q1", "q2"),
+            QuestionSearch.filterUncategorized(mixed, titles).map { it.id }
+        )
+        // Blank ids always count, even with no Uncategorized category present.
+        assertEquals(
+            listOf("q1"),
+            QuestionSearch.filterUncategorized(mixed, mapOf("u1" to "Misc", "c9" to "Science")).map { it.id }
+        )
+    }
 }

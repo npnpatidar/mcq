@@ -152,11 +152,14 @@ fun BrowseScreen(
         val searched = remember(questions, searchQuery) {
             com.mcqapp.domain.QuestionSearch.filter(questions, searchQuery)
         }
-        val filtered = remember(searched, filterValue) {
+        val filtered = remember(searched, filterValue, state.paper) {
+            val titles = flattenCategories(state.paper?.categories ?: emptyList())
+                .associate { it.first.id to it.first.title }
             when (filterValue) {
                 "No answer" -> searched.filter { it.correctOptionIds.isEmpty() }
                 "No explanation" -> searched.filter { it.explanation.isBlank() }
-                "No category" -> searched.filter { it.categoryId.isBlank() }
+                "Uncategorized" -> com.mcqapp.domain.QuestionSearch
+                    .filterUncategorized(searched, titles)
                 else -> searched
             }
         }
@@ -189,7 +192,7 @@ fun BrowseScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf("All", "No answer", "No explanation", "No category").forEach { label ->
+                    listOf("All", "No answer", "No explanation", "Uncategorized").forEach { label ->
                         FilterChip(
                             selected = filter.value == label,
                             onClick = { filter.value = label },

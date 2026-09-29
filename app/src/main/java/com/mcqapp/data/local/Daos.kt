@@ -38,6 +38,9 @@ interface CategoryDao {
     suspend fun getByPaper(paperId: String): List<CategoryEntity>
 
     @Query("SELECT * FROM categories")
+    suspend fun getAll(): List<CategoryEntity>
+
+    @Query("SELECT * FROM categories")
     fun observeAll(): Flow<List<CategoryEntity>>
 
     @Query("SELECT * FROM categories WHERE id = :id")

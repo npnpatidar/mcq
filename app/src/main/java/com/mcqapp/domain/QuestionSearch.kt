@@ -30,4 +30,20 @@ object QuestionSearch {
         questions.filter { q ->
             q.categoryId.isBlank() || titlesByCategoryId[q.categoryId] == "Uncategorized"
         }
+
+    /** A cross-paper hit: the question plus where it lives. */
+    data class Hit(
+        val question: Question,
+        val paperId: String,
+        val paperTitle: String
+    )
+
+    /** Attaches provenance; questions from deleted papers/categories drop out. */
+    fun attach(
+        questions: List<Question>,
+        paperByCategoryId: Map<String, Pair<String, String>>
+    ): List<Hit> = questions.mapNotNull { q ->
+        val (paperId, paperTitle) = paperByCategoryId[q.categoryId] ?: return@mapNotNull null
+        Hit(q, paperId, paperTitle)
+    }
 }

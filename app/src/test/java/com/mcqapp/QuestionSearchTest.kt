@@ -46,6 +46,22 @@ class QuestionSearchTest {
     }
 
     @Test
+    fun attachAddsProvenanceAndDropsOrphans() {
+        val hits = QuestionSearch.attach(
+            questions,
+            mapOf("c" to ("p1" to "Paper One"))
+        )
+        assertEquals(2, hits.size)
+        assertEquals("p1", hits[0].paperId)
+        assertEquals("Paper One", hits[0].paperTitle)
+        assertEquals("q1", hits[0].question.id)
+        assertEquals(
+            emptyList<QuestionSearch.Hit>(),
+            QuestionSearch.attach(questions, emptyMap())
+        )
+    }
+
+    @Test
     fun uncategorizedMatchesTitleAndBlankIds() {
         val mixed = listOf(
             Question(

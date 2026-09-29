@@ -105,6 +105,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it.remove(progressKey) }
     }
 
+    /** Cross-paper text/tag search with paper provenance attached. */
+    suspend fun searchGlobal(query: String): List<com.mcqapp.domain.QuestionSearch.Hit> {
+        if (query.isBlank()) return emptyList()
+        val questions = searchQuestions(query)
+        if (questions.isEmpty()) return emptyList()
+        val papersById = db.paperDao().getAll().associateBy({ it.id }, { it.title })
+        val paperByCategory = db.categoryDao().getAll().associate { cat ->
+            cat.id to (cat.paperId to (papersById[cat.paperId] ?: "Paper"))
+        }
+        return com.mcqapp.domain.QuestionSearch.attach(questions, paperByCategory)
+    }
+
     /** Storage breakdown for Settings: file size, row counts, per-paper weight. */
     suspend fun storageReport(): com.mcqapp.domain.StorageInfo.Report {
         val dbBytes = try {

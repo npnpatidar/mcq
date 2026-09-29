@@ -14,6 +14,7 @@ import com.mcqapp.ui.history.HistoryScreen
 import com.mcqapp.ui.importscreen.ImportScreen
 import com.mcqapp.ui.library.LibraryScreen
 import com.mcqapp.ui.results.ResultsScreen
+import com.mcqapp.ui.search.SearchScreen
 import com.mcqapp.ui.settings.SettingsScreen
 import com.mcqapp.ui.test.TestSessionScreen
 import com.mcqapp.util.Logger
@@ -91,6 +92,10 @@ fun McqNavHost(repository: McqRepository) {
         }
         composable("bookmarks") {
             BookmarksScreen(repository = repository, navController = navController)
+        }
+        composable("search") {
+            Logger.i("NAV", "search screen")
+            SearchScreen(repository = repository, navController = navController)
         }
         composable(
             route = "editor?questionId={questionId}&paperId={paperId}&categoryId={categoryId}",

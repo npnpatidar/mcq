@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.FilterChip
@@ -186,6 +187,10 @@ fun LibraryScreen(
                     onOpenBookmarks = {
                         scope.launch { drawerState.close() }
                         navController.navigate("bookmarks")
+                    },
+                    onOpenSearch = {
+                        scope.launch { drawerState.close() }
+                        navController.navigate("search")
                     },
                     onOpenSettings = {
                         scope.launch { drawerState.close() }
@@ -424,6 +429,7 @@ private fun DrawerContent(
     onCloseDrawer: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenBookmarks: () -> Unit,
+    onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
     onImport: () -> Unit,
@@ -470,6 +476,22 @@ private fun DrawerContent(
                     Icon(Icons.Default.Bookmark, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Text("Bookmarks")
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onCloseDrawer()
+                            onOpenSearch()
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Search")
                 }
             }
             item {

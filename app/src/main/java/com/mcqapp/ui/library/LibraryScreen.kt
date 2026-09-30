@@ -407,6 +407,9 @@ fun LibraryScreen(
                             append(", ${report.duplicateQuestions} already present")
                         }
                         append('.')
+                        if (report.restoredSchedules > 0) {
+                            append(" Review progress kept for ${report.restoredSchedules} cards.")
+                        }
                     }
                 )
             },

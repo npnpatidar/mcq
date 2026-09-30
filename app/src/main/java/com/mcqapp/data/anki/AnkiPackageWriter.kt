@@ -1,5 +1,6 @@
 package com.mcqapp.data.anki
 
+import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
@@ -59,8 +60,17 @@ object AnkiPackageWriter {
      * Categories become Anki subdecks (`Paper::Category::Subcategory`), so
      * importing the package back restores the paper's structure. Questions with
      * no category go into the paper's own deck.
+     *
+     * @param scheduling review progress keyed by question id. A question
+     * without an entry is written as a new card, which is what a shared deck
+     * should be; with an entry its intervals and ease travel with it. The
+     * collection is created at export time, so due days are counted from then.
      */
-    fun write(paper: PaperDto, questions: List<Question>): ByteArray {
+    fun write(
+        paper: PaperDto,
+        questions: List<Question>,
+        scheduling: Map<String, CardScheduleDto> = emptyMap()
+    ): ByteArray {
         val media = AnkiMediaPool()
         val nowSeconds = System.currentTimeMillis() / 1000
         val nowMillis = System.currentTimeMillis()
@@ -92,14 +102,23 @@ object AnkiPackageWriter {
                 fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" + payloadOf(question).toField(),
                 sortField = question.text
             )
+            val card = scheduling[question.id]
+                ?.let { AnkiScheduling.toAnki(it, nowSeconds, nowMillis) }
+                ?: AnkiScheduling.NEW_CARD
             cards += AnkiCardRow(
                 id = noteId + 1,
                 noteId = noteId,
                 mod = nowSeconds,
                 // Anki numbers new cards from col.conf.nextPos; only the relative
                 // order matters, so an increasing sequence is correct.
-                due = index + 1,
-                deckId = deckIdFor(deckNameFor(paper.title, categoryPaths[question.categoryId]))
+                due = if (card.queue == AnkiScheduling.QUEUE_NEW) index + 1 else card.due,
+                deckId = deckIdFor(deckNameFor(paper.title, categoryPaths[question.categoryId])),
+                type = card.type,
+                queue = card.queue,
+                interval = card.ivl,
+                factor = card.factor,
+                reps = card.reps,
+                lapses = card.lapses
             )
         }
         val collectionBytes = buildCollection(
@@ -301,14 +320,21 @@ object AnkiPackageWriter {
     )
 
     /**
-     * One row of Anki's `cards` table. Every field is an initial value for a
-     * brand-new card except [due], which sets the new-card ordering position.
+     * One row of Anki's `cards` table. The defaults are the initial values of a
+     * brand-new card, where [due] is the new-card ordering position rather than
+     * a date; see [AnkiScheduling] for what each field means once reviewed.
      */
     data class AnkiCardRow(
         val id: Long,
         val noteId: Long,
         val mod: Long,
         val due: Int,
-        val deckId: Long
+        val deckId: Long,
+        val type: Int = AnkiScheduling.TYPE_NEW,
+        val queue: Int = AnkiScheduling.QUEUE_NEW,
+        val interval: Int = 0,
+        val factor: Int = 0,
+        val reps: Int = 0,
+        val lapses: Int = 0
     )
 }

@@ -4,6 +4,7 @@ import android.database.sqlite.SQLiteDatabase
 import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
+import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
@@ -12,6 +13,7 @@ import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -413,9 +415,13 @@ class AnkiPackageReaderTest {
         cards: List<ClozeCard> = emptyList(),
         skipAutoCard: Boolean = false,
         media: Map<String, String> = emptyMap(),
-        mediaBytes: Map<String, ByteArray> = emptyMap()
+        mediaBytes: Map<String, ByteArray> = emptyMap(),
+        /** When the collection was created; a review card's due counts from it. */
+        crtSeconds: Long = 0L,
+        /** Scheduling and review-log rows, which the defaults above leave new. */
+        extraSql: List<String> = emptyList()
     ): ByteArray {
-        val db = newCollection(11)
+        val db = newCollection(11, crtSeconds)
         db.execSQL("update col set models = ?, decks = ?", arrayOf<Any>(models, decks))
         notes.forEachIndexed { i, (flds, did) ->
             val id = (i + 1).toLong()
@@ -436,6 +442,7 @@ class AnkiPackageReaderTest {
                 arrayOf<Any>(c.cardId, c.nid, c.did, c.ord.toLong())
             )
         }
+        extraSql.forEach { db.execSQL(it) }
         val collection = bytesOf(db)
         return zipOf(
             "collection.anki2" to collection,
@@ -445,7 +452,119 @@ class AnkiPackageReaderTest {
     }
 
     /** Anki 2.1.x schema 11 collection, matching Anki's own `schema11.sql`. */
-    private fun newCollection(ver: Int): SQLiteDatabase {
+    @Test
+    fun aReviewedCardKeepsItsSchedule() {
+        val crt = 1_700_000_000L
+        val apkg = legacyPackage(
+            notes = listOf("Front: 2 + 2?${us}&#10003; 4<br>&#10007; five" to 1L),
+            crtSeconds = crt,
+            extraSql = listOf(
+                "update cards set type = 2, queue = 2, due = 5, ivl = 5, factor = 2600, " +
+                    "reps = 7, lapses = 1 where id = 1001",
+                // The review log is the only record of when a card was last seen.
+                "insert into revlog values (1, 1001, -1, 3, 5, 1, 2600, ${crt - 3600}, 0)"
+            )
+        )
+
+        val result = AnkiPackageReader.read(apkg)
+        val question = result.file.papers.single().let(::allQuestions).single()
+        val state = result.scheduling[question.id]
+
+        assertNotNull("a reviewed card must carry its schedule", state)
+        assertEquals(5, state!!.intervalDays)
+        assertEquals(7, state.reps)
+        assertEquals(1, state.lapses)
+        assertEquals(2.6, state.ease, 0.0001)
+        assertFalse("one lapse is not a leech", state.leech)
+        // due = 5 days after the collection was created, not after the import.
+        assertWithinADay("due", (crt + 5 * 86_400L) * 1000L, state.dueAt)
+        assertEquals((crt - 3600) * 1000L, state.lastReviewedAt)
+    }
+
+    @Test
+    fun aSuspendedCardImportsAsAReviewedCard() {
+        // This app has no suspended state, so a suspended card keeps its history
+        // rather than the import pretending it is a new card.
+        val crt = 1_700_000_000L
+        val apkg = legacyPackage(
+            notes = listOf("Front: 2 + 2?${us}&#10003; 4<br>&#10007; five" to 1L),
+            crtSeconds = crt,
+            extraSql = listOf(
+                "update cards set type = 2, queue = -1, due = 3, ivl = 3, factor = 2500, " +
+                    "reps = 4, lapses = 0 where id = 1001"
+            )
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertTrue("the note still imports", question.options.isNotEmpty())
+    }
+
+    @Test
+    fun aNewCardCarriesNoSchedule() {
+        val apkg = legacyPackage(notes = listOf("Front: 2 + 2?${us}4" to 1L))
+
+        val result = AnkiPackageReader.read(apkg)
+
+        // Nothing to carry: a card Anki has never studied is already new here.
+        assertTrue(result.scheduling.isEmpty())
+    }
+
+    @Test
+    fun scheduleIsExportedAndReadsBackUnchanged() {
+        val now = System.currentTimeMillis()
+        val questions = listOf(
+            Question(
+                id = "q1",
+                categoryId = "c1",
+                text = "2 + 2?",
+                options = listOf(QuestionOption("a", "4"), QuestionOption("b", "five")),
+                correctOptionIds = setOf("a"),
+                explanation = "Arithmetic."
+            )
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Maths",
+            categories = listOf(CategoryDto(id = "c1", title = "Basics", questions = questions.map { it.toDto() }))
+        )
+        val apkg = AnkiPackageWriter.write(
+            paper,
+            AnkiDtoMapper.flattenQuestions(paper),
+            mapOf(
+                "q1" to CardScheduleDto(
+                    ease = 2.6,
+                    intervalDays = 5,
+                    dueAt = now + 5 * 86_400_000L,
+                    reps = 7,
+                    lapses = 1,
+                    lastReviewedAt = now
+                )
+            )
+        )
+
+        val result = AnkiPackageReader.read(apkg)
+        val question = result.file.papers.single().let(::allQuestions).single()
+        val state = result.scheduling[question.id]
+
+        assertNotNull(state)
+        assertEquals(5, state!!.intervalDays)
+        assertEquals(7, state.reps)
+        assertEquals(2.6, state.ease, 0.0001)
+        // Five days from the export, which is what the package was written for.
+        assertWithinADay("due", now + 5 * 86_400_000L, state.dueAt)
+    }
+
+    /**
+     * A due *day* is anchored to midnight, so it cannot match a millisecond
+     * timestamp exactly; a day's slack is the whole claim being made.
+     */
+    private fun assertWithinADay(what: String, expected: Long, actual: Long) {
+        val drift = Math.abs(expected - actual)
+        assertTrue("$what drifted by ${drift}ms", drift <= 86_400_000L)
+    }
+
+    private fun newCollection(ver: Int, crtSeconds: Long = 0L): SQLiteDatabase {
         val file = File.createTempFile("reader-test", ".anki2")
         file.delete()
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)
@@ -465,7 +584,10 @@ class AnkiPackageReaderTest {
         db.execSQL("create index ix_cards_sched on cards (did, queue, due)")
         db.execSQL("create index ix_revlog_cid on revlog (cid)")
         db.execSQL("create index ix_notes_csum on notes (csum)")
-        db.execSQL("insert into col values (1, 0, 0, 0, ?, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')", arrayOf<Any>(ver))
+        db.execSQL(
+            "insert into col values (1, ?, 0, 0, ?, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')",
+            arrayOf<Any>(crtSeconds, ver)
+        )
         return db
     }
 

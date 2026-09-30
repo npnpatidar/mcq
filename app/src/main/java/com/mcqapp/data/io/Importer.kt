@@ -2,6 +2,7 @@ package com.mcqapp.data.io
 
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
+import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
@@ -16,12 +17,23 @@ data class ImportReport(
     val updatedQuestions: Int,
     val duplicateQuestions: Int,
     val restoredBookmarks: Int = 0,
-    val restoredAttempts: Int = 0
+    val restoredAttempts: Int = 0,
+    /** Cards whose review progress was carried in, e.g. from an Anki package. */
+    val restoredSchedules: Int = 0
 )
 
 class Importer(private val db: AppDatabase) {
 
-    suspend fun import(file: McqFileDto): ImportReport {
+    /**
+     * @param scheduling review progress keyed by question id, applied to the
+     * questions this import accepts. It sits beside the file rather than in it
+     * because scheduling is per-device progress, not question content: see
+     * [CardScheduleDto].
+     */
+    suspend fun import(
+        file: McqFileDto,
+        scheduling: Map<String, CardScheduleDto> = emptyMap()
+    ): ImportReport {
         // currentTimeMillis (not elapsedRealtime): JVM-testable, and this is log timing only.
         val started = System.currentTimeMillis()
         Logger.i("IMPORT", "Starting import of ${file.papers.size} papers")
@@ -32,6 +44,7 @@ class Importer(private val db: AppDatabase) {
         var duplicateQuestions = 0
         var restoredBookmarks = 0
         var restoredAttempts = 0
+        var restoredSchedules = 0
 
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
@@ -192,6 +205,36 @@ class Importer(private val db: AppDatabase) {
                         )
                         existingHashes.add(contentHash)
 
+                        // Review progress is applied only to a question this
+                        // import accepted. A duplicate is skipped above, so
+                        // re-importing a deck does not overwrite a schedule
+                        // the user has since moved on with.
+                        scheduling[questionDto.id]?.let { schedule ->
+                            // The hash of the bytes as stored, because that is
+                            // what the study session recomputes it from: a
+                            // mismatch reads as edited content and would reset
+                            // the card on the next load.
+                            db.cardStateDao().upsert(
+                                CardStateEntity(
+                                    paperId = effectivePaperId,
+                                    questionId = questionDto.id,
+                                    ease = schedule.ease,
+                                    intervalDays = schedule.intervalDays,
+                                    dueAt = schedule.dueAt,
+                                    reps = schedule.reps,
+                                    lapses = schedule.lapses,
+                                    leech = schedule.leech,
+                                    lastReviewedAt = schedule.lastReviewedAt,
+                                    contentHash = ContentHash.of(
+                                        scaled.text,
+                                        scaled.options.map { it.text },
+                                        scaled.options.map { it.image }
+                                    )
+                                )
+                            )
+                            restoredSchedules++
+                        }
+
                         db.optionDao().deleteByQuestion(questionDto.id)
                         db.optionDao().upsertAll(
                             scaled.options.mapIndexed { index, o ->
@@ -273,7 +316,7 @@ class Importer(private val db: AppDatabase) {
             "in ${elapsed}ms, heap ${usedMb}MB/${runtime.maxMemory() / 1048576}MB")
         return ImportReport(
             newPapers, updatedPapers, newQuestions, updatedQuestions, duplicateQuestions,
-            restoredBookmarks, restoredAttempts
+            restoredBookmarks, restoredAttempts, restoredSchedules
         )
     }
 

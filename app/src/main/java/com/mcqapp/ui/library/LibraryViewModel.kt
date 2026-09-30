@@ -234,12 +234,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         "${read.recallCount} recall, ${read.file.papers.size} papers"
                 )
 
-                val report = Importer(repository.db()).import(read.file)
+                val report = Importer(repository.db()).import(read.file, read.scheduling)
                 Logger.i(
                     "LIBVM",
                     "Anki import done: ${report.newPapers} new, ${report.updatedPapers} updated papers, " +
                         "${report.newQuestions} new, ${report.updatedQuestions} updated, " +
-                        "${report.duplicateQuestions} duplicate questions"
+                        "${report.duplicateQuestions} duplicate questions, " +
+                        "${report.restoredSchedules} schedules"
                 )
                 _importReport.value = report
                 _importReportTitle.value = title

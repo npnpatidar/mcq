@@ -4,6 +4,7 @@ import android.database.sqlite.SQLiteDatabase
 import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiMediaPool
 import com.mcqapp.data.anki.AnkiPackageWriter
+import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
@@ -116,6 +117,53 @@ class AnkiPackageWriterTest {
         val file = File.createTempFile("apkg-test", ".anki2")
         file.writeBytes(bytes)
         return SQLiteDatabase.openOrCreateDatabase(file, null) to file
+    }
+
+    @Test
+    fun reviewedQuestionsAreWrittenAsReviewCards() {
+        val paper = samplePaper()
+        val questions = AnkiDtoMapper.flattenQuestions(paper)
+        val studied = questions.first()
+        val now = System.currentTimeMillis()
+        val apkg = AnkiPackageWriter.write(
+            paper,
+            questions,
+            mapOf(
+                studied.id to CardScheduleDto(
+                    ease = 2.6,
+                    intervalDays = 5,
+                    dueAt = now + 5 * 86_400_000L,
+                    reps = 7,
+                    lapses = 1,
+                    lastReviewedAt = now
+                )
+            )
+        )
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery(
+                "select nid, type, queue, due, ivl, factor, reps, lapses from cards order by id",
+                null
+            ).use { c ->
+                val reviewed = mutableListOf<String>()
+                while (c.moveToNext()) {
+                    val nid = c.getLong(0)
+                    val type = c.getInt(1)
+                    if (type == 2) {
+                        reviewed += "queue=${c.getInt(2)} due=${c.getInt(3)} ivl=${c.getInt(4)} " +
+                            "factor=${c.getInt(5)} reps=${c.getInt(6)} lapses=${c.getInt(7)}"
+                    }
+                    // A question with no schedule stays new: type 0, and its due
+                    // is a queue position rather than a date.
+                    if (type == 0) assertEquals("new card due is a position", 1, c.getInt(3))
+                }
+                assertEquals(1, reviewed.size)
+                assertEquals("queue=2 due=5 ivl=5 factor=2600 reps=7 lapses=1", reviewed.single())
+            }
+        } finally {
+            db.close()
+            file.delete()
+        }
     }
 
     @Test

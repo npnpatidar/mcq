@@ -169,8 +169,12 @@ object AnkiSchema11 {
             cards.forEach { card ->
                 db.execSQL(
                     "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) " +
-                        "VALUES (?, ?, ?, 0, ?, 0, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-                    arrayOf(card.id, card.noteId, card.deckId, card.mod, card.due)
+                        "VALUES (?, ?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, '')",
+                    arrayOf(
+                        card.id, card.noteId, card.deckId, card.mod,
+                        card.type, card.queue, card.due, card.interval, card.factor,
+                        card.reps, card.lapses
+                    )
                 )
             }
             db.setTransactionSuccessful()

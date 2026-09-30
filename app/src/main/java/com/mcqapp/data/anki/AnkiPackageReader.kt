@@ -19,7 +19,13 @@ data class AnkiReadResult(
     val file: McqFileDto,
     val noteCount: Int,
     val recallCount: Int,
-    val deckCount: Int
+    val deckCount: Int,
+    /**
+     * Review progress keyed by the question id in [file], so a deck studied
+     * for months keeps its intervals instead of restarting at zero. Empty when
+     * a package carries no schedule, such as a shared deck of new cards.
+     */
+    val scheduling: Map<String, com.mcqapp.data.io.CardScheduleDto> = emptyMap()
 )
 
 /** Raised when a package cannot be read at all. */
@@ -92,26 +98,29 @@ object AnkiPackageReader {
     }
 
     private fun readCollection(db: SQLiteDatabase, media: MediaIndex): AnkiReadResult {
-        val col = db.rawQuery("select ver, models, decks from col", null).use { c ->
+        val col = db.rawQuery("select ver, models, decks, crt from col", null).use { c ->
             if (!c.moveToFirst()) throw AnkiPackageException("The Anki collection is empty")
-            Triple(c.getInt(0), c.getString(1), c.getString(2))
+            ColMeta(c.getInt(0), c.getString(1), c.getString(2), c.getLong(3))
         }
-        val ver = col.first
+        val ver = col.version
         Logger.i("IMPORT", "Reading Anki collection, schema version $ver")
 
-        val notetypes = if (ver >= SCHEMA_14) readNotetypes14(db) else readNotetypes11(col.second)
-        val decks = if (ver >= SCHEMA_14) readDecks14(db) else readDecks11(col.third)
+        val notetypes = if (ver >= SCHEMA_14) readNotetypes14(db) else readNotetypes11(col.models)
+        val decks = if (ver >= SCHEMA_14) readDecks14(db) else readDecks11(col.decks)
         if (decks.isEmpty()) throw AnkiPackageException("The Anki collection has no decks")
 
         val notes = readNotes(db, media)
         val cards = readCards(db)
+        val lastReviews = readLastReviewTimes(db)
         // One note can hold several cards (a cloze note produces one per
         // deletion); without a card we still import the note once.
         val cardsByNote = cards.groupBy { it.nid }
         val noteById = notes.associateBy { it.id }
 
         var recallCount = 0
+        var unscheduled = 0
         val questionsByDeck = LinkedHashMap<Long, MutableList<QuestionDto>>()
+        val scheduling = LinkedHashMap<String, com.mcqapp.data.io.CardScheduleDto>()
         notes.forEach { note ->
             val template = notetypes[note.mid]
             val noteCards = cardsByNote[note.id].orEmpty()
@@ -119,8 +128,23 @@ object AnkiPackageReader {
             instances.forEach { ord ->
                 val parsed = toQuestion(note, template, ord, media) ?: return@forEach
                 if (parsed.isRecall) recallCount++
-                val deckId = noteCards.firstOrNull { it.ord == ord }?.did ?: DEFAULT_DECK_ID
+                val card = noteCards.firstOrNull { it.ord == ord }
+                val deckId = card?.did ?: DEFAULT_DECK_ID
                 questionsByDeck.getOrPut(deckId) { mutableListOf() }.add(parsed.question)
+                if (card != null) {
+                    val state = AnkiScheduling.fromAnki(
+                        type = card.type,
+                        queue = card.queue,
+                        due = card.due,
+                        ivl = card.ivl,
+                        factor = card.factor,
+                        reps = card.reps,
+                        lapses = card.lapses,
+                        crtSeconds = col.crtSeconds,
+                        lastReviewedAtMillis = lastReviews[card.id] ?: 0L
+                    )
+                    if (state == null) unscheduled++ else scheduling[parsed.question.id] = state
+                }
             }
         }
         if (noteById.isEmpty()) throw AnkiPackageException("The Anki collection has no notes")
@@ -129,13 +153,15 @@ object AnkiPackageReader {
         val noteCount = questionsByDeck.values.sumOf { it.size }
         Logger.i(
             "IMPORT",
-            "Anki package: ${decks.size} decks, $noteCount questions, $recallCount without options"
+            "Anki package: ${decks.size} decks, $noteCount questions, $recallCount without options, " +
+                "${scheduling.size} scheduled, $unscheduled new or not due"
         )
         return AnkiReadResult(
             file = McqFileDto(version = 1, papers = papers),
             noteCount = noteCount,
             recallCount = recallCount,
-            deckCount = decks.size
+            deckCount = decks.size,
+            scheduling = scheduling
         )
     }
 
@@ -246,12 +272,47 @@ object AnkiPackageReader {
 
     private fun readCards(db: SQLiteDatabase): List<AnkiCard> {
         val out = mutableListOf<AnkiCard>()
-        db.rawQuery("select id, nid, did, ord from cards order by id", null).use { c ->
+        db.rawQuery(
+            "select id, nid, did, ord, type, queue, due, ivl, factor, reps, lapses " +
+                "from cards order by id",
+            null
+        ).use { c ->
             while (c.moveToNext()) {
-                out += AnkiCard(c.getLong(1), c.getLong(2), c.getInt(3))
+                out += AnkiCard(
+                    id = c.getLong(0),
+                    nid = c.getLong(1),
+                    did = c.getLong(2),
+                    ord = c.getInt(3),
+                    type = c.getInt(4),
+                    queue = c.getInt(5),
+                    due = c.getInt(6),
+                    ivl = c.getInt(7),
+                    factor = c.getInt(8),
+                    reps = c.getInt(9),
+                    lapses = c.getInt(10)
+                )
             }
         }
         return out
+    }
+
+    /**
+     * Each card's most recent review time, in millis, from the review log. The
+     * log is the only record of when a card was last seen; without it the
+     * schedule falls back to the interval, which is close enough for a card
+     * that has not been overdue. A package may legitimately not carry one.
+     */
+    private fun readLastReviewTimes(db: SQLiteDatabase): Map<Long, Long> = try {
+        val out = LinkedHashMap<Long, Long>()
+        db.rawQuery("select cid, max(time) from revlog group by cid", null).use { c ->
+            while (c.moveToNext()) {
+                if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1) * 1000L
+            }
+        }
+        out
+    } catch (e: Exception) {
+        Logger.w("IMPORT", "No usable review log in this package: ${e.message}")
+        emptyMap()
     }
 
     // ---- note -> question ----
@@ -488,7 +549,32 @@ object AnkiPackageReader {
         val fields: List<String>
     )
 
-    private data class AnkiCard(val nid: Long, val did: Long, val ord: Int)
+    private data class AnkiCard(
+        val id: Long,
+        val nid: Long,
+        val did: Long,
+        val ord: Int,
+        val type: Int,
+        val queue: Int,
+        val due: Int,
+        val ivl: Int,
+        val factor: Int,
+        val reps: Int,
+        val lapses: Int
+    )
+
+    /** The `col` row: schema version, the schema-11 JSON blobs, and the epoch. */
+    private data class ColMeta(
+        val version: Int,
+        val models: String,
+        val decks: String,
+        /**
+         * Collection creation, in seconds. A review card's `due` counts days
+         * from this instant, so without it a reviewed deck's due dates are
+         * meaningless.
+         */
+        val crtSeconds: Long
+    )
 }
 
 private val IMG_TAG =

@@ -2,6 +2,7 @@ package com.mcqapp.data.export
 
 import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageWriter
+import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
@@ -24,7 +25,7 @@ class PaperExporter(private val db: AppDatabase) {
         val dto = Exporter(db).getPaperDto(paperId)
             ?: throw IllegalStateException("Paper not found")
         Logger.i("EXPORT", "Exporting paper '${dto.title}' as ${format.name}")
-        return render(dto, dto.title, format)
+        return render(dto, dto.title, format, scheduling = loadScheduling(paperId))
     }
 
     /** Any assembled DTO (e.g. bookmarks) through the same format writers. */
@@ -40,10 +41,35 @@ class PaperExporter(private val db: AppDatabase) {
             ?: throw IllegalStateException("Category not found or empty")
         val title = dto.categories.firstOrNull()?.title ?: dto.title
         Logger.i("EXPORT", "Exporting category '$title' as ${format.name}")
-        return render(dto, title, format)
+        return render(dto, title, format, scheduling = loadScheduling(paperId))
     }
 
-    private fun render(dto: PaperDto, title: String, format: ExportFormat): ExportResult {
+    /**
+     * Review progress for a paper, keyed by question id. Only Anki packages use
+     * it: a JSON backup keeps scheduling out of the file on purpose, so it
+     * would be lost on restore even if it were written.
+     */
+    private suspend fun loadScheduling(paperId: String): Map<String, CardScheduleDto> =
+        db.cardStateDao().getByPaper(paperId)
+            .filter { it.reps > 0 || it.dueAt > 0L }
+            .associate { state ->
+                state.questionId to CardScheduleDto(
+                    ease = state.ease,
+                    intervalDays = state.intervalDays,
+                    dueAt = state.dueAt,
+                    reps = state.reps,
+                    lapses = state.lapses,
+                    leech = state.leech,
+                    lastReviewedAt = state.lastReviewedAt
+                )
+            }
+
+    private fun render(
+        dto: PaperDto,
+        title: String,
+        format: ExportFormat,
+        scheduling: Map<String, CardScheduleDto> = emptyMap()
+    ): ExportResult {
         val base = baseName(title)
         return when (format) {
             ExportFormat.JSON_INLINE -> ExportResult(
@@ -82,7 +108,7 @@ class PaperExporter(private val db: AppDatabase) {
             ExportFormat.APKG -> ExportResult(
                 "$base.apkg",
                 format.mimeType,
-                AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto))
+                AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto), scheduling)
             )
         }
     }

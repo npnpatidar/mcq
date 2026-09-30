@@ -80,3 +80,26 @@ data class McqFileDto(
     val bookmarks: List<String> = emptyList(),
     val attempts: List<AttemptDto> = emptyList()
 )
+
+/**
+ * A card's review schedule, carried next to an imported paper rather than
+ * inside it.
+ *
+ * It is deliberately not part of [McqFileDto]: a question is content, and how
+ * far that content has been learned is per-device progress. Putting scheduling
+ * on [QuestionDto] would make every JSON backup carry it and every question
+ * carry state that belongs to the review history, so Anki import passes a
+ * questionId-keyed map alongside the file instead.
+ *
+ * Field names match `card_state` so the importer is a copy rather than a
+ * translation. Milliseconds, days, and Anki's own ease scale (1.3-3.0).
+ */
+data class CardScheduleDto(
+    val ease: Double = 2.5,
+    val intervalDays: Int = 0,
+    val dueAt: Long = 0L,
+    val reps: Int = 0,
+    val lapses: Int = 0,
+    val leech: Boolean = false,
+    val lastReviewedAt: Long = 0L
+)

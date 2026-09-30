@@ -372,28 +372,30 @@ object AnkiPackageReader {
         val allDecks = decks + orphanDecks
         val idByName = allDecks.associateBy { it.name }
 
-        return allDecks
-            .filter { !it.name.contains("::") }
-            .mapNotNull { deck ->
-            val segments = deck.name.split("::").filter { it.isNotBlank() }
-            if (segments.isEmpty()) return@mapNotNull null
-            val root = segments.first()
-            // Every deck contributes to its own top-level paper; nested decks are
-            // categories inside it.
-            val ownQuestions = questionsByDeck[deck.id].orEmpty()
-            val childNames = allDecks.map { it.name }
-                .filter { it != deck.name && it.startsWith(deck.name + "::") }
-            val categories = buildCategories(
-                prefixSegments = segments,
-                ownQuestions = ownQuestions,
-                childDeckNames = childNames,
-                idByName = idByName,
-                questionsByDeck = questionsByDeck
-            )
+        // One paper per top-level deck. The roots come from the deck names
+        // rather than from the deck rows, so a package that lists only a subdeck
+        // without its parent still produces a paper.
+        val roots = LinkedHashSet<String>()
+        allDecks.forEach { deck ->
+            deck.name.split("::").firstOrNull { it.isNotBlank() }?.let { roots += it }
+        }
+        val allNames = allDecks.map { it.name }
+
+        return roots.map { root ->
+            // A deck holds its own cards; its subdecks become categories.
+            val deck = idByName[root]
+            val ownQuestions = questionsByDeck[deck?.id].orEmpty()
+            val childNames = allNames.filter { it != root && it.startsWith("$root::") }
             PaperDto(
-                id = "anki-${deck.id}",
+                id = "anki-${deck?.id ?: root}",
                 title = root,
-                categories = categories
+                categories = buildCategories(
+                    prefixSegments = listOf(root),
+                    ownQuestions = ownQuestions,
+                    childDeckNames = childNames,
+                    idByName = idByName,
+                    questionsByDeck = questionsByDeck
+                )
             )
         }
             // A paper needs at least one question to be worth importing.

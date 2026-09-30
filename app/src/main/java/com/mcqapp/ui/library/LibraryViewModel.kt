@@ -5,18 +5,23 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.data.anki.AnkiPackageException
+import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.io.Exporter
+import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -192,6 +197,62 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun deleteCategory(categoryId: String) {
         Logger.i("LIBVM", "deleteCategory($categoryId)")
         viewModelScope.launch { repository.deleteCategory(categoryId) }
+    }
+
+    private val _importReport = MutableStateFlow<ImportReport?>(null)
+    val importReport: StateFlow<ImportReport?> = _importReport.asStateFlow()
+
+    private val _importReportTitle = MutableStateFlow<String?>(null)
+    val importReportTitle: StateFlow<String?> = _importReportTitle.asStateFlow()
+
+    fun dismissImportReport() {
+        _importReport.value = null
+        _importReportTitle.value = null
+    }
+
+    /**
+     * Imports an Anki `.apkg` straight into the database. Packages are read
+     * whole — a deck can hold thousands of notes — so this skips the Import
+     * screen's single-paper preview, which only makes sense for one hand-written
+     * JSON file. Merge decisions are the same ones that path makes: papers match
+     * by id then title, questions by content hash.
+     */
+    fun importAnkiPackage(uri: Uri) {
+        val title = uri.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg"
+        viewModelScope.launch {
+            try {
+                Logger.i("LIBVM", "Reading Anki package '$title'")
+                val bytes = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?.use { it.readBytes() }
+                } ?: throw AnkiPackageException("Could not open $title.")
+
+                val read = withContext(Dispatchers.IO) { AnkiPackageReader.read(bytes) }
+                Logger.i(
+                    "LIBVM",
+                    "Package '${title}': ${read.deckCount} decks, ${read.noteCount} notes, " +
+                        "${read.recallCount} recall, ${read.file.papers.size} papers"
+                )
+
+                val report = Importer(repository.db()).import(read.file)
+                Logger.i(
+                    "LIBVM",
+                    "Anki import done: ${report.newPapers} new, ${report.updatedPapers} updated papers, " +
+                        "${report.newQuestions} new, ${report.updatedQuestions} updated, " +
+                        "${report.duplicateQuestions} duplicate questions"
+                )
+                _importReport.value = report
+                _importReportTitle.value = title
+            } catch (e: AnkiPackageException) {
+                // Already phrased for the user; these are format problems a user can act on
+                // (export the deck as .apkg), not a bug.
+                Logger.e("LIBVM", "Anki package rejected", e)
+                _exportError.value = e.message
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Anki import failed", e)
+                _exportError.value = "Import failed: ${e.message}"
+            }
+        }
     }
 
     fun loadSampleData() {

@@ -96,6 +96,8 @@ fun LibraryScreen(
     val mistakeCounts by viewModel.mistakeCounts.collectAsState()
     val studyCounts by viewModel.studyCounts.collectAsState()
     val exportError by viewModel.exportError.collectAsState()
+    val importReport by viewModel.importReport.collectAsState()
+    val importReportTitle by viewModel.importReportTitle.collectAsState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -158,6 +160,25 @@ fun LibraryScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
+            // Anki packages are binary, so they must not go through the text
+            // reader below. Sniff the magic bytes rather than trusting the name
+            // or the MIME type: pickers report .apkg inconsistently, and our
+            // JSON can arrive under any extension.
+            val isAnkiPackage = try {
+                context.contentResolver.openInputStream(it)?.use { stream ->
+                    val magic = ByteArray(2)
+                    stream.read(magic) == 2 && magic[0] == 'P'.code.toByte() &&
+                        magic[1] == 'K'.code.toByte()
+                } ?: false
+            } catch (e: Exception) {
+                Logger.e("LIB", "Failed to sniff import file", e)
+                false
+            }
+
+            if (isAnkiPackage) {
+                viewModel.importAnkiPackage(it)
+                return@let
+            }
             try {
                 val text = context.contentResolver.openInputStream(it)
                     ?.bufferedReader()
@@ -208,7 +229,7 @@ fun LibraryScreen(
                         val csv = categoryIds.joinToString(",")
                         navController.navigate("test?paperId=$paperId&categories=$csv")
                     },
-                    onImport = { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                    onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
                     onDeleteCategory = { id -> viewModel.deleteCategory(id) }
                 )
             }
@@ -364,6 +385,33 @@ fun LibraryScreen(
             text = { Text(error) },
             confirmButton = {
                 TextButton(onClick = { viewModel.dismissError() }) { Text("OK") }
+            }
+        )
+    }
+
+    importReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissImportReport() },
+            title = { Text("Imported") },
+            text = {
+                Text(
+                    buildString {
+                        append(importReportTitle ?: "Deck")
+                        append(": ")
+                        append("${report.newPapers} new")
+                        if (report.updatedPapers > 0) append(", ${report.updatedPapers} updated")
+                        append(" paper${if (report.newPapers + report.updatedPapers == 1) "" else "s"}, ")
+                        append("${report.newQuestions} new questions")
+                        if (report.updatedQuestions > 0) append(", ${report.updatedQuestions} updated")
+                        if (report.duplicateQuestions > 0) {
+                            append(", ${report.duplicateQuestions} already present")
+                        }
+                        append('.')
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissImportReport() }) { Text("OK") }
             }
         )
     }

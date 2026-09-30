@@ -51,8 +51,17 @@ class SamplePaperApkgRoundTripTest {
         paper.questions + paper.categories.flatMap { category -> category.questions }
 
     /** Everything a study session can see about a question, keyed by its text. */
-    private fun shape(paper: PaperDto): Map<String, QuestionShape> =
-        allQuestions(paper).associate { it.text to it.shape() }
+    private fun shape(paper: PaperDto): Map<String, QuestionShape> {
+        val questions = allQuestions(paper)
+        // Keyed by text, so a repeated question would collapse into one entry
+        // and quietly weaken every comparison below.
+        assertEquals(
+            "the sample paper lists a question more than once",
+            questions.size,
+            questions.map { it.text }.distinct().size
+        )
+        return questions.associate { it.text to it.shape() }
+    }
 
     private data class OptionShape(
         val text: String,

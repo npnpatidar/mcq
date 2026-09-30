@@ -22,7 +22,10 @@ object AnkiDtoMapper {
             .filter { it.parentId == null }
             .forEach { root -> visit(root, paper.categories, result) }
         result.addAll(paper.topLevelQuestions().toQuestions(""))
-        return result
+        // One note per question id. A question that is both a paper's
+        // uncategorised list and inside one of its categories would otherwise
+        // become two notes with a single guid, and Anki drops the second.
+        return result.distinctBy { it.id }
     }
 
     private fun visit(category: CategoryDto, all: List<CategoryDto>, out: MutableList<Question>) {

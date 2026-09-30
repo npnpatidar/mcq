@@ -153,7 +153,10 @@ object LegacyParser {
             durationMinutes = duration,
             negativeMarking = negative,
             categories = finalCategories,
-            questions = parsedTopLevel
+            // The synthesized category above already holds them. Listing them
+            // here as well would count every top level question twice, which
+            // the Anki writer then turns into two notes sharing a guid.
+            questions = emptyList()
         )
     }
 

@@ -656,7 +656,7 @@ private fun DrawerContent(
             ) {
                 Icon(Icons.Default.FileUpload, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
-                Text("Import JSON")
+                Text("Import JSON/APKG")
             }
         }
     }
@@ -784,7 +784,7 @@ private fun PaperCard(
                         Text("${leechCount} tricky")
                     }
                 }
-                TextButton(onClick = onExport) {
+                OutlinedButton(onClick = onExport) {
                     Text("Export")
                 }
                 OutlinedButton(onClick = onBrowse) {

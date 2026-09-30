@@ -286,7 +286,11 @@ class AnkiPackageReaderTest {
         db.execSQL("insert into templates values (1, 0, '{{Front}}')")
         db.execSQL("insert into decks values (1, 'Default', 0, 0, x'', x''), (55, 'Chem::Bonds', 0, 0, x'', x'')")
         db.execSQL(
-            "insert into notes values (100, 'g1', 1, 0, 0, '', ' bond?<br>yes<br>no', ' bond?', 0, 0, '')"
+            // A third-party MCQ deck: the question on the front, the options
+            // marked on the back. This notetype has no structured payload
+            // field, which is what the marker path is for.
+            "insert into notes values (100, 'g1', 1, 0, 0, '', " +
+                "' bond?${us}&#10003; yes<br>&#10007; no', ' bond?', 0, 0, '')"
         )
         db.execSQL(
             "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +

@@ -360,7 +360,9 @@ object AnkiPackageReader {
                 difficulty = payload.difficulty,
                 marks = payload.marks,
                 tags = (payload.tags + note.tags).distinct()
-            ), isRecall = false)
+            ),
+            // Nothing to choose between, so this counts as a recall question.
+            isRecall = payload.options.isEmpty())
         }
 
         val back = AnkiHtml.parseBackField(media.rewrite(backHtml))

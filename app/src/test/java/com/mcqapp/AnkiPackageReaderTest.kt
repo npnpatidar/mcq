@@ -123,6 +123,43 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun aQuestionWithNoOptionsStaysAQuestionWithNoOptions() {
+        // A question can be authored with an empty option list. Reading it back
+        // as a one option recall question would change what the question is,
+        // and would report it under a different count.
+        val questions = listOf(
+            Question(
+                id = "q1",
+                categoryId = "c1",
+                text = "This question arrived with no options at all.",
+                options = emptyList(),
+                correctOptionIds = emptySet(),
+                explanation = "Imports tolerate empty option lists.",
+                difficulty = Difficulty.MEDIUM,
+                marks = 1.0
+            )
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Edge Cases",
+            categories = listOf(CategoryDto(id = "c1", title = "Odd", questions = questions.map { it.toDto() }))
+        )
+
+        val imported = AnkiPackageReader.read(
+            AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        )
+
+        assertEquals("nothing to choose between, so it counts as a recall", 1, imported.recallCount)
+        val question = allQuestions(imported.file.papers.first()).single()
+        assertEquals("This question arrived with no options at all.", question.text)
+        assertEquals(emptyList<com.mcqapp.data.io.OptionDto>(), question.options)
+        assertEquals(emptyList<String>(), question.correctOptionIds)
+        assertEquals("Imports tolerate empty option lists.", question.explanation)
+        assertEquals("medium", question.difficulty)
+        assertEquals(1.0, question.marks, 0.0001)
+    }
+
+    @Test
     fun reExportingTheSamePaperKeepsEveryGuidSoAnkiUpdatesInPlace() {
         val questions = listOf(
             Question(

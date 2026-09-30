@@ -3,6 +3,8 @@ package com.mcqapp.data.anki
 import com.mcqapp.data.io.QuestionDto
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 
 /**
  * The MCQ payload stored in a note's third field.
@@ -54,8 +56,13 @@ internal fun AnkiMcqPayload.toField(): String = ankiPayloadJson.encodeToString(
 internal fun payloadFromField(field: String?): AnkiMcqPayload? {
     if (field.isNullOrBlank()) return null
     return try {
-        ankiPayloadJson.decodeFromString(AnkiMcqPayload.serializer(), field)
-            .takeIf { it.options.isNotEmpty() }
+        val element = ankiPayloadJson.parseToJsonElement(field) as? JsonObject ?: return null
+        // A question may have no options at all, and such a payload must still
+        // be honoured, so the test is the shape of the two arrays rather than
+        // the options inside them. That still keeps a stray object in a
+        // foreign third field from being read as an empty question.
+        if (element["options"] !is JsonArray || element["correct"] !is JsonArray) return null
+        ankiPayloadJson.decodeFromJsonElement(AnkiMcqPayload.serializer(), element)
     } catch (e: Exception) {
         null
     }

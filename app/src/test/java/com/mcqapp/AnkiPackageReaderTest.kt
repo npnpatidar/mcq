@@ -230,8 +230,12 @@ class AnkiPackageReaderTest {
 
         val paper = result.file.papers.single()
         assertEquals("Biology", paper.title)
-        assertEquals(listOf("Biology", "Cells"), paper.categories.map { it.title })
-        assertEquals(listOf("top level", "nested"), paper.categories.map { it.questions.single().text })
+        // A card in the paper's own deck is an uncategorised question; a
+        // category named "Biology" inside the paper "Biology" was never useful.
+        assertEquals(listOf("top level"), paper.questions.map { it.text })
+        assertEquals(listOf("Cells"), paper.categories.map { it.title })
+        assertEquals(listOf("nested"), paper.categories.map { it.questions.single().text })
+        assertNull(paper.categories.single().parentId)
         assertEquals(3, result.deckCount)
     }
 

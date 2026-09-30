@@ -341,12 +341,16 @@ object AnkiPackageReader {
 
         val backHtml = note.fields.getOrNull(1).orEmpty()
         if (payload != null) {
-            // Our own export: the front also holds the options, so only the text
-            // above the first lettered option is the question.
+            // Our own export: the front also holds the options, so only what is
+            // above the first lettered option belongs to the question. That
+            // includes its image: the first <img> on the whole field is an
+            // option's image whenever the question itself has none.
+            val questionHtml = AnkiHtml.splitFront(media.rewrite(frontHtml).orEmpty()).first
             return ParsedQuestion(QuestionDto(
                 id = questionId,
-                text = AnkiHtml.questionTextFromFront(front.first),
-                image = front.second,
+                text = AnkiHtml.toPlainText(IMG_TAG.replace(questionHtml, "")),
+                image = media.rewrite(payload.image)
+                    ?: IMG_TAG.find(questionHtml)?.groupValues?.get(1),
                 options = payload.options.map {
                     OptionDto(it.id, AnkiHtml.toPlainText(it.text), media.rewrite(it.image))
                 },

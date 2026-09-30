@@ -18,6 +18,16 @@ import kotlinx.serialization.json.Json
  */
 @Serializable
 data class AnkiMcqPayload(
+    /**
+     * The question's own image, as a data URI.
+     *
+     * The front field carries it too, but there it is only the first `<img>`
+     * anywhere in the field, which for a question whose images all belong to
+     * its options is an option's image. Reading it from here instead of
+     * guessing keeps the round trip exact, and older packages without the field
+     * still fall back to the front.
+     */
+    val image: String? = null,
     val options: List<AnkiMcqOption> = emptyList(),
     val correct: List<String> = emptyList(),
     val explanation: String = "",
@@ -53,6 +63,7 @@ internal fun payloadFromField(field: String?): AnkiMcqPayload? {
 
 internal fun payloadOf(question: com.mcqapp.domain.Question): AnkiMcqPayload =
     AnkiMcqPayload(
+        image = question.image,
         options = question.options.map { AnkiMcqOption(it.id, it.text, it.image) },
         correct = question.correctOptionIds.toList(),
         explanation = question.explanation,

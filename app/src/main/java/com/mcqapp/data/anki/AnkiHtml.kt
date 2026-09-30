@@ -61,25 +61,44 @@ object AnkiHtml {
     private val OPTION_LINE = Regex("^(\\(?\\d*[A-Z]\\)?|[A-Z])\\. ")
 
     /**
-     * The question text from the front of one of our cards.
+     * The front of one of our cards, split into the question and the options.
+     * Both halves keep their HTML, so an image can be told apart by which half
+     * it is in rather than by being the first one on the field.
      *
      * The exporter writes the question, a blank line, an optional multi-select
      * prompt, then the options as `A. …`. Anything shaped like an option line
      * that does not follow that boundary is part of the question, so a question
      * that happens to start with a letter and a full stop is left alone.
      */
-    fun questionTextFromFront(front: String): String {
-        val lines = front.lines()
+    fun splitFront(front: String): Pair<String, String> {
+        // Line breaks arrive as <br> from a field written by the exporter.
+        val lines = BREAK.replace(front, "\n").lines()
         val cut = lines.withIndex().firstOrNull { (i, line) ->
-            OPTION_LINE.containsMatchIn(line.trim()) &&
-                i > 0 && (lines[i - 1].isBlank() || lines[i - 1].trim() == MULTI_PROMPT)
+            isOptionLine(line) && i > 0 && (lines[i - 1].isBlank() || isMultiPrompt(lines[i - 1]))
         }?.index ?: -1
-        if (cut < 0) return front.trim()
-        return lines.take(cut)
-            .filterNot { it.trim() == MULTI_PROMPT }
+        if (cut < 0) return front.trim() to ""
+        val question = lines.take(cut)
+            .filterNot { isMultiPrompt(it) }
             .joinToString("\n")
             .trim()
+        return question to lines.drop(cut).joinToString("\n").trim()
     }
+
+    /**
+     * The question text from the front of one of our cards; see [splitFront]
+     * for how the options are told apart.
+     */
+    fun questionTextFromFront(front: String): String = toPlainText(splitFront(front).first)
+
+    /**
+     * An option line as the exporter writes it, which is `<b>A.</b> text`. The
+     * match is made on the line with its tags removed, so the bold marker on the
+     * letter cannot hide it.
+     */
+    private fun isOptionLine(line: String): Boolean =
+        OPTION_LINE.containsMatchIn(TAG.replace(line, "").trim())
+
+    private fun isMultiPrompt(line: String): Boolean = TAG.replace(line, "").trim() == MULTI_PROMPT
 
     /** One option line recovered from a readable back field. */
     data class BackOption(val text: String, val correct: Boolean)

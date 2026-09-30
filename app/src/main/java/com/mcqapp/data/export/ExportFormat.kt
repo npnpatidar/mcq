@@ -45,5 +45,11 @@ enum class ExportFormat(
         "PDF (answer key at end)",
         ".pdf for self-testing: questions first, all answers at the end.",
         "-answer-key"
+    ),
+    APKG(
+        "application/octet-stream",
+        "apkg",
+        "Anki deck (.apkg)",
+        "Importable with Anki. Each question becomes a flashcard in one deck."
     )
 }

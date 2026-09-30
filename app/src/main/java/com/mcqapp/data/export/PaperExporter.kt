@@ -1,5 +1,7 @@
 package com.mcqapp.data.export
 
+import com.mcqapp.data.anki.AnkiDtoMapper
+import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
@@ -76,6 +78,11 @@ class PaperExporter(private val db: AppDatabase) {
                 "$base-answer-key.pdf",
                 format.mimeType,
                 PdfPaperWriter.paperToPdfBytes(dto, answersAtEnd = true)
+            )
+            ExportFormat.APKG -> ExportResult(
+                "$base.apkg",
+                format.mimeType,
+                AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto))
             )
         }
     }

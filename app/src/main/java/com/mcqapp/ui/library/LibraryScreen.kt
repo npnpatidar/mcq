@@ -142,12 +142,16 @@ fun LibraryScreen(
     val exportPdfLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(ExportFormat.PDF.mimeType)
     ) { uri: Uri? -> onExportDocument(uri) }
+    val exportApkgLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ExportFormat.APKG.mimeType)
+    ) { uri: Uri? -> onExportDocument(uri) }
 
     fun exportSaver(format: ExportFormat) = when (format) {
         ExportFormat.JSON_INLINE -> exportJsonLauncher
         ExportFormat.ZIP -> exportZipLauncher
         ExportFormat.HTML, ExportFormat.HTML_QUIZ -> exportHtmlLauncher
         ExportFormat.PDF, ExportFormat.PDF_ANSWER_KEY -> exportPdfLauncher
+        ExportFormat.APKG -> exportApkgLauncher
     }
 
     val importLauncher = rememberLauncherForActivityResult(

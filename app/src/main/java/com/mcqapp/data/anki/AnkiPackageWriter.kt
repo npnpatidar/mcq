@@ -40,6 +40,9 @@ object AnkiPackageWriter {
     const val NEWLINE_BREAK = "<br>"
     private const val LINE_BREAK = NEWLINE_BREAK
 
+    /** The `<br>` that separates one line of a card from the next. */
+    const val BR = NEWLINE_BREAK
+
     /** Fixed ids keep the output deterministic and diffable across exports. */
     const val DECK_ID = 1L
     const val DECK_CONFIG_ID = 1L
@@ -65,14 +68,16 @@ object AnkiPackageWriter {
             // Ids only have to be unique inside the package; a timestamp base
             // keeps them sortable in the same order as the source paper.
             val noteId = nowMillis + index
-            val front = media.htmlField(question.text, question.image)
+            val front = buildFront(question, media)
             val back = buildBack(question, media)
             notes += AnkiNoteRow(
                 id = noteId,
-                guid = guidFor(noteId),
+                guid = guidFor(paper.id, question.id),
                 mod = nowSeconds,
                 tags = formatTags(question),
-                fields = "$front$FIELD_SEPARATOR$back"
+                // Front, Back, then the structured payload. Anki splits fields on
+                // the unit separator; the template only renders the first two.
+                fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" + payloadOf(question).toField()
             )
             cards += AnkiCardRow(
                 id = noteId + 1,
@@ -97,26 +102,48 @@ object AnkiPackageWriter {
         return apkg
     }
 
-    private fun buildBack(question: Question, media: AnkiMediaPool): String {
+    /**
+     * The front of the card: the question followed by its options, so reviewing
+     * in Anki works like answering an MCQ rather than recalling an answer.
+     */
+    private fun buildFront(question: Question, media: AnkiMediaPool): String {
         val sb = StringBuilder()
-        // Single-choice questions read naturally as a list; multi-choice
-        // questions must not imply exactly-one-is-right, so they are labelled.
+        sb.append(media.htmlField(question.text, question.image))
+        sb.append(LINE_BREAK).append(LINE_BREAK)
         if (question.correctOptionIds.size > 1) {
+            // Options alone would imply exactly one of them is right.
             sb.append("<b>Select all that apply.</b>").append(LINE_BREAK)
         }
-        question.options.forEach { option ->
-            val isCorrect = option.id in question.correctOptionIds
-            val marker = if (isCorrect) "&#10003; " else "&#10007; "
-            sb.append(marker)
+        question.options.forEachIndexed { i, option ->
+            sb.append("<b>").append(letterFor(i)).append(".</b> ")
+            sb.append(media.htmlField(option.text, option.image))
+            sb.append(LINE_BREAK)
+        }
+        return sb.toString().trim()
+    }
+
+    /**
+     * The back of the card: which options were correct and why. The options
+     * themselves stay on the front, where the question was asked.
+     */
+    private fun buildBack(question: Question, media: AnkiMediaPool): String {
+        val sb = StringBuilder()
+        question.options.forEachIndexed { i, option ->
+            if (option.id !in question.correctOptionIds) return@forEachIndexed
+            sb.append("&#10003; <b>").append(letterFor(i)).append(".</b> ")
             sb.append(media.htmlField(option.text, option.image))
             sb.append(LINE_BREAK)
         }
         if (question.explanation.isNotBlank()) {
-            sb.append("<br><b>Explanation:</b> ")
+            if (sb.isNotEmpty()) sb.append("<br>")
+            sb.append("<b>Explanation:</b> ")
                 .append(media.htmlField(question.explanation, question.explanationImage))
         }
-        return sb.toString()
+        return sb.toString().trim()
     }
+
+    private fun letterFor(index: Int): String =
+        if (index < 26) ('A' + index).toString() else "(${index / 26}${'A' + index % 26})"
 
     /** Anki stores tags space-delimited with a leading and trailing space. */
     private fun formatTags(question: Question): String {
@@ -134,17 +161,24 @@ object AnkiPackageWriter {
         "<img src=\"${src.replace("&", "&amp;").replace("\"", "&quot;")}\">"
 
     /**
-     * A stable, Anki-shaped guid. Anki keys deduplication on this value, so a
-     * re-export of the same paper produces identical guids and importing the
-     * updated package updates notes in place instead of duplicating them.
+     * A stable, Anki-shaped guid derived from the question's identity rather
+     * than from when it was exported. Anki keys deduplication on this value, so
+     * re-exporting a paper and importing it again updates the notes in place
+     * instead of creating duplicates.
      */
-    fun guidFor(seed: Long): String {
+    fun guidFor(paperId: String, questionId: String): String {
+        // Anki guids are base91 of a u32 hash; a 64-bit FNV hash folded into 32
+        // bits gives the same shape and stays stable across exports.
+        val digest = java.security.MessageDigest.getInstance("SHA-1")
+            .digest("$paperId/$questionId".toByteArray())
+        var n = 0L
+        repeat(4) { i -> n = (n shl 8) or (digest[i].toLong() and 0xFF) }
         val alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&()*+,-./:;<=>?@[]^_`{|}~"
-        var n = seed * 2_654_435_761L
         return buildString(10) {
+            var v = n
             repeat(10) {
-                n = n * 6_364_136_223_846_793_005L + 1
-                append(alphabet[((n ushr 33) % alphabet.length).toInt()])
+                v = v * 2_654_435_761L + 1
+                append(alphabet[((v ushr 33) % alphabet.length).toInt()])
             }
         }
     }

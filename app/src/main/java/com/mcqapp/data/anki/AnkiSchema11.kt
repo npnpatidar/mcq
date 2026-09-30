@@ -1,6 +1,7 @@
 package com.mcqapp.data.anki
 
 import android.database.sqlite.SQLiteDatabase
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -216,22 +217,11 @@ object AnkiSchema11 {
                 })
             }
             putJsonArray("flds") {
-                add(buildJsonObject {
-                    put("name", "Front")
-                    put("ord", 0)
-                    put("sticky", false)
-                    put("rtl", false)
-                    put("font", "Arial")
-                    put("size", 20)
-                })
-                add(buildJsonObject {
-                    put("name", "Back")
-                    put("ord", 1)
-                    put("sticky", false)
-                    put("rtl", false)
-                    put("font", "Arial")
-                    put("size", 20)
-                })
+                add(field("Front", 0))
+                add(field("Back", 1))
+                // Structured copy of the question, so importing the deck back
+                // recovers options and correct answers exactly.
+                add(field(PAYLOAD_FIELD, 2))
             }
             put(
                 "css",
@@ -313,6 +303,18 @@ object AnkiSchema11 {
     }.toString()
 
     private val SHA1_HEX_BYTES = 4
+
+    /** Name of the notefield carrying the structured MCQ payload. */
+    const val PAYLOAD_FIELD = "mcqapp"
+
+    private fun field(name: String, ord: Int): JsonObject = buildJsonObject {
+        put("name", name)
+        put("ord", ord)
+        put("sticky", false)
+        put("rtl", false)
+        put("font", "Arial")
+        put("size", 20)
+    }
 
     /**
      * Anki's field checksum: the first 4 bytes of the SHA-1 of the field.

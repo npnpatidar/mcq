@@ -3,6 +3,7 @@ package com.mcqapp
 import com.mcqapp.data.anki.AnkiSchema11
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.float
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -41,11 +42,17 @@ class AnkiSchema11JsonTest {
         required(template, listOf("name", "ord", "qfmt", "afmt"))
 
         val fields = model["flds"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(2, fields.size)
+        assertEquals(3, fields.size)
         fields.forEach { required(it, listOf("name", "ord", "sticky", "rtl", "font", "size")) }
         assertEquals("Front", fields[0]["name"]!!.jsonPrimitive.content)
         assertEquals("Back", fields[1]["name"]!!.jsonPrimitive.content)
+        // The third field keeps a structured copy of the question so importing
+        // the deck back recovers options and correct answers exactly.
+        assertEquals("mcqapp", fields[2]["name"]!!.jsonPrimitive.content)
+        assertEquals(2, fields[2]["ord"]!!.jsonPrimitive.int)
         assertEquals("{{Front}}", template["qfmt"]!!.jsonPrimitive.content)
+        // The template must not leak the payload field onto the card.
+        assertEquals("{{FrontSide}}\n\n<hr id=answer>\n\n{{Back}}", template["afmt"]!!.jsonPrimitive.content)
     }
 
     @Test

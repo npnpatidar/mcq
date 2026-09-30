@@ -130,7 +130,11 @@ class AnkiPackageWriterTest {
                 val model = models.values.first().jsonObject
                 assertEquals("Basic", model["name"]!!.jsonPrimitive.content)
                 assertEquals(0, model["type"]!!.jsonPrimitive.int)
-                assertEquals(2, model["flds"]!!.jsonArray.size)
+                assertEquals(3, model["flds"]!!.jsonArray.size)
+                assertEquals(
+                    "mcqapp",
+                    model["flds"]!!.jsonArray[2].jsonObject["name"]!!.jsonPrimitive.content
+                )
                 assertEquals(1, model["tmpls"]!!.jsonArray.size)
                 val decks = json.parseToJsonElement(c.getString(3)).jsonObject
                 assertEquals("Biology: Cell", decks.values.first().jsonObject["name"]!!.jsonPrimitive.content)
@@ -162,11 +166,16 @@ class AnkiPackageWriterTest {
                 assertTrue("user tag: $tags", " energy " in tags)
                 val flds = n.getString(2)
                 val front = flds.substringBefore("\u001f")
-                val back = flds.substringAfter("\u001f")
-                assertEquals("Which organelle makes ATP?", front)
-                assertTrue("correct option marked: $back", "&#10003; Mitochondrion" in back)
-                assertTrue("wrong option crossed: $back", "&#10007; Ribosome" in back)
+                val back = flds.substringAfter("\u001f").substringBefore("\u001f")
+                assertTrue("question on the front: $front", "Which organelle makes ATP?" in front)
+                assertTrue("option on the front: $front", "Mitochondrion" in front)
+                assertTrue("option on the front: $front", "Ribosome" in front)
+                assertTrue("answer on the back: $back", "&#10003; <b>A.</b> Mitochondrion" in back)
                 assertTrue("explanation present: $back", "electron transport chain" in back)
+                assertTrue(
+                    "only the correct answer is revealed: $back",
+                    !back.contains("Ribosome")
+                )
                 assertEquals("Which organelle makes ATP?", n.getString(3))
                 val csum = n.getLong(4)
                 assertTrue("checksum fits Anki's u32: $csum", csum > 0 && csum <= 0xFFFFFFFFL)
@@ -220,7 +229,7 @@ class AnkiPackageWriterTest {
     }
 
     @Test
-    fun embeddedImagesBecomeNumericMediaEntriesAndRewrittenTags() {
+    fun embeddedImagesAreReferencedByFilenameNotByZipEntryName() {
         val paper = samplePaper()
         val questions = listOf(
             question("q1", "See diagram", image = png1x1),
@@ -234,13 +243,19 @@ class AnkiPackageWriterTest {
         assertTrue("media manifest written", "media" in entries)
         assertTrue("numeric media entry written", "0" in entries)
         val manifest = json.parseToJsonElement(String(entries["media"]!!)).jsonObject
-        assertEquals("img-0.png", manifest["0"]!!.jsonPrimitive.content)
+        assertEquals("mcqapp-0.png", manifest["0"]!!.jsonPrimitive.content)
 
         val (db, file) = openCollection(entries["collection.anki2"]!!)
         try {
             db.rawQuery("select flds from notes order by id", null).use { n ->
                 n.moveToFirst()
-                assertTrue("front references media", "<img src=\"0\">" in n.getString(0))
+                // Anki keys its media map by filename and rewrites `src` from the
+                // field text, so a numeric reference here resolves to nothing.
+                assertTrue(
+                    "front references the filename: ${n.getString(0)}",
+                    "<img src=\"mcqapp-0.png\">" in n.getString(0)
+                )
+                assertTrue("no numeric reference", "<img src=\"0\">" !in n.getString(0))
             }
         } finally {
             db.close()
@@ -281,8 +296,14 @@ class AnkiPackageWriterTest {
     }
 
     @Test
-    fun guidsAreStableForTheSameSeed() {
-        assertEquals(AnkiPackageWriter.guidFor(42L), AnkiPackageWriter.guidFor(42L))
-        assertEquals(10, AnkiPackageWriter.guidFor(1L).length)
+    fun guidsAreStableForTheSameQuestionButDifferBetweenQuestions() {
+        assertEquals(AnkiPackageWriter.guidFor("p1", "q1"), AnkiPackageWriter.guidFor("p1", "q1"))
+        assertEquals(10, AnkiPackageWriter.guidFor("p1", "q1").length)
+        assertTrue(
+            AnkiPackageWriter.guidFor("p1", "q1") != AnkiPackageWriter.guidFor("p1", "q2")
+        )
+        assertTrue(
+            AnkiPackageWriter.guidFor("p1", "q1") != AnkiPackageWriter.guidFor("p2", "q1")
+        )
     }
 }

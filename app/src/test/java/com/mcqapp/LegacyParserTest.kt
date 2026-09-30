@@ -316,5 +316,81 @@ class LegacyParserTest {
         assertTrue(file.papers.isEmpty())
         assertTrue(file.bookmarks.isEmpty())
         assertTrue(file.attempts.isEmpty())
+        assertTrue(file.warnings.isEmpty())
+    }
+
+    @Test
+    fun scalarRootReportsDiagnosticInsteadOfSilentEmpty() {
+        val file = LegacyParser.parse("42")
+        assertTrue(file.papers.isEmpty())
+        assertEquals(1, file.warnings.size)
+        assertTrue(file.warnings[0].contains("scalar"))
+    }
+
+    @Test
+    fun malformedPaperIsSkippedWithRowDiagnostic() {
+        val json = """
+        {
+          "papers": [
+            {"id": "p1", "title": "Good", "categories": []},
+            "not an object"
+          ]
+        }
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        assertEquals(1, file.papers.size)
+        assertEquals("p1", file.papers[0].id)
+        assertEquals(1, file.warnings.size)
+        assertTrue(file.warnings[0].contains("paper 2"))
+    }
+
+    @Test
+    fun malformedQuestionRowIsSkippedWithRowDiagnostic() {
+        val json = """
+        {
+          "papers": [{
+            "id": "p1",
+            "title": "Paper",
+            "categories": [{
+              "id": "c1",
+              "title": "Cat",
+              "questions": [
+                {"id": "q1", "text": "Fine?", "options": ["A", "B"], "correctOptionIds": ["a"]},
+                42
+              ]
+            }]
+          }]
+        }
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val questions = file.papers[0].categories[0].questions
+        assertEquals(1, questions.size)
+        assertEquals("q1", questions[0].id)
+        assertEquals(1, file.warnings.size)
+        assertTrue(file.warnings[0].contains("question 2"))
+    }
+
+    @Test
+    fun cleanFileProducesNoDiagnostics() {
+        val json = """
+        {
+          "papers": [{
+            "id": "p1",
+            "title": "Paper",
+            "categories": [{
+              "id": "c1",
+              "title": "Cat",
+              "questions": [
+                {"id": "q1", "text": "Fine?", "options": ["A", "B"], "correctOptionIds": ["a"]}
+              ]
+            }]
+          }]
+        }
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        assertTrue(file.warnings.isEmpty())
     }
 }

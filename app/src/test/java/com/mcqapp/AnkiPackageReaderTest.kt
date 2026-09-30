@@ -302,6 +302,35 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun foreignDifficultyTagIsRecovered() {
+        // Recall path: no markers on the back.
+        val recallPkg = legacyPackage(
+            notes = listOf("q${us}a" to 1L),
+            noteTags = " mcqapp mcqapp-difficulty-easy "
+        )
+        val recall = AnkiPackageReader.read(recallPkg).file.papers.single().let(::allQuestions).single()
+        assertEquals("easy", recall.difficulty)
+
+        // Marker path: options on the back.
+        val markerPkg = legacyPackage(
+            notes = listOf("q${us}&#10003; yes<br>&#10007; no" to 1L),
+            noteTags = " mcqapp mcqapp-difficulty-hard "
+        )
+        val marker = AnkiPackageReader.read(markerPkg).file.papers.single().let(::allQuestions).single()
+        assertEquals("hard", marker.difficulty)
+    }
+
+    @Test
+    fun unknownDifficultyTagFallsBackToMedium() {
+        val apkg = legacyPackage(
+            notes = listOf("q${us}a" to 1L),
+            noteTags = " mcqapp mcqapp-difficulty-extreme "
+        )
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+        assertEquals("medium", question.difficulty)
+    }
+
+    @Test
     fun imagesReferencedByZipEntryNameAreInlined() {
         val apkg = legacyPackage(
             notes = listOf("look: <img src=\"0\">${us}answer" to 1L),
@@ -315,6 +344,55 @@ class AnkiPackageReaderTest {
         assertTrue(
             "image inlined: ${question.image}",
             question.image!!.startsWith("data:image/png;base64,")
+        )
+    }
+
+    @Test
+    fun mediaMimeLabelsFollowTheRealSignature() {
+        val gif = "GIF89a".toByteArray() + ByteArray(3)
+        val webp = "RIFF".toByteArray() + ByteArray(4) + "WEBP".toByteArray() + ByteArray(2)
+        val apkg = legacyPackage(
+            notes = listOf(
+                "gif: <img src=\"0\">${us}answer" to 1L,
+                "webp: <img src=\"1\">${us}answer" to 1L
+            ),
+            media = mapOf("0" to "a.gif", "1" to "b.webp"),
+            mediaBytes = mapOf("0" to gif, "1" to webp)
+        )
+        val questions = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions)
+        assertTrue("gif labelled: ${questions[0].image}", questions[0].image!!.startsWith("data:image/gif;base64,"))
+        assertTrue("webP labelled: ${questions[1].image}", questions[1].image!!.startsWith("data:image/webp;base64,"))
+    }
+
+    @Test
+    fun riffContainerWithoutWebpFormTypeIsNotLabelledWebp() {
+        val riff = "RIFF".toByteArray() + ByteArray(4) + "WAVE ".toByteArray()
+        val apkg = legacyPackage(
+            notes = listOf("look: <img src=\"0\">${us}answer" to 1L),
+            media = mapOf("0" to "a.wav"),
+            mediaBytes = mapOf("0" to riff)
+        )
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+        assertTrue(
+            "RIFF without WEBP is not WebP: ${question.image}",
+            question.image!!.startsWith("data:image/jpeg;base64,")
+        )
+    }
+
+    @Test
+    fun truncatedPngSignatureIsNotLabelledPng() {
+        val fakePng = byteArrayOf(
+            0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte()
+        ) + ByteArray(6)
+        val apkg = legacyPackage(
+            notes = listOf("look: <img src=\"0\">${us}answer" to 1L),
+            media = mapOf("0" to "a.png"),
+            mediaBytes = mapOf("0" to fakePng)
+        )
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+        assertTrue(
+            "a bare 89 50 prefix is not a PNG signature: ${question.image}",
+            question.image!!.startsWith("data:image/jpeg;base64,")
         )
     }
 

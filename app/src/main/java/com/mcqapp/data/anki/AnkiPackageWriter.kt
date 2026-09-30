@@ -8,6 +8,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.File
 import java.util.zip.ZipEntry
+import kotlin.random.Random
 import java.util.zip.ZipOutputStream
 
 /**
@@ -77,6 +78,9 @@ object AnkiPackageWriter {
         val media = AnkiMediaPool()
         val nowSeconds = System.currentTimeMillis() / 1000
         val nowMillis = System.currentTimeMillis()
+        // Random per-export component: same-millisecond exports must not share
+        // an id sequence (see the note-id loop below).
+        val idBase = nowMillis + Random.nextLong(1, 1_000_000_000)
 
         val categoryPaths = categoryPaths(paper)
         // Deck name -> id, in first-seen order, so a re-export numbers them the
@@ -91,8 +95,12 @@ object AnkiPackageWriter {
 
         questions.forEachIndexed { index, question ->
             // Ids only have to be unique inside the package; a timestamp base
-            // keeps them sortable in the same order as the source paper.
-            val noteId = nowMillis + index
+            // keeps them sortable in the same order as the source paper. The
+            // per-export salt keeps two packages exported in the same
+            // millisecond (on this device or different ones) from reusing
+            // the same id sequence, which would collide when both are
+            // imported into one Anki collection.
+            val noteId = idBase + index
             val front = buildFront(question, media)
             val back = buildBack(question, media)
             notes += AnkiNoteRow(
@@ -220,8 +228,19 @@ object AnkiPackageWriter {
         return sb.toString().trim()
     }
 
-    private fun letterFor(index: Int): String =
-        if (index < 26) ('A' + index).toString() else "(${index / 26}${'A' + index % 26})"
+    /**
+     * Spreadsheet-style option labels: A-Z, then AA-AZ, BA-BZ, and so on
+     * (bijective base-26). The reader recognises the same shape.
+     */
+    private fun letterFor(index: Int): String {
+        var n = index
+        val sb = StringBuilder()
+        do {
+            sb.append('A' + n % 26)
+            n = n / 26 - 1
+        } while (n >= 0)
+        return sb.reverse().toString()
+    }
 
     /** Anki stores tags space-delimited with a leading and trailing space. */
     private fun formatTags(question: Question): String {
@@ -290,7 +309,9 @@ object AnkiPackageWriter {
             db.close()
             return file.readBytes()
         } finally {
-            file.delete()
+            if (!file.delete()) {
+                Logger.w("ANKI", "Could not delete temp collection ${file.absolutePath}")
+            }
         }
     }
 

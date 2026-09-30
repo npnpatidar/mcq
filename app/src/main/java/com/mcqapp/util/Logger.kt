@@ -16,6 +16,15 @@ object Logger {
     private val lock = Any()
     private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
+    /**
+     * File IO runs on this single-thread executor so callers (including Main)
+     * never block on disk; the daemon thread never keeps the process alive.
+     * One thread keeps log lines in write order.
+     */
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "mcq-log").apply { isDaemon = true }
+    }
+
     var activePath: String = "not initialized"
         private set
 
@@ -93,17 +102,39 @@ object Logger {
         } catch (_: Exception) {
             println("$level/$tag: $message")
         }
-        synchronized(lock) {
-            val file = logFile ?: return
-            try {
-                if (file.length() > MAX_FILE_BYTES) {
-                    file.renameTo(File(file.parentFile, "app.log.1"))
-                    file.appendText("=== Log rotated ${timeFormat.format(Date())} ===\n")
+        // logcat stays synchronous (cheap); file IO moves off the caller.
+        try {
+            io.execute {
+                try {
+                    val file = synchronized(lock) { logFile } ?: return@execute
+                    if (file.length() > MAX_FILE_BYTES) {
+                        rotate(file)
+                    }
+                    file.appendText(line)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to write log: ${e.message}")
                 }
-                file.appendText(line)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to write log: ${e.message}")
             }
+        } catch (_: Exception) {
+            // Executor rejected or shut down: drop the line, never crash.
+        }
+    }
+
+    private fun rotate(file: File) = rotate(file, MAX_FILE_BYTES)
+
+    /**
+     * Bounded rotation: rename to `app.log.1`, or truncate if the rename
+     * fails, so the live file never grows without limit.
+     */
+    internal fun rotate(file: File, maxBytes: Long) {
+        val rotated = File(file.parentFile, "app.log.1")
+        // A stale target can make renameTo fail; clear it first.
+        rotated.delete()
+        if (file.renameTo(rotated)) {
+            file.appendText("=== Log rotated ${timeFormat.format(Date())} ===\n")
+        } else {
+            Log.w(TAG, "Log rotation failed; truncating ${file.absolutePath}")
+            file.writeText("=== Log truncated ${timeFormat.format(Date())} ===\n")
         }
     }
 }

@@ -30,7 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -54,7 +54,7 @@ fun ImportScreen(
     navController: NavController,
     viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
 
     // Memoized: these re-ran over all rows on every recomposition (frames
     // dropped while scrolling big previews).
@@ -71,6 +71,8 @@ fun ImportScreen(
     val warnings = remember(state.questions) {
         ImportWarnings.forFile(state.questions)
     }
+    // Parse-time diagnostics: rows the reader skipped, not fatal.
+    val parseWarnings = remember(state.parseWarnings) { state.parseWarnings }
     val report = state.importReport
     state.error?.let { error ->
         AlertDialog(
@@ -264,6 +266,40 @@ fun ImportScreen(
                         style = MaterialTheme.typography.titleSmall
                     )
                     Spacer(Modifier.height(4.dp))
+                }
+                if (parseWarnings.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Skipped rows (${parseWarnings.size}) — imported without these",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    items(parseWarnings.take(20), key = { "parse|$it" }) { warning ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Text(
+                                warning,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+                    if (parseWarnings.size > 20) {
+                        item {
+                            Text(
+                                "+${parseWarnings.size - 20} more skipped rows",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                    }
                 }
                 if (warnings.isNotEmpty()) {
                     item {

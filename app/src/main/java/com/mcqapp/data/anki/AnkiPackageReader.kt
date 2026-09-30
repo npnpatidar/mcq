@@ -93,7 +93,9 @@ object AnkiPackageReader {
         } catch (e: Exception) {
             throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
         } finally {
-            file.delete()
+            if (!file.delete()) {
+                Logger.w("ANKI", "Could not delete temp collection ${file.absolutePath}")
+            }
         }
     }
 
@@ -366,6 +368,9 @@ object AnkiPackageReader {
         }
 
         val back = AnkiHtml.parseBackField(media.rewrite(backHtml))
+        // Foreign packages carry no mcqapp payload, so difficulty survives
+        // only as a tag; recover it before the default (medium) overwrites it.
+        val difficulty = difficultyFromTags(note.tags)
         if (back.hasMarkers) {
             val options = back.options.mapIndexed { i, opt ->
                 OptionDto("o$i", AnkiHtml.toPlainText(opt.text))
@@ -378,6 +383,7 @@ object AnkiPackageReader {
                     options = options,
                     correctOptionIds = options.filterIndexed { i, _ -> back.options[i].correct }.map { it.id },
                     explanation = AnkiHtml.toPlainText(back.explanation),
+                    difficulty = difficulty,
                     tags = note.tags
                 ),
                 isRecall = false
@@ -394,10 +400,18 @@ object AnkiPackageReader {
                 image = front.second,
                 options = listOf(OptionDto("o0", answer.first.ifBlank { front.first }, answer.second)),
                 correctOptionIds = listOf("o0"),
+                difficulty = difficulty,
                 tags = note.tags
             ),
             isRecall = true
         )
+    }
+
+    /** `mcqapp-difficulty-easy|medium|hard` on a foreign note, else the default. */
+    private fun difficultyFromTags(tags: List<String>): String {
+        val tag = tags.firstOrNull { it.startsWith("mcqapp-difficulty-") } ?: return "medium"
+        return tag.removePrefix("mcqapp-difficulty-").takeIf { it in setOf("easy", "medium", "hard") }
+            ?: "medium"
     }
 
     /**
@@ -666,10 +680,25 @@ private class MediaIndex(
     }
 
     private fun mimeOf(bytes: ByteArray): String = when {
-        bytes.size >= 3 && bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() -> "image/png"
-        bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> "image/jpeg"
-        bytes.size >= 3 && bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() -> "image/gif"
-        bytes.size >= 12 && String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" -> "image/webp"
+        // Full signatures, not prefixes: PNG's 8-byte magic, JPEG's SOI plus
+        // the first marker byte, GIF's versioned header, and RIFF plus the
+        // form type at offset 8 (a bare RIFF is not necessarily WebP).
+        bytes.size >= 8 &&
+            bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() &&
+            bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte() &&
+            bytes[4] == 0x0D.toByte() && bytes[5] == 0x0A.toByte() &&
+            bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte() -> "image/png"
+        bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "image/jpeg"
+        bytes.size >= 6 &&
+            bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() &&
+            bytes[3] == '8'.code.toByte() && (bytes[4] == '7'.code.toByte() || bytes[4] == '9'.code.toByte()) &&
+            bytes[5] == 'a'.code.toByte() -> "image/gif"
+        bytes.size >= 12 &&
+            String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" &&
+            String(bytes, 8, 4, Charsets.US_ASCII) == "WEBP" -> "image/webp"
+        // Unrecognised bytes: still labelled as an image so the data URI
+        // renders (decoders sniff the real format); the extension follows.
         else -> "image/jpeg"
     }
 

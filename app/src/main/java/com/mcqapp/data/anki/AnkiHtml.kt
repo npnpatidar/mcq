@@ -57,8 +57,8 @@ object AnkiHtml {
     private const val MULTI_PROMPT = "Select all that apply."
     private const val EXPLANATION_PREFIX = "Explanation:"
 
-    /** `A. text`, or `(1A). text` past the first 26 options. */
-    private val OPTION_LINE = Regex("^(\\(?\\d*[A-Z]\\)?|[A-Z])\\. ")
+    /** `A. text`, or multi-letter (`AA. text`) past the first 26 options. */
+    private val OPTION_LINE = Regex("^\\(?\\d*[A-Z]+\\)?\\. ")
 
     /**
      * The front of one of our cards, split into the question and the options.

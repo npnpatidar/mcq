@@ -2,7 +2,7 @@ package com.mcqapp.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -28,8 +28,8 @@ import com.mcqapp.util.Logger
 @Composable
 fun McqNavHost(repository: McqRepository) {
     val navController = rememberNavController()
-    val fontScale by repository.fontScale().collectAsState(
-        initial = com.mcqapp.util.FontScale.DEFAULT
+    val fontScale by repository.fontScale().collectAsStateWithLifecycle(
+        initialValue = com.mcqapp.util.FontScale.DEFAULT
     )
     val density = LocalDensity.current
     CompositionLocalProvider(

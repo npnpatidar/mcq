@@ -172,7 +172,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_3_4,
                 AppDatabase.MIGRATION_4_5,
                 AppDatabase.MIGRATION_5_6,
-                AppDatabase.MIGRATION_6_7
+                AppDatabase.MIGRATION_6_7,
+                AppDatabase.MIGRATION_7_8
             )
             .allowMainThreadQueries()
             .build()
@@ -298,7 +299,30 @@ class MigrationTest {
     }
 
     @Test
-    fun `full chain 3 to 7 migrates cleanly and keeps data`() {
+    fun `migration 7 to 8 drops orphan answer keys and cascades on delete`() {
+        runBlocking {
+            createV6(
+                insertPaper(),
+                "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                    "VALUES ('c1','p1','Cat',NULL,0)",
+                "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage," +
+                    "difficulty,marks,tags,sortOrder,contentHash) VALUES " +
+                    "('q1','c1','Q one',NULL,'because',NULL,'medium',2.0,'tag',0,'hash1')",
+                // One live key and one whose question is already gone.
+                "INSERT INTO correct_answers (questionId,optionId) VALUES ('q1','q1-a'),('gone','x')"
+            )
+            val db = openMigrated()
+            assertEquals(listOf("q1-a"), db.correctAnswerDao().getCorrectIds("q1"))
+            assertTrue(db.correctAnswerDao().getCorrectIds("gone").isEmpty())
+            // The new cascade removes the key with its question.
+            db.questionDao().deleteById("q1")
+            assertTrue(db.correctAnswerDao().getCorrectIds("q1").isEmpty())
+            db.close()
+        }
+    }
+
+    @Test
+    fun `full chain 3 to 8 migrates cleanly and keeps data`() {
         runBlocking {
             context.deleteDatabase("chain-test.db")
             val chainFile = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(
@@ -326,11 +350,12 @@ class MigrationTest {
                     AppDatabase.MIGRATION_3_4,
                     AppDatabase.MIGRATION_4_5,
                     AppDatabase.MIGRATION_5_6,
-                    AppDatabase.MIGRATION_6_7
+                    AppDatabase.MIGRATION_6_7,
+                    AppDatabase.MIGRATION_7_8
                 )
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->5->6->7; Room validates the final schema.
+            // One open exercises 3->4->5->6->7->8; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)

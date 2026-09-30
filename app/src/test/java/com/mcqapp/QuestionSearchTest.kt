@@ -118,4 +118,19 @@ class QuestionSearchTest {
             QuestionSearch.filterUncategorized(mixed, mapOf("u1" to "Misc", "c9" to "Science")).map { it.id }
         )
     }
+
+    @Test
+    fun escapeLikeLeavesPlainQueriesAlone() {
+        assertEquals("titanic", QuestionSearch.escapeLike("titanic"))
+        assertEquals("", QuestionSearch.escapeLike(""))
+    }
+
+    @Test
+    fun escapeLikeNeutralisesWildcards() {
+        assertEquals("100\\% sure", QuestionSearch.escapeLike("100% sure"))
+        assertEquals("a\\_b", QuestionSearch.escapeLike("a_b"))
+        assertEquals("back\\\\slash", QuestionSearch.escapeLike("back\\slash"))
+        // Backslash first: an existing escape must not itself become wild.
+        assertEquals("\\\\\\%\\_", QuestionSearch.escapeLike("\\%_"))
+    }
 }

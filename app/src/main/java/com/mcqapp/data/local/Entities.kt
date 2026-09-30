@@ -90,7 +90,15 @@ data class OptionEntity(
 @Entity(
     tableName = "correct_answers",
     primaryKeys = ["questionId", "optionId"],
-    indices = [Index("optionId")]
+    foreignKeys = [
+        ForeignKey(
+            entity = QuestionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["questionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("questionId"), Index("optionId")]
 )
 data class CorrectAnswerEntity(
     val questionId: String,

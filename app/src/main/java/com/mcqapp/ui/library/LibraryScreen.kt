@@ -62,7 +62,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,12 +92,12 @@ fun LibraryScreen(
     navController: NavController,
     viewModel: LibraryViewModel = viewModel()
 ) {
-    val papers by viewModel.papers.collectAsState()
-    val mistakeCounts by viewModel.mistakeCounts.collectAsState()
-    val studyCounts by viewModel.studyCounts.collectAsState()
-    val exportError by viewModel.exportError.collectAsState()
-    val importReport by viewModel.importReport.collectAsState()
-    val importReportTitle by viewModel.importReportTitle.collectAsState()
+    val papers by viewModel.papers.collectAsStateWithLifecycle()
+    val mistakeCounts by viewModel.mistakeCounts.collectAsStateWithLifecycle()
+    val studyCounts by viewModel.studyCounts.collectAsStateWithLifecycle()
+    val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+    val importReport by viewModel.importReport.collectAsStateWithLifecycle()
+    val importReportTitle by viewModel.importReportTitle.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current

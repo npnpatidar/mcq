@@ -259,6 +259,72 @@ class AnkiPackageWriterTest {
     }
 
     @Test
+    fun optionLabelsPastZAreSpreadsheetStyle() {
+        val options = (0 until 27).map { i -> OptionDto("o$i", "Option $i") }
+        val paper = samplePaper().copy(
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Pick one",
+                            options = options,
+                            correctOptionIds = listOf("o26")
+                        )
+                    )
+                )
+            )
+        )
+        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery("select flds from notes", null).use { n ->
+                assertTrue(n.moveToFirst())
+                val front = n.getString(0).substringBefore("\u001f")
+                assertTrue("26th option labelled Z: $front", "<b>Z.</b> Option 25" in front)
+                assertTrue("27th option labelled AA: $front", "<b>AA.</b> Option 26" in front)
+                assertTrue("no numeric labels: $front", "(1A)" !in front)
+            }
+        } finally {
+            db.close()
+            file.delete()
+        }
+    }
+
+    @Test
+    fun twoExportsNeverShareAnIdSequence() {
+        val paper = samplePaper()
+        val questions = AnkiDtoMapper.flattenQuestions(paper)
+        val first = AnkiPackageWriter.write(paper, questions)
+        val second = AnkiPackageWriter.write(paper, questions)
+        val firstIds = noteIds(first)
+        val secondIds = noteIds(second)
+        assertTrue(
+            "same-millisecond exports must not reuse note ids",
+            firstIds.intersect(secondIds.toSet()).isEmpty()
+        )
+        // Ids stay sortable in source order within each package.
+        assertEquals(firstIds.sorted(), firstIds)
+        assertEquals(secondIds.sorted(), secondIds)
+    }
+
+    private fun noteIds(apkg: ByteArray): List<Long> {
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        return try {
+            db.rawQuery("select id from notes order by id", null).use { c ->
+                val ids = mutableListOf<Long>()
+                while (c.moveToNext()) ids += c.getLong(0)
+                ids
+            }
+        } finally {
+            db.close()
+            file.delete()
+        }
+    }
+
+    @Test
     fun multiCorrectQuestionsAreLabelledAndEveryNoteHasANewCard() {
         val paper = samplePaper()
         val questions = listOf(

@@ -3,6 +3,7 @@ package com.mcqapp
 import android.app.Application
 import android.os.Process
 import android.util.Log
+import com.mcqapp.data.anki.AnkiTempFiles
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
@@ -16,6 +17,7 @@ class McqApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Logger.init(this)
+        AnkiTempFiles.cleanup(this)
         Logger.i("APP", "Application onCreate (pid=${Process.myPid()})")
 
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()

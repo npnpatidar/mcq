@@ -203,6 +203,13 @@ class AnkiHtmlTest {
         assertTrue("nothing downloaded", pool.entries.isEmpty())
     }
 
-    private fun letterFor(index: Int): String =
-        if (index < 26) ('A' + index).toString() else "(${index / 26}${'A' + index % 26})"
+    private fun letterFor(index: Int): String {
+        var n = index
+        val sb = StringBuilder()
+        do {
+            sb.append('A' + n % 26)
+            n = n / 26 - 1
+        } while (n >= 0)
+        return sb.reverse().toString()
+    }
 }

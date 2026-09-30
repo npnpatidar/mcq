@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         QuestionResultEntity::class,
         CardStateEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -84,6 +84,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the `correct_answers -> questions` cascade and drops answer-key
+         * rows whose question is already gone. SQLite cannot add a foreign key
+         * to an existing table, so the table is rebuilt carrying only rows
+         * that still have a parent question.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `correct_answers_new` (" +
+                        "`questionId` TEXT NOT NULL, `optionId` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`questionId`, `optionId`), " +
+                        "FOREIGN KEY(`questionId`) REFERENCES `questions`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "INSERT INTO `correct_answers_new` (`questionId`, `optionId`) " +
+                        "SELECT `correct_answers`.`questionId`, `correct_answers`.`optionId` " +
+                        "FROM `correct_answers` INNER JOIN `questions` " +
+                        "ON `questions`.`id` = `correct_answers`.`questionId`"
+                )
+                db.execSQL("DROP TABLE `correct_answers`")
+                db.execSQL("ALTER TABLE `correct_answers_new` RENAME TO `correct_answers`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_correct_answers_questionId` " +
+                        "ON `correct_answers` (`questionId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_correct_answers_optionId` " +
+                        "ON `correct_answers` (`optionId`)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -91,7 +125,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "mcq.db"
                 ).addMigrations(
-                    MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                    MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                    MIGRATION_7_8
                 ).build().also { INSTANCE = it }
             }
     }

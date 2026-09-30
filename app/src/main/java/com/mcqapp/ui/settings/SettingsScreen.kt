@@ -34,7 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,15 +57,15 @@ fun SettingsScreen(
     navController: NavController,
     viewModel: SettingsViewModel = viewModel()
 ) {
-    val themeMode by viewModel.themeMode.collectAsState()
-    val fontScale by viewModel.fontScale.collectAsState()
-    val shuffleQuestions by viewModel.shuffleQuestions.collectAsState()
-    val shuffleOptions by viewModel.shuffleOptions.collectAsState()
-    val practiceMode by viewModel.practiceMode.collectAsState()
-    val strictMode by viewModel.strictMode.collectAsState()
-    val autoAdvance by viewModel.autoAdvance.collectAsState()
-    val schedulerConfig by viewModel.schedulerConfig.collectAsState()
-    val storage by viewModel.storage.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
+    val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
+    val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
+    val practiceMode by viewModel.practiceMode.collectAsStateWithLifecycle()
+    val strictMode by viewModel.strictMode.collectAsStateWithLifecycle()
+    val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
+    val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
+    val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
 

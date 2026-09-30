@@ -36,6 +36,8 @@ data class ImportUiState(
     val negativeMarking: Double = 0.0,
     val categoryName: String = "Uncategorized",
     val questions: List<QuestionDto> = emptyList(),
+    /** Row-level parse diagnostics (skipped malformed rows); empty for clean files. */
+    val parseWarnings: List<String> = emptyList(),
     /** Ids of preview questions already in the library (same content hash). */
     val duplicateIds: Set<String> = emptySet(),
     /** Ids whose content changed vs the library row with the same id (will UPDATE). */
@@ -90,11 +92,29 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 val (dups, changed) = withContext(Dispatchers.Default) {
                     val hashes = existing.map { it.contentHash }.toHashSet()
                     val ids = existing.map { it.id }.toHashSet()
+                    val byId = existing.associateBy { it.id }
+                    val correctById = if (questions.isEmpty()) {
+                        emptyMap()
+                    } else {
+                        repository.db().correctAnswerDao()
+                            .getForQuestions(questions.map { it.id })
+                            .groupBy({ it.questionId }, { it.optionId })
+                    }
                     val d = HashSet<String>()
                     val c = HashSet<String>()
                     questions.forEach { q ->
                         if (com.mcqapp.data.io.ContentHash.of(q) in hashes) {
-                            d.add(q.id)
+                            // The hash ignores the answer key and metadata: the
+                            // same id with a fixed key reads as changed, exactly
+                            // as the Importer will treat it.
+                            val changedAnswer = byId[q.id]?.let { stored ->
+                                com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
+                                    stored,
+                                    correctById[q.id].orEmpty().toSet(),
+                                    q
+                                )
+                            } == true
+                            if (changedAnswer) c.add(q.id) else d.add(q.id)
                         } else if (q.id in ids) {
                             c.add(q.id)
                         }
@@ -170,7 +190,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val paper = file.papers.firstOrNull()
         if (paper == null) {
             Logger.e("IMPORTVM", "No papers found in JSON")
-            _state.update { it.copy(loading = false, error = "No papers found in this file.") }
+            val detail = file.warnings.joinToString("\n")
+            _state.update {
+                it.copy(
+                    loading = false,
+                    error = "No papers found in this file." + if (detail.isNotEmpty()) "\n$detail" else ""
+                )
+            }
             return
         }
 
@@ -189,6 +215,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarking = paper.negativeMarking,
             categoryName = effectiveCategory,
             questions = allQuestions,
+            parseWarnings = file.warnings,
             originalFile = file
         )
         Logger.i("IMPORTVM", "Loaded ${allQuestions.size} questions for import preview")
@@ -214,7 +241,10 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         original: McqFileDto?
     ): PaperDto {
         if (original == null || original.papers.isEmpty()) {
-            val paperId = "paper-" + System.currentTimeMillis().toString(36)
+            // Preview-built paper: no stable id exists, so mint an ephemeral
+            // one that the Importer may match by title.
+            val paperId = LegacyParser.EPHEMERAL_PAPER_ID_PREFIX +
+                System.currentTimeMillis().toString(36)
             return PaperDto(
                 id = paperId,
                 title = s.paperTitle.trim(),

@@ -104,7 +104,6 @@ object HtmlPaperWriter {
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
             .append(esc(question.text)).append(marksSuffix(question)).append("</p>\n")
         appendImage(sb, question.image)
-        appendImage(sb, question.image)
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
             for (option in question.options) {

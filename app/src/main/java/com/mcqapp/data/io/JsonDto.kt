@@ -78,7 +78,14 @@ data class McqFileDto(
     val version: Int = 1,
     val papers: List<PaperDto> = emptyList(),
     val bookmarks: List<String> = emptyList(),
-    val attempts: List<AttemptDto> = emptyList()
+    val attempts: List<AttemptDto> = emptyList(),
+    /**
+     * Row-level diagnostics from parsing a foreign file (malformed papers,
+     * categories, or questions that were skipped, not fatal). Empty for files
+     * the app itself exported; surfaced on the import preview so a partially
+     * dropped import is never silent.
+     */
+    val warnings: List<String> = emptyList()
 )
 
 /**

@@ -57,6 +57,36 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlEmbedsEachImageExactlyOnce() {
+        // The question and its option use different images here so each
+        // <img> can be counted separately: a duplicated appendImage call
+        // would show up as two identical question-image tags.
+        val questionSrc = "data:image/png;base64," +
+            java.util.Base64.getEncoder().encodeToString(ByteArray(16) { it.toByte() })
+        val optionSrc = "data:image/gif;base64," +
+            java.util.Base64.getEncoder().encodeToString(ByteArray(16) { (it + 1).toByte() })
+        val q = QuestionDto(
+            id = "q1",
+            text = "Pick one?",
+            image = questionSrc,
+            options = listOf(
+                OptionDto(id = "a", text = "Alpha"),
+                OptionDto(id = "b", text = "Beta", image = optionSrc)
+            ),
+            correctOptionIds = listOf("b"),
+            explanation = "Because reasons"
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        val html = HtmlPaperWriter.paperToHtml(paper)
+        assertEquals(1, html.split("<img src=\"$questionSrc\"").size - 1)
+        assertEquals(1, html.split("<img src=\"$optionSrc\"").size - 1)
+    }
+
+    @Test
     fun quizHtmlHidesAnswersBehindToggle() {
         val html = HtmlPaperWriter.paperToQuizHtml(samplePaper())
         // no correct marks in the question body ...

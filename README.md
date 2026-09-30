@@ -303,15 +303,17 @@ question landing in Uncategorized. Re-loading merges by stable ids — never dup
 
 ## Data & storage
 
-Room database `mcq.db`, **version 7** (`MIGRATION_3_4` adds `explanationImage` to
+Room database `mcq.db`, **version 8** (`MIGRATION_3_4` adds `explanationImage` to
 `questions` and `question_results`; `MIGRATION_4_5` adds `marks` to `questions`,
 default `1.0`; `MIGRATION_5_6` adds `dwellSeconds` to `question_results`, default
 `0`; `MIGRATION_6_7` adds the `card_state` table used by Study, starting empty so the
-first session rebuilds schedules from attempt history; existing installs migrate in
-place, and the 3→7 chain is covered by a migration test). Deleting a paper
-deletes its categories; deleting a category deletes its questions (FK cascades) — options
-go with their question. Deleting attempts, bookmarks, or papers never orphans history
-snapshots (attempts embed their own copies).
+first session rebuilds schedules from attempt history; `MIGRATION_7_8` cascades
+`correct_answers` off their question and drops already-orphaned answer-key rows;
+existing installs migrate in place, and the 3→8 chain is covered by a migration
+test). Deleting a paper deletes its categories; deleting a category deletes its
+questions (FK cascades) — options and answer keys go with their question, and the
+repository removes that question's bookmarks alongside. Deleting attempts, bookmarks,
+or papers never orphans history snapshots (attempts embed their own copies).
 
 Test progress snapshots live in DataStore (single `in_progress_test` key, cleared on
 submit); test display options (shuffle, practice, strict, auto-advance) and theme are
@@ -323,8 +325,9 @@ be deleted along with the paper, and be rebuilt from attempt history. See
 
 ## Edge cases & gotchas (observed, not theoretical)
 
-- **Answer-only edits don't re-import.** Hash excludes answers, so fixing just a key and
-  re-importing changes nothing. Edit text/options, or fix it in the editor.
+- **Answer-only edits do re-import.** The duplicate hash covers text and options, but a
+  re-imported question kept under the same id with a fixed key, explanation, marks,
+  difficulty, or tags updates that question instead of being skipped as a duplicate.
 - **Importing an older file overwrites newer edits.** Same id + different hash = UPDATE in
   place. The preview's Changed section exists precisely to warn you.
 - **"Nothing imported" after editing the file?** Check *which bytes the app received*:

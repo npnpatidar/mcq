@@ -67,6 +67,17 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
     suspend fun getByCategory(categoryId: String): List<QuestionEntity>
 
+    @Query(
+        "SELECT questions.* FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "ORDER BY categories.rowid, questions.sortOrder, questions.rowid"
+    )
+    suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
+
+    @Query("SELECT * FROM questions WHERE id = :id")
+    fun observeById(id: String): Flow<QuestionEntity?>
+
     @Query("SELECT * FROM questions")
     fun observeAll(): Flow<List<QuestionEntity>>
 
@@ -75,6 +86,15 @@ interface QuestionDao {
 
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
     fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
+
+    @Query("SELECT id FROM questions WHERE categoryId = :categoryId")
+    suspend fun getIdsByCategory(categoryId: String): List<String>
+
+    @Query(
+        "SELECT questions.id FROM questions INNER JOIN categories " +
+            "ON questions.categoryId = categories.id WHERE categories.paperId = :paperId"
+    )
+    suspend fun getIdsByPaper(paperId: String): List<String>
 
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?
@@ -88,13 +108,13 @@ interface QuestionDao {
     @Query("UPDATE questions SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
 
-    @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' OR tags LIKE '%' || :query || '%' ORDER BY rowid DESC")
+    @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' ESCAPE '\\' OR tags LIKE '%' || :query || '%' ESCAPE '\\' ORDER BY rowid DESC")
     suspend fun search(query: String): List<QuestionEntity>
 
     @Query(
         "SELECT DISTINCT questions.* FROM questions LEFT JOIN options " +
-            "ON options.questionId = questions.id WHERE questions.text LIKE '%' || :query || '%' " +
-            "OR questions.tags LIKE '%' || :query || '%' OR options.text LIKE '%' || :query || '%' " +
+            "ON options.questionId = questions.id WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.text LIKE '%' || :query || '%' ESCAPE '\\' " +
             "ORDER BY questions.rowid DESC"
     )
     suspend fun searchIncludingOptions(query: String): List<QuestionEntity>
@@ -176,6 +196,9 @@ interface BookmarkDao {
 
     @Query("DELETE FROM bookmarks WHERE questionId = :questionId")
     suspend fun remove(questionId: String)
+
+    @Query("DELETE FROM bookmarks WHERE questionId IN (:questionIds)")
+    suspend fun removeAll(questionIds: Collection<String>)
 
     @Query("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE questionId = :questionId)")
     suspend fun isBookmarked(questionId: String): Boolean

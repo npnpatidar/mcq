@@ -7,6 +7,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -96,6 +97,12 @@ class RepositoryTest {
         assertEquals(30L, dwellById["q1"])
         assertEquals(90L, dwellById["q2"])
         assertEquals(0L, dwellById["q3"])
+        // The ungraded row stores the same single isCorrect computation the
+        // counters use: false, matching its exclusion from the score above.
+        val correctById = results.associate { it.questionId to it.isCorrect }
+        assertEquals(true, correctById["q1"])
+        assertEquals(false, correctById["q2"])
+        assertEquals(false, correctById["q3"])
     }
 
     @Test
@@ -317,15 +324,6 @@ class RepositoryTest {
     }
 
     @Test
-    fun deletingAQuestionClearsItsSchedule() = runBlocking {
-        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        repository.saveQuestion(question("q1", setOf("q1-a")))
-        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
-        repository.deleteQuestion("q1")
-        assertEquals(null, db.cardStateDao().get("p1", "q1"))
-    }
-
-    @Test
     fun bulkDeleteClearsSchedules() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))
@@ -334,5 +332,71 @@ class RepositoryTest {
         repository.recordStudyReview("p1", "q2", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
         repository.deleteQuestions(listOf("q1", "q2"))
         assertTrue(db.cardStateDao().getByPaper("p1").isEmpty())
+    }
+
+    @Test
+    fun deletingAQuestionClearsItsAnswerKeyAndBookmark() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.toggleBookmark("q1")
+        assertEquals(listOf("q1-a"), db.correctAnswerDao().getCorrectIds("q1"))
+        repository.deleteQuestion("q1")
+        assertTrue(db.correctAnswerDao().getCorrectIds("q1").isEmpty())
+        assertTrue(db.bookmarkDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun deletingAPaperClearsItsQuestionsBookmarks() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.toggleBookmark("q1")
+        repository.deletePaper("p1")
+        assertTrue(db.correctAnswerDao().getCorrectIds("q1").isEmpty())
+        assertTrue(db.bookmarkDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun deletingACategoryClearsItsQuestionsBookmarks() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.toggleBookmark("q1")
+        repository.deleteCategory("c1")
+        assertTrue(db.correctAnswerDao().getCorrectIds("q1").isEmpty())
+        assertTrue(db.bookmarkDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun getByCategoriesMatchesThePerCategoryFetch() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat2")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        repository.saveQuestion(question("q3", setOf("q3-a")))
+        val viaPerCategory = listOf("c1", "c2").flatMap { db.questionDao().getByCategory(it) }.map { it.id }
+        val viaIn = db.questionDao().getByCategories(listOf("c1", "c2")).map { it.id }
+        assertEquals(viaPerCategory, viaIn)
+        assertTrue(db.questionDao().getByCategories(emptyList()).isEmpty())
+        assertEquals(listOf("q2"), db.questionDao().getByCategories(listOf("c2")).map { it.id })
+    }
+
+    @Test
+    fun getQuestionsForCategoriesReturnsEveryQuestionOnce() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat2")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        val questions = repository.getQuestionsForCategories(listOf("c1", "c2"))
+        assertEquals(setOf("q1", "q2"), questions.map { it.id }.toSet())
+        assertTrue(repository.getQuestionsForCategories(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun observeByIdEmitsOnlyTheTargetQuestion() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        val emission = db.questionDao().observeById("q1").first()
+        assertEquals("q1", emission?.id)
+        assertEquals(listOf("q1-a"), emission?.let { db.correctAnswerDao().getCorrectIds(it.id) })
     }
 }

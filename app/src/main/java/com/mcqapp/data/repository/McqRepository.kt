@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.BookmarkEntity
@@ -226,9 +227,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): List<com.mcqapp.domain.QuestionSearch.Hit> {
         if (query.isBlank()) return emptyList()
         // DAO prefilter must cover option texts whenever the scope needs them.
+        // The prefilter is a SQL LIKE, so the user query is escaped first;
+        // the in-memory post-filter below keeps matching the raw query.
+        val like = com.mcqapp.domain.QuestionSearch.escapeLike(query)
         val prefiltered = when (scope) {
-            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(query)
-            else -> db.questionDao().searchIncludingOptions(query)
+            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(like)
+            else -> db.questionDao().searchIncludingOptions(like)
         }
         val questions = prefiltered.toDomainBulk()
             .let { com.mcqapp.domain.QuestionSearch.filter(it, query, scope) }
@@ -320,10 +324,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
         // Bulk load (one options + one answers query for all rows) and map off
         // the main thread: the per-row re-fetch version stalled Browse badly.
+        // One IN query replaces the per-category fetch; the counts trigger is
+        // global so any question write refreshes this paper's list.
         db.questionDao().observeCategoryCounts().map {
             val started = android.os.SystemClock.elapsedRealtime()
             val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
-            val entities = categoryIds.flatMap { db.questionDao().getByCategory(it) }
+            val entities = db.questionDao().getByCategories(categoryIds)
             val result = entities.toDomainBulk()
             Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
                 "mapped ${result.size} questions in " +
@@ -332,30 +338,30 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         }.flowOn(Dispatchers.IO)
 
     fun observeQuestion(questionId: String): Flow<Question?> =
-        db.questionDao().observeAll().map { list -> list.find { it.id == questionId } }
-            .map { entity ->
-                entity?.let {
-                    val options = db.optionDao().getByQuestion(it.id)
-                    val correctIds = db.correctAnswerDao().getCorrectIds(it.id).toSet()
-                    Question(
-                        id = it.id,
-                        categoryId = it.categoryId,
-                        text = it.text,
-                        image = it.image,
-                        options = options.map { opt -> QuestionOption(opt.id, opt.text, opt.image) },
-                        correctOptionIds = correctIds,
-                        explanation = it.explanation,
-                        explanationImage = it.explanationImage,
-                        difficulty = Difficulty.fromLabel(it.difficulty),
-                        marks = it.marks,
-                        tags = it.tags.split(",").filter { t -> t.isNotBlank() }
-                    )
-                }
+        // Observe just this row instead of the whole question table.
+        db.questionDao().observeById(questionId).map { entity ->
+            entity?.let {
+                val options = db.optionDao().getByQuestion(it.id)
+                val correctIds = db.correctAnswerDao().getCorrectIds(it.id).toSet()
+                Question(
+                    id = it.id,
+                    categoryId = it.categoryId,
+                    text = it.text,
+                    image = it.image,
+                    options = options.map { opt -> QuestionOption(opt.id, opt.text, opt.image) },
+                    correctOptionIds = correctIds,
+                    explanation = it.explanation,
+                    explanationImage = it.explanationImage,
+                    difficulty = Difficulty.fromLabel(it.difficulty),
+                    marks = it.marks,
+                    tags = it.tags.split(",").filter { t -> t.isNotBlank() }
+                )
             }
+        }
 
     suspend fun getQuestionsForCategories(categoryIds: List<String>): List<Question> {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")
-        val entities = categoryIds.flatMap { db.questionDao().getByCategory(it) }
+        val entities = db.questionDao().getByCategories(categoryIds)
         val result = entities.toDomainBulk()
         Logger.d("REPO", "getQuestionsForCategories returned ${result.size} questions")
         return result
@@ -413,11 +419,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         )
     }
 
-    private fun computeContentHash(text: String, optionTexts: List<String>, optionImages: List<String?>): String {
-        val raw = text + "|" + optionTexts.joinToString(",") + "|" + optionImages.joinToString(",")
-        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
+    private fun computeContentHash(text: String, optionTexts: List<String>, optionImages: List<String?>): String =
+        // Single source of truth lives in ContentHash; this wrapper keeps the
+        // existing call site readable.
+        com.mcqapp.data.io.ContentHash.of(text, optionTexts, optionImages)
 
     suspend fun ensurePaperAndCategory(paperId: String, paperTitle: String, categoryId: String, categoryTitle: String) {
         db.paperDao().upsert(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
@@ -434,62 +439,77 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Logger.d("REPO", "saveQuestion(id=${question.id}, category=${question.categoryId}, " +
             "options=${question.options.size}, correct=${question.correctOptionIds}, " +
             "text='${question.text.take(60)}')")
-        val existing = db.questionDao().getById(question.id)
-        val sortOrder = existing?.sortOrder
-            ?: ((db.questionDao().getMaxSortOrder(question.categoryId) ?: -1) + 1)
-        Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
-            "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
-        val contentHash = computeContentHash(question.text, question.options.map { it.text }, question.options.map { it.image })
-        Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
-        db.questionDao().upsert(
-            QuestionEntity(
-                id = question.id,
-                categoryId = question.categoryId,
-                text = question.text,
-                image = question.image,
-                explanation = question.explanation,
-                explanationImage = question.explanationImage,
-                difficulty = question.difficulty.label,
-                marks = question.marks,
-                tags = question.tags.joinToString(","),
-                sortOrder = sortOrder,
-                contentHash = contentHash
-            )
-        )
-        Logger.d("REPO", "saveQuestion(id=${question.id}): question row upserted")
-        db.optionDao().deleteByQuestion(question.id)
-        db.optionDao().upsertAll(
-            question.options.mapIndexed { index, o ->
-                OptionEntity(
-                    id = o.id,
-                    questionId = question.id,
-                    text = o.text,
-                    image = o.image,
-                    sortOrder = index
+        // One transaction: the question row, its options and its answer key
+        // must land together, so a crash can never leave options without a key.
+        db.withTransaction {
+            val existing = db.questionDao().getById(question.id)
+            val sortOrder = existing?.sortOrder
+                ?: ((db.questionDao().getMaxSortOrder(question.categoryId) ?: -1) + 1)
+            Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
+                "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
+            val contentHash = computeContentHash(question.text, question.options.map { it.text }, question.options.map { it.image })
+            Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
+            db.questionDao().upsert(
+                QuestionEntity(
+                    id = question.id,
+                    categoryId = question.categoryId,
+                    text = question.text,
+                    image = question.image,
+                    explanation = question.explanation,
+                    explanationImage = question.explanationImage,
+                    difficulty = question.difficulty.label,
+                    marks = question.marks,
+                    tags = question.tags.joinToString(","),
+                    sortOrder = sortOrder,
+                    contentHash = contentHash
                 )
-            }
-        )
-        Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.options.size} options written")
-        db.correctAnswerDao().deleteByQuestion(question.id)
-        db.correctAnswerDao().upsertAll(
-            question.correctOptionIds.map {
-                CorrectAnswerEntity(question.id, it)
-            }
-        )
-        Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.correctOptionIds.size} correct answers written - done")
+            )
+            Logger.d("REPO", "saveQuestion(id=${question.id}): question row upserted")
+            db.optionDao().deleteByQuestion(question.id)
+            db.optionDao().upsertAll(
+                question.options.mapIndexed { index, o ->
+                    OptionEntity(
+                        id = o.id,
+                        questionId = question.id,
+                        text = o.text,
+                        image = o.image,
+                        sortOrder = index
+                    )
+                }
+            )
+            Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.options.size} options written")
+            db.correctAnswerDao().deleteByQuestion(question.id)
+            db.correctAnswerDao().upsertAll(
+                question.correctOptionIds.map {
+                    CorrectAnswerEntity(question.id, it)
+                }
+            )
+            Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.correctOptionIds.size} correct answers written - done")
+        }
     }
 
     suspend fun deleteQuestion(questionId: String) {
         Logger.d("REPO", "deleteQuestion($questionId)")
-        db.questionDao().deleteById(questionId)
-        db.cardStateDao().deleteByQuestion(questionId)
+        // One transaction: the question row, its schedule and its bookmark
+        // must disappear together.
+        db.withTransaction {
+            db.questionDao().deleteById(questionId)
+            db.cardStateDao().deleteByQuestion(questionId)
+            // No FK on bookmarks: backup restores tolerate dangling bookmark ids,
+            // so stale ones are removed here instead of by cascade.
+            db.bookmarkDao().remove(questionId)
+        }
     }
 
     suspend fun deleteQuestions(questionIds: Collection<String>) {
         Logger.i("REPO", "deleteQuestions(${questionIds.size} ids)")
-        questionIds.forEach {
-            db.questionDao().deleteById(it)
-            db.cardStateDao().deleteByQuestion(it)
+        // One transaction: a partial bulk delete must not strand rows.
+        db.withTransaction {
+            questionIds.forEach {
+                db.questionDao().deleteById(it)
+                db.cardStateDao().deleteByQuestion(it)
+            }
+            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds.toList())
         }
     }
 
@@ -506,16 +526,20 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** Moves questions into another category, appended after its siblings. */
     suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
         Logger.i("REPO", "moveQuestionsToCategory(${questionIds.size} ids -> $targetCategoryId)")
-        val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
-        questionIds.forEach { id ->
-            getQuestion(id)?.let { question ->
-                val sourcePaperId = db.categoryDao().getById(question.categoryId)?.paperId
-                saveQuestion(question.copy(categoryId = targetCategoryId))
-                // A schedule is keyed to a paper. Moving a question into another
-                // paper makes the old row an orphan that would still inflate the
-                // source paper's due count, so start the card over instead.
-                if (targetPaperId != null && targetPaperId != sourcePaperId) {
-                    db.cardStateDao().deleteByQuestion(id)
+        // One transaction: a partial move must not strand questions, and the
+        // cross-paper schedule reset below belongs to the same move.
+        db.withTransaction {
+            val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
+            questionIds.forEach { id ->
+                getQuestion(id)?.let { question ->
+                    val sourcePaperId = db.categoryDao().getById(question.categoryId)?.paperId
+                    saveQuestion(question.copy(categoryId = targetCategoryId))
+                    // A schedule is keyed to a paper. Moving a question into another
+                    // paper makes the old row an orphan that would still inflate the
+                    // source paper's due count, so start the card over instead.
+                    if (targetPaperId != null && targetPaperId != sourcePaperId) {
+                        db.cardStateDao().deleteByQuestion(id)
+                    }
                 }
             }
         }
@@ -523,63 +547,74 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Deep-copies questions into another category (appended after siblings). */
     suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
-        val existing = db.questionDao().getAll().map { it.id }.toHashSet()
-        var count = 0
-        questionIds.forEach { id ->
-            getQuestion(id)?.let { q ->
-                val newId = com.mcqapp.domain.BulkOps.copyId(existing, id)
-                existing.add(newId)
-                saveQuestion(q.copy(id = newId, categoryId = targetCategoryId))
-                count++
+        // One transaction: a partial copy must not leave half the selection behind.
+        db.withTransaction {
+            val existing = db.questionDao().getAll().map { it.id }.toHashSet()
+            var count = 0
+            questionIds.forEach { id ->
+                getQuestion(id)?.let { q ->
+                    val newId = com.mcqapp.domain.BulkOps.copyId(existing, id)
+                    existing.add(newId)
+                    saveQuestion(q.copy(id = newId, categoryId = targetCategoryId))
+                    count++
+                }
             }
+            Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
         }
-        Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
     }
 
     /** Moves a category up/down among same-paper, same-parent siblings. */
     suspend fun moveCategory(categoryId: String, delta: Int): Boolean {
-        val category = db.categoryDao().getById(categoryId) ?: return false
-        val siblings = db.categoryDao().getByPaper(category.paperId)
-            .filter { it.parentId == category.parentId }
-        val fromIndex = siblings.indexOfFirst { it.id == categoryId }
-        if (fromIndex < 0) return false
-        val target = (fromIndex + delta).coerceIn(siblings.indices)
-        if (target == fromIndex) return false
-        val order = com.mcqapp.domain.Reorder.normalizedOrder(
-            siblings.map { it.id }, fromIndex, delta
-        )
-        order.forEach { (id, sortOrder) -> db.categoryDao().updateSortOrder(id, sortOrder) }
-        Logger.i("REPO", "moveCategory($categoryId by $delta)")
-        return true
+        // One transaction: the reorder writes every sibling's position, so a
+        // crash must not leave two of them sharing one.
+        return db.withTransaction {
+            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
+            val siblings = db.categoryDao().getByPaper(category.paperId)
+                .filter { it.parentId == category.parentId }
+            val fromIndex = siblings.indexOfFirst { it.id == categoryId }
+            if (fromIndex < 0) return@withTransaction false
+            val target = (fromIndex + delta).coerceIn(siblings.indices)
+            if (target == fromIndex) return@withTransaction false
+            val order = com.mcqapp.domain.Reorder.normalizedOrder(
+                siblings.map { it.id }, fromIndex, delta
+            )
+            order.forEach { (id, sortOrder) -> db.categoryDao().updateSortOrder(id, sortOrder) }
+            Logger.i("REPO", "moveCategory($categoryId by $delta)")
+            true
+        }
     }
 
     /** Deep-clones a paper (categories, questions, options, keys, marks). */
     suspend fun duplicatePaper(paperId: String): String? {
-        val paper = db.paperDao().getById(paperId) ?: return null
-        val existingPaperIds = db.paperDao().getAll().map { it.id }.toHashSet()
-        val newPaperId = com.mcqapp.data.io.PaperClone.copyPaperId(existingPaperIds, paperId)
-        db.paperDao().insertIgnore(
-            paper.copy(
-                id = newPaperId,
-                title = "${paper.title} (copy)",
-                createdAt = System.currentTimeMillis()
+        // One transaction: a partial clone must not leave a paper shell with
+        // half its questions.
+        return db.withTransaction {
+            val paper = db.paperDao().getById(paperId) ?: return@withTransaction null
+            val existingPaperIds = db.paperDao().getAll().map { it.id }.toHashSet()
+            val newPaperId = com.mcqapp.data.io.PaperClone.copyPaperId(existingPaperIds, paperId)
+            db.paperDao().insertIgnore(
+                paper.copy(
+                    id = newPaperId,
+                    title = "${paper.title} (copy)",
+                    createdAt = System.currentTimeMillis()
+                )
             )
-        )
-        val remapped = com.mcqapp.data.io.PaperClone.remapCategories(
-            db.categoryDao().getByPaper(paperId),
-            newPaperId
-        )
-        remapped.values.forEach { db.categoryDao().insertIgnore(it) }
-        val existingQ = db.questionDao().getAll().map { it.id }.toHashSet()
-        for ((oldCatId, newCat) in remapped) {
-            for (q in getQuestionsForCategories(listOf(oldCatId))) {
-                val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
-                existingQ.add(newQId)
-                saveQuestion(q.copy(id = newQId, categoryId = newCat.id))
+            val remapped = com.mcqapp.data.io.PaperClone.remapCategories(
+                db.categoryDao().getByPaper(paperId),
+                newPaperId
+            )
+            remapped.values.forEach { db.categoryDao().insertIgnore(it) }
+            val existingQ = db.questionDao().getAll().map { it.id }.toHashSet()
+            for ((oldCatId, newCat) in remapped) {
+                for (q in getQuestionsForCategories(listOf(oldCatId))) {
+                    val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
+                    existingQ.add(newQId)
+                    saveQuestion(q.copy(id = newQId, categoryId = newCat.id))
+                }
             }
+            Logger.i("REPO", "duplicatePaper($paperId -> $newPaperId)")
+            newPaperId
         }
-        Logger.i("REPO", "duplicatePaper($paperId -> $newPaperId)")
-        return newPaperId
     }
 
     /** Bulk-sets marks/difficulty/tags on questions; null fields are kept. */
@@ -589,31 +624,38 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         difficulty: Difficulty?,
         tags: List<String>?
     ) {
-        var count = 0
-        questionIds.forEach { id ->
-            getQuestion(id)?.let { q ->
-                saveQuestion(
-                    q.copy(
-                        marks = marks ?: q.marks,
-                        difficulty = difficulty ?: q.difficulty,
-                        tags = tags ?: q.tags
+        // One transaction: a partial bulk edit must not apply to half the selection.
+        db.withTransaction {
+            var count = 0
+            questionIds.forEach { id ->
+                getQuestion(id)?.let { q ->
+                    saveQuestion(
+                        q.copy(
+                            marks = marks ?: q.marks,
+                            difficulty = difficulty ?: q.difficulty,
+                            tags = tags ?: q.tags
+                        )
                     )
-                )
-                count++
+                    count++
+                }
             }
+            Logger.i("REPO", "bulkUpdateQuestions($count ids)")
         }
-        Logger.i("REPO", "bulkUpdateQuestions($count ids)")
     }
 
     /** Swaps the positions of two same-category questions. */
     suspend fun swapQuestionOrder(firstId: String, secondId: String): Boolean {
-        val a = db.questionDao().getById(firstId) ?: return false
-        val b = db.questionDao().getById(secondId) ?: return false
-        if (a.categoryId != b.categoryId) return false
-        db.questionDao().updateSortOrder(a.id, b.sortOrder)
-        db.questionDao().updateSortOrder(b.id, a.sortOrder)
-        Logger.i("REPO", "swapQuestionOrder(${a.id} <-> ${b.id})")
-        return true
+        // One transaction: the two position writes are a single swap, so a
+        // crash must not commit the first without the second.
+        return db.withTransaction {
+            val a = db.questionDao().getById(firstId) ?: return@withTransaction false
+            val b = db.questionDao().getById(secondId) ?: return@withTransaction false
+            if (a.categoryId != b.categoryId) return@withTransaction false
+            db.questionDao().updateSortOrder(a.id, b.sortOrder)
+            db.questionDao().updateSortOrder(b.id, a.sortOrder)
+            Logger.i("REPO", "swapQuestionOrder(${a.id} <-> ${b.id})")
+            true
+        }
     }
 
     suspend fun savePaper(paper: Paper) {
@@ -631,7 +673,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun deletePaper(paperId: String) {
         Logger.d("REPO", "deletePaper($paperId)")
-        db.paperDao().deleteById(paperId)
+        // One transaction: bookmark cleanup and the paper delete (which
+        // cascades categories/questions) must land together.
+        db.withTransaction {
+            // Collect first: deleting the paper cascades its questions away.
+            val questionIds = db.questionDao().getIdsByPaper(paperId)
+            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
+            db.paperDao().deleteById(paperId)
+        }
     }
 
     suspend fun addCategory(paperId: String, title: String, parentId: String?): String {
@@ -649,7 +698,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     }
 
     suspend fun deleteCategory(categoryId: String) {
-        db.categoryDao().deleteById(categoryId)
+        // One transaction: bookmark cleanup and the category delete (which
+        // cascades its questions) must land together.
+        db.withTransaction {
+            val questionIds = db.questionDao().getIdsByCategory(categoryId)
+            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
+            db.categoryDao().deleteById(categoryId)
+        }
     }
 
     // --- spaced repetition ---
@@ -851,7 +906,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun searchQuestions(query: String): List<Question> {
         Logger.d("REPO", "searchQuestions('$query')")
-        return db.questionDao().search(query).map { it.toDomain() }
+        // LIKE prefilter: escape user wildcards so `%`/`_` match literally.
+        return db.questionDao().search(com.mcqapp.domain.QuestionSearch.escapeLike(query))
+            .map { it.toDomain() }
     }
 
     suspend fun saveAttempt(
@@ -873,12 +930,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val results = mutableListOf<QuestionResultEntity>()
         for (q in questions) {
             val selected = selections[q.id].orEmpty()
+            // Computed once and shared by the aggregate counters and the
+            // stored row below: for an ungraded question (no answer key) this
+            // is always false, matching its exclusion from scoring — every
+            // reader of the stored row guards on the empty key first.
+            val isCorrect = selected.isNotEmpty() && selected == q.correctOptionIds
             if (q.correctOptionIds.isEmpty()) {
                 // No answer key: excluded from scoring entirely (no credit, no penalty).
                 ungraded++
             } else {
                 maxScore += q.marks
-                val isCorrect = selected.isNotEmpty() && selected == q.correctOptionIds
                 when {
                     selected.isEmpty() -> skipped++
                     isCorrect -> {
@@ -891,7 +952,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     }
                 }
             }
-            val isCorrect = selected.isNotEmpty() && selected == q.correctOptionIds
             results.add(
                 QuestionResultEntity(
                     attemptId = 0,
@@ -914,23 +974,27 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Logger.d("REPO", "saveAttempt(paper=$paperId, questions=${questions.size}, " +
             "correct=$correct, wrong=$wrong, skipped=$skipped, ungraded=$ungraded, " +
             "score=$score/maxScore=$maxScore)")
-        val attemptId = db.attemptDao().insertAttempt(
-            AttemptEntity(
-                paperId = paperId,
-                title = paperTitle,
-                totalQuestions = questions.size,
-                correctCount = correct,
-                wrongCount = wrong,
-                skippedCount = skipped,
-                score = score,
-                maxScore = maxScore,
-                durationSeconds = durationSeconds,
-                finishedAt = finishedAt
+        // One transaction: the attempt header and its per-question rows must
+        // land together, so history never shows an attempt without results.
+        return db.withTransaction {
+            val attemptId = db.attemptDao().insertAttempt(
+                AttemptEntity(
+                    paperId = paperId,
+                    title = paperTitle,
+                    totalQuestions = questions.size,
+                    correctCount = correct,
+                    wrongCount = wrong,
+                    skippedCount = skipped,
+                    score = score,
+                    maxScore = maxScore,
+                    durationSeconds = durationSeconds,
+                    finishedAt = finishedAt
+                )
             )
-        )
-        db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
-        Logger.d("REPO", "saveAttempt stored attemptId=$attemptId with ${results.size} results")
-        return attemptId
+            db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
+            Logger.d("REPO", "saveAttempt stored attemptId=$attemptId with ${results.size} results")
+            attemptId
+        }
     }
 
     private suspend fun categoryTitleOf(categoryId: String): String =

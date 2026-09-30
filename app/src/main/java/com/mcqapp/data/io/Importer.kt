@@ -46,6 +46,12 @@ class Importer(private val db: AppDatabase) {
         var restoredAttempts = 0
         var restoredSchedules = 0
 
+        // Image preparation (Bitmap decode/scale/compress) runs BEFORE the
+        // transaction: it is pure CPU work that must not hold the database
+        // write lock. The scaled twins mirror the originals 1:1 — hashes and
+        // identity still read the original DTOs, only stored bytes shrink.
+        val scaledPapers = file.papers.map { it.withDownscaledImages() }
+
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
             // so a snapshot taken later could match hashes of already-deleted rows.
@@ -53,12 +59,18 @@ class Importer(private val db: AppDatabase) {
                 .map { it.contentHash }
                 .toHashSet()
 
-            for (paperDto in file.papers) {
-                // Paper identity: match by id first, then by title. Bare-array
-                // JSON has no stable id (random per parse), so without the
-                // title fallback every re-import would create a same-named stub.
+            for ((paperDto, scaledPaper) in file.papers.zip(scaledPapers)) {
+                // Paper identity: match by id first. The title fallback is
+                // only for ephemeral parser-generated ids (bare-array or
+                // id-less files mint a fresh id on every parse, so without it
+                // every re-import would create a same-named stub). A stable
+                // id that merely shares a title with another paper is a
+                // distinct paper and keeps its incoming id.
                 val existingById = db.paperDao().getById(paperDto.id)
-                val existingByTitle = if (existingById == null && paperDto.title.isNotBlank()) {
+                val existingByTitle = if (existingById == null &&
+                    paperDto.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX) &&
+                    paperDto.title.isNotBlank()
+                ) {
                     db.paperDao().getByTitle(paperDto.title)
                 } else {
                     null
@@ -98,6 +110,13 @@ class Importer(private val db: AppDatabase) {
                 } else {
                     paperDto.categories
                 }
+                // Scaled twin of effectiveCategories, in the same order: the
+                // synthesized category mirrors the paper's top-level questions.
+                val scaledCategories = if (paperDto.categories.isEmpty()) {
+                    listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = scaledPaper.topLevelQuestions()))
+                } else {
+                    scaledPaper.categories
+                }
 
                 // A brand-new paper whose questions ALL already exist adds nothing:
                 // skip creating the shell so the library doesn't fill with stubs.
@@ -108,13 +127,35 @@ class Importer(private val db: AppDatabase) {
                 }
                 if (isNewPaper && incomingHashes.isNotEmpty() &&
                     incomingHashes.all { it in existingHashes }) {
-                    duplicateQuestions += incomingHashes.size
-                    Logger.i("IMPORT", "Paper '${paperDto.title}' ($effectivePaperId): " +
-                        "all ${incomingHashes.size} questions already exist, skipping paper creation")
-                    continue
+                    // Matching hashes alone are not enough to skip: a question
+                    // kept under the same id with a fixed answer key (or other
+                    // non-hashed field) must still reach the per-question loop
+                    // as an update.
+                    val incomingIds = effectiveCategories.flatMap { cat ->
+                        cat.questions.map { it.id }
+                    }
+                    val storedById = db.questionDao().getByIds(incomingIds).associateBy { it.id }
+                    val storedCorrectById = db.correctAnswerDao().getForQuestions(incomingIds)
+                        .groupBy({ it.questionId }, { it.optionId })
+                    val hasAnswerOnlyChange = effectiveCategories.flatMap { it.questions }.any { q ->
+                        storedById[q.id]?.let { stored ->
+                            ContentHash.nonHashedFieldsDiffer(
+                                stored,
+                                storedCorrectById[q.id].orEmpty().toSet(),
+                                q
+                            )
+                        } == true
+                    }
+                    if (!hasAnswerOnlyChange) {
+                        duplicateQuestions += incomingHashes.size
+                        Logger.i("IMPORT", "Paper '${paperDto.title}' ($effectivePaperId): " +
+                            "all ${incomingHashes.size} questions already exist, skipping paper creation")
+                        continue
+                    }
                 }
 
                 effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
+                    val scaledCategory = scaledCategories[categoryIndex]
                     // Category identity within the paper: match by id first, then
                     // by title, so re-imports reuse the same category instead of
                     // piling up same-named ones.
@@ -154,16 +195,31 @@ class Importer(private val db: AppDatabase) {
                         )
                     }
 
-                    categoryDto.questions.forEach { questionDto ->
+                    categoryDto.questions.forEachIndexed { questionIndex, questionDto ->
+                        val scaledQuestion = scaledCategory.questions[questionIndex]
                         val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image })
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
                             "text='${questionDto.text.take(60)}'")
 
                         if (contentHash in existingHashes) {
-                            duplicateQuestions++
-                            Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
-                            return@forEach
+                            // Same text and options, but the hash ignores the
+                            // answer key and metadata: the same question id with
+                            // a fixed key (or explanation/marks/etc.) is an
+                            // update, not a duplicate.
+                            val changedAnswer = db.questionDao().getById(questionDto.id)?.let { existing ->
+                                ContentHash.nonHashedFieldsDiffer(
+                                    existing,
+                                    db.correctAnswerDao().getCorrectIds(questionDto.id).toSet(),
+                                    questionDto
+                                )
+                            } == true
+                            if (!changedAnswer) {
+                                duplicateQuestions++
+                                Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
+                                return@forEachIndexed
+                            }
+                            Logger.d("IMPORT", "  Same content hash but changed answer/metadata: updating id=${questionDto.id}")
                         }
 
                         // New questions append after existing ones; updates keep
@@ -179,23 +235,14 @@ class Importer(private val db: AppDatabase) {
                         Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
                             "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
 
-                        // Hash above covers the ORIGINAL bytes (preview parity);
-                        // only stored bytes shrink.
-                        val scaled = questionDto.copy(
-                            image = ImageDownscale.downscaleDataUri(questionDto.image),
-                            explanationImage = ImageDownscale.downscaleDataUri(questionDto.explanationImage),
-                            options = questionDto.options.map { o ->
-                                o.copy(image = ImageDownscale.downscaleDataUri(o.image))
-                            }
-                        )
                         db.questionDao().upsert(
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
                                 text = questionDto.text,
-                                image = scaled.image,
+                                image = scaledQuestion.image,
                                 explanation = questionDto.explanation,
-                                explanationImage = scaled.explanationImage,
+                                explanationImage = scaledQuestion.explanationImage,
                                 difficulty = questionDto.difficulty,
                                 marks = questionDto.marks,
                                 tags = questionDto.tags.joinToString(","),
@@ -226,9 +273,9 @@ class Importer(private val db: AppDatabase) {
                                     leech = schedule.leech,
                                     lastReviewedAt = schedule.lastReviewedAt,
                                     contentHash = ContentHash.of(
-                                        scaled.text,
-                                        scaled.options.map { it.text },
-                                        scaled.options.map { it.image }
+                                        scaledQuestion.text,
+                                        scaledQuestion.options.map { it.text },
+                                        scaledQuestion.options.map { it.image }
                                     )
                                 )
                             )
@@ -237,7 +284,7 @@ class Importer(private val db: AppDatabase) {
 
                         db.optionDao().deleteByQuestion(questionDto.id)
                         db.optionDao().upsertAll(
-                            scaled.options.mapIndexed { index, o ->
+                            scaledQuestion.options.mapIndexed { index, o ->
                                 OptionEntity(
                                     id = o.id,
                                     questionId = questionDto.id,
@@ -319,5 +366,32 @@ class Importer(private val db: AppDatabase) {
             restoredBookmarks, restoredAttempts, restoredSchedules
         )
     }
-
 }
+
+/**
+ * Deep-copies the file with every question image downscaled. Pure DTO
+ * work: no database calls, safe to run before the import transaction.
+ */
+internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
+    papers = papers.map { paper ->
+        paper.copy(
+            questions = paper.questions.map { it.withDownscaledImages() },
+            categories = paper.categories.map { category ->
+                category.copy(questions = category.questions.map { it.withDownscaledImages() })
+            }
+        )
+    }
+)
+
+private fun PaperDto.withDownscaledImages(): PaperDto = copy(
+    questions = questions.map { it.withDownscaledImages() },
+    categories = categories.map { category ->
+        category.copy(questions = category.questions.map { it.withDownscaledImages() })
+    }
+)
+
+internal fun QuestionDto.withDownscaledImages(): QuestionDto = copy(
+    image = ImageDownscale.downscaleDataUri(image),
+    explanationImage = ImageDownscale.downscaleDataUri(explanationImage),
+    options = options.map { it.copy(image = ImageDownscale.downscaleDataUri(it.image)) }
+)

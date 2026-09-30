@@ -14,18 +14,29 @@ import java.security.MessageDigest
 
 object LegacyParser {
 
+    /**
+     * Prefix for paper ids generated at parse time. Such an id is ephemeral —
+     * a fresh parse mints a new one — so the Importer may match these papers
+     * by title. Stable ids (app-created or file-authored) never title-merge.
+     */
+    const val EPHEMERAL_PAPER_ID_PREFIX = "paper-import-"
+
     private val letterIds = ('a'..'z').map { it.toString() }
 
     fun parse(json: String): McqFileDto {
+        val warnings = mutableListOf<String>()
         val element = Json.parseToJsonElement(json)
         // Scalar/null roots carry no questions; empty file beats a crash
         // (the import screen reports "No papers found").
         if (element !is JsonObject && element !is JsonArray) {
-            return McqFileDto(version = 1)
+            warnings.add("File root is a scalar or null, not an object or array — no papers found")
+            return McqFileDto(version = 1, warnings = warnings)
         }
         if (element is JsonArray) {
-            val questions = uniqueIds(element.mapNotNull { safeQuestion(it) })
-            val paperId = "paper-" + System.currentTimeMillis().toString(36)
+            val questions = uniqueIds(element.mapIndexedNotNull { index, el ->
+                safeQuestion(el, "question ${index + 1}", warnings)
+            })
+            val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
             val paper = PaperDto(
                 id = paperId,
                 title = "Imported Questions",
@@ -38,15 +49,16 @@ object LegacyParser {
                 ),
                 questions = questions
             )
-            return McqFileDto(version = 1, papers = listOf(paper))
+            return McqFileDto(version = 1, papers = listOf(paper), warnings = warnings)
         }
         val root = element.jsonObject
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 1
         val papersJson = root["papers"] as? JsonArray ?: JsonArray(emptyList())
-        val papers = papersJson.mapNotNull {
+        val papers = papersJson.mapIndexedNotNull { index, paperEl ->
             try {
-                parsePaper(it.jsonObject)
-            } catch (_: Exception) {
+                parsePaper(paperEl.jsonObject, warnings)
+            } catch (e: Exception) {
+                warnings.add("Skipped malformed paper ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
                 null
             }
         }
@@ -54,14 +66,21 @@ object LegacyParser {
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.filter { it.isNotBlank() }
             ?: emptyList()
         val attemptsJson = root["attempts"] as? JsonArray ?: JsonArray(emptyList())
-        val attempts = attemptsJson.mapNotNull {
+        val attempts = attemptsJson.mapIndexedNotNull { index, attemptEl ->
             try {
-                parseAttempt(it.jsonObject)
+                parseAttempt(attemptEl.jsonObject)
             } catch (e: Exception) {
+                warnings.add("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
                 null
             }
         }
-        return McqFileDto(version = version, papers = papers, bookmarks = bookmarks, attempts = attempts)
+        return McqFileDto(
+            version = version,
+            papers = papers,
+            bookmarks = bookmarks,
+            attempts = attempts,
+            warnings = warnings
+        )
     }
 
     private fun parseAttempt(obj: JsonObject): AttemptDto {
@@ -98,9 +117,9 @@ object LegacyParser {
         )
     }
 
-    private fun parsePaper(obj: JsonObject): PaperDto {
+    private fun parsePaper(obj: JsonObject, warnings: MutableList<String>): PaperDto {
         val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: "paper-" + System.currentTimeMillis().toString(36)
+            ?: EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
         val title = obj["title"]?.jsonPrimitive?.contentOrNull
             ?: obj["name"]?.jsonPrimitive?.contentOrNull
             ?: "Untitled Paper"
@@ -117,16 +136,20 @@ object LegacyParser {
             ?: obj["sections"] as? JsonArray
             ?: obj["subjects"] as? JsonArray
             ?: JsonArray(emptyList())
-        val categories = categoriesJson.mapNotNull {
+        val categories = categoriesJson.mapIndexedNotNull { index, catEl ->
             try {
-                parseCategory(it.jsonObject)
-            } catch (_: Exception) {
+                parseCategory(catEl.jsonObject, warnings)
+            } catch (e: Exception) {
+                warnings.add(
+                    "Skipped malformed category ${index + 1} in paper '$title': ${e.message ?: e.javaClass.simpleName}"
+                )
                 null
             }
         }
         val topLevelQuestions = obj["questions"] as? JsonArray
-        val parsedTopLevel = topLevelQuestions?.let { uniqueIds(it.mapNotNull { q -> safeQuestion(q) }) }
-            ?: emptyList()
+        val parsedTopLevel = topLevelQuestions?.let {
+            uniqueIds(it.mapIndexedNotNull { index, q -> safeQuestion(q, "question ${index + 1}", warnings) })
+        } ?: emptyList()
         // Top-level questions land in their own category instead of being
         // silently dropped when the paper also defines categories.
         val finalCategories = if (categories.isEmpty() && topLevelQuestions != null) {
@@ -160,7 +183,7 @@ object LegacyParser {
         )
     }
 
-    private fun parseCategory(obj: JsonObject): CategoryDto {
+    private fun parseCategory(obj: JsonObject, warnings: MutableList<String>): CategoryDto {
         val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: "cat-" + System.currentTimeMillis().toString(36) + "-" + (0..9999).random()
         val title = obj["title"]?.jsonPrimitive?.contentOrNull
@@ -172,14 +195,23 @@ object LegacyParser {
             id = id,
             title = title,
             parentId = parentId,
-            questions = uniqueIds(questionsJson.mapNotNull { safeQuestion(it) })
+            questions = uniqueIds(
+                questionsJson.mapIndexedNotNull { index, q ->
+                    safeQuestion(q, "question ${index + 1}", warnings)
+                }
+            )
         )
     }
 
-    /** Malformed rows are skipped, never fatal: one bad question must not kill a bank. */
-    private fun safeQuestion(element: JsonElement): QuestionDto? = try {
-        parseQuestion(element.jsonObject)
-    } catch (_: Exception) {
+    /**
+     * Malformed rows are skipped, never fatal: one bad question must not kill
+     * a bank. The drop is recorded in [warnings] so the import preview can say
+     * which row was lost and why.
+     */
+    private fun safeQuestion(element: JsonElement, where: String, warnings: MutableList<String>): QuestionDto? = try {
+        parseQuestion(element.jsonObject, warnings)
+    } catch (e: Exception) {
+        warnings.add("Skipped malformed $where: ${e.message ?: e.javaClass.simpleName}")
         null
     }
 
@@ -208,7 +240,7 @@ object LegacyParser {
         return "q-" + bytes.joinToString("") { "%02x".format(it) }.take(12)
     }
 
-    private fun parseQuestion(obj: JsonObject): QuestionDto {
+    private fun parseQuestion(obj: JsonObject, warnings: MutableList<String>): QuestionDto {
         val text = obj["text"]?.jsonPrimitive?.contentOrNull
             ?: obj["question"]?.jsonPrimitive?.contentOrNull
             ?: ""
@@ -234,7 +266,7 @@ object LegacyParser {
         } ?: emptyList()
 
         val options = parseOptions(obj)
-        val correctIds = parseCorrectIds(obj, options)
+        val correctIds = parseCorrectIds(obj, options, warnings)
         val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: stableQuestionId(text, options)
 
@@ -280,9 +312,14 @@ object LegacyParser {
         }
     }
 
-    private fun parseCorrectIds(obj: JsonObject, options: List<OptionDto>): List<String> = try {
+    private fun parseCorrectIds(
+        obj: JsonObject,
+        options: List<OptionDto>,
+        warnings: MutableList<String>
+    ): List<String> = try {
         parseCorrectIdsUnsafe(obj, options)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        warnings.add("Could not read the answer key: ${e.message ?: e.javaClass.simpleName} — question imports ungraded")
         emptyList()
     }
 

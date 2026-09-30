@@ -1,7 +1,5 @@
 package com.mcqapp
 
-import android.content.Context
-import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
@@ -15,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 
 /**
  * Export the sample paper, import it, export it again: the two packages must
@@ -33,11 +32,17 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class SamplePaperApkgRoundTripTest {
 
-    private val samplePaper: PaperDto by lazy {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val text = context.assets.open("sample_paper.json").bufferedReader().use { it.readText() }
-        LegacyParser.parse(text).papers.first()
-    }
+    private val samplePaper: PaperDto by lazy { LegacyParser.parse(sampleJson()).papers.first() }
+
+    /**
+     * The sample paper is read from the source tree: a unit test's assets are not
+     * on the classpath, and the working directory is the module directory.
+     */
+    private fun sampleJson(): String =
+        listOf("src/main/assets/sample_paper.json", "app/src/main/assets/sample_paper.json")
+            .firstNotNullOfOrNull { File(it).takeIf { file -> file.isFile } }
+            ?.readText()
+            ?: error("sample_paper.json not found from ${File(".").absolutePath}")
 
     private fun write(paper: PaperDto) =
         AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))

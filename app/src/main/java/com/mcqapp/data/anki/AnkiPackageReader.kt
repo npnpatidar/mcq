@@ -117,10 +117,10 @@ object AnkiPackageReader {
             val noteCards = cardsByNote[note.id].orEmpty()
             val instances = if (noteCards.isEmpty()) listOf(null) else noteCards.map { it.ord }
             instances.forEach { ord ->
-                val q = toQuestion(note, template, ord, media) ?: return@forEach
-                if (template?.isMcqLike != true) recallCount++
+                val parsed = toQuestion(note, template, ord, media) ?: return@forEach
+                if (parsed.isRecall) recallCount++
                 val deckId = noteCards.firstOrNull { it.ord == ord }?.did ?: DEFAULT_DECK_ID
-                questionsByDeck.getOrPut(deckId) { mutableListOf() }.add(q)
+                questionsByDeck.getOrPut(deckId) { mutableListOf() }.add(parsed.question)
             }
         }
         if (noteById.isEmpty()) throw AnkiPackageException("The Anki collection has no notes")
@@ -256,17 +256,22 @@ object AnkiPackageReader {
 
     // ---- note -> question ----
 
+    /** A question plus whether it had to be reduced to a single option. */
+    private data class ParsedQuestion(val question: QuestionDto, val isRecall: Boolean)
+
     private fun toQuestion(
         note: AnkiNote,
         notetype: AnkiNotetype?,
         ord: Int?,
         media: MediaIndex
-    ): QuestionDto? {
+    ): ParsedQuestion? {
         val payload = payloadFromField(note.fields.getOrNull(2))
         val frontHtml = note.fields.firstOrNull().orEmpty()
 
         if (notetype != null && notetype.isCloze) {
-            return clozeQuestion(note, frontHtml, ord ?: 0, media)
+            return clozeQuestion(note, frontHtml, ord ?: 0, media)?.let {
+                ParsedQuestion(it, isRecall = true)
+            }
         }
 
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
@@ -277,7 +282,7 @@ object AnkiPackageReader {
         if (payload != null) {
             // Our own export: the front also holds the options, so only the text
             // above the first lettered option is the question.
-            return QuestionDto(
+            return ParsedQuestion(QuestionDto(
                 id = questionId,
                 text = AnkiHtml.questionTextFromFront(front.first),
                 image = front.second,
@@ -290,7 +295,7 @@ object AnkiPackageReader {
                 difficulty = payload.difficulty,
                 marks = payload.marks,
                 tags = (payload.tags + note.tags).distinct()
-            )
+            ), isRecall = false)
         }
 
         val back = AnkiHtml.parseBackField(media.rewrite(backHtml))
@@ -298,27 +303,33 @@ object AnkiPackageReader {
             val options = back.options.mapIndexed { i, opt ->
                 OptionDto("o$i", AnkiHtml.toPlainText(opt.text))
             }
-            return QuestionDto(
-                id = questionId,
-                text = front.first,
-                image = front.second,
-                options = options,
-                correctOptionIds = options.filterIndexed { i, _ -> back.options[i].correct }.map { it.id },
-                explanation = AnkiHtml.toPlainText(back.explanation),
-                tags = note.tags
+            return ParsedQuestion(
+                QuestionDto(
+                    id = questionId,
+                    text = front.first,
+                    image = front.second,
+                    options = options,
+                    correctOptionIds = options.filterIndexed { i, _ -> back.options[i].correct }.map { it.id },
+                    explanation = AnkiHtml.toPlainText(back.explanation),
+                    tags = note.tags
+                ),
+                isRecall = false
             )
         }
 
         // A foreign note with no options: keep the content as a single-option
         // recall question rather than dropping it.
         val answer = fieldToText(backHtml, media)
-        return QuestionDto(
-            id = questionId,
-            text = front.first,
-            image = front.second,
-            options = listOf(OptionDto("o0", answer.first.ifBlank { front.first }, answer.second)),
-            correctOptionIds = listOf("o0"),
-            tags = note.tags
+        return ParsedQuestion(
+            QuestionDto(
+                id = questionId,
+                text = front.first,
+                image = front.second,
+                options = listOf(OptionDto("o0", answer.first.ifBlank { front.first }, answer.second)),
+                correctOptionIds = listOf("o0"),
+                tags = note.tags
+            ),
+            isRecall = true
         )
     }
 
@@ -465,10 +476,7 @@ object AnkiPackageReader {
         val name: String,
         val fields: List<AnkiField>,
         val isCloze: Boolean
-    ) {
-        /** True when the note carries our structured payload, or marked options. */
-        val isMcqLike: Boolean get() = fields.any { it.name == AnkiSchema11.PAYLOAD_FIELD }
-    }
+    )
 
     private data class AnkiDeck(val id: Long, val name: String)
 

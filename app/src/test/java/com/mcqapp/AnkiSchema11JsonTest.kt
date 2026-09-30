@@ -84,4 +84,14 @@ class AnkiSchema11JsonTest {
         assertEquals(2, conf["nextPos"]!!.jsonPrimitive.float.toInt())
         assertEquals(1, conf["curDeck"]!!.jsonPrimitive.float.toInt())
     }
+
+    @Test
+    fun fieldChecksumSpansTheWholeUnsigned32BitRange() {
+        // Anki stores csum in a 64-bit SQLite INTEGER and reads it back as a
+        // u32, so values above Int.MAX_VALUE must not overflow. "See diagram"
+        // hashes to 0x8bc16f84 and is a regression case for that.
+        val csum = AnkiSchema11.fieldChecksum("See diagram")
+        assertTrue("checksum must stay in u32 range: $csum", csum in 1..0xFFFFFFFFL)
+        assertEquals(csum, AnkiSchema11.fieldChecksum("See diagram"))
+    }
 }

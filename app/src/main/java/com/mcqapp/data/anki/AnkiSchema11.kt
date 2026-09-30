@@ -144,7 +144,7 @@ object AnkiSchema11 {
         text.replace(Regex("<[^>]*>"), "").trim()
 
     fun insertNotes(db: SQLiteDatabase, notes: List<AnkiPackageWriter.AnkiNoteRow>) {
-        val frontToCsum = HashMap<String, Int>()
+        val frontToCsum = HashMap<String, Long>()
         db.beginTransaction()
         try {
             notes.forEach { note ->
@@ -312,13 +312,20 @@ object AnkiSchema11 {
         }
     }.toString()
 
-    private val SHA1_HEX_PREFIX = 8
+    private val SHA1_HEX_BYTES = 4
 
-    /** Anki's field checksum: first 8 hex chars of the SHA-1 of the field. */
-    fun fieldChecksum(field: String): Int {
+    /**
+     * Anki's field checksum: the first 4 bytes of the SHA-1 of the field.
+     *
+     * Returned as a [Long] because the value spans the whole unsigned 32-bit
+     * range and Anki stores it in a 64-bit SQLite INTEGER (Anki's original
+     * implementation is arbitrary-precision Python; the Rust side reads it back
+     * as a `u32`).
+     */
+    fun fieldChecksum(field: String): Long {
         val digest = MessageDigest.getInstance("SHA-1").digest(field.toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02x".format(it) }
-        return hex.substring(0, SHA1_HEX_PREFIX).toInt(16)
+        return hex.substring(0, SHA1_HEX_BYTES * 2).toLong(16)
     }
 
     private const val MAX_SORT_FIELD_CHARS = 1024

@@ -168,7 +168,8 @@ class AnkiPackageWriterTest {
                 assertTrue("wrong option crossed: $back", "&#10007; Ribosome" in back)
                 assertTrue("explanation present: $back", "electron transport chain" in back)
                 assertEquals("Which organelle makes ATP?", n.getString(3))
-                assertTrue("checksum is a non-negative int", n.getInt(4) > 0)
+                val csum = n.getLong(4)
+                assertTrue("checksum fits Anki's u32: $csum", csum > 0 && csum <= 0xFFFFFFFFL)
             }
         } finally {
             db.close()

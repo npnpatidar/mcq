@@ -43,6 +43,10 @@ class AnkiPackageReaderTest {
 
     private val us = AnkiPackageWriter.FIELD_SEPARATOR
 
+    /** The reader maps every deck to a category, so questions live in one. */
+    private fun allQuestions(paper: com.mcqapp.data.io.PaperDto) =
+        paper.questions + paper.categories.flatMap { it.questions }
+
     /** An explicitly scheduled card: a cloze note needs one card per deletion. */
     private data class ClozeCard(val cardId: Long, val nid: Long, val did: Long, val ord: Int)
 
@@ -91,7 +95,7 @@ class AnkiPackageReaderTest {
         val result = AnkiPackageReader.read(apkg)
 
         assertEquals(1, result.file.papers.size)
-        val imported = result.file.papers.first().questions
+        val imported = result.file.papers.first().let(::allQuestions)
         assertEquals(2, imported.size)
         assertEquals(0, result.recallCount)
 
@@ -135,7 +139,7 @@ class AnkiPackageReaderTest {
     }
 
     @Test
-    fun anExportedCategorySurvivesAsADeckNamedAfterIt() {
+    fun anExportedCategorySurvivesAsASubdeck() {
         val paper = PaperDto(
             id = "p1",
             title = "Biology",
@@ -158,10 +162,12 @@ class AnkiPackageReaderTest {
 
         val result = AnkiPackageReader.read(apkg)
 
-        assertEquals(1, result.file.papers.size)
         assertEquals(1, result.noteCount)
-        assertEquals("Basics", result.file.papers.first().categories.first().title)
-        assertEquals("One", result.file.papers.first().questions.single().text)
+        val imported = result.file.papers.single()
+        assertEquals("Biology", imported.title)
+        // The category became a subdeck, so its title survives the round trip.
+        assertEquals(listOf("Basics"), imported.categories.map { it.title })
+        assertEquals("One", allQuestions(imported).single().text)
     }
 
     // ---- foreign packages ----
@@ -172,7 +178,7 @@ class AnkiPackageReaderTest {
             notes = listOf("Front: 2 + 2?${us}&#10003; 4${us}&#10007; five${us}Explanation: arithmetic" to 1L)
         )
 
-        val question = AnkiPackageReader.read(apkg).file.papers.single().questions.single()
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertEquals("Front: 2 + 2?", question.text)
         assertEquals(listOf("4", "five"), question.options.map { it.text })
@@ -186,7 +192,7 @@ class AnkiPackageReaderTest {
         val apkg = legacyPackage(notes = listOf("Capital of France?${us}Paris${us}" to 1L))
 
         val result = AnkiPackageReader.read(apkg)
-        val question = result.file.papers.single().questions.single()
+        val question = result.file.papers.single().let(::allQuestions).single()
 
         assertEquals("Capital of France?", question.text)
         assertEquals(listOf("Paris"), question.options.map { it.text })
@@ -200,7 +206,7 @@ class AnkiPackageReaderTest {
             notes = listOf("<b>Capital</b> of<br>France?${us}<div>Paris</div><div>Marseille</div>" to 1L)
         )
 
-        val question = AnkiPackageReader.read(apkg).file.papers.single().questions.single()
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertEquals("Capital of\nFrance?", question.text)
         assertEquals(listOf("Paris", "Marseille"), question.options.map { it.text })
@@ -232,7 +238,7 @@ class AnkiPackageReaderTest {
         val result = AnkiPackageReader.read(apkg)
 
         assertEquals(1, result.deckCount)
-        assertEquals(listOf("keep"), result.file.papers.single().questions.map { it.text })
+        assertEquals(listOf("keep"), result.file.papers.single().let(::allQuestions).map { it.text })
     }
 
     @Test
@@ -242,7 +248,7 @@ class AnkiPackageReaderTest {
             noteTags = " mcqapp mcqapp-difficulty-easy cell-bio "
         )
 
-        val question = AnkiPackageReader.read(apkg).file.papers.single().questions.single()
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertEquals(listOf("cell-bio"), question.tags)
     }
@@ -255,7 +261,7 @@ class AnkiPackageReaderTest {
             mediaBytes = mapOf("0" to pngBytes)
         )
 
-        val question = AnkiPackageReader.read(apkg).file.papers.single().questions.single()
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertTrue("image inlined: ${question.text}", question.text.contains("data:image/png;base64,"))
     }
@@ -267,10 +273,10 @@ class AnkiPackageReaderTest {
         db.execSQL("create table notetypes (id integer primary key, name text not null, config blob)")
         db.execSQL("create table templates (ntid integer not null, ord integer not null, qfmt text not null, primary key (ntid, ord))")
         db.execSQL("create table decks (id integer primary key, name text not null, mtime_secs integer not null, usn integer not null, common blob not null, kind blob not null)")
-        db.execSQL("insert into notetypes values (1, 'Basic', null)")
+        db.execSQL("insert into notetypes values (1, 'Basic', x'')")
         db.execSQL("insert into fields values (1, 0, 'Front'), (1, 1, 'Back')")
         db.execSQL("insert into templates values (1, 0, '{{Front}}')")
-        db.execSQL("insert into decks values (1, 'Default', 0, 0, null, null), (55, 'Chem::Bonds', 0, 0, null, null)")
+        db.execSQL("insert into decks values (1, 'Default', 0, 0, x'', x''), (55, 'Chem::Bonds', 0, 0, x'', x'')")
         db.execSQL("insert into notes values (100, 'g1', 1, 0, 0, ' bond?${us}yes${us}no', '')")
         db.execSQL("insert into cards values (200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')")
         val bytes = bytesOf(db)
@@ -278,7 +284,7 @@ class AnkiPackageReaderTest {
 
         val result = AnkiPackageReader.read(apkg)
 
-        val question = result.file.papers.single().questions.single()
+        val question = result.file.papers.single().let(::allQuestions).single()
         assertEquals("bond?", question.text)
         assertEquals(listOf("yes", "no"), question.options.map { it.text })
         assertEquals(listOf("o0"), question.correctOptionIds)
@@ -297,7 +303,7 @@ class AnkiPackageReaderTest {
             )
         )
 
-        val questions = AnkiPackageReader.read(apkg).file.papers.single().questions
+        val questions = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions)
 
         assertEquals(2, questions.size)
         assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
@@ -310,7 +316,7 @@ class AnkiPackageReaderTest {
         val result = AnkiPackageReader.read(apkg)
 
         assertEquals(1, result.noteCount)
-        assertEquals("orphan", result.file.papers.single().questions.single().text)
+        assertEquals("orphan", result.file.papers.single().let(::allQuestions).single().text)
     }
 
     // ---- failures ----

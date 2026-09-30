@@ -57,7 +57,7 @@ class AnkiSchema11JsonTest {
 
     @Test
     fun deckBlobHasEveryFieldAnkiRequires() {
-        val deck = json.parseToJsonElement(AnkiSchema11.decksJson(1L, "Paper", now))
+        val deck = json.parseToJsonElement(AnkiSchema11.decksJson(listOf(1L to "Paper", 2L to "Paper::Cells"), now))
             .jsonObject.values.first().jsonObject
         required(deck, listOf("id", "name", "usn", "collapsed", "dyn", "conf"))
         // dyn must be a number: serde's schema-11 deck reader only tolerates a

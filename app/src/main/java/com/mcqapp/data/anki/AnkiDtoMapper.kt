@@ -21,19 +21,24 @@ object AnkiDtoMapper {
         paper.categories
             .filter { it.parentId == null }
             .forEach { root -> visit(root, paper.categories, result) }
-        result.addAll(paper.topLevelQuestions().toQuestions())
+        result.addAll(paper.topLevelQuestions().toQuestions(""))
         return result
     }
 
     private fun visit(category: CategoryDto, all: List<CategoryDto>, out: MutableList<Question>) {
-        out.addAll(category.questions.toQuestions())
+        out.addAll(category.questions.toQuestions(category.id))
         all.filter { it.parentId == category.id }.forEach { child -> visit(child, all, out) }
     }
 
-    private fun List<QuestionDto>.toQuestions(): List<Question> = map { dto ->
+    /**
+     * [categoryId] is the id of the category the questions came from, or blank
+     * for a paper's uncategorised questions. The exporter uses it to choose the
+     * Anki subdeck.
+     */
+    private fun List<QuestionDto>.toQuestions(categoryId: String): List<Question> = map { dto ->
         Question(
             id = dto.id,
-            categoryId = dto.id,
+            categoryId = categoryId,
             text = dto.text,
             image = dto.image,
             options = dto.options.map { QuestionOption(it.id, it.text, it.image) },

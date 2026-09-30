@@ -136,8 +136,17 @@ class AnkiPackageWriterTest {
                     model["flds"]!!.jsonArray[2].jsonObject["name"]!!.jsonPrimitive.content
                 )
                 assertEquals(1, model["tmpls"]!!.jsonArray.size)
+                // The paper is the root deck and its category a subdeck.
                 val decks = json.parseToJsonElement(c.getString(3)).jsonObject
-                assertEquals("Biology: Cell", decks.values.first().jsonObject["name"]!!.jsonPrimitive.content)
+                assertEquals(
+                    listOf("Biology: Cell", "Biology: Cell::Basics"),
+                    decks.values.map { it.jsonObject["name"]!!.jsonPrimitive.content }
+                )
+                assertEquals(
+                    "both decks active",
+                    2,
+                    json.parseToJsonElement(c.getString(1)).jsonObject["activeDecks"]!!.jsonArray.size
+                )
                 val dconf = json.parseToJsonElement(c.getString(4)).jsonObject
                 val deckConfig = dconf.values.first().jsonObject
                 assertEquals(20, deckConfig["new"]!!.jsonObject["perDay"]!!.jsonPrimitive.int)
@@ -256,6 +265,50 @@ class AnkiPackageWriterTest {
                     "<img src=\"mcqapp-0.png\">" in n.getString(0)
                 )
                 assertTrue("no numeric reference", "<img src=\"0\">" !in n.getString(0))
+            }
+        } finally {
+            db.close()
+            file.delete()
+        }
+    }
+
+    @Test
+    fun aCardsDeckMatchesItsCategoriesSubdeck() {
+        val paper = samplePaper()
+        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            val decks = HashMap<Long, String>()
+            db.rawQuery("select id, name from decks", null).use { c ->
+                while (c.moveToNext()) decks[c.getLong(0)] = c.getString(1)
+            }
+            db.rawQuery(
+                "select decks.name from cards join notes on notes.id = cards.nid " +
+                    "join decks on decks.id = cards.did order by cards.due",
+                null
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                // samplePaper puts its only question in the "Basics" category.
+                assertEquals("Biology: Cell::Basics", c.getString(0))
+            }
+        } finally {
+            db.close()
+            file.delete()
+        }
+    }
+
+    @Test
+    fun anUncategorisedQuestionGoesInThePaperDeck() {
+        val paper = PaperDto(id = "p", title = "Flat", questions = listOf(QuestionDto(id = "q1", text = "One")))
+        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery(
+                "select decks.name from cards join notes on notes.id = cards.nid join decks on decks.id = cards.did",
+                null
+            ).use { c ->
+                assertTrue(c.moveToFirst())
+                assertEquals("Flat", c.getString(0))
             }
         } finally {
             db.close()

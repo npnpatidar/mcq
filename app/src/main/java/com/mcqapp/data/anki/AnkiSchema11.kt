@@ -149,9 +149,8 @@ object AnkiSchema11 {
         db.beginTransaction()
         try {
             notes.forEach { note ->
-                val front = note.fields.substringBefore(AnkiPackageWriter.FIELD_SEPARATOR)
-                val sfld = stripHtml(front).take(MAX_SORT_FIELD_CHARS)
-                val csum = frontToCsum.getOrPut(front) { fieldChecksum(front) }
+                val sfld = note.sortField.take(MAX_SORT_FIELD_CHARS)
+                val csum = frontToCsum.getOrPut(note.sortField) { fieldChecksum(note.sortField) }
                 db.execSQL(
                     "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) " +
                         "VALUES (?, ?, ${AnkiPackageWriter.MODEL_ID}, ?, 0, ?, ?, ?, ?, 0, '')",
@@ -170,8 +169,8 @@ object AnkiSchema11 {
             cards.forEach { card ->
                 db.execSQL(
                     "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) " +
-                        "VALUES (?, ?, ${AnkiPackageWriter.DECK_ID}, 0, ?, 0, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
-                    arrayOf(card.id, card.noteId, card.mod, card.due)
+                        "VALUES (?, ?, ?, 0, ?, 0, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                    arrayOf(card.id, card.noteId, card.deckId, card.mod, card.due)
                 )
             }
             db.setTransactionSuccessful()
@@ -181,9 +180,9 @@ object AnkiSchema11 {
     }
 
     /** `col.conf` — a subset of the classic keys; the rest get defaults. */
-    fun configJson(modelId: Long, nextPos: Int): String = buildJsonObject {
-        put("activeDecks", buildJsonArray { add(AnkiPackageWriter.DECK_ID) })
-        put("curDeck", AnkiPackageWriter.DECK_ID)
+    fun configJson(modelId: Long, nextPos: Int, deckIds: List<Long> = listOf(AnkiPackageWriter.DECK_ID)): String = buildJsonObject {
+        put("activeDecks", buildJsonArray { deckIds.forEach { add(it) } })
+        put("curDeck", deckIds.firstOrNull() ?: AnkiPackageWriter.DECK_ID)
         put("newSpread", 0)
         put("collapseTime", 1200)
         put("timeLim", 0)
@@ -244,23 +243,30 @@ object AnkiSchema11 {
     }.toString()
 
     /** `col.decks` — a single normal deck named after the paper. */
-    fun decksJson(deckId: Long, name: String, nowSeconds: Long): String = buildJsonObject {
-        putJsonObject(deckId.toString()) {
-            put("id", deckId)
-            put("mod", nowSeconds)
-            put("name", name)
-            put("usn", 0)
-            putJsonArray("lrnToday") { add(0); add(0) }
-            putJsonArray("revToday") { add(0); add(0) }
-            putJsonArray("newToday") { add(0); add(0) }
-            putJsonArray("timeToday") { add(0); add(0) }
-            put("collapsed", false)
-            put("browserCollapsed", false)
-            put("desc", "")
-            put("dyn", 0)
-            put("conf", AnkiPackageWriter.DECK_CONFIG_ID)
-            put("extendNew", 0)
-            put("extendRev", 0)
+    /**
+     * `col.decks` — one entry per deck, the paper at the root and its
+     * categories as `Parent::Child` subdecks, which is how Anki represents
+     * nesting.
+     */
+    fun decksJson(decks: List<Pair<Long, String>>, nowSeconds: Long): String = buildJsonObject {
+        decks.forEach { (deckId, name) ->
+            putJsonObject(deckId.toString()) {
+                put("id", deckId)
+                put("mod", nowSeconds)
+                put("name", name)
+                put("usn", 0)
+                putJsonArray("lrnToday") { add(0); add(0) }
+                putJsonArray("revToday") { add(0); add(0) }
+                putJsonArray("newToday") { add(0); add(0) }
+                putJsonArray("timeToday") { add(0); add(0) }
+                put("collapsed", false)
+                put("browserCollapsed", false)
+                put("desc", "")
+                put("dyn", 0)
+                put("conf", AnkiPackageWriter.DECK_CONFIG_ID)
+                put("extendNew", 0)
+                put("extendRev", 0)
+            }
         }
     }.toString()
 

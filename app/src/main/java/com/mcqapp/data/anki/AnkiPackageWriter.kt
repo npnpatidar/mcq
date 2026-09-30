@@ -51,15 +51,27 @@ object AnkiPackageWriter {
     /**
      * Builds the package for one paper.
      *
-     * Each question becomes one Anki note: front is the question text, back is
-     * the options with the correct one marked plus the explanation. Media
-     * references in either field are rewritten to the numeric entry names and
-     * the bytes are appended to the package.
+     * Each question becomes one Anki note: the front is the question with its
+     * options, the back is the correct answers and the explanation. Media
+     * references in either field are rewritten to the media filenames and the
+     * bytes are appended to the package.
+     *
+     * Categories become Anki subdecks (`Paper::Category::Subcategory`), so
+     * importing the package back restores the paper's structure. Questions with
+     * no category go into the paper's own deck.
      */
     fun write(paper: PaperDto, questions: List<Question>): ByteArray {
         val media = AnkiMediaPool()
         val nowSeconds = System.currentTimeMillis() / 1000
         val nowMillis = System.currentTimeMillis()
+
+        val categoryPaths = categoryPaths(paper)
+        // Deck name -> id, in first-seen order, so a re-export numbers them the
+        // same way and Anki matches decks across exports.
+        val deckIds = LinkedHashMap<String, Long>()
+        deckIds[paper.title.trim()] = DECK_ID
+        fun deckIdFor(name: String): Long = deckIds.getOrPut(name) { DECK_ID + deckIds.size }
+        questions.forEach { deckIdFor(deckNameFor(paper.title, categoryPaths[it.categoryId])) }
 
         val notes = mutableListOf<AnkiNoteRow>()
         val cards = mutableListOf<AnkiCardRow>()
@@ -77,7 +89,8 @@ object AnkiPackageWriter {
                 tags = formatTags(question),
                 // Front, Back, then the structured payload. Anki splits fields on
                 // the unit separator; the template only renders the first two.
-                fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" + payloadOf(question).toField()
+                fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" + payloadOf(question).toField(),
+                sortField = question.text
             )
             cards += AnkiCardRow(
                 id = noteId + 1,
@@ -85,14 +98,14 @@ object AnkiPackageWriter {
                 mod = nowSeconds,
                 // Anki numbers new cards from col.conf.nextPos; only the relative
                 // order matters, so an increasing sequence is correct.
-                due = index + 1
+                due = index + 1,
+                deckId = deckIdFor(deckNameFor(paper.title, categoryPaths[question.categoryId]))
             )
         }
-
         val collectionBytes = buildCollection(
             notes = notes,
             cards = cards,
-            deckName = paper.title,
+            decks = deckIds.map { (name, id) -> id to name },
             nowSeconds = nowSeconds,
             nowMillis = nowMillis
         )
@@ -126,6 +139,32 @@ object AnkiPackageWriter {
      * The back of the card: which options were correct and why. The options
      * themselves stay on the front, where the question was asked.
      */
+    /**
+     * Maps a category id to its `Parent::Child` path, which becomes the Anki
+     * subdeck name. Cycles in the category tree are broken rather than
+     * recursed into.
+     */
+    private fun categoryPaths(paper: PaperDto): Map<String, String> {
+        val byId = paper.categories.associateBy { it.id }
+        val paths = mutableMapOf<String, String>()
+        fun pathOf(id: String, seen: Set<String>): String = paths.getOrPut(id) {
+            val category = byId[id] ?: return@getOrPut ""
+            if (id in seen) return@getOrPut ""
+            val parent = category.parentId
+            val prefix = parent?.let { pathOf(it, seen + id) }?.takeIf { it.isNotBlank() }
+            val name = category.title.trim()
+            if (prefix == null) name else "$prefix::$name"
+        }
+        paper.categories.forEach { pathOf(it.id, emptySet()) }
+        return paths
+    }
+
+    /** The Anki deck name for a question: the paper, plus its category path. */
+    private fun deckNameFor(paperTitle: String, categoryPath: String?): String {
+        val root = paperTitle.trim().ifBlank { "Untitled" }
+        return if (categoryPath.isNullOrBlank()) root else "$root::$categoryPath"
+    }
+
     private fun buildBack(question: Question, media: AnkiMediaPool): String {
         val sb = StringBuilder()
         question.options.forEachIndexed { i, option ->
@@ -186,7 +225,7 @@ object AnkiPackageWriter {
     private fun buildCollection(
         notes: List<AnkiNoteRow>,
         cards: List<AnkiCardRow>,
-        deckName: String,
+        decks: List<Pair<Long, String>>,
         nowSeconds: Long,
         nowMillis: Long
     ): ByteArray {
@@ -198,9 +237,13 @@ object AnkiPackageWriter {
                 db = db,
                 crt = nowSeconds,
                 mod = nowMillis,
-                conf = AnkiSchema11.configJson(modelId = MODEL_ID, nextPos = notes.size + 1),
+                conf = AnkiSchema11.configJson(
+                    modelId = MODEL_ID,
+                    nextPos = notes.size + 1,
+                    deckIds = decks.map { it.first }
+                ),
                 models = AnkiSchema11.modelsJson(MODEL_ID, nowSeconds),
-                decks = AnkiSchema11.decksJson(DECK_ID, deckName, nowSeconds),
+                decks = AnkiSchema11.decksJson(decks, nowSeconds),
                 dconf = AnkiSchema11.dconfJson(DECK_CONFIG_ID, nowSeconds)
             )
             AnkiSchema11.insertNotes(db, notes)
@@ -248,7 +291,13 @@ object AnkiPackageWriter {
         val guid: String,
         val mod: Long,
         val tags: String,
-        val fields: String
+        val fields: String,
+        /**
+         * The question text alone, for Anki's `sfld` sort field. The front
+         * field also holds the options, and Anki's browser and duplicate check
+         * work off this column, so it must not.
+         */
+        val sortField: String
     )
 
     /**
@@ -259,6 +308,7 @@ object AnkiPackageWriter {
         val id: Long,
         val noteId: Long,
         val mod: Long,
-        val due: Int
+        val due: Int,
+        val deckId: Long
     )
 }

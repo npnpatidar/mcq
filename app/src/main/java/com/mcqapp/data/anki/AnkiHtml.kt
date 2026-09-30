@@ -98,7 +98,9 @@ object AnkiHtml {
      */
     fun parseBackField(field: String?): BackField {
         if (field == null) return BackField(emptyList(), "", false)
-        val text = decodeEntities(field)
+        // A back field is HTML in Anki, so line breaks arrive as <br> rather
+        // than newlines. Flattening it here means the caller can pass either.
+        val text = decodeEntities(BREAK.replace(TAG.replace(field, ""), "\n"))
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val options = mutableListOf<BackOption>()
         var explanation = ""

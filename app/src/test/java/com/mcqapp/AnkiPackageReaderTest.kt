@@ -288,7 +288,11 @@ class AnkiPackageReaderTest {
         db.execSQL(
             "insert into notes values (100, 'g1', 1, 0, 0, '', ' bond?${us}yes${us}no', ' bond?', 0, 0, '')"
         )
-        db.execSQL("insert into cards values (200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')")
+        db.execSQL(
+            "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +
+                "lapses, left, odue, odid, flags, data) values " +
+                "(200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')"
+        )
         val bytes = bytesOf(db)
         val apkg = zipOf("collection.anki21" to bytes)
 

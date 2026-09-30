@@ -454,16 +454,17 @@ object AnkiPackageReader {
         val allNames = allDecks.map { it.name }
 
         return roots.map { root ->
-            // A deck holds its own cards; its subdecks become categories.
             val deck = idByName[root]
-            val ownQuestions = questionsByDeck[deck?.id].orEmpty()
             val childNames = allNames.filter { it != root && it.startsWith("$root::") }
             PaperDto(
                 id = "anki-${deck?.id ?: root}",
                 title = root,
+                // Cards in the paper's own deck are uncategorised questions.
+                // They used to become a category named after the deck, which
+                // gave every paper a category sharing its own name.
+                questions = questionsByDeck[deck?.id].orEmpty(),
                 categories = buildCategories(
-                    prefixSegments = listOf(root),
-                    ownQuestions = ownQuestions,
+                    prefix = root,
                     childDeckNames = childNames,
                     idByName = idByName,
                     questionsByDeck = questionsByDeck
@@ -471,40 +472,78 @@ object AnkiPackageReader {
             )
         }
             // A paper needs at least one question to be worth importing.
-            .filter { paper -> paper.categories.any { it.questions.isNotEmpty() } }
+            .filter { paper ->
+                paper.questions.isNotEmpty() || paper.categories.any { it.questions.isNotEmpty() }
+            }
     }
 
+    /**
+     * Turns subdeck names into this app's flat category list, with each
+     * category pointing at its parent.
+     *
+     * Two things this has to get right, both of which cost a hierarchy:
+     *
+     *  - Children carry their parent's id. Without it the reader returns a flat
+     *    list and a nested category arrives as a sibling of its parent.
+     *  - A level with no deck of its own still becomes a category. Anki only
+     *    creates a deck for a category that holds cards, so a category whose
+     *    questions all sit one level down has no deck row at all. Matching
+     *    children to their parent by depth would drop that whole subtree.
+     *
+     * Parents are emitted before their children so the list reads in the order
+     * the categories are meant to appear.
+     */
     private fun buildCategories(
-        prefixSegments: List<String>,
-        ownQuestions: List<QuestionDto>,
+        prefix: String,
         childDeckNames: List<String>,
         idByName: Map<String, AnkiDeck>,
-        questionsByDeck: Map<Long, List<QuestionDto>>
+        questionsByDeck: Map<Long, List<QuestionDto>>,
+        parentId: String? = null
     ): List<CategoryDto> {
-        val out = mutableListOf<CategoryDto>()
-        val selfName = prefixSegments.joinToString("::")
-        val deck = idByName[selfName]
-        if (ownQuestions.isNotEmpty()) {
-            out += CategoryDto(
-                id = "anki-deck-${deck?.id ?: selfName.hashCode()}",
-                title = prefixSegments.last(),
-                questions = ownQuestions
-            )
+        // The next segment below the prefix, in the order the decks appear.
+        val segments = LinkedHashSet<String>()
+        childDeckNames.forEach { name ->
+            segments += name.removePrefix("$prefix::").substringBefore("::")
         }
-        childDeckNames.forEach { childName ->
-            val childSegments = childName.split("::").filter { it.isNotBlank() }
-            if (childSegments.size != prefixSegments.size + 1) return@forEach
-            val childDeck = idByName[childName]
-            val grandchildren = childDeckNames.filter { it.startsWith(childName + "::") }
-            out += buildCategories(
-                prefixSegments = childSegments,
-                ownQuestions = questionsByDeck[childDeck?.id].orEmpty(),
-                childDeckNames = grandchildren,
+        val out = mutableListOf<CategoryDto>()
+        segments.forEach { segment ->
+            val fullName = "$prefix::$segment"
+            val deck = idByName[fullName]
+            val id = categoryId(fullName, deck)
+            val questions = questionsByDeck[deck?.id].orEmpty()
+            val children = buildCategories(
+                prefix = fullName,
+                childDeckNames = childDeckNames.filter { it.startsWith("$fullName::") },
                 idByName = idByName,
-                questionsByDeck = questionsByDeck
+                questionsByDeck = questionsByDeck,
+                parentId = id
             )
+            // An empty deck Anki happened to include, with nothing under it, is
+            // not worth a category.
+            if (questions.isNotEmpty() || children.isNotEmpty()) {
+                out += CategoryDto(
+                    id = id,
+                    title = segment,
+                    parentId = parentId,
+                    questions = questions
+                )
+                out += children
+            }
         }
         return out
+    }
+
+    /**
+     * A category id for a deck. Anki's own deck id is used when the package has
+     * a row for it, which is unique and stable. A level the package does not
+     * list has no id to borrow, so the name is folded into one: category ids
+     * travel in a comma-separated nav argument, so a raw deck name could break
+     * it, and a bare hash could collide and merge two categories.
+     */
+    private fun categoryId(deckName: String, deck: AnkiDeck?): String {
+        deck?.let { return "anki-deck-${it.id}" }
+        val slug = deckName.replace(Regex("[^A-Za-z0-9]+"), "-").trim('-').take(40)
+        return "anki-deck-$slug-${deckName.hashCode().toString(36)}"
     }
 
     // ---- helpers ----

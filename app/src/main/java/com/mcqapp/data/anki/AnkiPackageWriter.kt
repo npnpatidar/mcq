@@ -37,6 +37,9 @@ object AnkiPackageWriter {
     /** Anki separates notefields with the ASCII unit separator, not a newline. */
     const val FIELD_SEPARATOR = "\u001f"
 
+    /** Depth separator in a deck name: `Paper::Category::Subcategory`. */
+    const val DECK_SEPARATOR = "::"
+
     /** Anki recognises this as a line break inside a single notefield. */
     const val NEWLINE_BREAK = "<br>"
     private const val LINE_BREAK = NEWLINE_BREAK
@@ -171,7 +174,7 @@ object AnkiPackageWriter {
             if (id in seen) return@getOrPut ""
             val parent = category.parentId
             val prefix = parent?.let { pathOf(it, seen + id) }?.takeIf { it.isNotBlank() }
-            val name = category.title.trim()
+            val name = segmentFor(category.title, "Untitled")
             if (prefix == null) name else "$prefix::$name"
         }
         paper.categories.forEach { pathOf(it.id, emptySet()) }
@@ -180,8 +183,25 @@ object AnkiPackageWriter {
 
     /** The Anki deck name for a question: the paper, plus its category path. */
     private fun deckNameFor(paperTitle: String, categoryPath: String?): String {
-        val root = paperTitle.trim().ifBlank { "Untitled" }
+        val root = segmentFor(paperTitle, "Untitled")
         return if (categoryPath.isNullOrBlank()) root else "$root::$categoryPath"
+    }
+
+    /**
+     * One `::`-delimited part of a deck name.
+     *
+     * The separator is how a deck name encodes its depth, and Anki offers no
+     * way to escape it, so a title containing it would come back from the
+     * reader as a hierarchy the paper never had. The characters are replaced
+     * rather than dropped so two distinct titles stay distinct.
+     */
+    private fun segmentFor(title: String, fallback: String): String {
+        val clean = title.trim().replace(DECK_SEPARATOR, ": ").trim()
+        if (clean.isNotBlank()) return clean
+        if (title != fallback) {
+            Logger.w("EXPORT", "Deck name '$title' is blank after cleaning, using '$fallback'")
+        }
+        return fallback
     }
 
     private fun buildBack(question: Question, media: AnkiMediaPool): String {

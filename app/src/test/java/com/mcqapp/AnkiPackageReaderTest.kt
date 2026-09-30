@@ -15,6 +15,7 @@ import com.mcqapp.domain.QuestionOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -452,6 +453,108 @@ class AnkiPackageReaderTest {
     }
 
     /** Anki 2.1.x schema 11 collection, matching Anki's own `schema11.sql`. */
+    /**
+     * The sample paper's shape: Physics holds its own questions and is a
+     * subcategory of Science. Import used to return it as a sibling of Science,
+     * because the reader built the category list without parent links.
+     */
+    @Test
+    fun nestedCategoryStaysUnderItsParent() {
+        val paper = PaperDto(
+            id = "p1",
+            title = "General Knowledge",
+            categories = listOf(
+                CategoryDto(
+                    id = "cat-science",
+                    title = "Science",
+                    questions = listOf(
+                        QuestionDto(id = "q1", text = "Water is?", options = listOf(OptionDto("a", "H2O")),
+                            correctOptionIds = listOf("a"))
+                    )
+                ),
+                CategoryDto(
+                    id = "cat-physics",
+                    title = "Physics",
+                    parentId = "cat-science",
+                    questions = listOf(
+                        QuestionDto(id = "q2", text = "F = ma?", options = listOf(OptionDto("a", "Newton")),
+                            correctOptionIds = listOf("a"))
+                    )
+                )
+            )
+        )
+        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+
+        val imported = AnkiPackageReader.read(apkg).file.papers.single()
+
+        assertEquals(2, imported.categories.size)
+        val science = imported.categories.first { it.title == "Science" }
+        val physics = imported.categories.first { it.title == "Physics" }
+        assertEquals("Physics must not become a top-level category", science.id, physics.parentId)
+        assertEquals(null, science.parentId)
+        assertEquals(2, allQuestions(imported).size)
+        // Every category id has to survive the comma-separated nav argument the
+        // category filter is sent through.
+        assertTrue(imported.categories.all { ',' !in it.id })
+    }
+
+    /**
+     * A category whose questions all sit in its subcategories has no deck of its
+     * own, because Anki only creates a deck for a category that holds cards.
+     * The level still has to appear, or everything under it is lost.
+     */
+    @Test
+    fun aCategoryWithNoDeckOfItsOwnStillAppears() {
+        val apkg = legacyPackage(
+            decks = """{"1":{"id":1,"name":"Paper"},"2":{"id":2,"name":"Paper::Science::Physics"}}""",
+            notes = listOf("Front: F = ma?${us}&#10003; Newton<br>&#10007; m = F/a" to 2L)
+        )
+
+        val paper = AnkiPackageReader.read(apkg).file.papers.single()
+
+        val science = paper.categories.first { it.title == "Science" }
+        val physics = paper.categories.first { it.title == "Physics" }
+        assertEquals("no questions of its own", 0, science.questions.size)
+        assertEquals(science.id, physics.parentId)
+        assertEquals(1, allQuestions(paper).size)
+    }
+
+    @Test
+    fun questionsInThePaperDeckAreUncategorised() {
+        // They used to become a category named after the deck, so every paper
+        // gained a category sharing its own name.
+        val apkg = legacyPackage(notes = listOf("Front: 2 + 2?${us}4" to 1L))
+
+        val paper = AnkiPackageReader.read(apkg).file.papers.single()
+
+        assertEquals(1, paper.questions.size)
+        assertTrue("no category named after the paper", paper.categories.none { it.title == "Default" })
+    }
+
+    @Test
+    fun aCategoryTitleContainingTheSeparatorDoesNotInventAHierarchy() {
+        val paper = PaperDto(
+            id = "p1",
+            title = "Deck",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "A::B",
+                    questions = listOf(
+                        QuestionDto(id = "q1", text = "Q?", options = listOf(OptionDto("a", "A")),
+                            correctOptionIds = listOf("a"))
+                    )
+                )
+            )
+        )
+        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+
+        val imported = AnkiPackageReader.read(apkg).file.papers.single()
+
+        assertEquals("the :: in the title must not split the category", 1, imported.categories.size)
+        assertNull(imported.categories.single().parentId)
+    }
+
     @Test
     fun aReviewedCardKeepsItsSchedule() {
         val crt = 1_700_000_000L

@@ -2,6 +2,7 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -112,6 +113,96 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun setFontScale(scale: Float) {
         context.dataStore.edit { it[fontScaleKey] = scale }
+    }
+
+    // --- Scheduler (Anki-parity) settings ---
+    // Stored as doubles keyed by field name so a newly added option defaults
+    // cleanly on an old install instead of reading back as 0.
+
+    private fun schedKey(name: String) = doublePreferencesKey("anki_$name")
+
+    fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
+        context.dataStore.data.map { prefs ->
+            val d = com.mcqapp.domain.SchedulerConfig()
+            com.mcqapp.domain.SchedulerConfig(
+                defaultEase = prefs[schedKey("default_ease")] ?: d.defaultEase,
+                minEase = prefs[schedKey("min_ease")] ?: d.minEase,
+                maxEase = prefs[schedKey("max_ease")] ?: d.maxEase,
+                againEaseFactor = prefs[schedKey("again_ease")] ?: d.againEaseFactor,
+                hardEaseFactor = prefs[schedKey("hard_ease")] ?: d.hardEaseFactor,
+                easyEaseFactor = prefs[schedKey("easy_ease")] ?: d.easyEaseFactor,
+                firstIntervalDays = (prefs[schedKey("first_interval")] ?: d.firstIntervalDays.toDouble()).toInt(),
+                secondIntervalDays = (prefs[schedKey("second_interval")] ?: d.secondIntervalDays.toDouble()).toInt(),
+                easyFirstIntervalDays = (prefs[schedKey("easy_first_interval")] ?: d.easyFirstIntervalDays.toDouble()).toInt(),
+                hardIntervalMultiplier = prefs[schedKey("hard_multiplier")] ?: d.hardIntervalMultiplier,
+                easyBonus = prefs[schedKey("easy_bonus")] ?: d.easyBonus,
+                minimumIntervalDays = (prefs[schedKey("min_interval")] ?: d.minimumIntervalDays.toDouble()).toInt(),
+                maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
+                relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
+                leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
+                newLimit = (prefs[schedKey("new_limit")] ?: d.newLimit.toDouble()).toInt(),
+                reviewLimit = (prefs[schedKey("review_limit")] ?: d.reviewLimit.toDouble()).toInt(),
+                fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
+                slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
+            ).sanitized()
+        }
+
+    suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig =
+        schedulerConfig().first()
+
+    suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
+        val c = config.sanitized()
+        context.dataStore.edit { prefs ->
+            prefs[schedKey("default_ease")] = c.defaultEase
+            prefs[schedKey("min_ease")] = c.minEase
+            prefs[schedKey("max_ease")] = c.maxEase
+            prefs[schedKey("again_ease")] = c.againEaseFactor
+            prefs[schedKey("hard_ease")] = c.hardEaseFactor
+            prefs[schedKey("easy_ease")] = c.easyEaseFactor
+            prefs[schedKey("first_interval")] = c.firstIntervalDays.toDouble()
+            prefs[schedKey("second_interval")] = c.secondIntervalDays.toDouble()
+            prefs[schedKey("easy_first_interval")] = c.easyFirstIntervalDays.toDouble()
+            prefs[schedKey("hard_multiplier")] = c.hardIntervalMultiplier
+            prefs[schedKey("easy_bonus")] = c.easyBonus
+            prefs[schedKey("min_interval")] = c.minimumIntervalDays.toDouble()
+            prefs[schedKey("max_interval")] = c.maxIntervalDays.toDouble()
+            prefs[schedKey("relearn_ms")] = c.relearnMs.toDouble()
+            prefs[schedKey("leech_threshold")] = c.leechThreshold.toDouble()
+            prefs[schedKey("new_limit")] = c.newLimit.toDouble()
+            prefs[schedKey("review_limit")] = c.reviewLimit.toDouble()
+            prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
+            prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
+        }
+    }
+
+    suspend fun resetSchedulerConfig() {
+        context.dataStore.edit { prefs ->
+            com.mcqapp.domain.SchedulerConfig()
+                .sanitized()
+                .let { c ->
+                    listOf(
+                        "default_ease" to c.defaultEase,
+                        "min_ease" to c.minEase,
+                        "max_ease" to c.maxEase,
+                        "again_ease" to c.againEaseFactor,
+                        "hard_ease" to c.hardEaseFactor,
+                        "easy_ease" to c.easyEaseFactor,
+                        "first_interval" to c.firstIntervalDays.toDouble(),
+                        "second_interval" to c.secondIntervalDays.toDouble(),
+                        "easy_first_interval" to c.easyFirstIntervalDays.toDouble(),
+                        "hard_multiplier" to c.hardIntervalMultiplier,
+                        "easy_bonus" to c.easyBonus,
+                        "min_interval" to c.minimumIntervalDays.toDouble(),
+                        "max_interval" to c.maxIntervalDays.toDouble(),
+                        "relearn_ms" to c.relearnMs.toDouble(),
+                        "leech_threshold" to c.leechThreshold.toDouble(),
+                        "new_limit" to c.newLimit.toDouble(),
+                        "review_limit" to c.reviewLimit.toDouble(),
+                        "fast_seconds" to c.fastSeconds.toDouble(),
+                        "slow_seconds" to c.slowSeconds.toDouble()
+                    ).forEach { (name, value) -> prefs[schedKey(name)] = value }
+                }
+        }
     }
 
     private val progressKey = stringPreferencesKey("in_progress_test")
@@ -596,22 +687,23 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getStudyQueue(
         paperId: String,
         now: Long = System.currentTimeMillis(),
-        newLimit: Int = com.mcqapp.domain.Study.DEFAULT_NEW_LIMIT
+        newLimit: Int? = null
     ): List<com.mcqapp.domain.StudyCard> {
         val questions = getQuestionsForPaper(paperId)
         if (questions.isEmpty()) return emptyList()
-        val states = resolveStudyStates(paperId, questions)
+        val config = schedulerConfigNow()
+        val states = resolveStudyStates(paperId, questions, config)
         Logger.i(
             "REPO",
             "getStudyQueue($paperId): ${questions.size} questions, " +
                 "due=${com.mcqapp.domain.Study.dueCount(states.values, now)}"
         )
         return com.mcqapp.domain.Study.queue(
-            com.mcqapp.domain.Sm2Scheduler,
+            com.mcqapp.domain.Sm2Scheduler(config),
             questions.map { it.id },
             states,
             now,
-            newLimit
+            newLimit ?: config.newLimit
         )
     }
 
@@ -623,10 +715,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     private suspend fun resolveStudyStates(
         paperId: String,
-        questions: List<Question>
+        questions: List<Question>,
+        config: com.mcqapp.domain.SchedulerConfig
     ): Map<String, com.mcqapp.domain.CardState> {
+        val scheduler = com.mcqapp.domain.Sm2Scheduler(config)
         val stored = db.cardStateDao().getByPaper(paperId).associate { it.questionId to it }
-        val history = historySignalsFor(paperId, questions.map { it.id })
+        val history = historySignalsFor(paperId, questions.map { it.id }, config)
         val states = mutableMapOf<String, com.mcqapp.domain.CardState>()
         val seeded = mutableListOf<CardStateEntity>()
         for (q in questions) {
@@ -635,7 +729,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 // A question whose text or options changed is scheduled again
                 // from scratch: the old interval describes memory of other text.
                 if (existing.contentHash != contentHashOf(q)) {
-                    val reset = com.mcqapp.domain.Sm2Scheduler.initial(q.id)
+                    val reset = scheduler.initial(q.id)
                     states[q.id] = reset
                     // Persist the new hash, otherwise the edit looks stale again
                     // on the next load and the card is reset every time.
@@ -645,8 +739,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 }
             } else {
                 val rebuilt = history[q.id]?.let {
-                    com.mcqapp.domain.Study.rebuild(com.mcqapp.domain.Sm2Scheduler, q.id, it)
-                } ?: com.mcqapp.domain.Sm2Scheduler.initial(q.id)
+                    com.mcqapp.domain.Study.rebuild(scheduler, q.id, it)
+                } ?: scheduler.initial(q.id)
                 states[q.id] = rebuilt
                 seeded += rebuilt.toEntity(paperId, contentHashOf(q))
             }
@@ -665,7 +759,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): StudyCounts {
         val questions = getQuestionsForPaper(paperId)
         if (questions.isEmpty()) return StudyCounts()
-        val states = resolveStudyStates(paperId, questions)
+        val states = resolveStudyStates(paperId, questions, schedulerConfigNow())
         return StudyCounts(
             due = com.mcqapp.domain.Study.dueCount(states.values, now),
             leeches = com.mcqapp.domain.Study.leechCount(states.values),
@@ -687,9 +781,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.CardState {
         val question = getQuestion(questionId)
+        val scheduler = com.mcqapp.domain.Sm2Scheduler(schedulerConfigNow())
         val existing = db.cardStateDao().get(paperId, questionId)?.toDomain()
-            ?: com.mcqapp.domain.Sm2Scheduler.initial(questionId)
-        val next = com.mcqapp.domain.Sm2Scheduler.next(existing, grade, now)
+            ?: scheduler.initial(questionId)
+        val next = scheduler.next(existing, grade, now)
         db.cardStateDao().upsert(
             next.toEntity(paperId, question?.let { contentHashOf(it) } ?: "")
         )
@@ -707,7 +802,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     private suspend fun historySignalsFor(
         paperId: String,
-        questionIds: List<String>
+        questionIds: List<String>,
+        config: com.mcqapp.domain.SchedulerConfig = com.mcqapp.domain.SchedulerConfig()
     ): Map<String, List<com.mcqapp.domain.ReviewSignal>> {
         val ids = questionIds.toHashSet()
         val attemptsById = db.attemptDao().getAllAttempts()
@@ -719,7 +815,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             val attempt = attemptsById[row.attemptId] ?: continue
             if (row.questionId !in ids) continue
             if (row.selectedOptionIds.isEmpty() || row.correctOptionIds.isEmpty()) continue
-            val grade = com.mcqapp.domain.Study.inferGrade(row.isCorrect, row.dwellSeconds)
+            val grade = com.mcqapp.domain.Study.inferGrade(
+                row.isCorrect, row.dwellSeconds, config = config
+            )
             signals.getOrPut(row.questionId) { mutableListOf() }
                 .add(com.mcqapp.domain.ReviewSignal(row.questionId, grade, attempt.finishedAt))
         }

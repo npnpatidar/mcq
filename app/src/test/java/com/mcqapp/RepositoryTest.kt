@@ -142,10 +142,10 @@ class RepositoryTest {
         val next = repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
         assertEquals(1, next.reps)
         assertEquals(1, next.intervalDays)
-        assertEquals(1000L + com.mcqapp.domain.Sm2Scheduler.DAY_MS, next.dueAt)
+        assertEquals(1000L + com.mcqapp.domain.SchedulerConfig().let { 24*60*60*1000L }, next.dueAt)
         val stored = db.cardStateDao().get("p1", "q1")
         assertEquals(1, stored!!.reps)
-        assertEquals(com.mcqapp.domain.Sm2Scheduler.DEFAULT_EASE, stored.ease, 0.0001)
+        assertEquals(com.mcqapp.domain.SchedulerConfig().defaultEase, stored.ease, 0.0001)
     }
 
     @Test
@@ -183,7 +183,7 @@ class RepositoryTest {
         assertEquals(0, counts.fresh)
 
         // Once the relearning window opens, the badge and the queue agree.
-        val dueAt = 5000L + com.mcqapp.domain.Sm2Scheduler.RELEARN_MS
+        val dueAt = 5000L + com.mcqapp.domain.SchedulerConfig().relearnMs
         val later = repository.getStudyCounts("p1", now = dueAt)
         assertEquals(1, later.due)
         val queue = repository.getStudyQueue("p1", now = dueAt)
@@ -252,9 +252,9 @@ class RepositoryTest {
         assertTrue(repository.getStudyQueue("p1", now = 6000L).isEmpty())
         val stored = db.cardStateDao().get("p1", "q1")!!
         assertEquals("history must seed a card, not leave it new", 1, stored.reps)
-        assertEquals(5000L + com.mcqapp.domain.Sm2Scheduler.DAY_MS, stored.dueAt)
+        assertEquals(5000L + com.mcqapp.domain.SchedulerConfig().let { 24*60*60*1000L }, stored.dueAt)
         // And it becomes due once that date passes.
-        val later = 5000L + com.mcqapp.domain.Sm2Scheduler.DAY_MS
+        val later = 5000L + com.mcqapp.domain.SchedulerConfig().let { 24*60*60*1000L }
         val queue = repository.getStudyQueue("p1", now = later)
         assertEquals(1, queue.size)
         assertEquals(com.mcqapp.domain.StudyReason.DUE, queue.first().reason)

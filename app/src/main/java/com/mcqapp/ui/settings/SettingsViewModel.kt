@@ -104,6 +104,29 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setFontScale(scale) }
     }
 
+    private val _schedulerConfig = MutableStateFlow(com.mcqapp.domain.SchedulerConfig())
+    val schedulerConfig: StateFlow<com.mcqapp.domain.SchedulerConfig> = _schedulerConfig.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.schedulerConfig().collect { _schedulerConfig.value = it }
+        }
+    }
+
+    /**
+     * Applies a single change. Each field edit writes the whole config, so the
+     * in-progress value and the stored value never drift apart.
+     */
+    fun updateSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
+        _schedulerConfig.value = config.sanitized()
+        viewModelScope.launch { repository.setSchedulerConfig(config) }
+    }
+
+    fun resetSchedulerConfig() {
+        _schedulerConfig.value = com.mcqapp.domain.SchedulerConfig().sanitized()
+        viewModelScope.launch { repository.resetSchedulerConfig() }
+    }
+
     private val _storage = MutableStateFlow<com.mcqapp.domain.StorageInfo.Report?>(null)
     val storage: StateFlow<com.mcqapp.domain.StorageInfo.Report?> = _storage.asStateFlow()
 

@@ -11,17 +11,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -37,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -58,6 +64,7 @@ fun SettingsScreen(
     val practiceMode by viewModel.practiceMode.collectAsState()
     val strictMode by viewModel.strictMode.collectAsState()
     val autoAdvance by viewModel.autoAdvance.collectAsState()
+    val schedulerConfig by viewModel.schedulerConfig.collectAsState()
     val storage by viewModel.storage.collectAsState()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -249,6 +256,13 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(12.dp))
+            AnkiSchedulerSection(
+                config = schedulerConfig,
+                onChange = { viewModel.updateSchedulerConfig(it) },
+                onReset = { viewModel.resetSchedulerConfig() }
+            )
+
+            Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -377,4 +391,296 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+/**
+ * Anki-parity scheduler settings.
+ *
+ * Every tunable number the spaced repetition scheduler uses is editable here,
+ * using Anki's own review-options wording so a value copied from Anki lands in
+ * the obvious place. Defaults are Anki's defaults. The three ease bounds are
+ * interdependent, so [SchedulerConfig.sanitized] clamps them rather than the UI
+ * rejecting input field by field.
+ */
+@Composable
+private fun AnkiSchedulerSection(
+    config: com.mcqapp.domain.SchedulerConfig,
+    onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onReset: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Spaced repetition",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onReset) { Text("Reset") }
+            }
+            Text(
+                "SM-2 scheduling for Study. These match Anki's review options, so " +
+                    "the same values work in both apps. Changes apply to the next " +
+                    "review; cards already scheduled keep their current date.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(12.dp))
+
+            AnkiNumberRow(
+                label = "Starting ease",
+                help = "Ease a new card begins at",
+                value = config.defaultEase,
+                step = 0.05,
+                range = 1.3f..5.0f,
+                onChange = { onChange(config.copy(defaultEase = it.toDouble())) }
+            )
+            AnkiNumberRow(
+                label = "Minimum ease",
+                help = "Floor, so a card stays learnable",
+                value = config.minEase,
+                step = 0.05,
+                range = 1.0f..3.0f,
+                onChange = { onChange(config.copy(minEase = it.toDouble())) }
+            )
+            AnkiNumberRow(
+                label = "Maximum ease",
+                help = "Ceiling for easy cards",
+                value = config.maxEase,
+                step = 0.05,
+                range = 1.0f..5.0f,
+                onChange = { onChange(config.copy(maxEase = it.toDouble())) }
+            )
+            AnkiNumberRow(
+                label = "Easy bonus",
+                help = "Extra interval factor on Easy",
+                value = config.easyBonus,
+                step = 0.05,
+                range = 1.0f..5.0f,
+                onChange = { onChange(config.copy(easyBonus = it.toDouble())) }
+            )
+            AnkiNumberRow(
+                label = "Hard interval",
+                help = "Multiplier applied on Hard",
+                value = config.hardIntervalMultiplier,
+                step = 0.05,
+                range = 1.0f..5.0f,
+                onChange = { onChange(config.copy(hardIntervalMultiplier = it.toDouble())) }
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Text("Starting intervals", style = MaterialTheme.typography.labelLarge)
+            AnkiNumberRow(
+                label = "Easy interval",
+                help = "Days until a new card is reviewed after Easy",
+                value = config.easyFirstIntervalDays,
+                step = 1.0,
+                range = 1f..365f,
+                suffix = "d",
+                onChange = { onChange(config.copy(easyFirstIntervalDays = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Normal interval",
+                help = "Days until a new card is reviewed after Good",
+                value = config.firstIntervalDays,
+                step = 1.0,
+                range = 1f..365f,
+                suffix = "d",
+                onChange = { onChange(config.copy(firstIntervalDays = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Second interval",
+                help = "Days for the second review after Good",
+                value = config.secondIntervalDays,
+                step = 1.0,
+                range = 1f..365f,
+                suffix = "d",
+                onChange = { onChange(config.copy(secondIntervalDays = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Minimum interval",
+                help = "Shortest interval any review can get",
+                value = config.minimumIntervalDays,
+                step = 1.0,
+                range = 1f..365f,
+                suffix = "d",
+                onChange = { onChange(config.copy(minimumIntervalDays = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Maximum interval",
+                help = "Longest interval any review can get",
+                value = config.maxIntervalDays,
+                step = 1.0,
+                range = 1f..36500f,
+                suffix = "d",
+                onChange = { onChange(config.copy(maxIntervalDays = it.toInt())) }
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Text("Lapses", style = MaterialTheme.typography.labelLarge)
+            AnkiNumberRow(
+                label = "Relearning delay",
+                help = "How long until a failed card returns",
+                value = config.relearnMs / 60000.0,
+                step = 1.0,
+                range = 1.0f..1440.0f,
+                suffix = "m",
+                onChange = { onChange(config.copy(relearnMs = (it * 60000).toLong())) }
+            )
+            AnkiNumberRow(
+                label = "Leech threshold",
+                help = "Failures before a card is flagged tricky",
+                value = config.leechThreshold,
+                step = 1.0,
+                range = 1f..100f,
+                onChange = { onChange(config.copy(leechThreshold = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Easy ease bonus",
+                help = "Ease added on Easy",
+                value = config.easyEaseFactor,
+                step = 0.05,
+                range = 0f..1f,
+                onChange = { onChange(config.copy(easyEaseFactor = it.toDouble())) }
+            )
+            AnkiNumberRow(
+                label = "Hard ease penalty",
+                help = "Ease removed on Hard",
+                value = config.hardEaseFactor,
+                step = 0.05,
+                range = 0f..1f,
+                onChange = { onChange(config.copy(hardEaseFactor = it.toDouble())) }
+            )
+            AnkiNumberRow(
+                label = "Again ease penalty",
+                help = "Ease removed on Again",
+                value = config.againEaseFactor,
+                step = 0.05,
+                range = 0f..1f,
+                onChange = { onChange(config.copy(againEaseFactor = it.toDouble())) }
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Text("Daily limits", style = MaterialTheme.typography.labelLarge)
+            AnkiNumberRow(
+                label = "New cards per day",
+                help = "Unseen cards offered each day",
+                value = config.newLimit,
+                step = 1.0,
+                range = 0f..9999f,
+                onChange = { onChange(config.copy(newLimit = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Reviews per day",
+                help = "Maximum due cards offered each day",
+                value = config.reviewLimit,
+                step = 1.0,
+                range = 0f..9999f,
+                onChange = { onChange(config.copy(reviewLimit = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Easy answer threshold",
+                help = "Auto-graded Easy below this response time",
+                value = config.fastSeconds,
+                step = 1.0,
+                range = 1f..600f,
+                suffix = "s",
+                onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
+            )
+            AnkiNumberRow(
+                label = "Hard answer threshold",
+                help = "Auto-graded Hard above this response time",
+                value = config.slowSeconds,
+                step = 1.0,
+                range = 1f..3600f,
+                suffix = "s",
+                onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "The response-time thresholds only apply when rebuilding a schedule " +
+                    "from past test attempts. In Study you grade every card yourself.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+/**
+ * A labelled numeric setting with decrement/increment and direct entry.
+ *
+ * Uses stepper buttons rather than a slider because these values span 1 to 36500
+ * days, where a slider is unusable, and because a typed value is exact where a
+ * dragged one is not. The text field is the source of truth while focused so a
+ * partially typed number is not clobbered by the stepper.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnkiNumberRow(
+    label: String,
+    help: String,
+    value: Number,
+    step: Double,
+    range: ClosedFloatingPointRange<Float>,
+    suffix: String? = null,
+    onChange: (Double) -> Unit
+) {
+    val current = value.toDouble()
+    var text by remember(current) { mutableStateOf(formatValue(current, step)) }
+    val parsed = text.trim().toDoubleOrNull()
+    val valid = parsed != null && parsed >= range.start && parsed <= range.endInclusive
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label)
+            Text(help, style = MaterialTheme.typography.bodySmall)
+        }
+        IconButton(
+            onClick = { onChange((current - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
+            enabled = current > range.start
+        ) {
+            Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
+        }
+        OutlinedTextField(
+            value = text,
+            onValueChange = { input ->
+                // Allow digits, one dot, and a leading minus so a negative entry
+                // can be typed and rejected rather than silently swallowed.
+                val filtered = input.filter { it.isDigit() || it == '.' || (it == '-' && input.indexOf('-') == 0) }
+                text = filtered
+                val candidate = filtered.trim().toDoubleOrNull()
+                if (candidate != null && candidate >= range.start && candidate <= range.endInclusive) {
+                    onChange(candidate)
+                }
+            },
+            singleLine = true,
+            isError = !valid,
+            suffix = suffix?.let { { Text(it) } },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.width(88.dp)
+        )
+        IconButton(
+            onClick = { onChange((current + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
+            enabled = current < range.endInclusive
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Increase $label")
+        }
+    }
+}
+
+/** Rounds to the row's step so the text matches the value the steppers produce. */
+private fun formatValue(value: Double, step: Double): String {
+    val decimals = when {
+        step >= 1.0 -> 0
+        step >= 0.1 -> 1
+        else -> 2
+    }
+    return if (decimals == 0) value.toInt().toString()
+    else String.format("%.${decimals}f", value)
 }

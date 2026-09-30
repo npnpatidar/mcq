@@ -175,7 +175,9 @@ class AnkiPackageReaderTest {
     @Test
     fun aMarkedBackFieldBecomesOptionsWithCorrectAnswers() {
         val apkg = legacyPackage(
-            notes = listOf("Front: 2 + 2?${us}&#10003; 4${us}&#10007; five${us}Explanation: arithmetic" to 1L)
+            notes = listOf(
+                "Front: 2 + 2?${us}&#10003; 4<br>&#10007; five<br>Explanation: arithmetic" to 1L
+            )
         )
 
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
@@ -209,7 +211,9 @@ class AnkiPackageReaderTest {
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertEquals("Capital of\nFrance?", question.text)
-        assertEquals(listOf("Paris", "Marseille"), question.options.map { it.text })
+        // With nothing to say which line is the answer, the whole answer is kept
+        // as one option rather than guessing.
+        assertEquals(listOf("Paris\nMarseille"), question.options.map { it.text })
     }
 
     @Test
@@ -263,7 +267,11 @@ class AnkiPackageReaderTest {
 
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
-        assertTrue("image inlined: ${question.text}", question.text.contains("data:image/png;base64,"))
+        assertEquals("image is the question's own, not markup in the text", "look:", question.text)
+        assertTrue(
+            "image inlined: ${question.image}",
+            question.image!!.startsWith("data:image/png;base64,")
+        )
     }
 
     @Test
@@ -277,7 +285,9 @@ class AnkiPackageReaderTest {
         db.execSQL("insert into fields values (1, 0, 'Front'), (1, 1, 'Back')")
         db.execSQL("insert into templates values (1, 0, '{{Front}}')")
         db.execSQL("insert into decks values (1, 'Default', 0, 0, x'', x''), (55, 'Chem::Bonds', 0, 0, x'', x'')")
-        db.execSQL("insert into notes values (100, 'g1', 1, 0, 0, ' bond?${us}yes${us}no', '')")
+        db.execSQL(
+            "insert into notes values (100, 'g1', 1, 0, 0, '', ' bond?${us}yes${us}no', ' bond?', 0, 0, '')"
+        )
         db.execSQL("insert into cards values (200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')")
         val bytes = bytesOf(db)
         val apkg = zipOf("collection.anki21" to bytes)

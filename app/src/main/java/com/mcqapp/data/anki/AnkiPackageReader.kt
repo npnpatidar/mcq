@@ -372,7 +372,9 @@ object AnkiPackageReader {
         val allDecks = decks + orphanDecks
         val idByName = allDecks.associateBy { it.name }
 
-        return allDecks.mapNotNull { deck ->
+        return allDecks
+            .filter { !it.name.contains("::") }
+            .mapNotNull { deck ->
             val segments = deck.name.split("::").filter { it.isNotBlank() }
             if (segments.isEmpty()) return@mapNotNull null
             val root = segments.first()
@@ -393,7 +395,7 @@ object AnkiPackageReader {
                 title = root,
                 categories = categories
             )
-        }.distinctBy { it.id }
+        }
             // A paper needs at least one question to be worth importing.
             .filter { paper -> paper.categories.any { it.questions.isNotEmpty() } }
     }

@@ -97,6 +97,21 @@ class AnkiPackageWriterTest {
         return out
     }
 
+    /**
+     * Schema 11 has no `decks` table: the deck names live in the `col.decks`
+     * JSON blob, keyed by deck id.
+     */
+    private fun deckNames(db: SQLiteDatabase): Map<Long, String> {
+        val out = HashMap<Long, String>()
+        db.rawQuery("select decks from col", null).use { c ->
+            assertTrue(c.moveToFirst())
+            json.parseToJsonElement(c.getString(0)).jsonObject.forEach { (id, deck) ->
+                out[id.toLong()] = deck.jsonObject["name"]!!.jsonPrimitive.content
+            }
+        }
+        return out
+    }
+
     private fun openCollection(bytes: ByteArray): Pair<SQLiteDatabase, File> {
         val file = File.createTempFile("apkg-test", ".anki2")
         file.writeBytes(bytes)
@@ -278,18 +293,11 @@ class AnkiPackageWriterTest {
         val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
-            val decks = HashMap<Long, String>()
-            db.rawQuery("select id, name from decks", null).use { c ->
-                while (c.moveToNext()) decks[c.getLong(0)] = c.getString(1)
-            }
-            db.rawQuery(
-                "select decks.name from cards join notes on notes.id = cards.nid " +
-                    "join decks on decks.id = cards.did order by cards.due",
-                null
-            ).use { c ->
+            val names = deckNames(db)
+            db.rawQuery("select did from cards order by due", null).use { c ->
                 assertTrue(c.moveToFirst())
                 // samplePaper puts its only question in the "Basics" category.
-                assertEquals("Biology: Cell::Basics", c.getString(0))
+                assertEquals("Biology: Cell::Basics", names[c.getLong(0)])
             }
         } finally {
             db.close()
@@ -303,12 +311,10 @@ class AnkiPackageWriterTest {
         val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
-            db.rawQuery(
-                "select decks.name from cards join notes on notes.id = cards.nid join decks on decks.id = cards.did",
-                null
-            ).use { c ->
+            val names = deckNames(db)
+            db.rawQuery("select did from cards", null).use { c ->
                 assertTrue(c.moveToFirst())
-                assertEquals("Flat", c.getString(0))
+                assertEquals("Flat", names[c.getLong(0)])
             }
         } finally {
             db.close()

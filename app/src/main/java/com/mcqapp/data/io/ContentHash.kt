@@ -3,6 +3,7 @@ package com.mcqapp.data.io
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 

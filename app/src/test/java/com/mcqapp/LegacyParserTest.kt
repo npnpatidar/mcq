@@ -373,6 +373,99 @@ class LegacyParserTest {
     }
 
     @Test
+    fun parsesStructuredElementsFormat() {
+        val json = """
+        [
+          {
+            "question_num": "1.)",
+            "question_elements": [
+              {"type": "text", "content": "Match the kings:"},
+              {"type": "table", "content": [["King", "Year"], ["Akbar", "1556"]]}
+            ],
+            "options_elements": {
+              "a": [{"type": "text", "content": "Jalal"}],
+              "b": [{"type": "text", "content": "Mansingh"}]
+            },
+            "answer": "a",
+            "explanation_elements": [
+              {"type": "text", "content": "Jalal was sent in 1572."}
+            ]
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("1.) "),
+                com.mcqapp.domain.ContentElement.TextElement("Match the kings:"),
+                com.mcqapp.domain.ContentElement.TableElement(
+                    listOf(listOf("King", "Year"), listOf("Akbar", "1556"))
+                )
+            ),
+            question.elements
+        )
+        assertEquals("1.) Match the kings:", question.text)
+        assertEquals(
+            listOf("a"),
+            question.correctOptionIds
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("Jalal")),
+            question.options[0].elements
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("Jalal was sent in 1572.")),
+            question.explanationElements
+        )
+    }
+
+    @Test
+    fun imageElementContentExtractsTheImgSrc() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Identify the shape:"}
+            ],
+            "options_elements": {
+              "a": [{"type": "image", "content": "<br/><img src=\"/tmp/q100/img/fig20.png\" />"}]
+            },
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.ImageElement("/tmp/q100/img/fig20.png")),
+            question.options[0].elements
+        )
+    }
+
+    @Test
+    fun oldStringFormatStillParsesWithElementsPopulated() {
+        val json = """
+        [
+          {"text": "Plain question?", "options": ["A", "B"], "answer": "a"}
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("Plain question?")),
+            question.elements
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("A")),
+            question.options[0].elements
+        )
+    }
+
+    @Test
     fun cleanFileProducesNoDiagnostics() {
         val json = """
         {

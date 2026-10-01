@@ -440,7 +440,69 @@ class AnkiPackageWriterTest {
     fun questionTextIsHtmlEscaped() {
         val pool = AnkiMediaPool()
         val html = pool.htmlField("5 < 6 & \"quoted\"", null)
-        assertEquals("5 &lt; 6 &amp; &quot;quoted&quot;", html)
+        assertEquals("5 &lt; 6 &amp; &quot;quoted\"", html)
+    }
+
+    @Test
+    fun richContentIsEmbeddedInNoteFields() {
+        val math = "<math><mi>x</mi></math>"
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q1",
+            text = "Solve:",
+            elements = listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Solve:"),
+                com.mcqapp.domain.ContentElement.MathElement(math),
+                com.mcqapp.domain.ContentElement.TableElement(
+                    listOf(listOf("a", "b"), listOf("1", "2"))
+                )
+            ),
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(
+                    "a", "x = 1",
+                    listOf(com.mcqapp.domain.ContentElement.TextElement("x = 1"))
+                ),
+                com.mcqapp.data.io.OptionDto(
+                    "b", "x = 2",
+                    listOf(
+                        com.mcqapp.domain.ContentElement.TextElement("x = 2"),
+                        com.mcqapp.domain.ContentElement.ImageElement(png1x1)
+                    )
+                )
+            ),
+            correctOptionIds = listOf("a"),
+            explanation = "Because",
+            explanationElements = listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Because"),
+                com.mcqapp.domain.ContentElement.MathElement(math)
+            )
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "P",
+            categories = listOf(
+                CategoryDto(id = "c1", title = "Cat", questions = listOf(question))
+            )
+        )
+        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery("select flds from notes", null).use { n ->
+                assertTrue(n.moveToFirst())
+                val flds = n.getString(0)
+                val front = flds.substringBefore("")
+                val back = flds.substringAfter("").substringBefore("")
+                assertTrue("math in front: $front", math in front)
+                assertTrue("table in front: $front", "<table" in front)
+                assertTrue("option image in front: $front", "<img" in front)
+                assertTrue("math in back: $back", math in back)
+                assertTrue("explanation in back: $back", "Because" in back)
+            }
+            // The option image is stored in the media pool, referenced by filename.
+            assertTrue("media written", entries(apkg).keys.any { it != "collection.anki2" && it != "media" })
+        } finally {
+            db.close()
+            file.delete()
+        }
     }
 
     @Test

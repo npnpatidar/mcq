@@ -7,8 +7,11 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
+import kotlinx.serialization.json.Json
 
 data class ImportReport(
     val newPapers: Int,
@@ -23,6 +26,8 @@ data class ImportReport(
 )
 
 class Importer(private val db: AppDatabase) {
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     /**
      * @param scheduling review progress keyed by question id, applied to the
@@ -239,9 +244,9 @@ class Importer(private val db: AppDatabase) {
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
-                                text = questionDto.text,
+                                text = questionDto.elements.toContentJson(json),
                                 image = scaledQuestion.image,
-                                explanation = questionDto.explanation,
+                                explanation = questionDto.explanationElements.toContentJson(json),
                                 explanationImage = scaledQuestion.explanationImage,
                                 difficulty = questionDto.difficulty,
                                 marks = questionDto.marks,
@@ -288,7 +293,7 @@ class Importer(private val db: AppDatabase) {
                                 OptionEntity(
                                     id = o.id,
                                     questionId = questionDto.id,
-                                    text = o.text,
+                                    text = o.elements.toContentJson(json),
                                     image = o.image,
                                     sortOrder = index
                                 )

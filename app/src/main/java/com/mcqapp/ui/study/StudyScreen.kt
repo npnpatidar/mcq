@@ -49,6 +49,7 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.ui.StudyViewModelFactory
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 
 /**
@@ -175,7 +176,7 @@ private fun QuestionCard(
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            Text(question.text, style = MaterialTheme.typography.bodyMedium)
+            ContentElements(question.elements, textStyle = MaterialTheme.typography.bodyMedium)
             QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))
             question.options.forEach { option ->
                 val isCorrect = option.id in question.correctOptionIds
@@ -208,7 +209,7 @@ private fun QuestionCard(
                         else MaterialTheme.colorScheme.onSurface
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(option.text, style = MaterialTheme.typography.bodySmall)
+                        ContentElements(option.elements, textStyle = MaterialTheme.typography.bodySmall)
                         QuestionImage(src = option.image)
                     }
                 }
@@ -216,7 +217,7 @@ private fun QuestionCard(
             if (revealed && question.explanation.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Explanation", style = MaterialTheme.typography.labelMedium)
-                Text(question.explanation, style = MaterialTheme.typography.bodySmall)
+                ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodySmall)
                 QuestionImage(src = question.explanationImage)
             }
         }

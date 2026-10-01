@@ -1,6 +1,9 @@
 package com.mcqapp.data.anki
 
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.ContentElementListJson
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -36,13 +39,22 @@ data class AnkiMcqPayload(
     val explanationImage: String? = null,
     val difficulty: String = "medium",
     val marks: Double = 1.0,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    /** Rich content; see [com.mcqapp.domain.ContentElement]. */
+    @SerialName("question_elements")
+    @Serializable(with = ContentElementListJson::class)
+    val elements: List<ContentElement> = emptyList(),
+    @SerialName("explanation_elements")
+    @Serializable(with = ContentElementListJson::class)
+    val explanationElements: List<ContentElement> = emptyList()
 )
 
 @Serializable
 data class AnkiMcqOption(
     val id: String,
-    val text: String,
+    val text: String = "",
+    @Serializable(with = ContentElementListJson::class)
+    val elements: List<ContentElement> = emptyList(),
     val image: String? = null
 )
 
@@ -71,11 +83,13 @@ internal fun payloadFromField(field: String?): AnkiMcqPayload? {
 internal fun payloadOf(question: com.mcqapp.domain.Question): AnkiMcqPayload =
     AnkiMcqPayload(
         image = question.image,
-        options = question.options.map { AnkiMcqOption(it.id, it.text, it.image) },
+        options = question.options.map { AnkiMcqOption(it.id, it.text, it.elements, it.image) },
         correct = question.correctOptionIds.toList(),
         explanation = question.explanation,
+        explanationElements = question.explanationElements,
         explanationImage = question.explanationImage,
         difficulty = question.difficulty.label.lowercase(),
         marks = question.marks,
-        tags = question.tags
+        tags = question.tags,
+        elements = question.elements
     )

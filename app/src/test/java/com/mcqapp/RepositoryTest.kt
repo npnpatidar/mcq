@@ -220,7 +220,7 @@ class RepositoryTest {
         val before = db.cardStateDao().get("p1", "q1")!!
         assertTrue(before.reps >= 2)
         // Change the text, so the stored hash no longer matches.
-        repository.saveQuestion(question("q1", setOf("q1-a")).copy(text = "Rewritten"))
+        repository.saveQuestion(question("q1", setOf("q1-a")).copy(elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Rewritten"))))
         repository.getStudyQueue("p1")
         val after = db.cardStateDao().get("p1", "q1")!!
         assertEquals(0, after.reps)
@@ -231,7 +231,7 @@ class RepositoryTest {
     fun `a rewritten question is reset once, not on every load`() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))
-        repository.saveQuestion(question("q1", setOf("q1-a")).copy(text = "Rewritten"))
+        repository.saveQuestion(question("q1", setOf("q1-a")).copy(elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Rewritten"))))
         repository.getStudyQueue("p1")
         // The reset must store the new hash, otherwise the next load sees a
         // stale hash again and wipes any progress made since.
@@ -394,6 +394,41 @@ class RepositoryTest {
         val questions = repository.getQuestionsForCategories(listOf("c1", "c2"))
         assertEquals(setOf("q1", "q2"), questions.map { it.id }.toSet())
         assertTrue(repository.getQuestionsForCategories(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun questionElementsRoundTripThroughTheDatabase() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        val elements = listOf(
+            com.mcqapp.domain.ContentElement.TextElement("What is 2+2?"),
+            com.mcqapp.domain.ContentElement.TableElement(listOf(listOf("a", "b"), listOf("1", "2")))
+        )
+        repository.saveQuestion(question("q1", setOf("q1-a")).copy(elements = elements))
+
+        val stored = repository.getQuestion("q1")!!
+        assertEquals(elements, stored.elements)
+        assertEquals("What is 2+2?", stored.text)
+    }
+
+    @Test
+    fun optionElementsRoundTripThroughTheDatabase() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        val optionElements = listOf(
+            com.mcqapp.domain.ContentElement.TextElement("Four"),
+            com.mcqapp.domain.ContentElement.MathElement("<math><mi>x</mi></math>")
+        )
+        val question = question("q1", setOf("q1-a")).copy(
+            options = listOf(
+                com.mcqapp.domain.QuestionOption("q1-a", elements = optionElements),
+                com.mcqapp.domain.QuestionOption("q1-b", text = "Five")
+            )
+        )
+        repository.saveQuestion(question)
+
+        val stored = repository.getQuestion("q1")!!
+        assertEquals(optionElements, stored.options[0].elements)
+        assertEquals("Four", stored.options[0].text)
+        assertEquals("Five", stored.options[1].text)
     }
 
     @Test

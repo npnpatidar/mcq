@@ -6,6 +6,8 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -355,13 +357,28 @@ object AnkiPackageReader {
             return ParsedQuestion(QuestionDto(
                 id = questionId,
                 text = AnkiHtml.toPlainText(IMG_TAG.replace(questionHtml, "")),
+                elements = payload.elements.ifEmpty {
+                    listOf(com.mcqapp.domain.ContentElement.TextElement(
+                        AnkiHtml.toPlainText(IMG_TAG.replace(questionHtml, ""))
+                    ))
+                },
                 image = media.rewrite(payload.image)
                     ?: IMG_TAG.find(questionHtml)?.groupValues?.get(1),
                 options = payload.options.map {
-                    OptionDto(it.id, AnkiHtml.toPlainText(it.text), media.rewrite(it.image))
+                    OptionDto(
+                        id = it.id,
+                        text = it.text,
+                        elements = it.elements.ifEmpty {
+                            listOf(com.mcqapp.domain.ContentElement.TextElement(it.text))
+                        },
+                        image = media.rewrite(it.image)
+                    )
                 },
                 correctOptionIds = payload.correct,
-                explanation = AnkiHtml.toPlainText(payload.explanation),
+                explanation = payload.explanation,
+                explanationElements = payload.explanationElements.ifEmpty {
+                    listOf(com.mcqapp.domain.ContentElement.TextElement(payload.explanation))
+                },
                 explanationImage = media.rewrite(payload.explanationImage),
                 difficulty = payload.difficulty,
                 marks = payload.marks,
@@ -376,6 +393,42 @@ object AnkiPackageReader {
         // only as a tag; recover it before the default (medium) overwrites it.
         // rawTags: parseTags strips mcqapp-* before this point.
         val difficulty = difficultyFromTags(note.rawTags)
+
+        // A foreign deck with no mcqapp payload: options are `<p>(a) ...</p>`
+        // blocks on the front, the answer is `Answer: (a)` on the back, and
+        // the explanation follows `Exp:`. Rich markup (math, tables, images)
+        // becomes content elements.
+        val rewrittenFront = media.rewrite(frontHtml).orEmpty()
+        val (questionHtml, foreignOptions) = splitForeignFront(rewrittenFront)
+        val (correctLetter, explanationHtml) = parseForeignBack(media.rewrite(backHtml).orEmpty())
+        if (foreignOptions.isNotEmpty() && correctLetter != null) {
+            val questionElements = htmlToElements(questionHtml, media)
+            val options = foreignOptions.map { (letter, html) ->
+                val elements = htmlToElements(html, media)
+                OptionDto(
+                    id = letter,
+                    text = elements.textContent,
+                    elements = elements
+                )
+            }
+            val explanationElements = htmlToElements(explanationHtml, media)
+            val correctId = options.firstOrNull { it.id.equals(correctLetter, ignoreCase = true) }?.id
+            return ParsedQuestion(
+                QuestionDto(
+                    id = questionId,
+                    text = questionElements.textContent,
+                    elements = questionElements,
+                    options = options,
+                    correctOptionIds = listOfNotNull(correctId),
+                    explanation = explanationElements.textContent,
+                    explanationElements = explanationElements,
+                    difficulty = difficulty,
+                    tags = note.tags
+                ),
+                isRecall = false
+            )
+        }
+
         if (back.hasMarkers) {
             val options = back.options.mapIndexed { i, opt ->
                 OptionDto("o$i", AnkiHtml.toPlainText(opt.text))
@@ -403,7 +456,9 @@ object AnkiPackageReader {
                 id = questionId,
                 text = front.first,
                 image = front.second,
-                options = listOf(OptionDto("o0", answer.first.ifBlank { front.first }, answer.second)),
+                options = listOf(
+                    OptionDto("o0", text = answer.first.ifBlank { front.first }, image = answer.second)
+                ),
                 correctOptionIds = listOf("o0"),
                 difficulty = difficulty,
                 tags = note.tags
@@ -417,6 +472,111 @@ object AnkiPackageReader {
         val tag = tags.firstOrNull { it.startsWith("mcqapp-difficulty-") } ?: return "medium"
         return tag.removePrefix("mcqapp-difficulty-").takeIf { it in setOf("easy", "medium", "hard") }
             ?: "medium"
+    }
+
+    // ---- rich HTML fields -> content elements ----
+
+    /**
+     * Converts one Anki field's HTML into content elements in document order:
+     * text runs, `<math>` blocks, `<table>` blocks, and every `<img>` (a
+     * field may carry several). Image srcs are rewritten to data URIs.
+     */
+    private fun htmlToElements(html: String, media: MediaIndex): List<ContentElement> {
+        val rewritten = media.rewrite(html).orEmpty()
+        val out = mutableListOf<ContentElement>()
+        val tagPattern = Regex("<(math|table|img)\\b", RegexOption.IGNORE_CASE)
+        var pos = 0
+        while (pos < rewritten.length) {
+            val match = tagPattern.find(rewritten, pos) ?: break
+            addTextRun(out, rewritten.substring(pos, match.range.first))
+            when (match.groupValues[1].lowercase()) {
+                "math" -> {
+                    val end = findClosingTag(rewritten, "math", match.range.first)
+                    out += ContentElement.MathElement(rewritten.substring(match.range.first, end))
+                    pos = end
+                }
+                "table" -> {
+                    val end = findClosingTag(rewritten, "table", match.range.first)
+                    parseTable(rewritten.substring(match.range.first, end))?.let { out += it }
+                    pos = end
+                }
+                "img" -> {
+                    val end = rewritten.indexOf('>', match.range.first)
+                    if (end < 0) break
+                    val tag = rewritten.substring(match.range.first, end + 1)
+                    val src = IMG_TAG.find(tag)?.groupValues?.get(1)
+                    if (src != null) out += ContentElement.ImageElement(media.rewrite(src) ?: src)
+                    pos = end + 1
+                }
+            }
+        }
+        addTextRun(out, rewritten.substring(pos))
+        return out
+    }
+
+    private fun addTextRun(out: MutableList<ContentElement>, text: String) {
+        val plain = AnkiHtml.toPlainText(text)
+        if (plain.isNotEmpty()) out += ContentElement.TextElement(plain)
+    }
+
+    /** Index just past the matching close tag, honouring nesting. */
+    private fun findClosingTag(html: String, tag: String, from: Int): Int {
+        val open = Regex("<$tag\\b", RegexOption.IGNORE_CASE)
+        val close = Regex("</$tag\\s*>", RegexOption.IGNORE_CASE)
+        var depth = 0
+        var pos = from
+        while (pos < html.length) {
+            val nextOpen = open.find(html, pos)
+            val nextClose = close.find(html, pos)
+            if (nextClose == null) return html.length
+            if (nextOpen != null && nextOpen.range.first < nextClose.range.first) {
+                depth++
+                pos = nextOpen.range.first + 1
+            } else {
+                depth--
+                pos = nextClose.range.last + 1
+                if (depth == 0) return pos
+            }
+        }
+        return html.length
+    }
+
+    /** `<table>` rows and cells; cell markup is flattened to text. */
+    private fun parseTable(tableHtml: String): ContentElement.TableElement? {
+        val rowPattern = Regex("(?is)<tr\\b[^>]*>(.*?)</tr>")
+        val cellPattern = Regex("(?is)<t[dh]\\b[^>]*>(.*?)</t[dh]>")
+        val rows = rowPattern.findAll(tableHtml).map { rowMatch ->
+            cellPattern.findAll(rowMatch.groupValues[1]).map { cellMatch ->
+                AnkiHtml.toPlainText(cellMatch.groupValues[1])
+            }.toList()
+        }.toList()
+        return if (rows.isEmpty()) null else ContentElement.TableElement(rows)
+    }
+
+    /**
+     * Splits a foreign front field into the question part and its options.
+     * Foreign decks write options as `<p>(a) ...</p>` blocks; everything
+     * before the first one is the question.
+     */
+    private fun splitForeignFront(frontHtml: String): Pair<String, List<Pair<String, String>>> {
+        val optionPattern = Regex("(?is)<p>\\s*\\(([^)]+)\\)\\s*(.*?)</p>")
+        val matches = optionPattern.findAll(frontHtml).toList()
+        if (matches.isEmpty()) return frontHtml to emptyList()
+        val questionHtml = frontHtml.substring(0, matches.first().range.first)
+        val options = matches.map { it.groupValues[1] to it.groupValues[2] }
+        return questionHtml to options
+    }
+
+    /**
+     * Reads a foreign back field: the correct option letter from
+     * `Answer: (a)` and the explanation block after `Exp:`.
+     */
+    private fun parseForeignBack(backHtml: String): Pair<String?, String> {
+        val answer = Regex("(?i)Answer:\\s*\\(([^)]+)\\)")
+            .find(backHtml)?.groupValues?.get(1)
+        val expBlock = Regex("(?is)<p>\\s*Exp:\\s*(.*?)</p>")
+            .find(backHtml)?.groupValues?.get(1).orEmpty()
+        return answer to expBlock
     }
 
     /**

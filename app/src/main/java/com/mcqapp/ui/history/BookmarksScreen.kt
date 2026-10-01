@@ -46,6 +46,7 @@ import androidx.navigation.NavController
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -146,17 +147,17 @@ fun BookmarksScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    question.text,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                ContentElements(
+                                    question.elements,
+                                    textStyle = MaterialTheme.typography.bodyMedium,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                if (question.explanation.isNotBlank()) {
+                                if (question.explanationElements.isNotEmpty()) {
                                     Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        question.explanation,
-                                        style = MaterialTheme.typography.bodySmall,
+                                    ContentElements(
+                                        question.explanationElements,
+                                        textStyle = MaterialTheme.typography.bodySmall,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )

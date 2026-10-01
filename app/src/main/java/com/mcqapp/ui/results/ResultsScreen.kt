@@ -46,6 +46,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.ui.ResultsViewModelFactory
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -309,9 +310,9 @@ private fun ResultCard(
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(end = 8.dp)
                 )
-                Text(
-                    result.text,
-                    style = MaterialTheme.typography.bodyMedium,
+                ContentElements(
+                    result.elements,
+                    textStyle = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
@@ -346,14 +347,14 @@ private fun ResultCard(
                             MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.width(20.dp)
                     )
-                    Text(option.text, style = MaterialTheme.typography.bodySmall)
+                    ContentElements(option.elements, textStyle = MaterialTheme.typography.bodySmall)
                 }
             }
-            if (result.explanation.isNotBlank()) {
+            if (result.explanationElements.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "Explanation: ${result.explanation}",
-                    style = MaterialTheme.typography.bodySmall
+                ContentElements(
+                    result.explanationElements,
+                    textStyle = MaterialTheme.typography.bodySmall
                 )
             }
             if (showDwell) {

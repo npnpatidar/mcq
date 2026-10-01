@@ -151,7 +151,7 @@ object AnkiPackageWriter {
      */
     private fun buildFront(question: Question, media: AnkiMediaPool): String {
         val sb = StringBuilder()
-        sb.append(media.htmlField(question.text, question.image))
+        sb.append(media.elementsToHtml(question.elements, question.image))
         sb.append(LINE_BREAK).append(LINE_BREAK)
         if (question.correctOptionIds.size > 1) {
             // Options alone would imply exactly one of them is right.
@@ -159,7 +159,7 @@ object AnkiPackageWriter {
         }
         question.options.forEachIndexed { i, option ->
             sb.append("<b>").append(letterFor(i)).append(".</b> ")
-            sb.append(media.htmlField(option.text, option.image))
+            sb.append(media.elementsToHtml(option.elements, option.image))
             sb.append(LINE_BREAK)
         }
         return sb.toString().trim()
@@ -217,13 +217,13 @@ object AnkiPackageWriter {
         question.options.forEachIndexed { i, option ->
             if (option.id !in question.correctOptionIds) return@forEachIndexed
             sb.append("&#10003; <b>").append(letterFor(i)).append(".</b> ")
-            sb.append(media.htmlField(option.text, option.image))
+            sb.append(media.elementsToHtml(option.elements, option.image))
             sb.append(LINE_BREAK)
         }
-        if (question.explanation.isNotBlank()) {
+        if (question.explanationElements.isNotEmpty()) {
             if (sb.isNotEmpty()) sb.append("<br>")
             sb.append("<b>Explanation:</b> ")
-                .append(media.htmlField(question.explanation, question.explanationImage))
+                .append(media.elementsToHtml(question.explanationElements, question.explanationImage))
         }
         return sb.toString().trim()
     }

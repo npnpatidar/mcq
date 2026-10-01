@@ -397,6 +397,93 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun foreignRichFieldBecomesContentElements() {
+        val math = "<math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\"><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>"
+        val front = "4.) हल करें: $math x का मान?<p>(a) x = 1</p><p>(b) x <math><mi>y</mi></math></p>"
+        val back = "<p><strong>Answer: (b)</strong> x <math><mi>y</mi></math></p><p>Exp: हल <math><mi>z</mi></math></p>"
+        val apkg = legacyPackage(notes = listOf("$front${us}$back" to 1L))
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("4.) हल करें:"),
+                com.mcqapp.domain.ContentElement.MathElement(math),
+                com.mcqapp.domain.ContentElement.TextElement("x का मान?")
+            ),
+            question.elements
+        )
+        assertEquals(2, question.options.size)
+        assertEquals("a", question.options[0].id)
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("x = 1")),
+            question.options[0].elements
+        )
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("x"),
+                com.mcqapp.domain.ContentElement.MathElement("<math><mi>y</mi></math>")
+            ),
+            question.options[1].elements
+        )
+        assertEquals(listOf("b"), question.correctOptionIds)
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("हल"),
+                com.mcqapp.domain.ContentElement.MathElement("<math><mi>z</mi></math>")
+            ),
+            question.explanationElements
+        )
+    }
+
+    @Test
+    fun foreignFieldWithTableBecomesTableElement() {
+        val front = "10.) तालिका: <table border=\"1\"><tr><td>Mad</td><td>Year</td></tr><tr><td>Kumbhalgarh</td><td>1458</td></tr></table><p>(a) विकल्प एक</p><p>(b) विकल्प दो</p>"
+        val back = "<p><strong>Answer: (a)</strong> विकल्प एक</p><p>Exp: तालिका</p>"
+        val apkg = legacyPackage(notes = listOf("$front${us}$back" to 1L))
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("10.) तालिका:"),
+                com.mcqapp.domain.ContentElement.TableElement(
+                    listOf(listOf("Mad", "Year"), listOf("Kumbhalgarh", "1458"))
+                ),
+                com.mcqapp.domain.ContentElement.TextElement("विकल्प एक")
+            ),
+            question.elements
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("विकल्प दो")),
+            question.options[1].elements
+        )
+        assertEquals(listOf("a"), question.correctOptionIds)
+    }
+
+    @Test
+    fun foreignFieldWithMultipleImagesKeepsThemAllAsElements() {
+        val front = "3.) चित्र: <img src=\"0\"/><br/><img src=\"1\"/><p>(a) वृत्त</p><p>(b) वर्ग</p>"
+        val back = "<p><strong>Answer: (a)</strong> वृत्त</p><p>Exp: गोला</p>"
+        val apkg = legacyPackage(
+            notes = listOf("$front${us}$back" to 1L),
+            media = mapOf("0" to "a.png", "1" to "b.png"),
+            mediaBytes = mapOf("0" to pngBytes, "1" to pngBytes)
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals(3, question.elements.size)
+        assertEquals(com.mcqapp.domain.ContentElement.TextElement("3.) चित्र:"), question.elements[0])
+        assertTrue("first image an element", question.elements[1] is com.mcqapp.domain.ContentElement.ImageElement)
+        assertTrue("second image an element", question.elements[2] is com.mcqapp.domain.ContentElement.ImageElement)
+        val images = question.elements.filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+        assertEquals(2, images.size)
+        assertTrue(images.all { it.src.startsWith("data:image/png;base64,") })
+        assertEquals(listOf("a"), question.correctOptionIds)
+    }
+
+    @Test
     fun modernSchema14PackageIsReadFromNormalisedTables() {
         val db = newCollection(14)
         db.execSQL("create table fields (ntid integer not null, ord integer not null, name text not null, primary key (ntid, ord))")
@@ -492,7 +579,7 @@ class AnkiPackageReaderTest {
         id = id,
         text = text,
         image = image,
-        options = options.map { OptionDto(it.id, it.text, it.image) },
+        options = options.map { OptionDto(it.id, text = it.text, image = it.image) },
         correctOptionIds = correctOptionIds.toList(),
         explanation = explanation,
         explanationImage = explanationImage,

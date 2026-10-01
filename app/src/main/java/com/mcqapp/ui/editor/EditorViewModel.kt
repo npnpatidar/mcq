@@ -237,14 +237,16 @@ class EditorViewModel(
     private fun buildDto(): QuestionDto? {
         val s = _state.value
         if (s.text.isBlank() || s.options.size < 2 || s.options.any { it.text.isBlank() }) return null
-        val edited = s.options.map { QuestionOption(it.id, it.text.trim(), it.image.trim().ifBlank { null }) }
+        val edited = s.options.map { QuestionOption(it.id, listOf(com.mcqapp.domain.ContentElement.TextElement(it.text.trim())), it.image.trim().ifBlank { null }) }
         return QuestionDto(
             id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
             text = s.text.trim(),
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement(s.text.trim())),
             image = s.image.trim().ifBlank { null },
-            options = edited.map { com.mcqapp.data.io.OptionDto(it.id, it.text, it.image) },
+            options = edited.map { com.mcqapp.data.io.OptionDto(it.id, it.text, it.elements, it.image) },
             correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toList(),
             explanation = s.explanation.trim(),
+            explanationElements = listOf(com.mcqapp.domain.ContentElement.TextElement(s.explanation.trim())),
             explanationImage = s.explanationImage.trim().ifBlank { null },
             difficulty = s.difficulty.label,
             marks = parseMarks(s.marks),
@@ -256,11 +258,11 @@ class EditorViewModel(
         return Question(
             id = dto.id,
             categoryId = categoryId,
-            text = dto.text,
+            elements = dto.elements,
             image = dto.image,
-            options = dto.options.map { QuestionOption(it.id, it.text, it.image) },
+            options = dto.options.map { QuestionOption(it.id, it.elements, it.image) },
             correctOptionIds = dto.correctOptionIds.toSet(),
-            explanation = dto.explanation,
+            explanationElements = dto.explanationElements,
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,

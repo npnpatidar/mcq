@@ -1,5 +1,7 @@
 package com.mcqapp.data.io
 
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.textContent
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -241,15 +243,20 @@ object LegacyParser {
     }
 
     private fun parseQuestion(obj: JsonObject, warnings: MutableList<String>): QuestionDto {
-        val text = obj["text"]?.jsonPrimitive?.contentOrNull
-            ?: obj["question"]?.jsonPrimitive?.contentOrNull
-            ?: ""
+        val elements = buildList {
+            obj["question_num"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let {
+                add(com.mcqapp.domain.ContentElement.TextElement("$it "))
+            }
+            addAll(parseElements(obj["question_elements"], obj["text"], obj["question"]))
+        }
+        val text = elements.textContent
         val image = obj["image"]?.jsonPrimitive?.contentOrNull
             ?: obj["imageUrl"]?.jsonPrimitive?.contentOrNull
-        val explanation = obj["explanation"]?.jsonPrimitive?.contentOrNull
-            ?: obj["explain"]?.jsonPrimitive?.contentOrNull
-            ?: obj["reason"]?.jsonPrimitive?.contentOrNull
-            ?: ""
+        val explanationElements = parseElements(
+            obj["explanation_elements"],
+            obj["explanation"], obj["explain"], obj["reason"]
+        )
+        val explanation = explanationElements.textContent
         val explanationImage = obj["explanationImage"]?.jsonPrimitive?.contentOrNull
             ?: obj["explanation_image"]?.jsonPrimitive?.contentOrNull
             ?: obj["explainImage"]?.jsonPrimitive?.contentOrNull
@@ -273,10 +280,12 @@ object LegacyParser {
         return QuestionDto(
             id = id,
             text = text,
+            elements = elements,
             image = image,
             options = options,
             correctOptionIds = correctIds,
             explanation = explanation,
+            explanationElements = explanationElements,
             explanationImage = explanationImage,
             difficulty = difficulty,
             marks = marks,
@@ -284,15 +293,79 @@ object LegacyParser {
         )
     }
 
+    /**
+     * Reads a structured element list, falling back to a plain string (old
+     * format) wrapped as one TextElement.
+     */
+    private fun parseElements(elementsJson: JsonElement?, vararg fallbacks: JsonElement?): List<ContentElement> {
+        val arr = elementsJson as? JsonArray
+        if (arr != null) {
+            val parsed = arr.mapNotNull { el ->
+                if (el is JsonObject) parseContentElement(el) else null
+            }
+            if (parsed.isNotEmpty()) return parsed
+        }
+        for (fallback in fallbacks) {
+            val s = fallback?.jsonPrimitive?.contentOrNull
+            if (!s.isNullOrBlank()) return listOf(ContentElement.TextElement(s))
+        }
+        return emptyList()
+    }
+
+    /** Parses one `{type, content}` element; image content is an `<img>` tag. */
+    private fun parseContentElement(obj: JsonObject): ContentElement? {
+        return when (obj["type"]?.jsonPrimitive?.contentOrNull) {
+            "text" -> ContentElement.TextElement(obj["content"]?.jsonPrimitive?.contentOrNull ?: "")
+            "image" -> {
+                val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return null
+                ContentElement.ImageElement(extractImgSrc(content) ?: content)
+            }
+            "table" -> {
+                val rows = obj["content"]?.jsonArray?.map { row ->
+                    row.jsonArray.map { it.jsonPrimitive.content }
+                } ?: return null
+                ContentElement.TableElement(rows)
+            }
+            "math" -> {
+                val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return null
+                ContentElement.MathElement(content)
+            }
+            else -> null
+        }
+    }
+
+    /** Pulls the `src` out of an `<img ...>` tag; null when there is none. */
+    private fun extractImgSrc(html: String): String? =
+        Regex("""<img[^>]*src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(html)?.groupValues?.get(1)
+
     private fun parseOptions(obj: JsonObject): List<OptionDto> {
+        val elementsMap = obj["options_elements"] as? JsonObject
+        if (elementsMap != null) {
+            val parsed = elementsMap.entries.mapNotNull { (optionId, raw) ->
+                val elements = (raw as? JsonArray)?.mapNotNull { el ->
+                    if (el is JsonObject) parseContentElement(el) else null
+                } ?: return@mapNotNull null
+                OptionDto(
+                    id = optionId,
+                    text = elements.textContent,
+                    elements = elements
+                )
+            }
+            if (parsed.isNotEmpty()) return parsed
+        }
         val raw = obj["options"] ?: return emptyList()
         return when (raw) {
             is JsonArray -> raw.mapIndexedNotNull { index, el ->
                 when (el) {
-                    is JsonPrimitive -> OptionDto(
-                        id = letterIds.getOrElse(index) { index.toString() },
-                        text = el.content
-                    )
+                    is JsonPrimitive -> {
+                        val text = el.content
+                        OptionDto(
+                            id = letterIds.getOrElse(index) { index.toString() },
+                            text = text,
+                            elements = listOf(ContentElement.TextElement(text))
+                        )
+                    }
                     is JsonObject -> {
                         val text = el["text"]?.jsonPrimitive?.contentOrNull
                             ?: el["value"]?.jsonPrimitive?.contentOrNull
@@ -302,6 +375,7 @@ object LegacyParser {
                         OptionDto(
                             id = oid,
                             text = text,
+                            elements = listOf(ContentElement.TextElement(text)),
                             image = el["image"]?.jsonPrimitive?.contentOrNull
                         )
                     }

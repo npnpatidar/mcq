@@ -1,27 +1,92 @@
 package com.mcqapp.data.io
 
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.ContentElementListJson
+import com.mcqapp.domain.textContent
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.buildClassSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class OptionDto(
     val id: String,
-    val text: String,
+    val text: String = "",
+    @Serializable(with = ContentElementListJson::class)
+    val elements: List<ContentElement> = emptyList(),
     val image: String? = null
 )
 
 @Serializable
 data class QuestionDto(
     val id: String,
-    val text: String,
+    val text: String = "",
+    @SerialName("question_elements")
+    @Serializable(with = ContentElementListJson::class)
+    val elements: List<ContentElement> = emptyList(),
     val image: String? = null,
+    @SerialName("options_elements")
+    @Serializable(with = OptionListJson::class)
     val options: List<OptionDto> = emptyList(),
     val correctOptionIds: List<String> = emptyList(),
     val explanation: String = "",
+    @SerialName("explanation_elements")
+    @Serializable(with = ContentElementListJson::class)
+    val explanationElements: List<ContentElement> = emptyList(),
     val explanationImage: String? = null,
     val difficulty: String = "medium",
     val marks: Double = 1.0,
     val tags: List<String> = emptyList()
 )
+
+/**
+ * Serializes the options as the structured `options_elements` object the
+ * example format uses: `{optionId: [elements]}`. An option's separate image
+ * field has no place in that shape, so it is appended as an image element
+ * when the elements do not already carry one.
+ */
+object OptionListJson : KSerializer<List<OptionDto>> {
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("OptionList") {
+        element("options_elements", String.serializer().descriptor)
+    }
+
+    override fun serialize(encoder: Encoder, value: List<OptionDto>) {
+        val obj = buildJsonObject {
+            value.forEach { option ->
+                val elements = option.elements.let { els ->
+                    if (option.image != null && els.none { it is ContentElement.ImageElement }) {
+                        els + ContentElement.ImageElement(option.image)
+                    } else {
+                        els
+                    }
+                }
+                put(option.id, json.encodeToJsonElement(ContentElementListJson, elements))
+            }
+        }
+        encoder.encodeSerializableValue(JsonElement.serializer(), obj)
+    }
+
+    override fun deserialize(decoder: Decoder): List<OptionDto> {
+        val obj = decoder.decodeSerializableValue(JsonElement.serializer()).jsonObject
+        return obj.entries.map { (id, el) ->
+            val elements = json.decodeFromJsonElement(ContentElementListJson, el.jsonArray)
+            OptionDto(id = id, text = elements.textContent, elements = elements)
+        }
+    }
+}
 
 @Serializable
 data class CategoryDto(

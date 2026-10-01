@@ -25,6 +25,8 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -349,11 +351,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 Question(
                     id = it.id,
                     categoryId = it.categoryId,
-                    text = it.text,
+                    elements = it.text.parseContentElements(json),
                     image = it.image,
-                    options = options.map { opt -> QuestionOption(opt.id, opt.text, opt.image) },
+                    options = options.map { opt ->
+                        QuestionOption(opt.id, opt.text.parseContentElements(json), opt.image)
+                    },
                     correctOptionIds = correctIds,
-                    explanation = it.explanation,
+                    explanationElements = it.explanation.parseContentElements(json),
                     explanationImage = it.explanationImage,
                     difficulty = Difficulty.fromLabel(it.difficulty),
                     marks = it.marks,
@@ -383,11 +387,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             Question(
                 id = entity.id,
                 categoryId = entity.categoryId,
-                text = entity.text,
+                elements = entity.text.parseContentElements(json),
                 image = entity.image,
-                options = options.map { QuestionOption(it.id, it.text, it.image) },
+                options = options.map { QuestionOption(it.id, it.text.parseContentElements(json), it.image) },
                 correctOptionIds = correctIds,
-                explanation = entity.explanation,
+                explanationElements = entity.explanation.parseContentElements(json),
                 difficulty = Difficulty.fromLabel(entity.difficulty),
                 marks = entity.marks,
                 tags = entity.tags.split(",").filter { it.isNotBlank() }
@@ -412,11 +416,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         return Question(
             id = id,
             categoryId = categoryId,
-            text = text,
+            elements = text.parseContentElements(json),
             image = image,
-            options = options.map { QuestionOption(it.id, it.text, it.image) },
+            options = options.map { QuestionOption(it.id, it.text.parseContentElements(json), it.image) },
             correctOptionIds = correctIds,
-            explanation = explanation,
+            explanationElements = explanation.parseContentElements(json),
             explanationImage = explanationImage,
             difficulty = Difficulty.fromLabel(difficulty),
             marks = marks,
@@ -458,9 +462,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 QuestionEntity(
                     id = question.id,
                     categoryId = question.categoryId,
-                    text = question.text,
+                    text = question.elements.toContentJson(json),
                     image = question.image,
-                    explanation = question.explanation,
+                    explanation = question.explanationElements.toContentJson(json),
                     explanationImage = question.explanationImage,
                     difficulty = question.difficulty.label,
                     marks = question.marks,
@@ -476,7 +480,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     OptionEntity(
                         id = o.id,
                         questionId = question.id,
-                        text = o.text,
+                        text = o.elements.toContentJson(json),
                         image = o.image,
                         sortOrder = index
                     )
@@ -962,15 +966,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     attemptId = 0,
                     questionId = q.id,
                     categoryTitle = categoryTitleOf(q.categoryId),
-                    text = q.text,
+                    text = q.elements.toContentJson(json),
                     optionsJson = json.encodeToString(
                         ListSerializer(QuestionOptionDto.serializer()),
-                        q.options.map { QuestionOptionDto(it.id, it.text, it.image) }
+                        q.options.map { QuestionOptionDto(it.id, it.text, it.elements, it.image) }
                     ),
                     correctOptionIds = q.correctOptionIds.joinToString(","),
                     selectedOptionIds = selected.joinToString(","),
                     isCorrect = isCorrect,
-                    explanation = q.explanation,
+                    explanation = q.explanationElements.toContentJson(json),
                     explanationImage = q.explanationImage,
                     dwellSeconds = dwellSeconds[q.id] ?: 0L
                 )
@@ -1078,12 +1082,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             dwellSeconds = dwellSeconds,
             questionId = questionId,
             categoryTitle = categoryTitle,
-            text = text,
-            options = options.map { QuestionOption(it.id, it.text, it.image) },
+            elements = text.parseContentElements(json),
+            options = options.map {
+                QuestionOption(it.id, elements = it.elements, image = it.image)
+            },
             correctOptionIds = correctOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
             selectedOptionIds = selectedOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
             isCorrect = isCorrect,
-            explanation = explanation,
+            explanationElements = explanation.parseContentElements(json),
             explanationImage = explanationImage
         )
     }
@@ -1094,4 +1100,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 }
 
 @kotlinx.serialization.Serializable
-private data class QuestionOptionDto(val id: String, val text: String, val image: String? = null)
+private data class QuestionOptionDto(
+    val id: String,
+    val text: String = "",
+    @kotlinx.serialization.Serializable(with = com.mcqapp.domain.ContentElementListJson::class)
+    val elements: List<com.mcqapp.domain.ContentElement> = emptyList(),
+    val image: String? = null
+)

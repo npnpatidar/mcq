@@ -33,10 +33,12 @@ object BookmarkExport {
     private fun Question.toDto() = QuestionDto(
         id = id,
         text = text,
+        elements = elements,
         image = image,
-        options = options.map { OptionDto(it.id, it.text, it.image) },
+        options = options.map { OptionDto(it.id, text = it.text, image = it.image) },
         correctOptionIds = correctOptionIds.toList(),
         explanation = explanation,
+        explanationElements = explanationElements,
         explanationImage = explanationImage,
         difficulty = difficulty.label,
         marks = marks,

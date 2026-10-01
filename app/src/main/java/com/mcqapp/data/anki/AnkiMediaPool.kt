@@ -2,6 +2,7 @@ package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.imageExtension
 import com.mcqapp.data.export.parseDataUri
+import com.mcqapp.domain.ContentElement
 
 /**
  * Collects image data while rewriting a field into Anki HTML.
@@ -35,6 +36,34 @@ class AnkiMediaPool {
 
     /** Escapes [text] without an image; for a field that is purely markup. */
     fun html(text: String): String = escapeHtml(text)
+
+    /**
+     * Renders content elements to Anki field HTML: text is escaped, MathML is
+     * embedded as-is, tables become `<table>` blocks, and images are stored in
+     * the media pool and referenced by filename. [legacyImage] is the separate
+     * image field of a pre-rich-content question, appended when present.
+     */
+    fun elementsToHtml(elements: List<ContentElement>, legacyImage: String? = null): String =
+        elements.joinToString("") { elementToHtml(it) } + imageElement(legacyImage)
+
+    private fun elementToHtml(element: ContentElement): String = when (element) {
+        is ContentElement.TextElement -> escapeHtml(element.text)
+        is ContentElement.ImageElement -> imageElement(element.src)
+        is ContentElement.TableElement -> tableToHtml(element)
+        is ContentElement.MathElement -> element.mathml
+    }
+
+    private fun tableToHtml(table: ContentElement.TableElement): String {
+        val sb = StringBuilder("<table border=\"1\">")
+        table.rows.forEach { row ->
+            sb.append("<tr>")
+            row.forEach { cell ->
+                sb.append("<td>").append(escapeHtml(cell)).append("</td>")
+            }
+            sb.append("</tr>")
+        }
+        return sb.append("</table>").toString()
+    }
 
     private fun imageElement(src: String?): String {
         if (src.isNullOrBlank()) return ""

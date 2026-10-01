@@ -56,6 +56,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.Logger
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -486,9 +487,9 @@ private fun BrowseQuestionCard(
                         modifier = Modifier.padding(end = 8.dp)
                     )
                 }
-                Text(
-                    question.text,
-                    style = MaterialTheme.typography.titleSmall,
+                ContentElements(
+                    question.elements,
+                    textStyle = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -504,7 +505,7 @@ private fun BrowseQuestionCard(
                         modifier = Modifier.width(20.dp),
                         fontWeight = if (isCorrect) FontWeight.Bold else FontWeight.Normal
                     )
-                    Text(option.text, style = MaterialTheme.typography.bodyMedium)
+                    ContentElements(option.elements, textStyle = MaterialTheme.typography.bodyMedium)
                 }
                 if (option.image != null) {
                     QuestionImage(
@@ -514,11 +515,11 @@ private fun BrowseQuestionCard(
                 }
             }
 
-            if (question.explanation.isNotBlank()) {
+            if (question.explanationElements.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "Explanation: ${question.explanation}",
-                    style = MaterialTheme.typography.bodySmall
+                ContentElements(
+                    question.explanationElements,
+                    textStyle = MaterialTheme.typography.bodySmall
                 )
             }
             QuestionImage(src = question.explanationImage)

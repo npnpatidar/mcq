@@ -5,6 +5,8 @@ import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
 
@@ -131,13 +133,24 @@ class Exporter(private val db: AppDatabase) {
         return map { entity ->
             val options = optionsByQuestion[entity.id] ?: emptyList()
             val correctIds = correctByQuestion[entity.id]?.map { it.optionId } ?: emptyList()
+            val elements = entity.text.parseContentElements(json)
             QuestionDto(
                 id = entity.id,
-                text = entity.text,
+                text = elements.textContent,
+                elements = elements,
                 image = entity.image,
-                options = options.map { OptionDto(it.id, it.text, it.image) },
+                options = options.map { option ->
+                    val optionElements = option.text.parseContentElements(json)
+                    OptionDto(
+                        id = option.id,
+                        text = optionElements.textContent,
+                        elements = optionElements,
+                        image = option.image
+                    )
+                },
                 correctOptionIds = correctIds,
-                explanation = entity.explanation,
+                explanation = entity.explanation.parseContentElements(json).textContent,
+                explanationElements = entity.explanation.parseContentElements(json),
                 explanationImage = entity.explanationImage,
                 difficulty = entity.difficulty,
                 marks = entity.marks,

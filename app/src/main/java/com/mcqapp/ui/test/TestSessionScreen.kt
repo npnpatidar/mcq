@@ -74,6 +74,7 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.SubmitSummary
 import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.util.Logger
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -352,7 +353,7 @@ fun TestSessionScreen(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(question.text, style = MaterialTheme.typography.titleMedium)
+                ContentElements(question.elements, textStyle = MaterialTheme.typography.titleMedium)
                 QuestionImage(src = question.image, modifier = Modifier.padding(top = 8.dp))
 
                 Spacer(Modifier.height(16.dp))
@@ -366,6 +367,7 @@ fun TestSessionScreen(
                     val isCorrectOption = option.id in question.correctOptionIds
                     OptionRow(
                         text = option.text,
+                        elements = option.elements,
                         image = option.image,
                         selected = selected,
                         revealed = revealed,
@@ -560,6 +562,7 @@ private fun formatMarks(marks: Double): String =
 @Composable
 private fun OptionRow(
     text: String,
+    elements: List<com.mcqapp.domain.ContentElement>,
     image: String?,
     selected: Boolean,
     revealed: Boolean,
@@ -602,7 +605,7 @@ private fun OptionRow(
                 RadioButton(selected = selected, onClick = onClick)
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(text)
+                ContentElements(elements.ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(text)) })
                 if (image != null) {
                     QuestionImage(src = image, modifier = Modifier.padding(top = 4.dp))
                 }
@@ -633,9 +636,11 @@ private fun ExplanationCard(question: Question) {
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(4.dp))
-            Text(
-                question.explanation.ifBlank { "No explanation provided." },
-                style = MaterialTheme.typography.bodyMedium
+            ContentElements(
+                question.explanationElements.ifEmpty {
+                    listOf(com.mcqapp.domain.ContentElement.TextElement("No explanation provided."))
+                },
+                textStyle = MaterialTheme.typography.bodyMedium
             )
             QuestionImage(
                 src = question.explanationImage,

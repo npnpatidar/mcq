@@ -49,10 +49,11 @@ class RepositoryTest {
     private fun question(
         id: String,
         correct: Set<String>,
-        marks: Double = 1.0
+        marks: Double = 1.0,
+        categoryId: String = "c1"
     ) = Question(
         id = id,
-        categoryId = "c1",
+        categoryId = categoryId,
         text = "Q $id",
         options = listOf(QuestionOption("$id-a", "A"), QuestionOption("$id-b", "B")),
         correctOptionIds = correct,
@@ -373,7 +374,7 @@ class RepositoryTest {
         // cascade-delete c1 (categories.paperId FK), so insert c2 directly.
         db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Cat2"))
         repository.saveQuestion(question("q1", setOf("q1-a")))
-        repository.saveQuestion(question("q2", setOf("q2-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
         repository.saveQuestion(question("q3", setOf("q3-a")))
         val viaPerCategory = listOf("c1", "c2").flatMap { db.questionDao().getByCategory(it) }.map { it.id }
         val viaIn = db.questionDao().getByCategories(listOf("c1", "c2")).map { it.id }

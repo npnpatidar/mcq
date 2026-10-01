@@ -30,6 +30,7 @@ import org.robolectric.annotation.Config
 class ImportAnswerUpdateTest {
 
     private lateinit var db: AppDatabase
+    private lateinit var repository: com.mcqapp.data.repository.McqRepository
 
     @Before
     fun setup() {
@@ -37,6 +38,7 @@ class ImportAnswerUpdateTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
+        repository = com.mcqapp.data.repository.McqRepository(db, context)
     }
 
     @After
@@ -100,7 +102,7 @@ class ImportAnswerUpdateTest {
 
         assertEquals(1, report.updatedQuestions)
         assertEquals(0, report.duplicateQuestions)
-        assertEquals("Two plus two.", db.questionDao().getById("q1")!!.explanation)
+        assertEquals("Two plus two.", repository.getQuestion("q1")?.explanation)
     }
 
     @Test

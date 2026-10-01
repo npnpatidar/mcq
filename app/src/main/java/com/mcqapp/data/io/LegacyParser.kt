@@ -25,6 +25,9 @@ object LegacyParser {
 
     private val letterIds = ('a'..'z').map { it.toString() }
 
+    /** A `<math>...</math>` block, attributes and line breaks included. */
+    private val mathBlockPattern = Regex("<math\\b.*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
     fun parse(json: String): McqFileDto {
         val warnings = mutableListOf<String>()
         val element = Json.parseToJsonElement(json)
@@ -51,6 +54,7 @@ object LegacyParser {
                 ),
                 questions = questions
             )
+            localImageWarning(listOf(paper))?.let { warnings.add(it) }
             return McqFileDto(version = 1, papers = listOf(paper), warnings = warnings)
         }
         val root = element.jsonObject
@@ -82,7 +86,49 @@ object LegacyParser {
             bookmarks = bookmarks,
             attempts = attempts,
             warnings = warnings
+                .plus(localImageWarning(papers)?.let { listOf(it) } ?: emptyList())
         )
+    }
+
+    /**
+     * One summary warning when images point at files on the author's
+     * computer (absolute/relative paths, `file:` URLs): a JSON document
+     * travels alone, so those bytes can never arrive on the device and the
+     * images would silently show as broken. Data URIs and http(s)/content
+     * links are portable and never warned about. Embedded media travels
+     * with the `.apkg` format instead.
+     */
+    private fun localImageWarning(papers: List<PaperDto>): String? {
+        var images = 0
+        var questions = 0
+        val seen = HashSet<String>()
+        val allQuestions = papers.flatMap { it.questions + it.categories.flatMap { c -> c.questions } }
+            .filter { seen.add(it.id) }
+        var example = ""
+        for (q in allQuestions) {
+            val elements = q.elements + q.options.flatMap { it.elements } + q.explanationElements
+            val bad = elements
+                .filterIsInstance<ContentElement.ImageElement>()
+                .filter { !isPortableImageSrc(it.src) }
+            if (bad.isNotEmpty()) {
+                questions++
+                images += bad.size
+                if (example.isEmpty()) example = bad.first().src
+            }
+        }
+        if (images == 0) return null
+        return "$images image(s) in $questions question(s) point at files on the author's computer " +
+            "(e.g. '$example') and will not display after import — " +
+            "embed data URIs or import the .apkg instead"
+    }
+
+    /** Data URIs and retrievable links travel with the question; file paths do not. */
+    private fun isPortableImageSrc(src: String): Boolean {
+        if (src.startsWith("data:", ignoreCase = true)) return true
+        val scheme = src.substringBefore(':')
+            .takeIf { it.length < src.length && it.matches(Regex("[a-zA-Z][a-zA-Z0-9+.-]*")) }
+            ?.lowercase() ?: return false
+        return scheme == "http" || scheme == "https" || scheme == "content"
     }
 
     private fun parseAttempt(obj: JsonObject): AttemptDto {
@@ -243,12 +289,9 @@ object LegacyParser {
     }
 
     private fun parseQuestion(obj: JsonObject, warnings: MutableList<String>): QuestionDto {
-        val elements = buildList {
-            obj["question_num"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let {
-                add(com.mcqapp.domain.ContentElement.TextElement("$it "))
-            }
-            addAll(parseElements(obj["question_elements"], obj["text"], obj["question"]))
-        }
+        // question_num (e.g. "1.)") is a bank serial, not question content:
+        // it is deliberately ignored so it never becomes part of the text.
+        val elements = parseElements(obj["question_elements"], obj["text"], obj["question"])
         val text = elements.textContent
         val image = obj["image"]?.jsonPrimitive?.contentOrNull
             ?: obj["imageUrl"]?.jsonPrimitive?.contentOrNull
@@ -295,13 +338,15 @@ object LegacyParser {
 
     /**
      * Reads a structured element list, falling back to a plain string (old
-     * format) wrapped as one TextElement.
+     * format) wrapped as one TextElement. A text run may embed `<math>`
+     * blocks, which become MathElements so formulas render instead of
+     * showing raw markup.
      */
     private fun parseElements(elementsJson: JsonElement?, vararg fallbacks: JsonElement?): List<ContentElement> {
         val arr = elementsJson as? JsonArray
         if (arr != null) {
-            val parsed = arr.mapNotNull { el ->
-                if (el is JsonObject) parseContentElement(el) else null
+            val parsed = arr.flatMap { el ->
+                if (el is JsonObject) parseContentElement(el) else emptyList()
             }
             if (parsed.isNotEmpty()) return parsed
         }
@@ -313,25 +358,46 @@ object LegacyParser {
     }
 
     /** Parses one `{type, content}` element; image content is an `<img>` tag. */
-    private fun parseContentElement(obj: JsonObject): ContentElement? {
+    private fun parseContentElement(obj: JsonObject): List<ContentElement> {
         return when (obj["type"]?.jsonPrimitive?.contentOrNull) {
-            "text" -> ContentElement.TextElement(obj["content"]?.jsonPrimitive?.contentOrNull ?: "")
+            "text" -> splitTextRuns(obj["content"]?.jsonPrimitive?.contentOrNull ?: "")
             "image" -> {
-                val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return null
-                ContentElement.ImageElement(extractImgSrc(content) ?: content)
+                val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return emptyList()
+                listOf(ContentElement.ImageElement(extractImgSrc(content) ?: content))
             }
             "table" -> {
                 val rows = obj["content"]?.jsonArray?.map { row ->
                     row.jsonArray.map { it.jsonPrimitive.content }
-                } ?: return null
-                ContentElement.TableElement(rows)
+                } ?: return emptyList()
+                listOf(ContentElement.TableElement(rows))
             }
             "math" -> {
-                val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return null
-                ContentElement.MathElement(content)
+                val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return emptyList()
+                listOf(ContentElement.MathElement(content))
             }
-            else -> null
+            else -> emptyList()
         }
+    }
+
+    /**
+     * Splits a text run on `<math>...</math>` blocks so embedded formulas
+     * become MathElements. Anything else (including an unclosed `<math`)
+     * stays plain text: a malformed formula must remain visible, never
+     * silently reinterpreted or dropped.
+     */
+    private fun splitTextRuns(text: String): List<ContentElement> {
+        if (!text.contains("<math", ignoreCase = true)) return listOf(ContentElement.TextElement(text))
+        val out = mutableListOf<ContentElement>()
+        var pos = 0
+        for (match in mathBlockPattern.findAll(text)) {
+            val before = text.substring(pos, match.range.first)
+            if (before.isNotEmpty()) out += ContentElement.TextElement(before)
+            out += ContentElement.MathElement(match.value)
+            pos = match.range.last + 1
+        }
+        val tail = text.substring(pos)
+        if (tail.isNotEmpty()) out += ContentElement.TextElement(tail)
+        return out.ifEmpty { listOf(ContentElement.TextElement(text)) }
     }
 
     /** Pulls the `src` out of an `<img ...>` tag; null when there is none. */
@@ -343,8 +409,8 @@ object LegacyParser {
         val elementsMap = obj["options_elements"] as? JsonObject
         if (elementsMap != null) {
             val parsed = elementsMap.entries.mapNotNull { (optionId, raw) ->
-                val elements = (raw as? JsonArray)?.mapNotNull { el ->
-                    if (el is JsonObject) parseContentElement(el) else null
+                val elements = (raw as? JsonArray)?.flatMap { el ->
+                    if (el is JsonObject) parseContentElement(el) else emptyList()
                 } ?: return@mapNotNull null
                 OptionDto(
                     id = optionId,

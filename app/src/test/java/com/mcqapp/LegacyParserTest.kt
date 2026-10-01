@@ -396,9 +396,10 @@ class LegacyParserTest {
 
         val file = LegacyParser.parse(json)
         val question = file.papers[0].categories[0].questions[0]
+        // question_num is a bank serial, not content: it must not leak into
+        // the elements or the text.
         assertEquals(
             listOf(
-                com.mcqapp.domain.ContentElement.TextElement("1.) "),
                 com.mcqapp.domain.ContentElement.TextElement("Match the kings:"),
                 com.mcqapp.domain.ContentElement.TableElement(
                     listOf(listOf("King", "Year"), listOf("Akbar", "1556"))
@@ -406,7 +407,7 @@ class LegacyParserTest {
             ),
             question.elements
         )
-        assertEquals("1.) Match the kings:", question.text)
+        assertEquals("Match the kings:", question.text)
         assertEquals(
             listOf("a"),
             question.correctOptionIds
@@ -484,6 +485,139 @@ class LegacyParserTest {
         """.trimIndent()
 
         val file = LegacyParser.parse(json)
+        assertTrue(file.warnings.isEmpty())
+    }
+
+    @Test
+    fun questionNumIsIgnoredWithPlainText() {
+        val json = """
+        [
+          {"question_num": "10.)", "text": "What is 2+2?", "options": ["3", "4"], "answer": "b"}
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("What is 2+2?")),
+            question.elements
+        )
+        assertEquals("What is 2+2?", question.text)
+    }
+
+    @Test
+    fun embeddedMathBlocksBecomeMathElements() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Solve <math><mi>x</mi></math> then <MATH><mn>2</mn></MATH> done"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Solve "),
+                com.mcqapp.domain.ContentElement.MathElement("<math><mi>x</mi></math>"),
+                com.mcqapp.domain.ContentElement.TextElement(" then "),
+                com.mcqapp.domain.ContentElement.MathElement("<MATH><mn>2</mn></MATH>"),
+                com.mcqapp.domain.ContentElement.TextElement(" done")
+            ),
+            question.elements
+        )
+        assertEquals("Solve  then  done", question.text)
+    }
+
+    @Test
+    fun unclosedMathStaysPlainText() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Broken <math><mi>x</mi> formula"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Broken <math><mi>x</mi> formula")
+            ),
+            question.elements
+        )
+    }
+
+    @Test
+    fun localImagePathsWarnOnceWithExample() {
+        val json = """
+        [
+          {
+            "id": "q1",
+            "question_elements": [
+              {"type": "text", "content": "See figure:"},
+              {"type": "image", "content": "<img src=\"/tmp/q100/img/fig20.png\" />"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          },
+          {
+            "id": "q2",
+            "question_elements": [
+              {"type": "image", "content": "<img src=\"file:///sdcard/img/fig21.png\" />"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val questions = file.papers[0].categories[0].questions
+        // Parsing itself is exact: the srcs survive verbatim.
+        assertEquals(
+            com.mcqapp.domain.ContentElement.ImageElement("/tmp/q100/img/fig20.png"),
+            questions[0].elements[1]
+        )
+        assertEquals(1, file.warnings.size)
+        assertTrue(file.warnings[0].contains("2 image(s) in 2 question(s)"))
+        assertTrue(file.warnings[0].contains("/tmp/q100/img/fig20.png"))
+    }
+
+    @Test
+    fun portableImageSourcesWarnNothing() {
+        val json = """
+        [
+          {
+            "id": "q1",
+            "question_elements": [
+              {"type": "image", "content": "data:image/png;base64,iVBORw0KGgo="},
+              {"type": "image", "content": "<img src=\"https://example.com/fig.png\" />"},
+              {"type": "image", "content": "<img src=\"content://media/external/images/1\" />"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions[0]
+        assertEquals(3, question.elements.size)
+        assertEquals(
+            com.mcqapp.domain.ContentElement.ImageElement("content://media/external/images/1"),
+            question.elements[2]
+        )
         assertTrue(file.warnings.isEmpty())
     }
 }

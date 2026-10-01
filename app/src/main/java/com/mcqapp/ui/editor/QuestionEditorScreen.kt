@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,8 +51,10 @@ import android.app.Application
 import android.widget.Toast
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryNode
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.ui.EditorViewModelFactory
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.ImageUtils
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
@@ -119,9 +122,29 @@ fun QuestionEditorScreen(
         }
     }
 
-    val canProceed = state.text.isNotBlank() &&
-        state.options.size >= 2 &&
-        state.options.all { it.text.isNotBlank() }
+    // Generic gallery picker for image blocks: stores the block's write-back
+    // until the gallery returns, then delivers the encoded image to it.
+    var pendingBlockPick by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    val pickBlockImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        val writeBack = pendingBlockPick
+        pendingBlockPick = null
+        if (uri != null && writeBack != null) {
+            val encoded = ImageUtils.encodeImageUri(context, uri)
+            if (encoded != null) {
+                writeBack(encoded)
+            } else {
+                Logger.e("EDITOR", "Failed to encode block image")
+            }
+        }
+    }
+    val pickBlockImage: ((String) -> Unit) -> Unit = { onPicked ->
+        pendingBlockPick = onPicked
+        pickBlockImageLauncher.launch("image/*")
+    }
+
+    val canProceed = viewModel.canProceed()
     val queueIndex = EditorSession.index
     val queueSize = EditorSession.ids.size
     val prevId = EditorSession.prevId
@@ -207,11 +230,21 @@ fun QuestionEditorScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
-            OutlinedTextField(
-                value = state.text,
-                onValueChange = viewModel::updateText,
-                label = { Text("Question text") },
-                modifier = Modifier.fillMaxWidth()
+            Text("Question", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            BlockListEditor(
+                elements = state.elements,
+                onAddBlock = viewModel::addBlock,
+                onUpdateBlock = viewModel::updateBlock,
+                onRemoveBlock = viewModel::removeBlock,
+                onMoveUp = viewModel::moveBlockUp,
+                onMoveDown = viewModel::moveBlockDown,
+                onUpdateCell = viewModel::updateTableCell,
+                onAddRow = viewModel::addTableRow,
+                onRemoveRow = viewModel::removeTableRow,
+                onAddColumn = viewModel::addTableColumn,
+                onRemoveColumn = viewModel::removeTableColumn,
+                onPickImage = pickBlockImage
             )
             Spacer(Modifier.height(8.dp))
 
@@ -235,6 +268,13 @@ fun QuestionEditorScreen(
                 QuestionImage(src = state.image, modifier = Modifier.padding(top = 8.dp))
             }
 
+            Spacer(Modifier.height(8.dp))
+            Text("Preview", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                ContentElements(state.elements, modifier = Modifier.padding(12.dp))
+            }
+
             Spacer(Modifier.height(16.dp))
             Text("Options", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(
@@ -246,7 +286,14 @@ fun QuestionEditorScreen(
             state.options.forEach { option ->
                 OptionEditorRow(
                     option = option,
-                    onTextChange = { viewModel.updateOptionText(option.id, it) },
+                    onAddBlock = { viewModel.addOptionBlock(option.id, it) },
+                    onUpdateBlock = { index, element ->
+                        viewModel.updateOptionBlock(option.id, index, element)
+                    },
+                    onRemoveBlock = { viewModel.removeOptionBlock(option.id, it) },
+                    onMoveBlockUp = { viewModel.moveOptionBlockUp(option.id, it) },
+                    onMoveBlockDown = { viewModel.moveOptionBlockDown(option.id, it) },
+                    onPickBlockImage = pickBlockImage,
                     onImageChange = { viewModel.updateOptionImage(option.id, it) },
                     onPickImage = {
                         pickingOptionImageId = option.id
@@ -279,11 +326,18 @@ fun QuestionEditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = state.explanation,
-                onValueChange = viewModel::updateExplanation,
-                label = { Text("Explanation") },
-                modifier = Modifier.fillMaxWidth()
+            Text("Explanation", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            // No table cell callbacks: the ViewModel exposes cell ops for the
+            // question body only, so explanation tables render read-only.
+            BlockListEditor(
+                elements = state.explanationElements,
+                onAddBlock = viewModel::addExplanationBlock,
+                onUpdateBlock = viewModel::updateExplanationBlock,
+                onRemoveBlock = viewModel::removeExplanationBlock,
+                onMoveUp = viewModel::moveExplanationBlockUp,
+                onMoveDown = viewModel::moveExplanationBlockDown,
+                onPickImage = pickBlockImage
             )
             Spacer(Modifier.height(8.dp))
             Row(
@@ -341,7 +395,12 @@ fun QuestionEditorScreen(
 @Composable
 private fun OptionEditorRow(
     option: OptionEditorState,
-    onTextChange: (String) -> Unit,
+    onAddBlock: (EditorBlockType) -> Unit,
+    onUpdateBlock: (index: Int, element: ContentElement) -> Unit,
+    onRemoveBlock: (index: Int) -> Unit,
+    onMoveBlockUp: (index: Int) -> Unit,
+    onMoveBlockDown: (index: Int) -> Unit,
+    onPickBlockImage: ((String) -> Unit) -> Unit,
     onImageChange: (String) -> Unit,
     onPickImage: () -> Unit,
     onToggleCorrect: () -> Unit,
@@ -356,11 +415,10 @@ private fun OptionEditorRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(checked = option.isCorrect, onCheckedChange = { onToggleCorrect() })
-            OutlinedTextField(
-                value = option.text,
-                onValueChange = onTextChange,
-                label = { Text("Option ${option.id}") },
-                singleLine = true,
+            Text(
+                "Option ${option.id}",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = onMoveUp) {
@@ -375,6 +433,18 @@ private fun OptionEditorRow(
                 }
             }
         }
+        // Option tables render read-only: options rarely need tables and the
+        // ViewModel exposes cell ops for the question body only, so full grid
+        // editing is omitted here to keep scope sane.
+        BlockListEditor(
+            elements = option.elements,
+            onAddBlock = onAddBlock,
+            onUpdateBlock = onUpdateBlock,
+            onRemoveBlock = onRemoveBlock,
+            onMoveUp = onMoveBlockUp,
+            onMoveDown = onMoveBlockDown,
+            onPickImage = onPickBlockImage
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()

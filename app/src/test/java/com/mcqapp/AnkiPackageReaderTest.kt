@@ -449,10 +449,13 @@ class AnkiPackageReaderTest {
                 com.mcqapp.domain.ContentElement.TextElement("10.) तालिका:"),
                 com.mcqapp.domain.ContentElement.TableElement(
                     listOf(listOf("Mad", "Year"), listOf("Kumbhalgarh", "1458"))
-                ),
-                com.mcqapp.domain.ContentElement.TextElement("विकल्प एक")
+                )
             ),
             question.elements
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("विकल्प एक")),
+            question.options[0].elements
         )
         assertEquals(
             listOf(com.mcqapp.domain.ContentElement.TextElement("विकल्प दो")),

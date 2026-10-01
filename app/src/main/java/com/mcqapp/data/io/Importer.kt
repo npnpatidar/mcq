@@ -248,7 +248,9 @@ class Importer(private val db: AppDatabase) {
                                     .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
                                     .toContentJson(json),
                                 image = scaledQuestion.image,
-                                explanation = questionDto.explanationElements.toContentJson(json),
+                                explanation = questionDto.explanationElements
+                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.explanation)) }
+                                    .toContentJson(json),
                                 explanationImage = scaledQuestion.explanationImage,
                                 difficulty = questionDto.difficulty,
                                 marks = questionDto.marks,

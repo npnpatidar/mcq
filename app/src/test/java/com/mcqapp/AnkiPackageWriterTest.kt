@@ -440,7 +440,7 @@ class AnkiPackageWriterTest {
     fun questionTextIsHtmlEscaped() {
         val pool = AnkiMediaPool()
         val html = pool.htmlField("5 < 6 & \"quoted\"", null)
-        assertEquals("5 &lt; 6 &amp; &quot;quoted\"", html)
+        assertEquals("5 &lt; 6 &amp; &quot;quoted&quot;", html)
     }
 
     @Test

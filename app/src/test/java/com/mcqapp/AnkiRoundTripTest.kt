@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
  * we read back both what we wrote and what Anki left after that upgrade.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [34])
 class AnkiRoundTripTest {
 
     @Test

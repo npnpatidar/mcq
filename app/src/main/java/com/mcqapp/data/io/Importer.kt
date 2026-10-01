@@ -244,7 +244,9 @@ class Importer(private val db: AppDatabase) {
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
-                                text = questionDto.elements.toContentJson(json),
+                                text = questionDto.elements
+                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
+                                    .toContentJson(json),
                                 image = scaledQuestion.image,
                                 explanation = questionDto.explanationElements.toContentJson(json),
                                 explanationImage = scaledQuestion.explanationImage,
@@ -293,7 +295,9 @@ class Importer(private val db: AppDatabase) {
                                 OptionEntity(
                                     id = o.id,
                                     questionId = questionDto.id,
-                                    text = o.elements.toContentJson(json),
+                                    text = o.elements
+                                        .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(o.text)) }
+                                        .toContentJson(json),
                                     image = o.image,
                                     sortOrder = index
                                 )

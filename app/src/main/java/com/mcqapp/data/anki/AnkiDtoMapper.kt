@@ -42,11 +42,17 @@ object AnkiDtoMapper {
         Question(
             id = dto.id,
             categoryId = categoryId,
-            elements = dto.elements,
+            elements = dto.elements.ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(dto.text)) },
             image = dto.image,
-            options = dto.options.map { QuestionOption(it.id, it.elements, it.image) },
+            options = dto.options.map { QuestionOption(
+                it.id,
+                it.elements.ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(it.text)) },
+                it.image
+            ) },
             correctOptionIds = dto.correctOptionIds.toSet(),
-            explanationElements = dto.explanationElements,
+            explanationElements = dto.explanationElements.ifEmpty {
+                listOf(com.mcqapp.domain.ContentElement.TextElement(dto.explanation))
+            },
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,

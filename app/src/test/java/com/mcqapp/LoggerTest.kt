@@ -45,8 +45,10 @@ class LoggerTest {
         val dir = tempDir()
         val file = File(dir, "app.log")
         file.writeText("x".repeat(100))
-        // A directory at the target path makes renameTo fail.
+        // A non-empty directory at the target path: delete() cannot remove it
+        // and renameTo fails, forcing the truncate fallback.
         File(dir, "app.log.1").mkdirs()
+        File(dir, "app.log.1" + File.separator + "keep").writeText("locked")
         Logger.rotate(file, 10)
         assertTrue("failed rename leaves the target alone", File(dir, "app.log.1").isDirectory)
         assertTrue("live file truncated", file.readText().startsWith("=== Log truncated"))

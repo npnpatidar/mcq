@@ -329,6 +329,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         db.questionDao().observeCategoryCounts().map {
             val started = android.os.SystemClock.elapsedRealtime()
             val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+            // An empty IN list is invalid SQL; a paper with no categories has
+            // no questions to load.
+            if (categoryIds.isEmpty()) return@map emptyList()
             val entities = db.questionDao().getByCategories(categoryIds)
             val result = entities.toDomainBulk()
             Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
@@ -361,6 +364,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun getQuestionsForCategories(categoryIds: List<String>): List<Question> {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")
+        // An empty IN list is invalid SQL; nothing can match anyway.
+        if (categoryIds.isEmpty()) return emptyList()
         val entities = db.questionDao().getByCategories(categoryIds)
         val result = entities.toDomainBulk()
         Logger.d("REPO", "getQuestionsForCategories returned ${result.size} questions")

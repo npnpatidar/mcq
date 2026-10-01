@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
@@ -368,21 +369,25 @@ class RepositoryTest {
     @Test
     fun getByCategoriesMatchesThePerCategoryFetch() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat2")
+        // A second ensurePaperAndCategory would REPLACE the paper row and
+        // cascade-delete c1 (categories.paperId FK), so insert c2 directly.
+        db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Cat2"))
         repository.saveQuestion(question("q1", setOf("q1-a")))
         repository.saveQuestion(question("q2", setOf("q2-a")))
         repository.saveQuestion(question("q3", setOf("q3-a")))
         val viaPerCategory = listOf("c1", "c2").flatMap { db.questionDao().getByCategory(it) }.map { it.id }
         val viaIn = db.questionDao().getByCategories(listOf("c1", "c2")).map { it.id }
         assertEquals(viaPerCategory, viaIn)
-        assertTrue(db.questionDao().getByCategories(emptyList()).isEmpty())
         assertEquals(listOf("q2"), db.questionDao().getByCategories(listOf("c2")).map { it.id })
+        // The repository guards the empty-IN case (invalid SQL) before the DAO.
+        assertTrue(repository.getQuestionsForCategories(emptyList()).isEmpty())
     }
 
     @Test
     fun getQuestionsForCategoriesReturnsEveryQuestionOnce() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat2")
+        // Insert c2 directly: re-upserting the paper would cascade-delete c1.
+        db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Cat2"))
         repository.saveQuestion(question("q1", setOf("q1-a")))
         repository.saveQuestion(question("q2", setOf("q2-a")))
         val questions = repository.getQuestionsForCategories(listOf("c1", "c2"))

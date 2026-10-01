@@ -265,6 +265,10 @@ object AnkiPackageReader {
                     guid = c.getString(1).orEmpty(),
                     mid = c.getLong(2),
                     tags = parseTags(c.getString(3).orEmpty()),
+                    rawTags = c.getString(3).orEmpty()
+                        .split(' ', '\t', '\n')
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() },
                     fields = c.getString(4).orEmpty().split(SEPARATOR)
                 )
             }
@@ -370,7 +374,8 @@ object AnkiPackageReader {
         val back = AnkiHtml.parseBackField(media.rewrite(backHtml))
         // Foreign packages carry no mcqapp payload, so difficulty survives
         // only as a tag; recover it before the default (medium) overwrites it.
-        val difficulty = difficultyFromTags(note.tags)
+        // rawTags: parseTags strips mcqapp-* before this point.
+        val difficulty = difficultyFromTags(note.rawTags)
         if (back.hasMarkers) {
             val options = back.options.mapIndexed { i, opt ->
                 OptionDto("o$i", AnkiHtml.toPlainText(opt.text))
@@ -605,6 +610,8 @@ object AnkiPackageReader {
         val guid: String,
         val mid: Long,
         val tags: List<String>,
+        /** Tags before the mcqapp-* filter, so difficulty survives a round trip. */
+        val rawTags: List<String>,
         val fields: List<String>
     )
 

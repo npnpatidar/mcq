@@ -153,7 +153,7 @@ fun HistoryScreen(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { navController.navigate("review/${attempt.id}") }
+                            .clickable { navController.navigate(com.mcqapp.ui.navigation.resultsRoute(attempt.id)) }
                     ) {
                         Row(
                             modifier = Modifier

@@ -271,7 +271,7 @@ fun BrowseScreen(
                             index = index
                         )
                         navController.navigate(
-                            "editor?questionId=${question.id}&paperId=$paperId&categoryId=${question.categoryId}"
+                            com.mcqapp.ui.navigation.editorRoute(question.id, paperId, question.categoryId)
                         )
                     },
                     onDelete = { viewModel.deleteQuestion(question.id) },

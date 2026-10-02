@@ -104,7 +104,7 @@ fun TestSessionScreen(
 
     LaunchedEffect(state.attemptId) {
         state.attemptId?.let { id ->
-            navController.navigate("results/$id") {
+            navController.navigate(com.mcqapp.ui.navigation.resultsRoute(id)) {
                 popUpTo("library") { inclusive = false }
             }
         }

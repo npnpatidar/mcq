@@ -47,7 +47,7 @@ Everything else on this list is independent of release state.
 | A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
 | A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
 | A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[x]` fixed |
-| A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[ ]` |
+| A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[x]` fixed |
 | A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[ ]` |
 | A18 | — | Data | `MIGRATION_2_3` never existed | `[-]` not needed pre-release |
 | A19 | P1 | Data | `resolveStudyStates` writes N rows with no transaction | `[ ]` |
@@ -435,14 +435,21 @@ hand-crafted JSON, so the fixture cannot drift from the DTO. It covers the round
 row not hiding a healthy one, mistakes still derivable, and both import paths. Confirmed to fail
 (two cases) with the read guard removed.
 
-### A16 · `[ ]` · IDs interpolated into nav routes unencoded · `sub`
+### A16 · `[x]` · IDs interpolated into nav routes unencoded — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/importscreen/ImportScreen.kt:133`, `ui/search/SearchScreen.kt:112`,
 `ui/library/LibraryScreen.kt:227,294,306`. IDs come from files unvalidated (`LegacyParser.kt:320`),
 so `"id": "x&paperId=other-paper"` opens the editor against a different paper and a subsequent save
 writes into the wrong paper; a `#` or `/` truncates the route.
 
-Fix: `Uri.encode(...)` every id/csv segment, or pass ids as typed `navArgument`s.
+**Fixed** in the A16 commit: new `ui/navigation/Routes.kt` builds every route with `Uri.encode` on
+each segment — `editorRoute`, `browseRoute`, `studyRoute`, `resultsRoute`, `testRoute` — and all ten
+call sites across seven screens now use them. The CSV of category ids is encoded as one value, so a
+category id can no longer smuggle in a `mistakes=true` parameter. Navigation decodes values on read,
+so this is the whole fix.
+`RoutesTest` (7 cases) uses the exact hijacking payload from the finding and asserts the route keeps
+its three declared parameters, that `/` stays inside one path segment, and that ordinary ids decode
+back unchanged.
 
 ### A17 · `[ ]` · `durationMinutes × 60` overflows · `sub`
 

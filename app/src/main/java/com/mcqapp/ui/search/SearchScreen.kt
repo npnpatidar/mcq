@@ -109,7 +109,7 @@ fun SearchScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                navController.navigate("browse/${hit.paperId}?focus=${hit.question.id}")
+                                navController.navigate(com.mcqapp.ui.navigation.browseRoute(hit.paperId, hit.question.id))
                             }
                     ) {
                         Row(

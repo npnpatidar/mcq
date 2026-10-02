@@ -136,7 +136,7 @@ fun BookmarksScreen(
                             .clickable {
                                 com.mcqapp.ui.editor.EditorSession.clear()
                                 navController.navigate(
-                                    "editor?questionId=${question.id}&paperId=&categoryId=${question.categoryId}"
+                                    com.mcqapp.ui.navigation.editorRoute(question.id, "", question.categoryId)
                                 )
                             }
                     ) {

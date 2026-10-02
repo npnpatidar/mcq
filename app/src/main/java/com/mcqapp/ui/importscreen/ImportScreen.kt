@@ -130,7 +130,7 @@ fun ImportScreen(
         Logger.d("IMPORTSCREEN", "holder armed: id=${question.id}, " +
             "editingFromImport=true; navigating to editor")
         navController.navigate(
-            "editor?questionId=${question.id}&paperId=&categoryId="
+            com.mcqapp.ui.navigation.editorRoute(question.id, "", "")
         )
     }
 

@@ -248,8 +248,9 @@ fun LibraryScreen(
                     },
                     onStartTest = { paperId, categoryIds ->
                         scope.launch { drawerState.close() }
-                        val csv = categoryIds.joinToString(",")
-                        navController.navigate("test?paperId=$paperId&categories=$csv")
+                        navController.navigate(
+                            com.mcqapp.ui.navigation.testRoute(paperId, categoryIds)
+                        )
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
                     onDeleteCategory = { id -> viewModel.deleteCategory(id) }
@@ -316,26 +317,31 @@ fun LibraryScreen(
                             val leechCountBadge = studyCounts[paper.id]?.leeches ?: 0
                             PaperCard(
                                 paper = paper,
-                                onStart = { navController.navigate("test?paperId=${paper.id}&categories=") },
+                                onStart = { navController.navigate(com.mcqapp.ui.navigation.testRoute(paper.id)) },
                                 onPracticeMistakes = {
-                                    navController.navigate("test?paperId=${paper.id}&categories=&mistakes=true")
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.testRoute(paper.id, mistakes = true)
+                                    )
                                 },
                                 onDrill = { count, minutes ->
                                     navController.navigate(
-                                        "test?paperId=${paper.id}&categories=&mistakes=false" +
-                                            "&drillCount=$count&drillMinutes=$minutes"
+                                        com.mcqapp.ui.navigation.testRoute(
+                                            paper.id, drillCount = count, drillMinutes = minutes
+                                        )
                                     )
                                 },
                                 onStudy = {
                                     Logger.i("LIB", "Study: paperId=${paper.id}, due=$dueCountBadge")
-                                    navController.navigate("study/${paper.id}")
+                                    navController.navigate(com.mcqapp.ui.navigation.studyRoute(paper.id))
                                     viewModel.refreshStudyCounts()
                                 },
                                 dueCount = dueCountBadge,
                                 freshCount = studyCounts[paper.id]?.fresh ?: 0,
                                 leechCount = leechCountBadge,
                                 mistakeCount = mistakeCounts[paper.id] ?: 0,
-                                onBrowse = { navController.navigate("browse/${paper.id}") },
+                                onBrowse = {
+                                    navController.navigate(com.mcqapp.ui.navigation.browseRoute(paper.id))
+                                },
                                 onExport = {
                                     pendingExportPaperId = paper.id
                                     exportFormat = ExportFormat.JSON_INLINE
@@ -351,13 +357,13 @@ fun LibraryScreen(
                                 onEditQuestion = { questionId, categoryId ->
                                     com.mcqapp.ui.editor.EditorSession.clear()
                                     navController.navigate(
-                                        "editor?questionId=$questionId&paperId=${paper.id}&categoryId=$categoryId"
+                                        com.mcqapp.ui.navigation.editorRoute(questionId, paper.id, categoryId)
                                     )
                                 },
                                 onAddQuestion = { categoryId ->
                                     com.mcqapp.ui.editor.EditorSession.clear()
                                     navController.navigate(
-                                        "editor?questionId=&paperId=${paper.id}&categoryId=$categoryId"
+                                        com.mcqapp.ui.navigation.editorRoute("", paper.id, categoryId)
                                     )
                                 },
                                 onExportCategory = { categoryId, title ->

@@ -113,11 +113,12 @@ class TestViewModel(
                 } else {
                     ordered
                 }
-                val totalSeconds = if (isDrill && drillMinutes > 0) {
-                    drillMinutes * 60
-                } else {
-                    (paper?.durationMinutes ?: 0) * 60
-                }
+                // Saturating conversion: drillMinutes and durationMinutes both
+                // originate in files, and minutes * 60 could overflow.
+                val totalSeconds = com.mcqapp.domain.ExamTiming.secondsFrom(
+                    if (isDrill && drillMinutes > 0) drillMinutes
+                    else (paper?.durationMinutes ?: 0)
+                ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                 val practice = repository.practiceMode().first()
                 val strict = repository.strictMode().first()
                 val advance = repository.autoAdvance().first()

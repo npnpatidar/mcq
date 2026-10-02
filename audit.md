@@ -48,7 +48,7 @@ Everything else on this list is independent of release state.
 | A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
 | A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[x]` fixed |
 | A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[x]` fixed |
-| A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[ ]` |
+| A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[x]` fixed |
 | A18 | — | Data | `MIGRATION_2_3` never existed | `[-]` not needed pre-release |
 | A19 | P1 | Data | `resolveStudyStates` writes N rows with no transaction | `[ ]` |
 | A20 | P1 | Perf | N+1 query loops (bookmarks, attempt save) | `[ ]` |
@@ -451,13 +451,17 @@ so this is the whole fix.
 its three declared parameters, that `/` stays inside one path segment, and that ordinary ids decode
 back unchanged.
 
-### A17 · `[ ]` · `durationMinutes × 60` overflows · `sub`
+### A17 · `[x]` · `durationMinutes × 60` overflowed — fixed · `read`
 
 `app/src/main/java/com/mcqapp/data/io/LegacyParser.kt:177` (`intOrNull`, no range check) →
 `TestViewModel.kt:110-112`. Values ≳ 35.8M overflow to a negative `totalSeconds`, the timer never
 starts and the UI renders a negative clock.
 
-Fix: coerce to `0..10080` at parse and editor time.
+**Fixed** in the A17 commit: new `domain/ExamTiming` clamps a duration to a week, maps negatives and
+nulls to "no timer" (a legitimate setting), and `secondsFrom` saturates instead of wrapping. Applied
+where the value enters (`LegacyParser`, `LibraryViewModel.addPaper`) and where it is converted
+(`TestViewModel`). `ExamTimingTest` covers the exact 40-million value from the finding, `Int.MAX_VALUE`,
+and asserts `secondsFrom` never returns a negative.
 
 ### A18 · `[-]` · `MIGRATION_2_3` never existed — accepted, not needed pre-release · `read` (git history)
 

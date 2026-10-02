@@ -188,7 +188,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         id = id,
                         title = title,
                         description = description,
-                        durationMinutes = durationMinutes,
+                        // Clamped at the point of entry too, not just on import.
+                        durationMinutes = com.mcqapp.domain.ExamTiming.minutesFrom(durationMinutes),
                         negativeMarking = negativeMarking
                     )
                 )

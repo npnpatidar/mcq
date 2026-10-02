@@ -174,9 +174,12 @@ object LegacyParser {
         val description = obj["description"]?.jsonPrimitive?.contentOrNull
             ?: obj["desc"]?.jsonPrimitive?.contentOrNull
             ?: ""
-        val duration = obj["durationMinutes"]?.jsonPrimitive?.intOrNull
-            ?: obj["duration"]?.jsonPrimitive?.intOrNull
-            ?: 0
+        // Clamped: an imported file could otherwise overflow the Int that
+        // holds the exam duration and produce a negative timer.
+        val duration = com.mcqapp.domain.ExamTiming.minutesFrom(
+            obj["durationMinutes"]?.jsonPrimitive?.intOrNull
+                ?: obj["duration"]?.jsonPrimitive?.intOrNull
+        )
         val negative = obj["negativeMarking"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
             ?: obj["negative"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
             ?: 0.0

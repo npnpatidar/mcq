@@ -53,7 +53,28 @@ class Exporter(private val db: AppDatabase) {
             "${attemptDtos.size} attempts")
         return json.encodeToString(
             McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = paperDtos, bookmarks = bookmarks, attempts = attemptDtos)
+            McqFileDto(
+                version = 1,
+                papers = paperDtos,
+                bookmarks = bookmarks,
+                attempts = attemptDtos,
+                // Review progress travels with the backup. It used to be
+                // dropped, so restoring a backup silently reset every SM-2
+                // schedule, due date and leech flag.
+                scheduling = db.cardStateDao().getAll()
+                    .filter { it.reps > 0 || it.dueAt > 0L }
+                    .associate { state ->
+                        state.questionId to CardScheduleDto(
+                            ease = state.ease,
+                            intervalDays = state.intervalDays,
+                            dueAt = state.dueAt,
+                            reps = state.reps,
+                            lapses = state.lapses,
+                            leech = state.leech,
+                            lastReviewedAt = state.lastReviewedAt
+                        )
+                    }
+            )
         )
     }
 

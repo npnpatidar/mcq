@@ -51,6 +51,9 @@ class Importer(
         file: McqFileDto,
         scheduling: Map<String, CardScheduleDto> = emptyMap()
     ): ImportReport {
+        // A file this app exported carries its own review progress; an explicit
+        // map (the Anki path) still wins.
+        val restoreScheduling = scheduling.ifEmpty { file.scheduling }
         // currentTimeMillis (not elapsedRealtime): JVM-testable, and this is log timing only.
         val started = System.currentTimeMillis()
         Logger.i("IMPORT", "Starting import of ${file.papers.size} papers")
@@ -319,7 +322,7 @@ class Importer(
                         // import accepted. A duplicate is skipped above, so
                         // re-importing a deck does not overwrite a schedule
                         // the user has since moved on with.
-                        scheduling[questionDto.id]?.let { schedule ->
+                        restoreScheduling[questionDto.id]?.let { schedule ->
                             // The hash of the bytes as stored, because that is
                             // what the study session recomputes it from: a
                             // mismatch reads as edited content and would reset

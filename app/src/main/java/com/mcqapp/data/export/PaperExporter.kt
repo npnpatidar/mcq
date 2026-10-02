@@ -50,9 +50,9 @@ class PaperExporter(private val db: AppDatabase) {
     }
 
     /**
-     * Review progress for a paper, keyed by question id. Only Anki packages use
-     * it: a JSON backup keeps scheduling out of the file on purpose, so it
-     * would be lost on restore even if it were written.
+     * Review progress for a paper, keyed by question id, for Anki packages.
+     * JSON backups carry their own copy of this (see [Exporter.exportAll]), so
+     * a backup no longer loses schedules on restore.
      */
     private suspend fun loadScheduling(paperId: String): Map<String, CardScheduleDto> =
         db.cardStateDao().getByPaper(paperId)

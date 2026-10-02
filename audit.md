@@ -53,7 +53,7 @@ Everything else on this list is independent of release state.
 | A19 | P1 | Data | `resolveStudyStates` writes N rows with no transaction | `[x]` fixed |
 | A20 | P1 | Perf | N+1 query loops (bookmarks, attempt save) | `[x]` fixed |
 | A21 | P1 | Data | Unbounded `IN (:ids)` bind lists | `[x]` fixed |
-| A22 | P1 | Data | Backup silently drops all scheduling | `[ ]` |
+| A22 | P1 | Data | Backup silently drops all scheduling | `[x]` fixed |
 | A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[x]` fixed |
 | A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[x]` fixed |
 | A25 | P2 | Tests | 1 of 11 ViewModels tested | `[~]` results screen done, rest pending |
@@ -70,7 +70,7 @@ Everything else on this list is independent of release state.
 | A36 | P2 | UX | No string resources — app is not localisable | `[x]` fixed |
 | A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[~]` hygiene done, Coil upgrade declined |
 | A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
-| A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[ ]` |
+| A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[x]` fixed |
 | A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[x]` fixed behind a setting |
 | A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[x]` fixed |
 | A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[x]` fixed |
@@ -538,7 +538,7 @@ them, so no statement can exceed the bind-variable ceiling.
 order and completeness. The 999 figure itself is still from SQLite's documented history, not
 measured on an API 26 device.
 
-### A22 · `[ ]` · Backup silently drops all scheduling · `sub`
+### A22 · `[x]` · Backup silently dropped all scheduling — fixed · `read`
 
 `data/io/Exporter.kt:17` writes `McqFileDto(version, papers, bookmarks, attempts)`; there is no
 scheduling field, and `Importer` only writes `card_state` from the Anki path. Deliberate and
@@ -680,7 +680,7 @@ declared twice (`:72` and `:81`), so a bump can split runtime and test versions.
 (Apache-2.0), `mathlive.min.js` (MIT), 20 `KaTeX_*.woff2` (SIL OFL 1.1) — and
 `app/build.gradle.kts:41-45` then strips `META-INF/{AL2.0,LGPL2.1}` from the package.
 
-### A39 · `[ ]` · `.gitignore` misses the scratch files
+### A39 · `[x]` · `.gitignore` missed the scratch files — fixed · `read`
 `questions100.apkg` (189 KB), `questions100-datauri.json` (199 KB), `questions100.docx` (52 KB),
 `questions100.json` (106 KB) sit untracked in the repo root, one `git add -A` from being committed.
 

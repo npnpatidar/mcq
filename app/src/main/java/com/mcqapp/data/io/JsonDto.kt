@@ -150,22 +150,28 @@ data class McqFileDto(
      * the app itself exported; surfaced on the import preview so a partially
      * dropped import is never silent.
      */
-    val warnings: List<String> = emptyList()
+    val warnings: List<String> = emptyList(),
+    /**
+     * Review progress keyed by question id. Present in files this app
+     * exported, so a backup restores schedules rather than silently
+     * resetting them. Foreign files omit it and import exactly as before.
+     */
+    val scheduling: Map<String, CardScheduleDto> = emptyMap()
 )
 
 /**
- * A card's review schedule, carried next to an imported paper rather than
- * inside it.
+ * A card's review schedule.
  *
- * It is deliberately not part of [McqFileDto]: a question is content, and how
- * far that content has been learned is per-device progress. Putting scheduling
- * on [QuestionDto] would make every JSON backup carry it and every question
- * carry state that belongs to the review history, so Anki import passes a
- * questionId-keyed map alongside the file instead.
+ * Deliberately not part of [QuestionDto]: a question is content, while how far
+ * that content has been learned is per-device progress. It travels in
+ * [McqFileDto.scheduling] as a questionId-keyed map — which is also the shape
+ * the Anki importer passes alongside the file — so one restore path serves both
+ * JSON backups and `.apkg` files.
  *
  * Field names match `card_state` so the importer is a copy rather than a
  * translation. Milliseconds, days, and Anki's own ease scale (1.3-3.0).
  */
+@Serializable
 data class CardScheduleDto(
     val ease: Double = 2.5,
     val intervalDays: Int = 0,

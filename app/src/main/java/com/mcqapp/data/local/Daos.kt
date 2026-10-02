@@ -193,6 +193,9 @@ interface CardStateDao {
     @Query("SELECT * FROM card_state WHERE paperId = :paperId")
     suspend fun getByPaper(paperId: String): List<CardStateEntity>
 
+    @Query("SELECT * FROM card_state")
+    suspend fun getAll(): List<CardStateEntity>
+
     @Query("SELECT * FROM card_state WHERE paperId = :paperId AND questionId = :questionId")
     suspend fun get(paperId: String, questionId: String): CardStateEntity?
 

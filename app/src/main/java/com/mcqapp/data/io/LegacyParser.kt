@@ -7,7 +7,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -68,6 +71,35 @@ object LegacyParser {
                 )
             }
         }
+    }
+
+
+    /**
+     * Reads the optional questionId-keyed review progress.
+     *
+     * Tolerant by design: one unreadable entry costs that card's schedule, not
+     * the whole import.
+     */
+    private fun parseScheduling(element: JsonElement?): Map<String, CardScheduleDto> {
+        val obj = element as? JsonObject ?: return emptyMap()
+        val out = mutableMapOf<String, CardScheduleDto>()
+        for ((questionId, value) in obj) {
+            val entry = value as? JsonObject ?: continue
+            try {
+                out[questionId] = CardScheduleDto(
+                    ease = entry["ease"]?.jsonPrimitive?.doubleOrNull ?: 2.5,
+                    intervalDays = entry["intervalDays"]?.jsonPrimitive?.intOrNull ?: 0,
+                    dueAt = entry["dueAt"]?.jsonPrimitive?.longOrNull ?: 0L,
+                    reps = entry["reps"]?.jsonPrimitive?.intOrNull ?: 0,
+                    lapses = entry["lapses"]?.jsonPrimitive?.intOrNull ?: 0,
+                    leech = entry["leech"]?.jsonPrimitive?.booleanOrNull ?: false,
+                    lastReviewedAt = entry["lastReviewedAt"]?.jsonPrimitive?.longOrNull ?: 0L
+                )
+            } catch (_: Exception) {
+                // Keep the rest of the progress.
+            }
+        }
+        return out
     }
 
     /**
@@ -152,7 +184,10 @@ object LegacyParser {
             bookmarks = bookmarks,
             attempts = attempts,
             warnings = warnings
-                .plus(localImageWarning(papers)?.let { listOf(it) } ?: emptyList())
+                .plus(localImageWarning(papers)?.let { listOf(it) } ?: emptyList()),
+            // Review progress this app exported. Absent from foreign files,
+            // which then import exactly as before.
+            scheduling = parseScheduling(root["scheduling"])
         )
     }
 

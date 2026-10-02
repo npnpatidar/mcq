@@ -17,6 +17,13 @@ import java.security.MessageDigest
 object LegacyParser {
 
     /**
+     * Deepest JSON nesting accepted. Real question banks nest about six
+     * levels (file → paper → category → question → option); 200 is far beyond
+     * any legitimate file and far below the parser's stack limit.
+     */
+    const val MAX_NESTING_DEPTH = 200
+
+    /**
      * Prefix for paper ids generated at parse time. Such an id is ephemeral —
      * a fresh parse mints a new one — so the Importer may match these papers
      * by title. Stable ids (app-created or file-authored) never title-merge.
@@ -25,11 +32,50 @@ object LegacyParser {
 
     private val letterIds = ('a'..'z').map { it.toString() }
 
+    /**
+     * Nesting deeper than [MAX_NESTING_DEPTH] is rejected before parsing.
+     *
+     * `parseToJsonElement` recurses once per level, so a few hundred kilobytes
+     * of `[[[[...` raised a StackOverflowError — an Error, which the import
+     * screen's `catch (e: Exception)` could not catch, crashing instead of
+     * reporting "Could not parse the file".
+     */
+    internal fun requireNestingDepth(json: String) {
+        var depth = 0
+        var maxDepth = 0
+        var inString = false
+        var escaped = false
+        for (c in json) {
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inString = true
+                '{', '[' -> {
+                    depth++
+                    if (depth > maxDepth) maxDepth = depth
+                }
+                '}', ']' -> if (depth > 0) depth--
+            }
+            if (maxDepth > MAX_NESTING_DEPTH) {
+                throw IllegalArgumentException(
+                    "File is nested more than $MAX_NESTING_DEPTH levels deep."
+                )
+            }
+        }
+    }
+
     /** A `<math>...</math>` block, attributes and line breaks included. */
     private val mathBlockPattern = Regex("<math\\b.*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
     fun parse(json: String): McqFileDto {
         val warnings = mutableListOf<String>()
+        requireNestingDepth(json)
         val element = Json.parseToJsonElement(json)
         // Scalar/null roots carry no questions; empty file beats a crash
         // (the import screen reports "No papers found").

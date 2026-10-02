@@ -72,7 +72,7 @@ Everything else on this list is independent of release state.
 | A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
 | A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[ ]` |
 | A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[ ]` |
-| A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[ ]` |
+| A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[~]` depth guard done, row diagnostics pending |
 | A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[ ]` |
 | A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[ ]` |
 | A44 | P2 | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[ ]` |
@@ -640,11 +640,17 @@ narrowing is deliberate and documented, and the import report tells the user dup
 skipped — this is a product decision to confirm, not an oversight. `McqRepository` also duplicates
 the formula despite the "single source of truth" comment.
 
-### A41 · `[ ]` · JSON parser robustness *(carried forward)*
-`LegacyParser.kt:33` recurses once per nesting level; a file of `[[[[…` × ~50k should raise
-`StackOverflowError`, which `catch (e: Exception)` cannot catch. Malformed papers/questions are
-also dropped silently with no row-level diagnostic (`LegacyParser.kt:47-52,121-125,180-184`).
-`ParserFuzzTest` caps generated depth at 2, so this shape is untested.
+### A41 · `[~]` · JSON parser robustness — depth guard done, row diagnostics pending · `read`
+**Half fixed** in the A41 commit: `LegacyParser.requireNestingDepth` scans bracket depth before
+`parseToJsonElement` runs and rejects anything past 200 levels, so a file of `[[[[…` now produces a
+clean "Could not parse the file" instead of a StackOverflowError. The scan tracks string literals and
+escapes, so a question containing JSON as text is unaffected. `JsonDepthGuardTest` covers the exact
+boundary, a 200,000-level file, braces inside strings, and a normal file still parsing.
+
+**Still open:** malformed papers/questions are still dropped silently with no row-level diagnostic
+(`LegacyParser.kt:47-52,121-125,180-184`). Preserving partial-import tolerance while accumulating
+errors is the deliberate design, so this needs a product decision on whether such rows belong in the
+import report's warnings.
 
 ### A42 · `[ ]` · Search and recomposition nits
 `BrowseScreen.kt:175` filters every question's text, tags and option texts on the main thread per

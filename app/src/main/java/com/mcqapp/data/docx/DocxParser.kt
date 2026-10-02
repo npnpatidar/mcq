@@ -168,7 +168,8 @@ internal fun fieldElements(html: String): List<Map<String, Any>> {
         val chunk = html.substring(pos, end)
         if (chunk.isBlank()) return
         if (out.isNotEmpty() && out.last()["type"] == "text") {
-            val merged = out.removeLast().toMutableMap()
+            // removeLast() on java.util.List needs API 35; minSdk is 26.
+            val merged = out.removeAt(out.lastIndex).toMutableMap()
             merged["content"] = (merged["content"] as String) + chunk
             out.add(merged)
         } else {

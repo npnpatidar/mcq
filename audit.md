@@ -59,7 +59,7 @@ Everything else on this list is independent of release state.
 | A25 | P2 | Tests | 1 of 11 ViewModels tested | `[~]` results screen done, rest pending |
 | A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[~]` tests written, blocked by Robolectric |
 | A27 | P2 | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[ ]` |
-| A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[ ]` |
+| A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[x]` fixed |
 | A29 | P2 | Docs | `BUILDING.md` documents a release process that doesn't exist | `[ ]` |
 | A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[~]` dead code + escapers done, renderers pending |
 | A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[x]` fixed |
@@ -593,7 +593,7 @@ is deleted inline at the end of the test body rather than in `@After`. Only two 
 the whole app. Fix: add tags to editor/import/results roots, assert on tags, move cleanup to
 `@After`.
 
-### A28 · `[ ]` · CI gaps
+### A28 · `[x]` · CI gaps — fixed, and lint found three real defects · `read`
 `.github/workflows/build.yml` has two jobs and no `:app:lintDebug` (there is no `lint { }` block or
 baseline anywhere), no release job, no dependency scanning, no coverage, and it publishes raw JUnit
 XML that GitHub does not render. The `ui-test` job never installs `platforms;android-37.0` /

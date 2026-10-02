@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -50,7 +51,6 @@ import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -153,7 +153,7 @@ fun ResultsScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(attempt.title, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
+                        SimpleDateFormat("dd MMM yyyy, HH:mm", LocalConfiguration.current.locales[0])
                             .format(Date(attempt.finishedAt)),
                         style = MaterialTheme.typography.labelSmall
                     )

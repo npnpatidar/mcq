@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -39,7 +40,6 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Trends
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -167,7 +167,7 @@ fun HistoryScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(attempt.title, style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
+                                    SimpleDateFormat("dd MMM yyyy, HH:mm", LocalConfiguration.current.locales[0])
                                         .format(Date(attempt.finishedAt)),
                                     style = MaterialTheme.typography.labelSmall
                                 )

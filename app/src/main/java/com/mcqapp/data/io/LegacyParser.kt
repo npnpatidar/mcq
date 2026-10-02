@@ -70,6 +70,26 @@ object LegacyParser {
         }
     }
 
+    /**
+     * Reads a list field, complaining when it is present but the wrong shape.
+     *
+     * A bare `as? JsonArray ?: emptyList()` silently turned a malformed
+     * container into an empty one, so the import looked clean while silently
+     * dropping every row inside it.
+     */
+    private fun arrayField(
+        obj: JsonObject,
+        name: String,
+        where: String,
+        warnings: MutableList<String>
+    ): JsonArray {
+        val value = obj[name] ?: return JsonArray(emptyList())
+        if (value is JsonArray) return value
+        val kind = value.javaClass.simpleName ?: "value"
+        warnings.add("$where: \"$name\" is $kind, not a list — its contents were skipped")
+        return JsonArray(emptyList())
+    }
+
     /** A `<math>...</math>` block, attributes and line breaks included. */
     private val mathBlockPattern = Regex("<math\\b.*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
@@ -105,7 +125,7 @@ object LegacyParser {
         }
         val root = element.jsonObject
         val version = root["version"]?.jsonPrimitive?.intOrNull ?: 1
-        val papersJson = root["papers"] as? JsonArray ?: JsonArray(emptyList())
+        val papersJson = arrayField(root, "papers", "File", warnings)
         val papers = papersJson.mapIndexedNotNull { index, paperEl ->
             try {
                 parsePaper(paperEl.jsonObject, warnings)
@@ -117,7 +137,7 @@ object LegacyParser {
         val bookmarks = (root["bookmarks"] as? JsonArray)
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.filter { it.isNotBlank() }
             ?: emptyList()
-        val attemptsJson = root["attempts"] as? JsonArray ?: JsonArray(emptyList())
+        val attemptsJson = arrayField(root, "attempts", "File", warnings)
         val attempts = attemptsJson.mapIndexedNotNull { index, attemptEl ->
             try {
                 parseAttempt(attemptEl.jsonObject)
@@ -182,7 +202,7 @@ object LegacyParser {
         fun int(key: String) = obj[key]?.jsonPrimitive?.intOrNull ?: 0
         fun long(key: String) = obj[key]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
         fun double(key: String) = obj[key]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: 0.0
-        val resultsJson = obj["results"] as? JsonArray ?: JsonArray(emptyList())
+        val resultsJson = arrayField(obj, "results", "Attempt", mutableListOf())
         return AttemptDto(
             paperId = str("paperId"),
             title = str("title").ifBlank { "Test" },
@@ -287,7 +307,7 @@ object LegacyParser {
             ?: obj["name"]?.jsonPrimitive?.contentOrNull
             ?: "Category"
         val parentId = obj["parentId"]?.jsonPrimitive?.contentOrNull
-        val questionsJson = obj["questions"] as? JsonArray ?: JsonArray(emptyList())
+        val questionsJson = arrayField(obj, "questions", "Category '$title'", warnings)
         return CategoryDto(
             id = id,
             title = title,

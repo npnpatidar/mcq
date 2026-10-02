@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +59,7 @@ import com.mcqapp.util.ContentElements
 import com.mcqapp.util.ImageUtils
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -156,7 +158,7 @@ fun QuestionEditorScreen(
                 title = { Text(if (state.isNew) "New question" else "Edit question") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -176,7 +178,7 @@ fun QuestionEditorScreen(
                             },
                             enabled = canProceed && prevId != null
                         ) {
-                            Text("Prev")
+                            stringResource(R.string.prev)
                         }
                         TextButton(
                             onClick = {
@@ -188,7 +190,7 @@ fun QuestionEditorScreen(
                             },
                             enabled = canProceed && nextId != null
                         ) {
-                            Text("Next")
+                            stringResource(R.string.next)
                         }
                     }
                 }
@@ -198,7 +200,7 @@ fun QuestionEditorScreen(
         val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
         if (showLoading) {
             Text(
-                "Loading…",
+                stringResource(R.string.loading),
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
@@ -230,7 +232,7 @@ fun QuestionEditorScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
-            Text("Question", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.question), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             BlockListEditor(
                 elements = state.elements,
@@ -256,12 +258,12 @@ fun QuestionEditorScreen(
                 OutlinedTextField(
                     value = state.image,
                     onValueChange = viewModel::updateImage,
-                    label = { Text("Image URL (optional)") },
+                    label = { stringResource(R.string.image_url_optional) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedButton(onClick = { pickImageLauncher.launch("image/*") }) {
-                    Text("Pick")
+                    stringResource(R.string.pick)
                 }
             }
             if (state.image.isNotBlank()) {
@@ -269,16 +271,16 @@ fun QuestionEditorScreen(
             }
 
             Spacer(Modifier.height(8.dp))
-            Text("Preview", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.preview), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 ContentElements(state.elements, modifier = Modifier.padding(12.dp))
             }
 
             Spacer(Modifier.height(16.dp))
-            Text("Options", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.options), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(
-                "Tick the correct answer(s)",
+                stringResource(R.string.tick_the_correct_answer_s),
                 style = MaterialTheme.typography.labelSmall
             )
             Spacer(Modifier.height(4.dp))
@@ -309,7 +311,7 @@ fun QuestionEditorScreen(
             }
 
             OutlinedButton(onClick = viewModel::addOption) {
-                Text("Add option")
+                stringResource(R.string.add_option)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -321,12 +323,12 @@ fun QuestionEditorScreen(
             OutlinedTextField(
                 value = state.marks,
                 onValueChange = viewModel::updateMarks,
-                label = { Text("Marks (default 1)") },
+                label = { stringResource(R.string.marks_default_1) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            Text("Explanation", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.explanation), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             // No table cell callbacks: the ViewModel exposes cell ops for the
             // question body only, so explanation tables render read-only.
@@ -348,12 +350,12 @@ fun QuestionEditorScreen(
                 OutlinedTextField(
                     value = state.explanationImage,
                     onValueChange = viewModel::updateExplanationImage,
-                    label = { Text("Explanation image URL (optional)") },
+                    label = { stringResource(R.string.explanation_image_url_optional) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedButton(onClick = { pickExplanationImageLauncher.launch("image/*") }) {
-                    Text("Pick")
+                    stringResource(R.string.pick)
                 }
             }
             if (state.explanationImage.isNotBlank()) {
@@ -363,7 +365,7 @@ fun QuestionEditorScreen(
             OutlinedTextField(
                 value = state.tags,
                 onValueChange = viewModel::updateTags,
-                label = { Text("Tags (comma separated)") },
+                label = { stringResource(R.string.tags_comma_separated) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -377,7 +379,7 @@ fun QuestionEditorScreen(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(Modifier.padding(2.dp))
-                    Text("Save")
+                    stringResource(R.string.save)
                 }
                 if (!state.isNew) {
                     OutlinedButton(onClick = {
@@ -422,14 +424,14 @@ private fun OptionEditorRow(
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = onMoveUp) {
-                Icon(Icons.Default.ArrowUpward, contentDescription = "Move up")
+                Icon(Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.move_up))
             }
             IconButton(onClick = onMoveDown) {
-                Icon(Icons.Default.ArrowDownward, contentDescription = "Move down")
+                Icon(Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.move_down))
             }
             if (canRemove) {
                 IconButton(onClick = onRemove) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove option")
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_option))
                 }
             }
         }
@@ -454,12 +456,12 @@ private fun OptionEditorRow(
             OutlinedTextField(
                 value = option.image,
                 onValueChange = onImageChange,
-                label = { Text("Option image URL (optional)") },
+                label = { stringResource(R.string.option_image_url_optional) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             OutlinedButton(onClick = { onPickImage() }) {
-                Text("Pick")
+                stringResource(R.string.pick)
             }
         }
         if (option.image.isNotBlank()) {
@@ -488,7 +490,7 @@ private fun CategoryDropdown(
             value = selectedTitle,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Category") },
+            label = { stringResource(R.string.category) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -497,7 +499,7 @@ private fun CategoryDropdown(
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             flat.forEach { node ->
                 DropdownMenuItem(
-                    text = { Text("  ".repeat(node.depth) + node.title) },
+                    text = { Text(stringResource(R.string.label).repeat(node.depth) + node.title) },
                     onClick = {
                         onSelect(node.id)
                         expanded = false
@@ -520,7 +522,7 @@ private fun DifficultyDropdown(
             value = difficulty.label,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Difficulty") },
+            label = { stringResource(R.string.difficulty) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()

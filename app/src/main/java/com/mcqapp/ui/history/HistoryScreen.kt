@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -40,6 +41,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Trends
 import java.text.SimpleDateFormat
 import java.util.Date
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,10 +57,10 @@ fun HistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("History") },
+                title = { stringResource(R.string.history) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 }
             )
@@ -71,7 +73,7 @@ fun HistoryScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No attempts yet")
+                stringResource(R.string.no_attempts_yet)
             }
         } else {
             // Hoisted: was recomputed inside the lazy content lambda on every
@@ -86,18 +88,18 @@ fun HistoryScreen(
             ) {
                 if (trends.isNotEmpty()) {
                     item {
-                        Text("Trends", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.trends), style = MaterialTheme.typography.titleSmall)
                     }
                     items(trends, key = { "trend-${it.paperId}" }) { trend ->
                         TrendCard(trend = trend)
                     }
                     item {
-                        Text("Attempts", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.attempts), style = MaterialTheme.typography.titleSmall)
                     }
                 }
                 if (weakest.isNotEmpty()) {
                     item {
-                        Text("Weakest categories", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.weakest_categories), style = MaterialTheme.typography.titleSmall)
                     }
                     items(weakest, key = { "weak-${it.paperId}-${it.categoryTitle}" }) { mastery ->
                         Card(modifier = Modifier.fillMaxWidth()) {
@@ -127,7 +129,7 @@ fun HistoryScreen(
                 }
                 if (hardest.isNotEmpty()) {
                     item {
-                        Text("Hardest questions", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.hardest_questions), style = MaterialTheme.typography.titleSmall)
                     }
                     items(hardest, key = { "hard-${it.questionId}" }) { stat ->
                         Card(modifier = Modifier.fillMaxWidth()) {
@@ -174,7 +176,7 @@ fun HistoryScreen(
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    "%.0f%%".format(attempt.percentage),
+                                    stringResource(R.string.l_0f).format(attempt.percentage),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -210,7 +212,7 @@ private fun TrendCard(trend: Trends.PaperTrend) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "%.0f%%".format(trend.latestPercent),
+                    stringResource(R.string.l_0f).format(trend.latestPercent),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )

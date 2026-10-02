@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,7 @@ import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,16 +98,16 @@ fun BookmarksScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bookmarks") },
+                title = { stringResource(R.string.bookmarks) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
                     if (state.questions.isNotEmpty()) {
                         IconButton(onClick = { showFormatDialog = true }) {
-                            Icon(Icons.Default.Share, contentDescription = "Export bookmarks")
+                            Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_bookmarks))
                         }
                     }
                 }
@@ -119,7 +121,7 @@ fun BookmarksScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No bookmarked questions")
+                stringResource(R.string.no_bookmarked_questions)
             }
         } else {
             LazyColumn(
@@ -167,10 +169,10 @@ fun BookmarksScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                QuestionImage(src = question.explanationImage, contentDescription = "Explanation image")
+                                QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
                             }
                             IconButton(onClick = { viewModel.removeBookmark(question.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove bookmark")
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_bookmark))
                             }
                         }
                     }
@@ -182,10 +184,10 @@ fun BookmarksScreen(
     exportError?.let { error ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissError() },
-            title = { Text("Error") },
+            title = { stringResource(R.string.error) },
             text = { Text(error) },
             confirmButton = {
-                TextButton(onClick = { viewModel.dismissError() }) { Text("OK") }
+                TextButton(onClick = { viewModel.dismissError() }) { stringResource(R.string.ok) }
             }
         )
     }
@@ -196,7 +198,7 @@ fun BookmarksScreen(
                 showFormatDialog = false
                 pendingFormat = null
             },
-            title = { Text("Export ${state.questions.size} bookmarked questions") },
+            title = { stringResource(R.string.export_state_questions_size_bookmarked_questions) },
             text = {
                 Column {
                     ExportFormat.entries.forEach { format ->
@@ -234,13 +236,13 @@ fun BookmarksScreen(
                             exportFormat
                         )
                     )
-                }) { Text("Export") }
+                }) { stringResource(R.string.export) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showFormatDialog = false
                     pendingFormat = null
-                }) { Text("Cancel") }
+                }) { stringResource(R.string.cancel) }
             }
         )
     }

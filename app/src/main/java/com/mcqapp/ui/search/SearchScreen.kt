@@ -27,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,10 +51,10 @@ fun SearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Search all papers") },
+                title = { stringResource(R.string.search_all_papers) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 }
             )
@@ -67,12 +69,12 @@ fun SearchScreen(
             OutlinedTextField(
                 value = state.query,
                 onValueChange = viewModel::updateQuery,
-                label = { Text("Search text or tags") },
+                label = { stringResource(R.string.search_text_or_tags) },
                 singleLine = true,
                 trailingIcon = {
                     if (state.query.isNotEmpty()) {
                         IconButton(onClick = { viewModel.updateQuery("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.clear_search))
                         }
                     }
                 },
@@ -90,9 +92,9 @@ fun SearchScreen(
             }
             Spacer(Modifier.height(8.dp))
             when {
-                state.searching -> Text("Searching…", style = MaterialTheme.typography.bodyMedium)
+                state.searching -> Text(stringResource(R.string.searching), style = MaterialTheme.typography.bodyMedium)
                 state.searched && state.hits.isEmpty() ->
-                    Text("No matches", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.no_matches), style = MaterialTheme.typography.bodyMedium)
                 state.hits.isNotEmpty() ->
                     Text(
                         "${state.hits.size} match${if (state.hits.size == 1) "" else "es"}",

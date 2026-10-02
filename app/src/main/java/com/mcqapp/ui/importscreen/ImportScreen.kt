@@ -30,6 +30,7 @@ import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import com.mcqapp.domain.ImportWarnings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,20 +80,20 @@ fun ImportScreen(
     state.error?.let { error ->
         AlertDialog(
             onDismissRequest = { },
-            title = { Text("Cannot open file") },
+            title = { stringResource(R.string.cannot_open_file) },
             text = { Text(error) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.dismissError()
                     navController.popBackStack()
-                }) { Text("Go back") }
+                }) { stringResource(R.string.go_back) }
             }
         )
     }
     if (state.importDone && report != null) {
         AlertDialog(
             onDismissRequest = { },
-            title = { Text("Import complete") },
+            title = { stringResource(R.string.import_complete) },
             text = {
                 Text(
                     "• ${report.newQuestions} new questions added\n" +
@@ -116,7 +118,7 @@ fun ImportScreen(
                     navController.navigate("library") {
                         popUpTo("library") { inclusive = true }
                     }
-                }) { Text("OK") }
+                }) { stringResource(R.string.ok) }
             }
         )
     }
@@ -179,10 +181,10 @@ fun ImportScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Import questions") },
+                title = { stringResource(R.string.import_questions) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 }
             )
@@ -199,7 +201,7 @@ fun ImportScreen(
             ) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(8.dp))
-                Text("Loading…")
+                stringResource(R.string.loading)
             }
             return@Scaffold
         }
@@ -223,12 +225,12 @@ fun ImportScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 item {
-                    Text("Paper details", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.paper_details), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = state.paperTitle,
                         onValueChange = viewModel::updatePaperTitle,
-                        label = { Text("Paper title") },
+                        label = { stringResource(R.string.paper_title) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -236,7 +238,7 @@ fun ImportScreen(
                     OutlinedTextField(
                         value = state.paperDescription,
                         onValueChange = viewModel::updatePaperDescription,
-                        label = { Text("Description (optional)") },
+                        label = { stringResource(R.string.description_optional) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -244,7 +246,7 @@ fun ImportScreen(
                         OutlinedTextField(
                             value = if (state.durationMinutes == 0) "" else state.durationMinutes.toString(),
                             onValueChange = { input -> viewModel.updateDuration(input.filter { it.isDigit() }.toIntOrNull() ?: 0) },
-                            label = { Text("Duration (min)") },
+                            label = { stringResource(R.string.duration_min) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -254,7 +256,7 @@ fun ImportScreen(
                                 val filtered = input.filter { it.isDigit() || it == '.' }
                                 viewModel.updateNegativeMarking(filtered.toDoubleOrNull() ?: 0.0)
                             },
-                            label = { Text("Negative marking") },
+                            label = { stringResource(R.string.negative_marking) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -263,7 +265,7 @@ fun ImportScreen(
                     OutlinedTextField(
                         value = state.categoryName,
                         onValueChange = viewModel::updateCategoryName,
-                        label = { Text("Category name for all questions") },
+                        label = { stringResource(R.string.category_name_for_all_questions) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -396,7 +398,7 @@ fun ImportScreen(
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            "Matched by question text + options.",
+                            stringResource(R.string.matched_by_question_text_options),
                             style = MaterialTheme.typography.labelSmall
                         )
                         Spacer(Modifier.height(4.dp))
@@ -476,15 +478,15 @@ private fun PreviewQuestionCard(
                     )
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove question")
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_question))
                 }
                 IconButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit question")
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_question))
                 }
             }
             QuestionImage(
                 src = question.image,
-                contentDescription = "Question image",
+                contentDescription = stringResource(R.string.question_image),
                 modifier = Modifier.padding(top = 4.dp)
             )
             question.options.forEach { option ->

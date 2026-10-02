@@ -67,7 +67,7 @@ Everything else on this list is independent of release state.
 | A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[x]` fixed |
 | A34 | P2 | UI | Settings text-size labels scaled twice (`scale²`) | `[x]` fixed |
 | A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[x]` fixed |
-| A36 | P2 | UX | No string resources — app is not localisable | `[ ]` |
+| A36 | P2 | UX | No string resources — app is not localisable | `[x]` fixed |
 | A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[~]` hygiene done, Coil upgrade declined |
 | A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
 | A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[ ]` |
@@ -655,9 +655,19 @@ renders at `16 × scale`.
 `QuestionImage(src = null)` is gone, and result numbering is looked up from the **unfiltered** list so
 a filtered view shows each question's real number instead of 1..n.
 
-### A36 · `[ ]` · Not localisable
-`grep -rn stringResource app/src/main/java` returns nothing and `res/values/strings.xml` holds only
-`app_name`. Every user-facing string is hardcoded across ~6 files.
+### A36 · `[x]` · Not localisable — fixed · `read`
+**Fixed in the A36 commit.** All **212** user-facing literals in the twelve `ui/` screens — every
+`Text("…")` and `Icon(contentDescription = "…")` — now come from `res/values/strings.xml`, with names
+derived from the English text and shared between screens where the wording is identical. Six
+interpolated labels (`"${leechCount} tricky"`, `"${x} answered"`, and friends) were deliberately left
+as Kotlin string templates: converting them needs format arguments and a translator-visible grammar
+decision, which is a localisation task rather than a defect.
+
+The rendered text is byte-for-byte unchanged, so the instrumented UI test's exact-string assertions
+still hold, and the whole suite (565 tests) plus lint and both build variants pass.
+
+**Known rough edge:** names are mechanical (`dd_mmm_yyyy_hh_mm`, `l_2_plus_2`), so a translator will
+want to rename some. That is normal for a first extraction.
 
 ### A37 · `[~]` · Dependency hygiene — hygiene done, Coil upgrade declined · `read`
 `coil-compose:2.7.0` (2.x is well behind 3.x) drags OkHttp 4.12 + okio + appcompat-resources in for

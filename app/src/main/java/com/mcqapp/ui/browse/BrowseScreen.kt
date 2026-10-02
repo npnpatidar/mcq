@@ -41,6 +41,7 @@ import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -61,6 +62,7 @@ import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -109,7 +111,7 @@ fun BrowseScreen(
                         Icon(
                             if (selectionMode) Icons.Default.Close
                             else Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.back)
                         )
                     }
                 },
@@ -123,17 +125,17 @@ fun BrowseScreen(
                                 showBulkDialog = true
                             },
                             enabled = selectedIds.isNotEmpty()
-                        ) { Text("Edit") }
+                        ) { stringResource(R.string.edit) }
                         TextButton(
                             onClick = { showMoveDialog = true },
                             enabled = selectedIds.isNotEmpty()
-                        ) { Text("Move") }
+                        ) { stringResource(R.string.move) }
                         TextButton(
                             onClick = { showDeleteConfirm = true },
                             enabled = selectedIds.isNotEmpty()
-                        ) { Text("Delete") }
+                        ) { stringResource(R.string.delete) }
                     } else {
-                        TextButton(onClick = { selectionMode = true }) { Text("Select") }
+                        TextButton(onClick = { selectionMode = true }) { stringResource(R.string.select) }
                     }
                 }
             )
@@ -143,7 +145,7 @@ fun BrowseScreen(
         val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
         if (showLoading) {
             Text(
-                "Loading…",
+                stringResource(R.string.loading),
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
@@ -161,7 +163,7 @@ fun BrowseScreen(
 
         if (state.questions.isEmpty()) {
             Text(
-                "No questions in this paper",
+                stringResource(R.string.no_questions_in_this_paper),
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
@@ -224,12 +226,12 @@ fun BrowseScreen(
                     // later, so the filter does not run on every keystroke.
                     value = searchInput,
                     onValueChange = { searchInput = it },
-                    label = { Text("Search text, tags, options") },
+                    label = { stringResource(R.string.search_text_tags_options) },
                     singleLine = true,
                     trailingIcon = {
                         if (searchInput.isNotEmpty()) {
                             IconButton(onClick = { searchInput = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.clear_search))
                             }
                         }
                     },
@@ -252,7 +254,7 @@ fun BrowseScreen(
                 if (filtered.isEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "No questions match this filter",
+                        stringResource(R.string.no_questions_match_this_filter),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(vertical = 16.dp)
                     )
@@ -299,30 +301,30 @@ fun BrowseScreen(
         if (showBulkDialog) {
             AlertDialog(
                 onDismissRequest = { showBulkDialog = false },
-                title = { Text("Edit ${selectedIds.size} questions") },
+                title = { stringResource(R.string.edit_selectedids_size_questions) },
                 text = {
                     Column {
                         Text(
-                            "Blank fields keep existing values.",
+                            stringResource(R.string.blank_fields_keep_existing_values),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(Modifier.height(8.dp))
                         androidx.compose.material3.OutlinedTextField(
                             value = bulkMarks,
                             onValueChange = { bulkMarks = it },
-                            label = { Text("Marks (blank = keep)") },
+                            label = { stringResource(R.string.marks_blank_keep) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text("Difficulty", style = MaterialTheme.typography.labelLarge)
+                        Text(stringResource(R.string.difficulty), style = MaterialTheme.typography.labelLarge)
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             FilterChip(
                                 selected = bulkDifficulty == null,
                                 onClick = { bulkDifficulty = null },
-                                label = { Text("Keep") }
+                                label = { stringResource(R.string.keep) }
                             )
                             com.mcqapp.domain.Difficulty.entries.forEach { d ->
                                 FilterChip(
@@ -336,7 +338,7 @@ fun BrowseScreen(
                         androidx.compose.material3.OutlinedTextField(
                             value = bulkTags,
                             onValueChange = { bulkTags = it },
-                            label = { Text("Tags, comma separated (blank = keep)") },
+                            label = { stringResource(R.string.tags_comma_separated_blank_keep) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -348,10 +350,10 @@ fun BrowseScreen(
                         selectedIds = emptySet()
                         selectionMode = false
                         showBulkDialog = false
-                    }) { Text("Apply") }
+                    }) { stringResource(R.string.apply) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showBulkDialog = false }) { Text("Cancel") }
+                    TextButton(onClick = { showBulkDialog = false }) { stringResource(R.string.cancel) }
                 }
             )
         }
@@ -359,18 +361,18 @@ fun BrowseScreen(
         if (showDeleteConfirm) {
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
-                title = { Text("Delete ${selectedIds.size} questions?") },
-                text = { Text("This cannot be undone.") },
+                title = { stringResource(R.string.delete_selectedids_size_questions) },
+                text = { stringResource(R.string.this_cannot_be_undone) },
                 confirmButton = {
                     TextButton(onClick = {
                         viewModel.deleteQuestions(selectedIds)
                         selectedIds = emptySet()
                         selectionMode = false
                         showDeleteConfirm = false
-                    }) { Text("Delete") }
+                    }) { stringResource(R.string.delete) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                    TextButton(onClick = { showDeleteConfirm = false }) { stringResource(R.string.cancel) }
                 }
             )
         }
@@ -397,12 +399,12 @@ fun BrowseScreen(
                             FilterChip(
                                 selected = !moveIsCopy,
                                 onClick = { moveIsCopy = false },
-                                label = { Text("Move") }
+                                label = { stringResource(R.string.move) }
                             )
                             FilterChip(
                                 selected = moveIsCopy,
                                 onClick = { moveIsCopy = true },
-                                label = { Text("Copy") }
+                                label = { stringResource(R.string.copy) }
                             )
                         }
                         Spacer(Modifier.height(8.dp))
@@ -415,7 +417,7 @@ fun BrowseScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 singleLine = true,
-                                label = { Text("Paper") },
+                                label = { stringResource(R.string.paper) },
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults.TrailingIcon(expanded = paperMenuOpen)
                                 },
@@ -462,7 +464,7 @@ fun BrowseScreen(
                 },
                 confirmButton = {},
                 dismissButton = {
-                    TextButton(onClick = { showMoveDialog = false }) { Text("Cancel") }
+                    TextButton(onClick = { showMoveDialog = false }) { stringResource(R.string.cancel) }
                 }
             )
         }
@@ -498,7 +500,7 @@ private fun BrowseQuestionCard(
                     Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
                 } else {
                     Text(
-                        "$index.",
+                        stringResource(R.string.index),
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier.padding(end = 8.dp)
                     )
@@ -511,7 +513,7 @@ private fun BrowseQuestionCard(
             }
             QuestionImage(
                 src = question.image,
-                contentDescription = "Question image",
+                contentDescription = stringResource(R.string.question_image),
                 modifier = Modifier.padding(top = 4.dp)
             )
 
@@ -542,27 +544,27 @@ private fun BrowseQuestionCard(
                     textStyle = MaterialTheme.typography.bodySmall
                 )
             }
-            QuestionImage(src = question.explanationImage, contentDescription = "Explanation image")
+            QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
 
             Spacer(Modifier.height(8.dp))
             if (!selectionMode) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (canMoveUp || canMoveDown) {
                         IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up))
                         }
                         IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down))
                         }
                     }
                     IconButton(onClick = onEdit) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit question")
+                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_question))
                     }
                     IconButton(onClick = onDuplicate) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate question")
+                        Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.duplicate_question))
                     }
                     IconButton(onClick = onDelete) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete question")
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_question))
                     }
                 }
             }

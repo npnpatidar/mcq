@@ -40,6 +40,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -56,6 +57,7 @@ import com.mcqapp.domain.StudyReason
 import com.mcqapp.ui.StudyViewModelFactory
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 /**
  * Study mode: one question at a time, show the answer, then grade it. The
@@ -85,10 +87,10 @@ fun StudyScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Study") },
+                title = { stringResource(R.string.study) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 }
             )
@@ -141,7 +143,7 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                 onClick = { viewModel.reveal() },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Show answer")
+                stringResource(R.string.show_answer)
             }
         } else {
             GradeButtons(enabled = !state.grading, onGrade = { viewModel.grade(it) })
@@ -185,7 +187,7 @@ private fun QuestionCard(
                 Spacer(Modifier.height(6.dp))
             } else if (reason == StudyReason.NEW) {
                 Text(
-                    "New question",
+                    stringResource(R.string.new_question),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.tertiary
                 )
@@ -194,7 +196,7 @@ private fun QuestionCard(
             ContentElements(question.elements, textStyle = MaterialTheme.typography.bodyMedium)
             QuestionImage(
                 src = question.image,
-                contentDescription = "Question image",
+                contentDescription = stringResource(R.string.question_image),
                 modifier = Modifier.padding(top = 4.dp)
             )
             question.options.forEach { option ->
@@ -242,15 +244,15 @@ private fun QuestionCard(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         ContentElements(option.elements, textStyle = MaterialTheme.typography.bodySmall)
-                        QuestionImage(src = option.image, contentDescription = "Image for this option")
+                        QuestionImage(src = option.image, contentDescription = stringResource(R.string.image_for_this_option))
                     }
                 }
             }
             if (revealed && question.explanation.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text("Explanation", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.explanation), style = MaterialTheme.typography.labelMedium)
                 ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodySmall)
-                QuestionImage(src = question.explanationImage, contentDescription = "Explanation image")
+                QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
             }
         }
     }
@@ -274,7 +276,7 @@ private fun LeeChip() {
             )
             Spacer(Modifier.width(4.dp))
             Text(
-                "You keep missing this one",
+                stringResource(R.string.you_keep_missing_this_one),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onErrorContainer
             )
@@ -286,7 +288,7 @@ private fun LeeChip() {
 private fun GradeButtons(enabled: Boolean, onGrade: (ReviewGrade) -> Unit) {
     Column {
         Text(
-            "How well did you recall it?",
+            stringResource(R.string.how_well_did_you_recall_it),
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(Modifier.height(8.dp))
@@ -341,9 +343,9 @@ private fun StudyLoadError(message: String, onRetry: () -> Unit, onDone: () -> U
             color = MaterialTheme.colorScheme.error
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onRetry) { Text("Retry") }
+        Button(onClick = onRetry) { stringResource(R.string.retry) }
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onDone) { Text("Back to library") }
+        OutlinedButton(onClick = onDone) { stringResource(R.string.back_to_library) }
     }
 }
 
@@ -368,12 +370,12 @@ private fun StudySummary(
             )
             // There is nothing to repeat, so only offer a way out.
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                Text("Back to library")
+                stringResource(R.string.back_to_library)
             }
             return@Column
         } else {
             Text(
-                "Session complete",
+                stringResource(R.string.session_complete),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
@@ -385,11 +387,11 @@ private fun StudySummary(
             Spacer(Modifier.height(16.dp))
         }
         OutlinedButton(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {
-            Text("Study again")
+            stringResource(R.string.study_again)
         }
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-            Text("Done")
+            stringResource(R.string.done)
         }
     }
 }

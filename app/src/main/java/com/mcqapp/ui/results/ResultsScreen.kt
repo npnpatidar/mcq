@@ -29,6 +29,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import java.text.SimpleDateFormat
 import java.util.Date
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -75,7 +77,7 @@ fun ResultsScreen(
                 title = { Text(if (reviewMode) "Attempt review" else "Results") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 }
             )
@@ -84,7 +86,7 @@ fun ResultsScreen(
         val showLoading = com.mcqapp.util.rememberDelayedVisibility(state.loading)
         if (showLoading) {
             Text(
-                "Loading…",
+                stringResource(R.string.loading),
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
@@ -114,7 +116,7 @@ fun ResultsScreen(
         val attempt = state.attempt
         if (attempt == null) {
             Text(
-                "Attempt not found",
+                stringResource(R.string.attempt_not_found),
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
@@ -159,12 +161,12 @@ fun ResultsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "%.1f / %.0f".format(attempt.score, attempt.maxScore),
+                        stringResource(R.string.l_1f_0f).format(attempt.score, attempt.maxScore),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "%.0f%%".format(attempt.percentage),
+                        stringResource(R.string.l_0f).format(attempt.percentage),
                         style = MaterialTheme.typography.titleSmall
                     )
                     Spacer(Modifier.height(8.dp))
@@ -193,7 +195,7 @@ fun ResultsScreen(
                     val minutes = attempt.durationSeconds / 60
                     val seconds = attempt.durationSeconds % 60
                     Text(
-                        "Time taken: %02d:%02d".format(minutes, seconds),
+                        stringResource(R.string.time_taken_02d_02d).format(minutes, seconds),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(top = 8.dp)
                     )
@@ -212,7 +214,7 @@ fun ResultsScreen(
             if (state.categoryBreakdown.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Category breakdown", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.category_breakdown), style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(8.dp))
                         state.categoryBreakdown.forEach { (title, pair) ->
                             val (correct, total) = pair
@@ -245,7 +247,7 @@ fun ResultsScreen(
             }
 
             item {
-                Text("Questions", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.questions), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
@@ -322,7 +324,7 @@ private fun ResultCard(
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "$index.",
+                    stringResource(R.string.index),
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(end = 8.dp)
                 )
@@ -382,7 +384,7 @@ private fun ResultCard(
                     style = MaterialTheme.typography.labelSmall
                 )
             }
-            QuestionImage(src = result.explanationImage, contentDescription = "Explanation image")
+            QuestionImage(src = result.explanationImage, contentDescription = stringResource(R.string.explanation_image))
         }
     }
 }

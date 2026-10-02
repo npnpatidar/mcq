@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +50,7 @@ import androidx.navigation.NavController
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,10 +84,10 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { stringResource(R.string.settings) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 }
             )
@@ -100,7 +102,7 @@ fun SettingsScreen(
         ) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Theme", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.theme), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     listOf("system" to "System default", "light" to "Light", "dark" to "Dark").forEach { (value, label) ->
                         Row(
@@ -126,7 +128,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Text size", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.text_size), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     com.mcqapp.util.FontScale.OPTIONS.forEach { (scale, label) ->
                         Row(
@@ -160,7 +162,7 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Preview: the quick brown fox jumps over 13 lazy dogs.",
+                        stringResource(R.string.preview_the_quick_brown_fox_jumps_over_13_lazy_dogs),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -169,16 +171,16 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Test", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.test), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Shuffle question order")
+                            stringResource(R.string.shuffle_question_order)
                             Text(
-                                "Present questions in random order each attempt",
+                                stringResource(R.string.present_questions_in_random_order_each_attempt),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -193,9 +195,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Refresh answers on re-import")
+                            stringResource(R.string.refresh_answers_on_re_import)
                             Text(
-                                "When a file repeats a question's text and options but corrects " +
+                                stringResource(R.string.when_a_file_repeats_a_question_s_text_and_options_but_correc) +
                                     "its answer key, update the stored answer instead of " +
                                     "reporting it as a duplicate.",
                                 style = MaterialTheme.typography.bodySmall
@@ -212,9 +214,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Shuffle options")
+                            stringResource(R.string.shuffle_options)
                             Text(
-                                "Present answer options in random order",
+                                stringResource(R.string.present_answer_options_in_random_order),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -229,9 +231,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Practice mode")
+                            stringResource(R.string.practice_mode)
                             Text(
-                                "Show correct answers and explanations instantly",
+                                stringResource(R.string.show_correct_answers_and_explanations_instantly),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -246,9 +248,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Strict exam mode")
+                            stringResource(R.string.strict_exam_mode)
                             Text(
-                                "Hides answers, flags and the question palette",
+                                stringResource(R.string.hides_answers_flags_and_the_question_palette),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -263,9 +265,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Auto-advance")
+                            stringResource(R.string.auto_advance)
                             Text(
-                                "Move to the next question after answering (single-answer only)",
+                                stringResource(R.string.move_to_the_next_question_after_answering_single_answer_only),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -276,7 +278,7 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Review always shows the order you were given. " +
+                        stringResource(R.string.review_always_shows_the_order_you_were_given) +
                             "Scoring is unaffected: answers are matched by option, not position.",
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -298,18 +300,18 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Storage",
+                            stringResource(R.string.storage),
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { viewModel.refreshStorage() }) {
-                            Text("Refresh")
+                            stringResource(R.string.refresh)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
                     val report = storage
                     if (report == null) {
-                        Text("Measuring…", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.measuring), style = MaterialTheme.typography.bodyMedium)
                     } else {
                         Text(
                             "Database: ${com.mcqapp.domain.StorageInfo.formatBytes(report.dbBytes)}" +
@@ -340,7 +342,7 @@ fun SettingsScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Image weight counts embedded pictures; large banks shrink " +
+                            stringResource(R.string.image_weight_counts_embedded_pictures_large_banks_shrink) +
                                 "automatically at import.",
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -351,16 +353,16 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("PDF export", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.pdf_export), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Two-column layout")
+                            stringResource(R.string.two_column_layout)
                             Text(
-                                "Flow questions down the left column, then the right",
+                                stringResource(R.string.flow_questions_down_the_left_column_then_the_right),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -375,13 +377,13 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Data", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.data), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = { exportLauncher.launch("mcq-export.json") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Export all data (JSON)")
+                        stringResource(R.string.export_all_data_json)
                     }
                     Spacer(Modifier.height(8.dp))
                     Button(
@@ -404,11 +406,11 @@ fun SettingsScreen(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Export Logs")
+                        stringResource(R.string.export_logs)
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Backs up every paper, bookmark and attempt to one JSON file. " +
+                        stringResource(R.string.backs_up_every_paper_bookmark_and_attempt_to_one_json_file) +
                             "Re-import it anywhere to restore content and history.",
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -418,16 +420,16 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("About", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.about), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "MCQ App — practice multiple-choice papers offline. " +
+                        stringResource(R.string.mcq_app_practice_multiple_choice_papers_offline) +
                             "Import JSON question banks, take timed tests with negative marking, " +
                             "review explanations, and track your history.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("Version 1.0.0", style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.version_1_0_0), style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -436,10 +438,10 @@ fun SettingsScreen(
     exportError?.let { error ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { exportError = null },
-            title = { Text("Export failed") },
+            title = { stringResource(R.string.export_failed) },
             text = { Text(error) },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { exportError = null }) { Text("OK") }
+                androidx.compose.material3.TextButton(onClick = { exportError = null }) { stringResource(R.string.ok) }
             }
         )
     }
@@ -467,14 +469,14 @@ private fun AnkiSchedulerSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Spaced repetition",
+                    stringResource(R.string.spaced_repetition),
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onReset) { Text("Reset") }
+                TextButton(onClick = onReset) { stringResource(R.string.reset) }
             }
             Text(
-                "SM-2 scheduling for Study. These match Anki's review options, so " +
+                stringResource(R.string.sm_2_scheduling_for_study_these_match_anki_s_review_options_) +
                     "the same values work in both apps. Changes apply to the next " +
                     "review; cards already scheduled keep their current date.",
                 style = MaterialTheme.typography.bodySmall
@@ -523,7 +525,7 @@ private fun AnkiSchedulerSection(
             )
 
             Spacer(Modifier.height(12.dp))
-            Text("Starting intervals", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.starting_intervals), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
                 label = "Easy interval",
                 help = "Days until a new card is reviewed after Easy",
@@ -571,7 +573,7 @@ private fun AnkiSchedulerSection(
             )
 
             Spacer(Modifier.height(12.dp))
-            Text("Lapses", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.lapses), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
                 label = "Relearning delay",
                 help = "How long until a failed card returns",
@@ -615,7 +617,7 @@ private fun AnkiSchedulerSection(
             )
 
             Spacer(Modifier.height(12.dp))
-            Text("Daily limits", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.daily_limits), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
                 label = "New cards per day",
                 help = "Unseen cards offered each day",
@@ -653,7 +655,7 @@ private fun AnkiSchedulerSection(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                "The response-time thresholds only apply when rebuilding a schedule " +
+                stringResource(R.string.the_response_time_thresholds_only_apply_when_rebuilding_a_sc) +
                     "from past test attempts. In Study you grade every card yourself.",
                 style = MaterialTheme.typography.bodySmall
             )
@@ -697,7 +699,7 @@ private fun AnkiNumberRow(
             onClick = { onChange((current - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
             enabled = current > range.start
         ) {
-            Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
+            Icon(Icons.Default.Remove, contentDescription = stringResource(R.string.decrease_label))
         }
         OutlinedTextField(
             value = text,
@@ -721,7 +723,7 @@ private fun AnkiNumberRow(
             onClick = { onChange((current + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
             enabled = current < range.endInclusive
         ) {
-            Icon(Icons.Default.Add, contentDescription = "Increase $label")
+            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.increase_label))
         }
     }
 }

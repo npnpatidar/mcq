@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 /**
  * Reusable editor for a list of [ContentElement] blocks. Text and formula
@@ -75,20 +77,20 @@ fun BlockListEditor(
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = { onMoveUp(index) }, enabled = index > 0) {
-                        Icon(Icons.Default.ArrowUpward, contentDescription = "Move block up")
+                        Icon(Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.move_block_up))
                     }
                     IconButton(onClick = { onMoveDown(index) }, enabled = index < elements.size - 1) {
-                        Icon(Icons.Default.ArrowDownward, contentDescription = "Move block down")
+                        Icon(Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.move_block_down))
                     }
                     IconButton(onClick = { onRemoveBlock(index) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Remove block")
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_block))
                     }
                 }
                 when (element) {
                     is ContentElement.TextElement -> OutlinedTextField(
                         value = element.text,
                         onValueChange = { onUpdateBlock(index, ContentElement.TextElement(it)) },
-                        label = { Text("Text") },
+                        label = { stringResource(R.string.text) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     is ContentElement.ImageElement -> {
@@ -100,7 +102,7 @@ fun BlockListEditor(
                             OutlinedTextField(
                                 value = element.src,
                                 onValueChange = { onUpdateBlock(index, ContentElement.ImageElement(it)) },
-                                label = { Text("Image URL") },
+                                label = { stringResource(R.string.image_url) },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
@@ -109,7 +111,7 @@ fun BlockListEditor(
                                     onUpdateBlock(index, ContentElement.ImageElement(picked))
                                 }
                             }) {
-                                Text("Pick")
+                                stringResource(R.string.pick)
                             }
                         }
                         if (element.src.isNotBlank()) {
@@ -190,7 +192,7 @@ private fun TableBlockEditor(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         IconButton(onClick = { onRemoveColumn(col) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove column ${col + 1}")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_column_col_1))
                         }
                     }
                 }
@@ -217,14 +219,14 @@ private fun TableBlockEditor(
                     Spacer(Modifier.weight(1f))
                 }
                 IconButton(onClick = { onRemoveRow(row) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove row ${row + 1}")
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_row_row_1))
                 }
             }
             Spacer(Modifier.height(4.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onAddRow) { Text("Add row") }
-            OutlinedButton(onClick = onAddColumn) { Text("Add column") }
+            OutlinedButton(onClick = onAddRow) { stringResource(R.string.add_row) }
+            OutlinedButton(onClick = onAddColumn) { stringResource(R.string.add_column) }
         }
     }
 }
@@ -238,26 +240,26 @@ private fun AddBlockMenu(onAddBlock: (EditorBlockType) -> Unit) {
             onClick = { expanded = true },
             modifier = Modifier.menuAnchor()
         ) {
-            Text("Add block")
+            stringResource(R.string.add_block)
         }
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
             DropdownMenuItem(
-                text = { Text("Text") },
+                text = { stringResource(R.string.text) },
                 onClick = { onAddBlock(EditorBlockType.TEXT); expanded = false }
             )
             DropdownMenuItem(
-                text = { Text("Image") },
+                text = { stringResource(R.string.image) },
                 onClick = { onAddBlock(EditorBlockType.IMAGE); expanded = false }
             )
             DropdownMenuItem(
-                text = { Text("Table") },
+                text = { stringResource(R.string.table) },
                 onClick = { onAddBlock(EditorBlockType.TABLE); expanded = false }
             )
             DropdownMenuItem(
-                text = { Text("Formula") },
+                text = { stringResource(R.string.formula) },
                 onClick = { onAddBlock(EditorBlockType.MATH); expanded = false }
             )
         }

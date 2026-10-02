@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -79,6 +80,7 @@ import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -127,10 +129,10 @@ fun TestSessionScreen(
         val seconds = resumeOffer.remainingSeconds % 60
         AlertDialog(
             onDismissRequest = { /* explicit choice required */ },
-            title = { Text("Resume previous attempt?") },
+            title = { stringResource(R.string.resume_previous_attempt) },
             text = {
                 Text(
-                    "$answered question(s) answered" +
+                    stringResource(R.string.answered_question_s_answered) +
                         if (resumeOffer.totalSeconds > 0) {
                             ", %02d:%02d left.".format(minutes, seconds)
                         } else {
@@ -140,17 +142,17 @@ fun TestSessionScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.resume() }) { Text("Resume") }
+                TextButton(onClick = { viewModel.resume() }) { stringResource(R.string.resume) }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.discardResume() }) { Text("Start fresh") }
+                TextButton(onClick = { viewModel.discardResume() }) { stringResource(R.string.start_fresh) }
             }
         )
     }
     if (!state.loading && ungradedTotal > 0 && !ungradedDismissed) {
         AlertDialog(
             onDismissRequest = { ungradedDismissed = true },
-            title = { Text("Questions without an answer key") },
+            title = { stringResource(R.string.questions_without_an_answer_key) },
             text = {
                 Text(
                     if (ungradedTotal == 1)
@@ -162,7 +164,7 @@ fun TestSessionScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { ungradedDismissed = true }) { Text("Continue") }
+                TextButton(onClick = { ungradedDismissed = true }) { stringResource(R.string.continue_label) }
             },
             dismissButton = {
                 TextButton(
@@ -170,7 +172,7 @@ fun TestSessionScreen(
                         ungradedDismissed = true
                         navController.popBackStack()
                     }
-                ) { Text("Go back") }
+                ) { stringResource(R.string.go_back) }
             }
         )
     }
@@ -186,7 +188,7 @@ fun TestSessionScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -202,12 +204,12 @@ fun TestSessionScreen(
                         ) {
                             Icon(
                                 Icons.Default.Timer,
-                                contentDescription = "Time remaining",
+                                contentDescription = stringResource(R.string.time_remaining),
                                 tint = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                "%02d:%02d".format(minutes, seconds),
+                                stringResource(R.string.l_02d_02d).format(minutes, seconds),
                                 color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -218,7 +220,7 @@ fun TestSessionScreen(
                             IconButton(onClick = { viewModel.toggleFlag() }) {
                                 Icon(
                                     Icons.Default.Flag,
-                                    contentDescription = "Flag question",
+                                    contentDescription = stringResource(R.string.flag_question),
                                     tint = if (question.id in state.flagged) verdictColors().tricky else MaterialTheme.colorScheme.onSurface
                                 )
                             }
@@ -227,7 +229,7 @@ fun TestSessionScreen(
                             Icon(
                                 if (question.id in state.bookmarked) Icons.Default.Bookmark
                                 else Icons.Default.BookmarkBorder,
-                                contentDescription = "Bookmark question",
+                                contentDescription = stringResource(R.string.bookmark_question),
                                 tint = if (question.id in state.bookmarked) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface
                             )
@@ -244,7 +246,7 @@ fun TestSessionScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Text("Loading…")
+                stringResource(R.string.loading)
             }
             return@Scaffold
         }
@@ -264,9 +266,9 @@ fun TestSessionScreen(
                     color = MaterialTheme.colorScheme.error
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { viewModel.retry() }) { Text("Retry") }
+                Button(onClick = { viewModel.retry() }) { stringResource(R.string.retry) }
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { navController.popBackStack() }) { Text("Go back") }
+                TextButton(onClick = { navController.popBackStack() }) { stringResource(R.string.go_back) }
             }
             return@Scaffold
         }
@@ -307,7 +309,7 @@ fun TestSessionScreen(
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { viewModel.dismissTimeWarning() }) {
-                            Text("Dismiss")
+                            stringResource(R.string.dismiss)
                         }
                     }
                 }
@@ -354,7 +356,7 @@ fun TestSessionScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No questions in this selection")
+                    stringResource(R.string.no_questions_in_this_selection)
                 }
                 return@Scaffold
             }
@@ -377,21 +379,21 @@ fun TestSessionScreen(
                 val practice = ExamMode.effectivePractice(state.practiceMode, state.strictMode)
                 if (practice) {
                     Text(
-                        "Practice — answers shown instantly",
+                        stringResource(R.string.practice_answers_shown_instantly),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
                 }
                 if (state.strictMode) {
                     Text(
-                        "Strict exam — aids hidden until submit",
+                        stringResource(R.string.strict_exam_aids_hidden_until_submit),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
                 if (state.mistakesOnly) {
                     Text(
-                        "Mistakes round — previously missed questions",
+                        stringResource(R.string.mistakes_round_previously_missed_questions),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -405,14 +407,14 @@ fun TestSessionScreen(
                 }
                 if (question.isMultiCorrect) {
                     Text(
-                        "Multiple correct — select all that apply",
+                        stringResource(R.string.multiple_correct_select_all_that_apply),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
                 if (question.correctOptionIds.isEmpty()) {
                     Text(
-                        "No answer key — not scored",
+                        stringResource(R.string.no_answer_key_not_scored),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -421,7 +423,7 @@ fun TestSessionScreen(
                 ContentElements(question.elements, textStyle = MaterialTheme.typography.titleMedium)
                 QuestionImage(
                     src = question.image,
-                    contentDescription = "Question image",
+                    contentDescription = stringResource(R.string.question_image),
                     modifier = Modifier.padding(top = 8.dp)
                 )
 
@@ -464,11 +466,11 @@ fun TestSessionScreen(
                     onClick = { viewModel.previous() },
                     enabled = state.currentIndex > 0
                 ) {
-                    Text("Previous")
+                    stringResource(R.string.previous)
                 }
                 if (ExamMode.canOpenPalette(state.strictMode)) {
                     TextButton(onClick = { showPalette = !showPalette }) {
-                        Text("${state.answeredCount}/${state.questions.size} answered")
+                        stringResource(R.string.state_answeredcount_state_questions_size_answered)
                     }
                 } else {
                     Text(
@@ -477,9 +479,9 @@ fun TestSessionScreen(
                     )
                 }
                 if (state.currentIndex < state.questions.size - 1) {
-                    Button(onClick = { viewModel.next() }) { Text("Next") }
+                    Button(onClick = { viewModel.next() }) { stringResource(R.string.next) }
                 } else {
-                    Button(onClick = { showSubmitDialog = true }) { Text("Submit") }
+                    Button(onClick = { showSubmitDialog = true }) { stringResource(R.string.submit) }
                 }
             }
 
@@ -496,14 +498,14 @@ fun TestSessionScreen(
                         enabled = question.id !in state.revealed,
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Show answer")
+                        stringResource(R.string.show_answer)
                     }
                 }
                 Button(
                     onClick = { showSubmitDialog = true },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Submit test")
+                    stringResource(R.string.submit_test_2)
                 }
             }
         }
@@ -525,7 +527,7 @@ fun TestSessionScreen(
         val firstFlagged = state.questions.indexOfFirst { it.id in state.flagged }
         AlertDialog(
             onDismissRequest = { showSubmitDialog = false },
-            title = { Text("Submit test?") },
+            title = { stringResource(R.string.submit_test) },
             text = {
                 Column {
                     Text(SubmitSummary.lines(summary).joinToString("\n"))
@@ -533,7 +535,7 @@ fun TestSessionScreen(
                         showSubmitDialog = false
                         showAnswerReview = true
                     }) {
-                        Text("Review answers")
+                        stringResource(R.string.review_answers)
                     }
                 }
             },
@@ -544,16 +546,16 @@ fun TestSessionScreen(
                         viewModel.submit()
                     },
                     modifier = Modifier.testTag("confirm-submit")
-                ) { Text("Submit") }
+                ) { stringResource(R.string.submit) }
             },
             dismissButton = {
                 if (firstFlagged >= 0) {
                     TextButton(onClick = {
                         showSubmitDialog = false
                         viewModel.goTo(firstFlagged)
-                    }) { Text("Review flagged") }
+                    }) { stringResource(R.string.review_flagged) }
                 } else {
-                    TextButton(onClick = { showSubmitDialog = false }) { Text("Cancel") }
+                    TextButton(onClick = { showSubmitDialog = false }) { stringResource(R.string.cancel) }
                 }
             }
         )
@@ -565,7 +567,7 @@ fun TestSessionScreen(
         }
         AlertDialog(
             onDismissRequest = { showAnswerReview = false },
-            title = { Text("Your answers") },
+            title = { stringResource(R.string.your_answers) },
             text = {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
                     items(reviewRows, key = { it.questionId }) { row ->
@@ -612,10 +614,10 @@ fun TestSessionScreen(
                 TextButton(onClick = {
                     showAnswerReview = false
                     showSubmitDialog = true
-                }) { Text("Back to submit") }
+                }) { stringResource(R.string.back_to_submit) }
             },
             dismissButton = {
-                TextButton(onClick = { showAnswerReview = false }) { Text("Close") }
+                TextButton(onClick = { showAnswerReview = false }) { stringResource(R.string.close) }
             }
         )
     }
@@ -715,7 +717,7 @@ private fun OptionRow(
                     if (image != null) {
                         QuestionImage(
                             src = image,
-                            contentDescription = "Image for this option",
+                            contentDescription = stringResource(R.string.image_for_this_option),
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
@@ -727,12 +729,12 @@ private fun OptionRow(
                 when (com.mcqapp.domain.Feedback.revealMarker(isCorrectOption, selected)) {
                     com.mcqapp.domain.Feedback.RevealMarker.CORRECT -> Icon(
                         Icons.Default.Check,
-                        contentDescription = "Correct answer",
+                        contentDescription = stringResource(R.string.correct_answer),
                         tint = verdicts.correctBorder
                     )
                     com.mcqapp.domain.Feedback.RevealMarker.WRONG -> Icon(
                         Icons.Default.Close,
-                        contentDescription = "Wrong answer",
+                        contentDescription = stringResource(R.string.wrong_answer),
                         tint = verdicts.wrongBorder
                     )
                     com.mcqapp.domain.Feedback.RevealMarker.NONE -> Unit
@@ -752,7 +754,7 @@ private fun ExplanationCard(question: Question) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "Explanation",
+                stringResource(R.string.explanation),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -782,7 +784,7 @@ private fun QuestionPalette(
             .padding(16.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text("Questions", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.questions), style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp))
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(44.dp),
@@ -817,12 +819,13 @@ private fun QuestionPalette(
                         flagged -> "flagged"
                         else -> "unanswered"
                     }
+                    val semanticsLabel = stringResource(R.string.go_to_question_index_1_status)
                     Box(
                         modifier = Modifier
                             .size(48.dp)
                             .background(bg, RoundedCornerShape(8.dp))
                             .semantics {
-                                contentDescription = "Go to question ${index + 1}, $status"
+                                contentDescription = semanticsLabel
                             }
                             .clickable { onPick(index) },
                         contentAlignment = Alignment.Center

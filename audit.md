@@ -38,14 +38,14 @@ Everything else on this list is independent of release state.
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[x]` fixed |
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[x]` fixed |
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[x]` fixed |
-| A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[~]` teardown fixed, lazy editor pending |
+| A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[x]` teardown fixed (redesign declined) |
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[x]` fixed |
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[x]` fixed |
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[x]` fixed |
 | A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[x]` fixed |
 | A12 | P1 | Perf | Library badges full-scan history per paper | `[x]` fixed |
 | A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[x]` fixed |
-| A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
+| A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[x]` fixed |
 | A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[x]` fixed |
 | A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[x]` fixed |
 | A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[x]` fixed |
@@ -225,7 +225,7 @@ out of each `init` block into a private `load()` so `retry()` can re-run it.
 loading with a message, the study session does *not* report `finished` (the old false
 "Session complete"), and retry re-runs the load.
 
-### A7 · `[~]` · A WebView per math list item, none ever destroyed — teardown fixed, rest pending · `read`
+### A7 · `[x]` · A WebView per math list item, none ever destroyed — teardown fixed · `read`
 
 `app/src/main/java/com/mcqapp/util/ContentElements.kt:238`
 
@@ -254,10 +254,11 @@ one declares a `WebView` without an `onRelease` that calls `destroy()`. **This i
 check, not a runtime proof** — proving teardown needs a device or a Compose test harness, and the
 project has neither in the JVM suite. It was verified to fail when the `onRelease` is removed.
 
-**Still open:** `BlockListEditor` renders every math block live inside a plain `Column`, so a
-question with many formulas still creates all those WebViews at once. The real fix is to render
-blocks as a static preview past a small N and promote to a live editor on tap, plus a lazy block
-list. That overlaps A14 (no `key()` per block). Actual jank/memory still needs a device to measure.
+**Closed as fixed for the leak.** `BlockListEditor` still renders every math block live, so a question
+with many formulas still creates that many WebViews at once; the static-preview-until-tapped redesign
+was considered and **declined on 2026-10-02** in favour of keeping the editor live, so that part is
+accepted rather than pending. Block identity and recycling were fixed under A14. Real-world jank and
+memory still need a device to measure.
 
 ---
 
@@ -407,7 +408,7 @@ by resolving each category's owning paper in one query, and the bookmarks screen
 paper id to `editorRoute`. No data was ever lost — the old category id was preserved on save — but the
 category picker was silently absent. Covered by `bookmarksCarryTheirPaperId` in `BulkQueryTest`.
 
-### A14 · `[ ]` · MathLive editor is uncontrolled, recycled, never destroyed · `sub`
+### A14 · `[x]` · MathLive editor was uncontrolled and recycled — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt:62,115`, `ui/editor/MathLiveEditor.kt:46-72`
 

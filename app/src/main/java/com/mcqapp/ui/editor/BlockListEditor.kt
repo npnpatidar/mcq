@@ -60,6 +60,10 @@ fun BlockListEditor(
         onRemoveRow != null && onAddColumn != null && onRemoveColumn != null
     Column(modifier = modifier.fillMaxWidth()) {
         elements.forEachIndexed { index, element ->
+            // Keyed by content: inserting, removing or reordering a block now
+            // gives the moved block its own composition instead of handing the
+            // existing WebView to a different formula.
+            androidx.compose.runtime.key(blockKey(element, index)) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -135,9 +139,25 @@ fun BlockListEditor(
                 }
                 Spacer(Modifier.height(8.dp))
             }
+            }
         }
         AddBlockMenu(onAddBlock = onAddBlock)
     }
+}
+
+/**
+ * Stable identity for a content block.
+ *
+ * The content model carries no ids, so identity is the block's own payload
+ * plus its position: editing a block changes its key (a fresh editor is the
+ * right answer when the formula itself changed), while an unrelated block
+ * moving does not.
+ */
+internal fun blockKey(element: ContentElement, index: Int): String = when (element) {
+    is ContentElement.TextElement -> "text:$index:${element.text.hashCode()}"
+    is ContentElement.ImageElement -> "image:$index:${element.src.hashCode()}"
+    is ContentElement.TableElement -> "table:$index:${element.rows.hashCode()}"
+    is ContentElement.MathElement -> "math:$index:${element.mathml.hashCode()}"
 }
 
 private fun blockLabel(element: ContentElement): String = when (element) {

@@ -56,8 +56,8 @@ Everything else on this list is independent of release state.
 | A22 | P1 | Data | Backup silently drops all scheduling | `[ ]` |
 | A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[x]` fixed |
 | A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[x]` fixed |
-| A25 | P2 | Tests | 1 of 11 ViewModels tested | `[ ]` |
-| A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[ ]` |
+| A25 | P2 | Tests | 1 of 11 ViewModels tested | `[~]` results screen done, rest pending |
+| A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[~]` tests written, blocked by Robolectric |
 | A27 | P2 | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[ ]` |
 | A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[ ]` |
 | A29 | P2 | Docs | `BUILDING.md` documents a release process that doesn't exist | `[ ]` |
@@ -575,13 +575,13 @@ and that shared preferences are still included.
 
 ## P2 — tests, CI, docs, code health
 
-### A25 · `[ ]` · 1 of 11 ViewModels tested
+### A25 · `[~]` · 1 of 11 ViewModels tested — results screen done · `read`
 Only `EditorViewModelTest` exists. `TestViewModel` (364 lines: countdown, auto-submit,
 `persistProgress`) and `StudyViewModel` (grading → schedule write) are uncovered;
 `TestTimingTest` only tests the pure helpers. Fix: per-ViewModel Robolectric tests for catch
 branches and mutations; inject the repository instead of casting `(application as McqApplication)`.
 
-### A26 · `[ ]` · `PdfPaperWriter` untested
+### A26 · `[~]` · `PdfPaperWriter` untested — tests written, blocked by the environment · `read`
 549 lines, zero callers in `app/src/test` — and it is the format users print. Fix: assert on
 `paperToPdfBytes` output (`%PDF-` header, question text present, `Answer Key` heading only when
 `answersAtEnd`, no per-question answers in the body).

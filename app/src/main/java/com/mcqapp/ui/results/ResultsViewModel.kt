@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 
 data class ResultsUiState(
     val loading: Boolean = true,
+    /** Set when the attempt could not be loaded, so the screen can say so. */
+    val loadError: String? = null,
     val attempt: Attempt? = null,
     val results: List<QuestionResult> = emptyList(),
     val bookmarked: Set<String> = emptySet()
@@ -42,9 +44,19 @@ class ResultsViewModel(
     val state: StateFlow<ResultsUiState> = _state.asStateFlow()
 
     init {
-        Logger.i("RESULTVM", "ResultsViewModel created: attemptId=$attemptId")
+        reload()
+        viewModelScope.launch {
+            repository.observeBookmarks().collect { ids ->
+                _state.update { it.copy(bookmarked = ids.toSet()) }
+            }
+        }
+    }
+
+    /** Loads the attempt. Exposed so a failed load can be retried. */
+    fun reload() {
         viewModelScope.launch {
             try {
+                _state.update { it.copy(loading = true, loadError = null) }
                 val attempt = repository.getAttempt(attemptId)
                 val results = repository.getAttemptResults(attemptId)
                 Logger.i("RESULTVM", "Loaded attempt '${attempt?.title}' with ${results.size} results")
@@ -55,12 +67,12 @@ class ResultsViewModel(
                     bookmarked = _state.value.bookmarked
                 )
             } catch (e: Exception) {
+                // Same defect A6 fixed for the test and study screens: leaving
+                // `loading` true showed "Loading…" forever with no retry.
                 Logger.e("RESULTVM", "Failed to load attempt $attemptId", e)
-            }
-        }
-        viewModelScope.launch {
-            repository.observeBookmarks().collect { ids ->
-                _state.update { it.copy(bookmarked = ids.toSet()) }
+                _state.update {
+                    it.copy(loading = false, loadError = "Could not load this result: ${e.message}")
+                }
             }
         }
     }

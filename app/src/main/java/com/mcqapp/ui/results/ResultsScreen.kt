@@ -100,6 +100,17 @@ fun ResultsScreen(
             return@Scaffold
         }
 
+        state.loadError?.let { error ->
+            Text(
+                error,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .padding(padding)
+                    .padding(16.dp)
+            )
+            return@Scaffold
+        }
+
         val attempt = state.attempt
         if (attempt == null) {
             Text(

@@ -303,10 +303,12 @@ fun TestSessionScreen(
                     .padding(16.dp)
             ) {
                 Text(
-                    "Question ${state.currentIndex + 1} of ${state.questions.size}" +
-                        " · ${formatMarks(question.marks)} " +
-                        if (question.marks == 1.0) "mark" else "marks" +
-                        " · ${Dwell.format(state.dwellSeconds[question.id] ?: 0L)} here",
+                    questionProgressLabel(
+                        index = state.currentIndex,
+                        total = state.questions.size,
+                        marks = question.marks,
+                        dwellSeconds = state.dwellSeconds[question.id] ?: 0L
+                    ),
                     style = MaterialTheme.typography.labelMedium
                 )
                 val practice = ExamMode.effectivePractice(state.practiceMode, state.strictMode)
@@ -558,6 +560,21 @@ private fun formatMarks(marks: Double): String =
     } else {
         marks.toString()
     }
+
+/**
+ * "Question 3 of 10 · 1 mark · 0:42 here". Built in one expression on
+ * purpose: an inline `if` inside a `+` chain silently swallows the rest of
+ * the string, which is how the dwell time used to disappear for every
+ * single-mark question.
+ */
+internal fun questionProgressLabel(
+    index: Int,
+    total: Int,
+    marks: Double,
+    dwellSeconds: Long
+): String = "Question ${index + 1} of $total" +
+    " · ${formatMarks(marks)} ${if (marks == 1.0) "mark" else "marks"}" +
+    " · ${Dwell.format(dwellSeconds)} here"
 
 @Composable
 private fun OptionRow(

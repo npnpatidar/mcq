@@ -33,7 +33,7 @@ Everything else on this list is independent of release state.
 | ID | Sev | Area | Issue | Status |
 |---|---|---|---|---|
 | A1 | P0 | UI | Wrong answers marked with a red ✓ | `[x]` fixed |
-| A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[ ]` |
+| A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[x]` fixed |
 | A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[ ]` |
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[ ]` |
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[ ]` |
@@ -101,7 +101,7 @@ class of bug in this list.
 untouched wrong option draws nothing and can never inherit a tick. Three cases covered in
 `FeedbackTest`.
 
-### A2 · `[ ]` · Per-question dwell time silently dropped · `read`
+### A2 · `[x]` · Per-question dwell time was silently dropped — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt:306`
 
@@ -117,7 +117,11 @@ Kotlin's `if` is an expression with lower precedence than `+`, so it swallows ev
 defaults to `1.0`, so the indicator the timing feature exists to surface is missing for the
 majority of questions and inconsistently present for the rest.
 
-Fix: wrap in parentheses — `+ (if (...) "mark" else "marks") + " · … here"`.
+**Fixed** in the A2 commit: the label is now built by one pure function,
+`questionProgressLabel(index, total, marks, dwellSeconds)`
+(`ui/test/TestSessionScreen.kt`), with the plural wrapped so the `if` cannot
+extend past it. `QuestionProgressLabelTest` pins the exact 1-mark string that
+used to lose its suffix, plus zero dwell, plural and fractional cases.
 
 ### A3 · `[ ]` · Submit deletes the resume snapshot before saving the attempt · `read`
 

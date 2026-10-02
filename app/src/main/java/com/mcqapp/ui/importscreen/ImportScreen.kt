@@ -174,7 +174,7 @@ fun ImportScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Import JSON") },
+                title = { Text("Import questions") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -194,7 +194,7 @@ fun ImportScreen(
             ) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(8.dp))
-                Text("Loading JSON…")
+                Text("Loading…")
             }
             return@Scaffold
         }

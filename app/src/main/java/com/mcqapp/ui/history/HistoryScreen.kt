@@ -74,14 +74,16 @@ fun HistoryScreen(
                 Text("No attempts yet")
             }
         } else {
-            LazyColumn(
+            // Hoisted: was recomputed inside the lazy content lambda on every
+        // list build.
+        val trends = remember(attempts) { Trends.perPaper(attempts) }
+        LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val trends = Trends.perPaper(attempts)
                 if (trends.isNotEmpty()) {
                     item {
                         Text("Trends", style = MaterialTheme.typography.titleSmall)

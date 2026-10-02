@@ -41,10 +41,12 @@ import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -173,6 +175,17 @@ fun BrowseScreen(
         val questions = state.questions
         val filterValue = filter.value
         var searchQuery by remember { mutableStateOf("") }
+        // Debounced like the global search: filtering lowercases every
+        // question's text, tags and option texts, and this list is already
+        // in memory with base64 images, so it ran a full linear scan per
+        // keystroke on the main thread.
+        var searchInput by remember { mutableStateOf("") }
+        LaunchedEffect(searchInput) {
+            if (searchInput != searchQuery) {
+                delay(300)
+                searchQuery = searchInput
+            }
+        }
         val searched = remember(questions, searchQuery) {
             com.mcqapp.domain.QuestionSearch.filter(questions, searchQuery)
         }
@@ -207,13 +220,15 @@ fun BrowseScreen(
         ) {
             item {
                 androidx.compose.material3.OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
+                    // The field shows what was typed; the list follows 300 ms
+                    // later, so the filter does not run on every keystroke.
+                    value = searchInput,
+                    onValueChange = { searchInput = it },
                     label = { Text("Search text, tags, options") },
                     singleLine = true,
                     trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
+                        if (searchInput.isNotEmpty()) {
+                            IconButton(onClick = { searchInput = "" }) {
                                 Icon(Icons.Default.Close, contentDescription = "Clear search")
                             }
                         }

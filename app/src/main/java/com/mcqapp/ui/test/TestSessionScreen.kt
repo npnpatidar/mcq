@@ -365,14 +365,14 @@ fun TestSessionScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                Text(
-                    questionProgressLabel(
-                        index = state.currentIndex,
-                        total = state.questions.size,
-                        marks = question.marks,
-                        dwellSeconds = state.dwellSeconds[question.id] ?: 0L
-                    ),
-                    style = MaterialTheme.typography.labelMedium
+                // Own composable: reading dwellSeconds here made the 1 Hz
+                // timer tick re-execute the whole question body below,
+                // including every image.
+                QuestionHeader(
+                    index = state.currentIndex,
+                    total = state.questions.size,
+                    marks = question.marks,
+                    dwellSeconds = state.dwellSeconds[question.id] ?: 0L
                 )
                 val practice = ExamMode.effectivePractice(state.practiceMode, state.strictMode)
                 if (practice) {
@@ -628,6 +628,19 @@ private fun formatMarks(marks: Double): String =
         marks.toString()
     }
 
+@Composable
+private fun QuestionHeader(index: Int, total: Int, marks: Double, dwellSeconds: Long) {
+    Text(
+        questionProgressLabel(
+            index = index,
+            total = total,
+            marks = marks,
+            dwellSeconds = dwellSeconds
+        ),
+        style = MaterialTheme.typography.labelMedium
+    )
+}
+
 /**
  * "Question 3 of 10 · 1 mark · 0:42 here". Built in one expression on
  * purpose: an inline `if` inside a `+` chain silently swallows the rest of
@@ -779,7 +792,8 @@ private fun QuestionPalette(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(state.questions.indices.toList()) { index ->
+                // Count + key avoids boxing an Int on every composition.
+                items(count = state.questions.size, key = { state.questions[it].id }) { index ->
                     val question = state.questions[index]
                     val answered = state.selections[question.id]?.isNotEmpty() == true
                     val flagged = question.id in state.flagged

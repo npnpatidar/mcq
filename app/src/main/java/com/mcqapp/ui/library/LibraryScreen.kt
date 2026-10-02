@@ -691,7 +691,7 @@ private fun DrawerContent(
             ) {
                 Icon(Icons.Default.FileUpload, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
-                Text("Import JSON/APKG")
+                Text("Import questions")
             }
         }
     }

@@ -142,11 +142,18 @@ fun SettingsScreen(
                                 selected = fontScale == scale,
                                 onClick = { viewModel.setFontScale(scale) }
                             )
+                            // Preview of the chosen size, independent of the
+                            // ambient scale: McqNavHost overrides LocalDensity
+                            // with it, so an sp value multiplied by it again
+                            // rendered the labels at scale squared. Going via dp
+                            // cancels the ambient scale out first.
+                            val baseSize = with(androidx.compose.ui.platform.LocalDensity.current) {
+                                MaterialTheme.typography.bodyLarge.fontSize.value.dp.toSp()
+                            }
                             Text(
                                 label,
                                 modifier = Modifier.padding(start = 8.dp),
-                                fontSize = MaterialTheme.typography.bodyLarge.fontSize *
-                                    (scale / com.mcqapp.util.FontScale.DEFAULT)
+                                fontSize = baseSize * (scale / com.mcqapp.util.FontScale.DEFAULT)
                             )
                         }
                     }

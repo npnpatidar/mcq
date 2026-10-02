@@ -115,6 +115,11 @@ fun ResultsScreen(
         // scrolling Column, OOMing big attempt reviews like Browse did.
         val filter = remember { mutableStateOf("All") }
         val results = state.results
+        // Numbering follows the unfiltered list, so a filtered view still
+        // shows each question's real number rather than 1..n.
+        val numberByQuestionId = remember(results) {
+            results.withIndex().associate { (i, r) -> r.questionId to i + 1 }
+        }
         val filterValue = filter.value
         val bookmarked = state.bookmarked
         val ungradedCount = remember(results) { results.count { it.correctOptionIds.isEmpty() } }
@@ -262,9 +267,9 @@ fun ResultsScreen(
                     )
                 }
             } else {
-                itemsIndexed(filtered, key = { _, result -> result.questionId }) { index, result ->
+                itemsIndexed(filtered, key = { _, result -> result.questionId }) { _, result ->
                     ResultCard(
-                        index = index + 1,
+                        index = numberByQuestionId[result.questionId] ?: 0,
                         result = result,
                         bookmarked = result.questionId in bookmarked,
                         onToggleBookmark = { viewModel.toggleBookmark(result.questionId) },

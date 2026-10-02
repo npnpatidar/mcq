@@ -65,15 +65,15 @@ Everything else on this list is independent of release state.
 | A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[x]` fixed |
 | A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[x]` fixed |
 | A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[x]` fixed |
-| A34 | P2 | UI | Settings text-size labels scaled twice (`scale²`) | `[ ]` |
-| A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[ ]` |
+| A34 | P2 | UI | Settings text-size labels scaled twice (`scale²`) | `[x]` fixed |
+| A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[x]` fixed |
 | A36 | P2 | UX | No string resources — app is not localisable | `[ ]` |
-| A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[ ]` |
+| A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[~]` hygiene done, Coil upgrade declined |
 | A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
 | A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[ ]` |
 | A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[ ]` |
 | A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[~]` depth guard done, row diagnostics pending |
-| A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[ ]` |
+| A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[x]` fixed |
 | A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[x]` fixed |
 | A44 | P2 | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[ ]` |
 | A45 | — | Data | `exportSchema = false`, forward-only migrations | `[-]` not needed pre-release |
@@ -643,23 +643,22 @@ countdown.
 `getStudyQueue` returns due + new with leeches merely included, not filtered — so the label promises
 three problem questions and delivers the ordinary queue.
 
-### A34 · `[ ]` · Settings text-size labels scaled twice
+### A34 · `[x]` · Settings text-size labels scaled twice — fixed · `read`
 `SettingsScreen.kt:145-151` multiplies an `sp` value by `scale`, but `McqNavHost.kt:35-38` already
 overrides `LocalDensity` with `fontScale = scale`, so labels render at `16 × scale²` while body text
 renders at `16 × scale`.
 
-### A35 · `[ ]` · Stale labels and dead UI
-`ImportScreen.kt:176` still says "Import JSON" (and "Loading JSON…") although the screen also
-handles DOCX since `ad7feff`; `LibraryScreen.kt:656` says "Import JSON/APKG" while the picker
-accepts any file. `ResultsScreen.kt:334` passes `QuestionImage(src = null)`, a guaranteed no-op, so
-question images never appear in results. `ResultsScreen.kt:265` renumbers from 1 after filtering, so
-the "Wrong" chip shows 1..n instead of the original question numbers.
+### A35 · `[x]` · Stale labels and dead UI — fixed · `read`
+**Fixed** in the A35 commit: the import screen is titled "Import questions" with a plain "Loading…"
+(the DOCX path has been there since `ad7feff`), the library entry point says the same, the no-op
+`QuestionImage(src = null)` is gone, and result numbering is looked up from the **unfiltered** list so
+a filtered view shows each question's real number instead of 1..n.
 
 ### A36 · `[ ]` · Not localisable
 `grep -rn stringResource app/src/main/java` returns nothing and `res/values/strings.xml` holds only
 `app_name`. Every user-facing string is hardcoded across ~6 files.
 
-### A37 · `[ ]` · Dependency hygiene
+### A37 · `[~]` · Dependency hygiene — hygiene done, Coil upgrade declined · `read`
 `coil-compose:2.7.0` (2.x is well behind 3.x) drags OkHttp 4.12 + okio + appcompat-resources in for
 a single `AsyncImage` call site (`QuestionImage.kt:63`). `kotlinx-coroutines` is imported in 22 main
 files but never declared (it resolves transitively via `room-ktx`). `kotlinx-serialization-json` is
@@ -693,12 +692,16 @@ boundary, a 200,000-level file, braces inside strings, and a normal file still p
 errors is the deliberate design, so this needs a product decision on whether such rows belong in the
 import report's warnings.
 
-### A42 · `[ ]` · Search and recomposition nits
-`BrowseScreen.kt:175` filters every question's text, tags and option texts on the main thread per
-keystroke with no debounce (`SearchViewModel` uses 300 ms). `TestSessionScreen.kt:309` reads
-`state.dwellSeconds` inside the scroll `Column`, so each 1 Hz tick re-executes the whole question
-body including every `QuestionImage`. `HistoryScreen.kt:83` recomputes trends inside the
-`LazyColumn` content lambda. No `derivedStateOf` anywhere.
+### A42 · `[x]` · Search and recomposition nits — fixed · `read`
+**Fixed** in the A42 commit: the browse field keeps its own `searchInput` and a `LaunchedEffect`
+commits it after 300 ms — the same debounce the global search already used — so the linear scan over
+every question's text, tags and options no longer runs per keystroke. The dwell readout moved into a
+small `QuestionHeader` composable, so the 1 Hz tick no longer re-executes the question body and its
+images. `Trends.perPaper` is hoisted out of the `LazyColumn` content lambda and `remember`ed, and the
+answer palette switched from boxing an `Int` list per composition to `items(count, key)`.
+
+**Not done:** no `derivedStateOf` anywhere in the app. It was not needed for any of these fixes and
+would be speculative.
 
 ### A43 · `[x]` · XXE hardening failed open — fixed · `read`
 `DocxReader.kt:87-97` sets `disallow-doctype-decl` first (the strongest defence) and swallows any

@@ -7,6 +7,7 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
@@ -140,7 +141,7 @@ class Importer(private val db: AppDatabase) {
                         cat.questions.map { it.id }
                     }
                     val storedById = db.questionDao().getByIds(incomingIds).associateBy { it.id }
-                    val storedCorrectById = db.correctAnswerDao().getForQuestions(incomingIds)
+                    val storedCorrectById = db.correctAnswerDao().getForQuestionsChunked(incomingIds)
                         .groupBy({ it.questionId }, { it.optionId })
                     val hasAnswerOnlyChange = effectiveCategories.flatMap { it.questions }.any { q ->
                         storedById[q.id]?.let { stored ->

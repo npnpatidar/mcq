@@ -12,6 +12,7 @@ import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -98,7 +99,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                         emptyMap()
                     } else {
                         repository.db().correctAnswerDao()
-                            .getForQuestions(questions.map { it.id })
+                            .getForQuestionsChunked(questions.map { it.id })
                             .groupBy({ it.questionId }, { it.optionId })
                     }
                     val d = HashSet<String>()

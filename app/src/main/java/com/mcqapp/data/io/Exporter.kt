@@ -5,6 +5,7 @@ import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
@@ -128,8 +129,8 @@ class Exporter(private val db: AppDatabase) {
     private suspend fun List<QuestionEntity>.toDtoBulk(): List<QuestionDto> {
         if (isEmpty()) return emptyList()
         val ids = map { it.id }
-        val optionsByQuestion = db.optionDao().getForQuestions(ids).groupBy { it.questionId }
-        val correctByQuestion = db.correctAnswerDao().getForQuestions(ids).groupBy { it.questionId }
+        val optionsByQuestion = db.optionDao().getForQuestionsChunked(ids).groupBy { it.questionId }
+        val correctByQuestion = db.correctAnswerDao().getForQuestionsChunked(ids).groupBy { it.questionId }
         return map { entity ->
             val options = optionsByQuestion[entity.id] ?: emptyList()
             val correctIds = correctByQuestion[entity.id]?.map { it.optionId } ?: emptyList()

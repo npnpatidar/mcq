@@ -27,7 +27,8 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         viewModelScope.launch {
             repository.observeBookmarks().collect { ids ->
-                val questions = ids.mapNotNull { repository.getQuestion(it) }
+                // Was three queries per bookmark, re-run on every toggle.
+                val questions = repository.getQuestionsByIds(ids)
                 _state.value = BookmarksUiState(questions = questions)
             }
         }

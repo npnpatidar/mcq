@@ -18,6 +18,9 @@ import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionResultEntity
+import com.mcqapp.data.local.getByCategoriesChunked
+import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
@@ -266,7 +269,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val optionsByQuestion = if (allQuestions.isEmpty()) {
             emptyMap()
         } else {
-            db.optionDao().getForQuestions(allQuestions.map { it.id }).groupBy { it.questionId }
+            db.optionDao().getForQuestionsChunked(allQuestions.map { it.id }).groupBy { it.questionId }
         }
         val attempts = db.attemptDao().getAllAttempts().size
         val bookmarks = db.bookmarkDao().getAll().size
@@ -342,7 +345,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             // An empty IN list is invalid SQL; a paper with no categories has
             // no questions to load.
             if (categoryIds.isEmpty()) return@map emptyList()
-            val entities = db.questionDao().getByCategories(categoryIds)
+            val entities = db.questionDao().getByCategoriesChunked(categoryIds)
             val result = entities.toDomainBulk()
             Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
                 "mapped ${result.size} questions in " +
@@ -378,7 +381,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")
         // An empty IN list is invalid SQL; nothing can match anyway.
         if (categoryIds.isEmpty()) return emptyList()
-        val entities = db.questionDao().getByCategories(categoryIds)
+        val entities = db.questionDao().getByCategoriesChunked(categoryIds)
         val result = entities.toDomainBulk()
         Logger.d("REPO", "getQuestionsForCategories returned ${result.size} questions")
         return result
@@ -387,8 +390,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private suspend fun List<QuestionEntity>.toDomainBulk(): List<Question> {
         if (isEmpty()) return emptyList()
         val ids = map { it.id }
-        val optionsByQuestion = db.optionDao().getForQuestions(ids).groupBy { it.questionId }
-        val correctByQuestion = db.correctAnswerDao().getForQuestions(ids).groupBy { it.questionId }
+        val optionsByQuestion = db.optionDao().getForQuestionsChunked(ids).groupBy { it.questionId }
+        val correctByQuestion = db.correctAnswerDao().getForQuestionsChunked(ids).groupBy { it.questionId }
         return map { entity ->
             val options = optionsByQuestion[entity.id] ?: emptyList()
             val correctIds = correctByQuestion[entity.id]?.map { it.optionId }?.toSet() ?: emptySet()
@@ -416,6 +419,35 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getQuestion(questionId: String): Question? {
         Logger.d("REPO", "getQuestion($questionId)")
         return db.questionDao().getById(questionId)?.toDomain()
+    }
+
+    /**
+     * Many questions by id in three queries instead of three per question.
+     * Results follow the order of [ids], and unknown ids are dropped, so this
+     * replaces a `mapNotNull { getQuestion(it) }` loop.
+     */
+    suspend fun getQuestionsByIds(ids: List<String>): List<Question> {
+        if (ids.isEmpty()) return emptyList()
+        val byId = db.questionDao().getByIdsChunked(ids).toDomainBulk().associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
+    /** Category title per category id, in one query instead of one per id. */
+    private suspend fun categoryTitlesOf(categoryIds: Set<String>): Map<String, String> {
+        if (categoryIds.isEmpty()) return emptyMap()
+        return db.categoryDao().getByIds(categoryIds.toList())
+            .associate { it.id to it.title }
+    }
+
+    /** Owning paper's title per category id, in two queries instead of two per id. */
+    private suspend fun paperTitlesForCategories(categoryIds: Set<String>): Map<String, String> {
+        if (categoryIds.isEmpty()) return emptyMap()
+        val categories = db.categoryDao().getByIds(categoryIds.toList())
+        val papers = db.paperDao().getByIds(categories.map { it.paperId }.toSet().toList())
+            .associateBy { it.id }
+        return categories.mapNotNull { category ->
+            papers[category.paperId]?.let { category.id to it.title }
+        }.toMap()
     }
 
     private suspend fun QuestionEntity.toDomain(): Question {
@@ -828,7 +860,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             }
         }
         if (seeded.isNotEmpty()) {
-            seeded.forEach { db.cardStateDao().upsert(it) }
+            // One transaction: this runs from a badge read as well as from
+            // getStudyQueue, and without it the seeding was N separate
+            // transactions that two coroutines could interleave.
+            db.withTransaction { seeded.forEach { db.cardStateDao().upsert(it) } }
             Logger.i("REPO", "seeded ${seeded.size} card_state rows for $paperId")
         }
         return states
@@ -955,6 +990,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         var score = 0.0
         var maxScore = 0.0
         val results = mutableListOf<QuestionResultEntity>()
+        // Resolved once for the whole attempt: was two lookups per question.
+        val categoryTitles = categoryTitlesOf(questions.map { it.categoryId }.toSet())
         for (q in questions) {
             val selected = selections[q.id].orEmpty()
             // Computed once and shared by the aggregate counters and the
@@ -983,7 +1020,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 QuestionResultEntity(
                     attemptId = 0,
                     questionId = q.id,
-                    categoryTitle = categoryTitleOf(q.categoryId),
+                    categoryTitle = categoryTitles[q.categoryId] ?: "",
                     text = q.elements.toContentJson(json),
                     optionsJson = json.encodeToString(
                         ListSerializer(QuestionOptionDto.serializer()),
@@ -1023,9 +1060,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             attemptId
         }
     }
-
-    private suspend fun categoryTitleOf(categoryId: String): String =
-        db.categoryDao().getById(categoryId)?.title ?: ""
 
     fun observeAttempts(): Flow<List<Attempt>> =
         db.attemptDao().observeAll().map { list -> list.map { it.toDomain() } }
@@ -1073,14 +1107,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? {
         val ids = db.bookmarkDao().getAll()
         if (ids.isEmpty()) return null
-        val questions = ids.mapNotNull { getQuestion(it) }
+        // Three queries, not three per bookmark.
+        val questions = getQuestionsByIds(ids)
         if (questions.isEmpty()) return null
-        val titles = mutableMapOf<String, String>()
-        for (categoryId in questions.map { it.categoryId }.toSet()) {
-            val category = db.categoryDao().getById(categoryId) ?: continue
-            val paper = db.paperDao().getById(category.paperId) ?: continue
-            titles[categoryId] = paper.title
-        }
+        val titles = paperTitlesForCategories(questions.map { it.categoryId }.toSet())
         return com.mcqapp.data.io.BookmarkExport.paperDto(questions, titles)
     }
 
@@ -1089,7 +1119,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())[paperId]
             ?: return emptyList()
         if (ids.isEmpty()) return emptyList()
-        val byId = db.questionDao().getByIds(ids).toDomainBulk().associateBy { it.id }
+        val byId = db.questionDao().getByIdsChunked(ids).toDomainBulk().associateBy { it.id }
         return ids.mapNotNull { byId[it] }
     }
 

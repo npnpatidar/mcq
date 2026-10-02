@@ -50,9 +50,9 @@ Everything else on this list is independent of release state.
 | A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[x]` fixed |
 | A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[x]` fixed |
 | A18 | — | Data | `MIGRATION_2_3` never existed | `[-]` not needed pre-release |
-| A19 | P1 | Data | `resolveStudyStates` writes N rows with no transaction | `[ ]` |
-| A20 | P1 | Perf | N+1 query loops (bookmarks, attempt save) | `[ ]` |
-| A21 | P1 | Data | Unbounded `IN (:ids)` bind lists | `[ ]` |
+| A19 | P1 | Data | `resolveStudyStates` writes N rows with no transaction | `[x]` fixed |
+| A20 | P1 | Perf | N+1 query loops (bookmarks, attempt save) | `[x]` fixed |
+| A21 | P1 | Data | Unbounded `IN (:ids)` bind lists | `[x]` fixed |
 | A22 | P1 | Data | Backup silently drops all scheduling | `[ ]` |
 | A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[ ]` |
 | A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[ ]` |
@@ -483,30 +483,46 @@ plain uninstall clears it.
 *If it ever needs fixing:* `ALTER TABLE questions ADD COLUMN contentHash TEXT NOT NULL DEFAULT ''`
 as `MIGRATION_2_3`, plus a `MigrationTest` case starting from a v2 schema.
 
-### A19 · `[ ]` · `resolveStudyStates` writes N rows with no transaction · `sub`
+### A19 · `[x]` · `resolveStudyStates` wrote N rows with no transaction — fixed · `read`
 
 `McqRepository.kt:820`. Every other multi-write in the repository uses `db.withTransaction`; this
 one doesn't and runs from a badge read (`getStudyCounts`) as well as `getStudyQueue`, so two
 coroutines can seed the same paper concurrently.
 
-Fix: `db.withTransaction { }`, or better a batched `@Insert(onConflict = REPLACE) upsertAll`.
+**Fixed** in the A19 commit: the seeding loop is wrapped in `db.withTransaction { }`, so the badge
+read and the study queue can no longer interleave partial seeds.
 
-### A20 · `[ ]` · N+1 query loops · `sub`
+### A20 · `[x]` · N+1 query loops — fixed · `read`
 
 `McqRepository.kt:975` calls `categoryTitleOf()` per attempt row; `McqRepository.kt:1066` plus
 `BookmarksViewModel.kt:30` issue 3 queries **per bookmark** and re-run the whole loop on every
 bookmark toggle.
 
-Fix: hoist into a single `getByIds` map; use `getByIds` + `toDomainBulk()`.
+**Fixed** in the A20 commit: `getQuestionsByIds(ids)` loads many questions in three queries and
+preserves the requested order, and `BookmarksViewModel` plus `getBookmarkExportDto()` use it instead
+of a per-bookmark `getQuestion()`. `saveAttempt` resolves every category title once via
+`categoryTitlesOf()` rather than two lookups per question. New `CategoryDao.getByIds` and
+`PaperDao.getByIds` back the batched lookups.
 
-### A21 · `[ ]` · Unbounded `IN (:ids)` bind lists · `sub`
+Writing the test caught a mistake of mine: I first made `categoryTitlesOf` return *paper* titles,
+which silently changed what `categoryTitle` stores on a result row. It is now split into
+`categoryTitlesOf` (category titles) and `paperTitlesForCategories` (paper titles for grouping),
+and the test asserts the stored value.
+
+### A21 · `[x]` · Unbounded `IN (:ids)` bind lists — fixed · `read`
 
 `data/local/Daos.kt:137` (`getForQuestions`) is called from `toDomainBulk`, `Exporter.toDtoBulk` and
 `Importer`. `SQLITE_MAX_VARIABLE_NUMBER` is 999 up to API 30, and `minSdk = 26`, so a large paper
 throws "too many SQL variables" on older devices. The empty-list case is guarded; the large case is
 not, and there is no chunking helper in `data/`.
 
-Fix: a `chunked(500)` helper at the three call sites.
+**Fixed** in the A21 commit: `data/local/ChunkedQueries.kt` adds chunked wrappers
+(`getForQuestionsChunked`, `getByIdsChunked`, `getByCategoriesChunked`) that split ids into groups of
+500 and concatenate the results; all six call sites in the repository, importer and exporter now use
+them, so no statement can exceed the bind-variable ceiling.
+`BulkQueryTest` loads **1200** questions through the chunked path — past the 999 limit — and asserts
+order and completeness. The 999 figure itself is still from SQLite's documented history, not
+measured on an API 26 device.
 
 ### A22 · `[ ]` · Backup silently drops all scheduling · `sub`
 

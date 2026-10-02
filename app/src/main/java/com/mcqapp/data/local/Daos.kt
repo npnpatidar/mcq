@@ -16,6 +16,9 @@ interface PaperDao {
     @Query("SELECT * FROM papers WHERE id = :id")
     suspend fun getById(id: String): PaperEntity?
 
+    @Query("SELECT * FROM papers WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<PaperEntity>
+
     @Query("SELECT * FROM papers WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
     suspend fun getByTitle(title: String): PaperEntity?
 
@@ -45,6 +48,9 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories WHERE id = :id")
     suspend fun getById(id: String): CategoryEntity?
+
+    @Query("SELECT * FROM categories WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<CategoryEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(category: CategoryEntity)

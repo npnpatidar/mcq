@@ -105,6 +105,41 @@ class BulkQueryTest {
     }
 
     @Test
+    fun studyCountsOnlySeeThisPapersHistory() = runBlocking {
+        // The badge read used to load every attempt and every result row in
+        // the database and filter in Kotlin, so another paper's attempts
+        // leaked into these numbers.
+        // Paper first: categories carry a foreign key to it.
+        db.paperDao().upsert(
+            com.mcqapp.data.local.PaperEntity(id = "p2", title = "Other paper")
+        )
+        db.categoryDao().upsert(
+            com.mcqapp.data.local.CategoryEntity(id = "c2", paperId = "p2", title = "Other")
+        )
+        repository.saveQuestion(question("q1"))
+        repository.saveQuestion(question("q2", categoryId = "c2"))
+        repository.saveAttempt(
+            paperId = "p1", paperTitle = "Paper",
+            questions = listOf(repository.getQuestion("q1")!!),
+            selections = mapOf("q1" to setOf("q1-a")),
+            negativeMarking = 0.0, durationSeconds = 5, finishedAt = 1L
+        )
+        // p2 has no attempts at all: its card must be seeded as brand new
+        // even though p1 was reviewed.
+        repository.getStudyCounts("p1")
+        repository.getStudyCounts("p2")
+
+        val reviewed = repository.cardState("p1", "q1")!!
+        val untouched = repository.cardState("p2", "q2")!!
+        assertTrue("p1's question was reviewed", reviewed.reps > 0)
+        // If p1's attempt had leaked into p2's scan, this card would have been
+        // rebuilt from those signals and would not be untouched.
+        assertEquals("p2's question was never reviewed", 0, untouched.reps)
+        // And p2's history must not have seeded a card for p1's other question.
+        assertEquals(null, repository.cardState("p1", "q2"))
+    }
+
+    @Test
     fun seedingStudyStateIsIdempotent() = runBlocking {
         repository.saveQuestion(question("q1"))
         val first = repository.getStudyCounts("p1")

@@ -43,7 +43,7 @@ Everything else on this list is independent of release state.
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[x]` fixed |
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[x]` fixed |
 | A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[x]` fixed |
-| A12 | P1 | Perf | Library badges full-scan history per paper | `[ ]` |
+| A12 | P1 | Perf | Library badges full-scan history per paper | `[x]` fixed |
 | A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
 | A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
 | A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[x]` fixed |
@@ -364,7 +364,7 @@ Writing the test surfaced a bug in my own first cut: requiring *both* edges to c
 meant a 3200×2400 image was never subsampled. Robolectric's `BitmapFactory` shadow also returns a
 bitmap for arbitrary bytes, so the "garbage input returns null" case is left to a real device.
 
-### A12 · `[ ]` · Library badges full-scan all history, once per paper · `read`
+### A12 · `[x]` · Library badges full-scan all history, once per paper — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/library/LibraryViewModel.kt:50` → `McqRepository.kt:881`
 
@@ -378,7 +378,17 @@ and results tables per paper, plus a full content-JSON parse per paper. The thre
 fix it — `countDue/countLeeches/countNew` (`Daos.kt:173-180`) — are never called from anywhere.
 `question_results` also has no index on `questionId`.
 
-Fix: add `Index("questionId")`, push the filter into SQL, and wire the dead count DAOs.
+**Fixed** in the A12 commit: `historySignalsFor` no longer loads the entire attempts and results
+tables. Two new DAO queries scope the work — `AttemptDao.getByPaper(paperId)` and
+`getGradedResultsForQuestions(paperId, questionIds)`, a join that also drops ungraded rows in SQL —
+and the latter goes through the chunked wrapper. `BulkQueryTest` proves the isolation: with p1
+reviewed and p2 untouched, p2's card is still seeded with `reps == 0`, so p1's attempts did not leak
+into p2's badge.
+
+**Deliberately not done:** the `Index("questionId")` on `question_results` from the original
+finding. Adding it changes the schema, which needs a `MIGRATION_8_9`, and migration work was
+declined on 2026-10-02 (see A18/A45). The SQL filter already avoids materialising unrelated rows;
+the index would only speed up the scan. Worth adding when migrations are back on the table.
 
 ### A13 · `[ ]` · Bookmarks open the editor with no paper · `read`
 

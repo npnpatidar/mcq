@@ -26,3 +26,9 @@ suspend fun QuestionDao.getByIdsChunked(ids: List<String>): List<QuestionEntity>
 
 suspend fun QuestionDao.getByCategoriesChunked(categoryIds: List<String>): List<QuestionEntity> =
     categoryIds.chunks().flatMap { getByCategories(it) }
+
+suspend fun AttemptDao.getGradedResultsForQuestionsChunked(
+    paperId: String,
+    questionIds: List<String>
+): List<QuestionResultEntity> =
+    questionIds.chunks().flatMap { getGradedResultsForQuestions(paperId, it) }

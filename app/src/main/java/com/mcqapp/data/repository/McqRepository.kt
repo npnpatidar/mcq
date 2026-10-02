@@ -19,6 +19,7 @@ import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.getByCategoriesChunked
+import com.mcqapp.data.local.getGradedResultsForQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.Attempt
@@ -922,16 +923,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionIds: List<String>,
         config: com.mcqapp.domain.SchedulerConfig = com.mcqapp.domain.SchedulerConfig()
     ): Map<String, List<com.mcqapp.domain.ReviewSignal>> {
-        val ids = questionIds.toHashSet()
-        val attemptsById = db.attemptDao().getAllAttempts()
-            .filter { it.paperId == paperId }
-            .associateBy { it.id }
+        if (questionIds.isEmpty()) return emptyMap()
+        val attemptsById = db.attemptDao().getByPaper(paperId).associateBy { it.id }
         if (attemptsById.isEmpty()) return emptyMap()
         val signals = mutableMapOf<String, MutableList<com.mcqapp.domain.ReviewSignal>>()
-        for (row in db.attemptDao().getAllResults()) {
+        // Scoped to this paper and these question ids in SQL, rather than
+        // loading every attempt and every result row in the database.
+        val rows = db.attemptDao().getGradedResultsForQuestionsChunked(paperId, questionIds)
+        for (row in rows) {
             val attempt = attemptsById[row.attemptId] ?: continue
-            if (row.questionId !in ids) continue
-            if (row.selectedOptionIds.isEmpty() || row.correctOptionIds.isEmpty()) continue
             val grade = com.mcqapp.domain.Study.inferGrade(
                 row.isCorrect, row.dwellSeconds, config = config
             )

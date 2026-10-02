@@ -230,6 +230,28 @@ interface AttemptDao {
     @Query("SELECT * FROM attempts ORDER BY finishedAt DESC")
     fun observeAll(): Flow<List<AttemptEntity>>
 
+    /** Attempts of one paper only, instead of filtering the whole table in Kotlin. */
+    @Query("SELECT * FROM attempts WHERE paperId = :paperId ORDER BY finishedAt ASC")
+    suspend fun getByPaper(paperId: String): List<AttemptEntity>
+
+    /**
+     * Graded results for one paper's questions, filtered in SQL. The badge read
+     * used to pull every row of `question_results` and every attempt into
+     * memory and discard most of them in Kotlin.
+     */
+    @Query(
+        "SELECT question_results.* FROM question_results " +
+            "INNER JOIN attempts ON question_results.attemptId = attempts.id " +
+            "WHERE attempts.paperId = :paperId " +
+            "AND question_results.questionId IN (:questionIds) " +
+            "AND question_results.selectedOptionIds != '' " +
+            "AND question_results.correctOptionIds != ''"
+    )
+    suspend fun getGradedResultsForQuestions(
+        paperId: String,
+        questionIds: List<String>
+    ): List<QuestionResultEntity>
+
     @Query("SELECT * FROM attempts WHERE id = :id")
     suspend fun getById(id: Long): AttemptEntity?
 

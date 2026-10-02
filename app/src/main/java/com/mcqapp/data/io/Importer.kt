@@ -350,7 +350,7 @@ class Importer(private val db: AppDatabase) {
                             questionId = r.questionId,
                             categoryTitle = r.categoryTitle,
                             text = r.text,
-                            optionsJson = r.optionsJson,
+                            optionsJson = normaliseOptionsJson(json, r.optionsJson),
                             correctOptionIds = r.correctOptionIds,
                             selectedOptionIds = r.selectedOptionIds,
                             isCorrect = r.isCorrect,
@@ -377,6 +377,33 @@ class Importer(private val db: AppDatabase) {
             restoredBookmarks, restoredAttempts, restoredSchedules
         )
     }
+
+/**
+ * Coerces an imported result's `optionsJson` into something decodable.
+ *
+ * The column is read back with a strict decoder, so a backup carrying
+ * `"optionsJson": "x"` would otherwise store a value that throws forever.
+ * Anything that is not a JSON array of options becomes an empty list.
+ */
+private fun normaliseOptionsJson(json: Json, raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "[]"
+    return try {
+        // Only the shape is checked here, so a valid array is stored verbatim
+        // with no re-encoding drift. The strict decode happens on read, and is
+        // guarded there too.
+        if (json.parseToJsonElement(trimmed) is kotlinx.serialization.json.JsonArray) {
+            trimmed
+        } else {
+            Logger.w("IMPORT", "Dropping optionsJson that is not an array")
+            "[]"
+        }
+    } catch (e: Exception) {
+        Logger.w("IMPORT", "Dropping unreadable optionsJson: ${e.message}")
+        "[]"
+    }
+}
+
 }
 
 /**

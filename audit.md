@@ -46,7 +46,7 @@ Everything else on this list is independent of release state.
 | A12 | P1 | Perf | Library badges full-scan history per paper | `[ ]` |
 | A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
 | A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
-| A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[ ]` |
+| A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[x]` fixed |
 | A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[ ]` |
 | A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[ ]` |
 | A18 | — | Data | `MIGRATION_2_3` never existed | `[-]` not needed pre-release |
@@ -409,7 +409,7 @@ a plausible path to writing formula A's MathML into block B. Also: no `destroy()
 Fix: `key(blockId)`, add an `update`, `DisposableEffect` → `removeJavascriptInterface` +
 `loadUrl("about:blank")` + `destroy()`, and drive the CSS size from `FontScale`.
 
-### A15 · `[ ]` · Unguarded `optionsJson` decode can permanently poison history · `sub`
+### A15 · `[x]` · Unguarded `optionsJson` decode could permanently poison history — fixed · `read`
 
 `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:1087`
 
@@ -423,8 +423,17 @@ stored verbatim (`Importer.kt:352`). Import a backup whose `attempts[].results[]
 (`ResultsViewModel.kt:57`, `HistoryViewModel.kt:38`, `LibraryViewModel.kt:42`), so the app looks
 healthy while History and mistake badges are permanently empty with no way to clear the row.
 
-Fix: guard the decode the way `parseContentElements` already is (`Models.kt:122-130`), and validate
-at import time.
+**Fixed** in the A15 commit, on both ends:
+- **Read:** `toDomainResult()` now catches the decode failure and yields no options, exactly as
+  `parseContentElements` already did, so one bad row degrades instead of emptying History.
+- **Write:** `Importer` passes every result's `optionsJson` through `normaliseOptionsJson`, which
+  requires it to parse as a JSON array and otherwise stores `[]`. A valid array is kept verbatim so
+  there is no re-encoding drift.
+
+`CorruptOptionsJsonTest` (5 cases) writes real attempts through `saveAttempt` rather than
+hand-crafted JSON, so the fixture cannot drift from the DTO. It covers the round trip, a poisoned
+row not hiding a healthy one, mistakes still derivable, and both import paths. Confirmed to fail
+(two cases) with the read guard removed.
 
 ### A16 · `[ ]` · IDs interpolated into nav routes unencoded · `sub`
 

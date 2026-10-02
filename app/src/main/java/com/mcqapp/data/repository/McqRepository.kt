@@ -1094,7 +1094,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     }
 
     private fun QuestionResultEntity.toDomainResult(): QuestionResult {
-        val options = json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), optionsJson)
+        // optionsJson arrives from an imported backup and is stored verbatim,
+        // so it cannot be trusted to decode. An unguarded throw here made one
+        // bad row permanently empty the History screen and mistake badges,
+        // with no way to clear it from the UI.
+        val options = try {
+            json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), optionsJson)
+        } catch (e: Exception) {
+            Logger.w("REPO", "Unreadable optionsJson on result $id: ${e.message}")
+            emptyList()
+        }
         return QuestionResult(
             attemptId = attemptId,
             dwellSeconds = dwellSeconds,

@@ -354,30 +354,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             result
         }.flowOn(Dispatchers.IO)
 
-    fun observeQuestion(questionId: String): Flow<Question?> =
-        // Observe just this row instead of the whole question table.
-        db.questionDao().observeById(questionId).map { entity ->
-            entity?.let {
-                val options = db.optionDao().getByQuestion(it.id)
-                val correctIds = db.correctAnswerDao().getCorrectIds(it.id).toSet()
-                Question(
-                    id = it.id,
-                    categoryId = it.categoryId,
-                    elements = it.text.parseContentElements(json),
-                    image = it.image,
-                    options = options.map { opt ->
-                        QuestionOption(opt.id, opt.text.parseContentElements(json), opt.image)
-                    },
-                    correctOptionIds = correctIds,
-                    explanationElements = it.explanation.parseContentElements(json),
-                    explanationImage = it.explanationImage,
-                    difficulty = Difficulty.fromLabel(it.difficulty),
-                    marks = it.marks,
-                    tags = it.tags.split(",").filter { t -> t.isNotBlank() }
-                )
-            }
-        }
-
     suspend fun getQuestionsForCategories(categoryIds: List<String>): List<Question> {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")
         // An empty IN list is invalid SQL; nothing can match anyway.
@@ -987,13 +963,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun isBookmarked(questionId: String): Boolean =
         db.bookmarkDao().isBookmarked(questionId)
-
-    suspend fun searchQuestions(query: String): List<Question> {
-        Logger.d("REPO", "searchQuestions('$query')")
-        // LIKE prefilter: escape user wildcards so `%`/`_` match literally.
-        return db.questionDao().search(com.mcqapp.domain.QuestionSearch.escapeLike(query))
-            .map { it.toDomain() }
-    }
 
     suspend fun saveAttempt(
         paperId: String,

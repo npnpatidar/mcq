@@ -2,9 +2,6 @@ package com.mcqapp.domain
 
 object Scoring {
 
-    /** Questions with an empty answer key are ungraded: never scored, never penalized. */
-    fun isGraded(correct: Set<String>): Boolean = correct.isNotEmpty()
-
     fun isCorrect(selected: Set<String>, correct: Set<String>): Boolean =
         selected.isNotEmpty() && selected == correct
 

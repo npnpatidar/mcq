@@ -141,9 +141,6 @@ object AnkiSchema11 {
         )
     }
 
-    fun stripHtml(text: String): String =
-        text.replace(Regex("<[^>]*>"), "").trim()
-
     fun insertNotes(db: SQLiteDatabase, notes: List<AnkiPackageWriter.AnkiNoteRow>) {
         val frontToCsum = HashMap<String, Long>()
         db.beginTransaction()

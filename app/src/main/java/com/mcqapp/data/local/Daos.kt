@@ -134,9 +134,6 @@ interface QuestionDao {
     )
     suspend fun searchIncludingOptions(query: String): List<QuestionEntity>
 
-    @Query("SELECT COUNT(*) FROM questions WHERE categoryId = :categoryId")
-    suspend fun countByCategory(categoryId: String): Int
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)
 
@@ -184,15 +181,6 @@ interface CardStateDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: CardStateEntity)
-
-    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId AND reps > 0 AND dueAt <= :now")
-    suspend fun countDue(paperId: String, now: Long): Int
-
-    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId AND leech = 1")
-    suspend fun countLeeches(paperId: String): Int
-
-    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId AND reps = 0")
-    suspend fun countNew(paperId: String): Int
 
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)

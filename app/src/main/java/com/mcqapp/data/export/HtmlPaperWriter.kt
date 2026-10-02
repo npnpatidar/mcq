@@ -195,11 +195,8 @@ object HtmlPaperWriter {
         if (question.elements.isNotEmpty()) elementsToHtml(question.elements, question.image)
         else renderInlineHtml(question.text) + imageTag(question.image)
 
-    fun esc(s: String): String = s
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
+    /** Shared with the Anki and in-app renderers so all three agree. */
+    fun esc(s: String): String = com.mcqapp.data.escapeHtmlText(s)
 
     /** Shown only for non-default weights so existing output is byte-identical. */
     private fun marksSuffix(question: QuestionDto): String {

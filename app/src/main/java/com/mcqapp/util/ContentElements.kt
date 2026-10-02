@@ -205,17 +205,8 @@ internal fun stripMathAttributes(mathml: String): String {
     return normalizeMathText(wrapped)
 }
 
-private fun escapeHtmlData(s: String): String = buildString(s.length) {
-    s.forEach { ch ->
-        when (ch) {
-            '&' -> append("&amp;")
-            '<' -> append("&lt;")
-            '>' -> append("&gt;")
-            '"' -> append("&quot;")
-            else -> append(ch)
-        }
-    }
-}
+/** Same escaping as the exporters: one escaper, not four copies. */
+private fun escapeHtmlData(s: String): String = com.mcqapp.data.escapeHtmlText(s)
 
 @Composable
 private fun MixedContentView(

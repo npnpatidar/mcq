@@ -137,27 +137,6 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         lastEditedQuestionId = null
     }
 
-    fun loadJson(uri: Uri) {
-        viewModelScope.launch {
-            try {
-                val text = ImportDataHolder.pendingJsonText
-                    ?: getApplication<Application>().contentResolver.openInputStream(uri)
-                        ?.bufferedReader()
-                        ?.use { it.readText() }
-                if (text == null) {
-                    Logger.e("IMPORTVM", "Could not read file")
-                    _state.update { it.copy(loading = false, error = "Could not read the file.") }
-                    return@launch
-                }
-                ImportDataHolder.pendingJsonText = null
-                parseAndLoad(text)
-            } catch (e: Exception) {
-                Logger.e("IMPORTVM", "Failed to parse JSON", e)
-                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
-            }
-        }
-    }
-
     // Fingerprint (not the full text: a 25k-question file is ~9MB and must
     // not be retained twice) of the last directly-loaded JSON.
     private var loadedDirectFp: String? = null

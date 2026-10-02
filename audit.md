@@ -61,7 +61,7 @@ Everything else on this list is independent of release state.
 | A27 | P2 | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[ ]` |
 | A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[ ]` |
 | A29 | P2 | Docs | `BUILDING.md` documents a release process that doesn't exist | `[ ]` |
-| A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[ ]` |
+| A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[~]` dead code + escapers done, renderers pending |
 | A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[ ]` |
 | A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[ ]` |
 | A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[x]` fixed |
@@ -609,12 +609,20 @@ another repo. `AGENTS.md:8` also says `cd /sdcard/repo/mcq`, which is not a path
 Fix: rewrite against reality.
 
 ### A30 · `[ ]` · Dead code and duplication
-Unreferenced functions (verified by grep over all of `app/src`): `ImportViewModel.loadJson`,
-`McqRepository.observeQuestion`, `AnkiSchema11.stripHtml`, `Scoring.isGraded`, plus
-`CardStateDao.countDue/countLeeches/countNew`, `QuestionDao.countByCategory`,
-`McqRepository.searchQuestions`. Six independent HTML escapers and four separate "Explanation"
-renderers that will diverge. God files: `McqRepository` (1116), `LibraryScreen` (1097),
-`AnkiPackageReader` (883), `SettingsScreen` (711), `TestSessionScreen` (708).
+**Mostly fixed** in the A30 commit. Deleted after confirming zero references across `app/src`:
+`ImportViewModel.loadJson` (whose "Could not read the file" message was therefore unreachable),
+`McqRepository.observeQuestion` and `searchQuestions`, `AnkiSchema11.stripHtml`,
+`Scoring.isGraded`, and the four never-called DAO queries `countDue`, `countLeeches`, `countNew`,
+`countByCategory`. `NoDeadCodeTest` greps the sources so they cannot quietly return.
+
+HTML escaping is down to one implementation: `escapeHtmlText` is now used by the preview renderer
+and `HtmlPaperWriter` instead of each carrying a copy. `AnkiMediaPool.escapeHtml` keeps its own
+deliberately — it also maps `'` and newlines for Anki's renderer.
+
+**Still open:** the four separate "Explanation" renderers in `TestSessionScreen`, `ResultsScreen`,
+`StudyScreen` and `BrowseScreen` each carry their own label and styling and will drift; and the god
+files remain large (`McqRepository`, `LibraryScreen`, `AnkiPackageReader`, `SettingsScreen`,
+`TestSessionScreen`). Both are refactors rather than defects.
 
 ### A31 · `[ ]` · Hardcoded verdict colours, colour-only signalling
 `0xFFC8E6C9` / `0xFFFFCDD2` and friends hardcoded in `TestSessionScreen.kt:574-581,616-617`,

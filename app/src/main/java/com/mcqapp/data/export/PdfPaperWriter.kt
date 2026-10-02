@@ -244,12 +244,10 @@ object PdfPaperWriter {
         fun image(src: String?, indent: Float = 0f) {
             if (src == null) return
             val embedded = parseDataUri(src)
+            // Subsampled, and Throwable because an oversized embedded image
+            // raises OutOfMemoryError rather than an Exception.
             val bitmap: Bitmap? = embedded?.let {
-                try {
-                    BitmapFactory.decodeByteArray(it.bytes, 0, it.bytes.size)
-                } catch (e: Exception) {
-                    null
-                }
+                com.mcqapp.util.decodeBounded(it.bytes, com.mcqapp.util.MAX_EXPORT_DIMENSION)
             }
             if (bitmap == null) {
                 val label = if (embedded == null) "[image: $src]" else "[unreadable image]"

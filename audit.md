@@ -42,7 +42,7 @@ Everything else on this list is independent of release state.
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[x]` fixed |
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[x]` fixed |
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[x]` fixed |
-| A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[ ]` |
+| A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[x]` fixed |
 | A12 | P1 | Perf | Library badges full-scan history per paper | `[ ]` |
 | A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
 | A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
@@ -344,7 +344,7 @@ rather than the archive's own (hostile-controlled) size metadata. `DocxReader` r
 refused, plus the exact entry-limit boundary. Zip-slip remains a non-issue: entry names are only map
 keys and the temp file comes from `File.createTempFile`.
 
-### A11 · `[ ]` · Image decode OOM uncaught, no subsampling · `read`+`sub`
+### A11 · `[x]` · Image decode OOM uncaught, no subsampling — fixed · `read`
 
 `app/src/main/java/com/mcqapp/util/QuestionImage.kt:39`, `data/export/PdfPaperWriter.kt:249`,
 `util/ImageUtils.kt:19` — all `catch (e: Exception)` around `decodeByteArray`; no
@@ -352,7 +352,17 @@ keys and the temp file comes from `File.createTempFile`.
 decoded) kills the process. `ImageDownscale.kt:86` already catches `OutOfMemoryError`, so the
 pattern is known — the render paths just don't follow it.
 
-Fix: two-pass decode with subsampling; `catch (e: Throwable)` at all three sites.
+**Fixed** in the A11 commit: new `util/BitmapDecoder.kt` does the two-pass decode —
+`inJustDecodeBounds` to learn the real size, then `inSampleSize` — and catches `Throwable`, since
+`OutOfMemoryError` is an `Error`. The subsample is keyed on the **longest** edge, so a 3200×2400
+photo still halves for a 1600 px cap even though its short edge could not. All three sites use it:
+`QuestionImage` (1600 px), `PdfPaperWriter` (2400 px) and `ImageUtils`, which no longer decodes a
+full-resolution photo only to scale it afterwards. `BitmapDecoderTest` covers the sampling maths,
+empty input, a real decode and a 3000×2000 image provably decoding smaller than its source.
+
+Writing the test surfaced a bug in my own first cut: requiring *both* edges to cover the request
+meant a 3200×2400 image was never subsampled. Robolectric's `BitmapFactory` shadow also returns a
+bitmap for arbitrary bytes, so the "garbage input returns null" case is left to a real device.
 
 ### A12 · `[ ]` · Library badges full-scan all history, once per paper · `read`
 

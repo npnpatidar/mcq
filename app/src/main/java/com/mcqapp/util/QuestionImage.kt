@@ -1,7 +1,6 @@
 package com.mcqapp.util
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -33,10 +32,13 @@ fun QuestionImage(
             value = withContext(Dispatchers.Default) {
                 try {
                     val bytes = Base64.decode(src.substringAfter("base64,"), Base64.DEFAULT)
-                    val bitmap: Bitmap? =
-                        bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                    // Subsampled decode: an oversized payload must not be
+                    // expanded to full size before anything can reject it.
+                    val bitmap: Bitmap? = decodeBounded(bytes, MAX_PREVIEW_DIMENSION)
                     if (bitmap != null) DecodeResult.Ready(bitmap) else DecodeResult.Failed
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: Base64 and BitmapFactory both
+                    // raise OutOfMemoryError on a hostile image.
                     DecodeResult.Failed
                 }
             }

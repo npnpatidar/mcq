@@ -16,7 +16,9 @@ object ImageUtils {
         return try {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return null
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            // Decode straight to the target size instead of materialising a
+            // full-resolution photo only to scale it down afterwards.
+            val bitmap = decodeBounded(bytes, MAX_DIMENSION) ?: return null
             val scaled = scaleBitmap(bitmap)
             val out = ByteArrayOutputStream()
             scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)

@@ -20,13 +20,24 @@ data class ImportReport(
     val newQuestions: Int,
     val updatedQuestions: Int,
     val duplicateQuestions: Int,
+    /** Answers corrected on a question that matched existing content. */
+    val answersRefreshed: Int = 0,
     val restoredBookmarks: Int = 0,
     val restoredAttempts: Int = 0,
     /** Cards whose review progress was carried in, e.g. from an Anki package. */
     val restoredSchedules: Int = 0
 )
 
-class Importer(private val db: AppDatabase) {
+class Importer(
+    private val db: AppDatabase,
+    /**
+     * Refresh the stored answer key when a file repeats a question's text and
+     * options but corrects its answers. Off by default, matching the
+     * long-standing "duplicates are skipped" behaviour; the Settings toggle
+     * turns it on.
+     */
+    private val updateAnswersOnDuplicate: Boolean = false
+) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -48,6 +59,7 @@ class Importer(private val db: AppDatabase) {
         var newQuestions = 0
         var updatedQuestions = 0
         var duplicateQuestions = 0
+        var answersRefreshed = 0
         var restoredBookmarks = 0
         var restoredAttempts = 0
         var restoredSchedules = 0
@@ -207,6 +219,47 @@ class Importer(private val db: AppDatabase) {
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
                             "textLength=${questionDto.text.length}")
+
+                        if (contentHash in existingHashes && updateAnswersOnDuplicate) {
+                            // Same text and options under a different id: the
+                            // file is probably a regenerated bank carrying a
+                            // corrected key. Refresh the stored answers.
+                            val sameContentId = db.questionDao().getIdByContentHash(contentHash)
+                            if (sameContentId != null) {
+                                val stored = db.questionDao().getById(sameContentId)
+                                val storedCorrect = db.correctAnswerDao().getCorrectIds(sameContentId).toSet()
+                                if (stored != null &&
+                                    ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, questionDto)
+                                ) {
+                                    db.correctAnswerDao().deleteByQuestion(sameContentId)
+                                    db.correctAnswerDao().upsertAll(
+                                        questionDto.correctOptionIds.map { optionId ->
+                                            com.mcqapp.data.local.CorrectAnswerEntity(
+                                                questionId = sameContentId,
+                                                optionId = optionId
+                                            )
+                                        }
+                                    )
+                                    db.questionDao().updateNonHashedFields(
+                                        id = sameContentId,
+                                        explanation = questionDto.explanationElements
+                                            .ifEmpty {
+                                                listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.explanation))
+                                            }
+                                            .toContentJson(json),
+                                        marks = questionDto.marks,
+                                        difficulty = questionDto.difficulty,
+                                        tags = questionDto.tags.joinToString(",")
+                                    )
+                                    answersRefreshed++
+                                    Logger.i(
+                                        "IMPORT",
+                                        "  Refreshed answers on duplicate id=$sameContentId"
+                                    )
+                                    return@forEachIndexed
+                                }
+                            }
+                        }
 
                         if (contentHash in existingHashes) {
                             // Same text and options, but the hash ignores the
@@ -374,8 +427,15 @@ class Importer(private val db: AppDatabase) {
             "questions $newQuestions new/$updatedQuestions updated, $duplicateQuestions duplicates skipped " +
             "in ${elapsed}ms, heap ${usedMb}MB/${runtime.maxMemory() / 1048576}MB")
         return ImportReport(
-            newPapers, updatedPapers, newQuestions, updatedQuestions, duplicateQuestions,
-            restoredBookmarks, restoredAttempts, restoredSchedules
+            newPapers = newPapers,
+            updatedPapers = updatedPapers,
+            newQuestions = newQuestions,
+            updatedQuestions = updatedQuestions,
+            duplicateQuestions = duplicateQuestions,
+            answersRefreshed = answersRefreshed,
+            restoredBookmarks = restoredBookmarks,
+            restoredAttempts = restoredAttempts,
+            restoredSchedules = restoredSchedules
         )
     }
 

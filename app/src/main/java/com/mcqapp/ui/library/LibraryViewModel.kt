@@ -278,7 +278,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         "${read.recallCount} recall, ${read.file.papers.size} papers"
                 )
 
-                val report = Importer(repository.db()).import(read.file, read.scheduling)
+                val report = Importer(repository.db(), repository.updateAnswersOnDuplicate().first())
+                    .import(read.file, read.scheduling)
                 Logger.i(
                     "LIBVM",
                     "Anki import done: ${report.newPapers} new, ${report.updatedPapers} updated papers, " +
@@ -308,7 +309,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 val text = context.assets.open("sample_paper.json").bufferedReader().use { it.readText() }
                 Logger.d("LIBVM", "Read sample JSON (${text.length} chars), importing")
                 val file = LegacyParser.parse(text)
-                val report = Importer(repository.db()).import(file)
+                val report = Importer(repository.db(), repository.updateAnswersOnDuplicate().first()).import(file)
                 Logger.i("LIBVM", "Sample data loaded: ${report.newPapers} papers, ${report.newQuestions} questions")
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Sample load failed", e)

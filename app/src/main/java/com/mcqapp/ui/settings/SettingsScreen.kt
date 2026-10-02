@@ -60,6 +60,7 @@ fun SettingsScreen(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
+    val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
     val practiceMode by viewModel.practiceMode.collectAsStateWithLifecycle()
     val strictMode by viewModel.strictMode.collectAsStateWithLifecycle()
@@ -184,6 +185,25 @@ fun SettingsScreen(
                         Switch(
                             checked = shuffleQuestions,
                             onCheckedChange = { viewModel.setShuffleQuestions(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Refresh answers on re-import")
+                            Text(
+                                "When a file repeats a question's text and options but corrects " +
+                                    "its answer key, update the stored answer instead of " +
+                                    "reporting it as a duplicate.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = updateAnswersOnDuplicate,
+                            onCheckedChange = { viewModel.setUpdateAnswersOnDuplicate(it) }
                         )
                     }
                     Spacer(Modifier.height(8.dp))

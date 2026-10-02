@@ -438,6 +438,9 @@ fun LibraryScreen(
                         append(" paper${if (report.newPapers + report.updatedPapers == 1) "" else "s"}, ")
                         append("${report.newQuestions} new questions")
                         if (report.updatedQuestions > 0) append(", ${report.updatedQuestions} updated")
+                        if (report.answersRefreshed > 0) {
+                            append(", ${report.answersRefreshed} answers refreshed")
+                        }
                         if (report.duplicateQuestions > 0) {
                             append(", ${report.duplicateQuestions} already present")
                         }

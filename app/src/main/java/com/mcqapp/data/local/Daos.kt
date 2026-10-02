@@ -105,6 +105,23 @@ interface QuestionDao {
     @Query("SELECT id FROM questions WHERE categoryId = :categoryId")
     suspend fun getIdsByCategory(categoryId: String): List<String>
 
+    /** The stored question with this content, if any: a same-content match. */
+    @Query("SELECT id FROM questions WHERE contentHash = :contentHash LIMIT 1")
+    suspend fun getIdByContentHash(contentHash: String): String?
+
+    /** Everything the content hash deliberately ignores. */
+    @Query(
+        "UPDATE questions SET explanation = :explanation, marks = :marks, " +
+            "difficulty = :difficulty, tags = :tags WHERE id = :id"
+    )
+    suspend fun updateNonHashedFields(
+        id: String,
+        explanation: String,
+        marks: Double,
+        difficulty: String,
+        tags: String
+    )
+
     @Query(
         "SELECT questions.id FROM questions INNER JOIN categories " +
             "ON questions.categoryId = categories.id WHERE categories.paperId = :paperId"

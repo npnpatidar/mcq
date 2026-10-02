@@ -97,6 +97,11 @@ fun ImportScreen(
                     "• ${report.newQuestions} new questions added\n" +
                         "• ${report.updatedQuestions} updated\n" +
                         "• ${report.duplicateQuestions} already existed (skipped)" +
+                        (if (report.answersRefreshed > 0) {
+                            " • ${report.answersRefreshed} answers refreshed"
+                        } else {
+                            ""
+                        }) +
                         if (report.restoredBookmarks > 0 || report.restoredAttempts > 0) {
                             "\n• ${report.restoredBookmarks} bookmarks restored\n" +
                                 "• ${report.restoredAttempts} attempts restored"

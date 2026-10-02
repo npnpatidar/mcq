@@ -17,6 +17,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -355,7 +356,10 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 // The whole DB import (hashing + writes for every row) stays
                 // off Main; 25k rows froze it for tens of seconds.
                 val report = withContext(Dispatchers.Default) {
-                    com.mcqapp.data.io.Importer(repository.db()).import(file)
+                    com.mcqapp.data.io.Importer(
+                        repository.db(),
+                        updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first()
+                    ).import(file)
                 }
                 Logger.i("IMPORTVM", "Imported: ${report.newPapers} new papers, ${report.updatedPapers} updated, " +
                     "${report.newQuestions} new questions, ${report.updatedQuestions} updated")

@@ -110,6 +110,21 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it[strictModeKey] = enabled }
     }
 
+    /**
+     * When on, re-importing a file whose questions have the same text and
+     * options but a corrected answer key refreshes the stored answers instead
+     * of reporting them as duplicates. Off by default, which preserves the
+     * long-standing behaviour.
+     */
+    private val updateAnswersKey = booleanPreferencesKey("update_answers_on_duplicate")
+
+    fun updateAnswersOnDuplicate(): Flow<Boolean> =
+        context.dataStore.data.map { it[updateAnswersKey] ?: false }
+
+    suspend fun setUpdateAnswersOnDuplicate(enabled: Boolean) {
+        context.dataStore.edit { it[updateAnswersKey] = enabled }
+    }
+
     private val autoAdvanceKey = booleanPreferencesKey("auto_advance")
 
     fun autoAdvance(): Flow<Boolean> =

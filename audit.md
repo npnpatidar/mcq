@@ -71,7 +71,7 @@ Everything else on this list is independent of release state.
 | A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[~]` hygiene done, Coil upgrade declined |
 | A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
 | A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[ ]` |
-| A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[ ]` |
+| A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[x]` fixed behind a setting |
 | A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[~]` depth guard done, row diagnostics pending |
 | A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[x]` fixed |
 | A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[x]` fixed |
@@ -673,12 +673,26 @@ declared twice (`:72` and `:81`), so a bump can split runtime and test versions.
 `questions100.apkg` (189 KB), `questions100-datauri.json` (199 KB), `questions100.docx` (52 KB),
 `questions100.json` (106 KB) sit untracked in the repo root, one `git add -A` from being committed.
 
-### A40 · `[ ]` · Narrow `ContentHash` *(carried forward)*
-`data/io/ContentHash.kt:12-15` hashes text + option texts + option images only, so an
-answer/explanation/marks-only correction is classified as a duplicate and never applied. The
-narrowing is deliberate and documented, and the import report tells the user duplicates were
-skipped — this is a product decision to confirm, not an oversight. `McqRepository` also duplicates
-the formula despite the "single source of truth" comment.
+### A40 · `[x]` · Narrow `ContentHash` — made a setting *(carried forward)* · `read`
+The narrowing itself is deliberate and stays: a question's identity is its text and options.
+What changed is the owner's decision on what to do about a correction.
+
+**Fixed in the A40 commit, as a setting (owner's choice: a toggle rather than one fixed
+behaviour).** Settings now has **"Refresh answers on re-import"**, default **off** so today's
+behaviour is unchanged. With it on, a question that arrives with the same content hash but a
+corrected key *under a different id* — the regenerated-bank case, which the old code skipped
+because `getById(newId)` was null — updates the stored answer, explanation, marks, difficulty and
+tags instead of being reported as a duplicate. `QuestionDao.getIdByContentHash` and
+`updateNonHashedFields` support the lookup and update; `ImportReport.answersRefreshed` counts it and
+both import reports show "N answers refreshed". The JSON, DOCX and Anki import paths all read the
+flag.
+
+Writing the test caught a bug in my own first cut: I added the new report field mid-list but passed
+it positionally, so the count landed in `restoredBookmarks` and read back as 0 while the refresh had
+actually happened. The constructor call now uses named arguments.
+
+**Not done:** `McqRepository` still duplicates the hash formula despite the "single source of
+truth" comment.
 
 ### A41 · `[~]` · JSON parser robustness — depth guard done, row diagnostics pending · `read`
 **Half fixed** in the A41 commit: `LegacyParser.requireNestingDepth` scans bracket depth before

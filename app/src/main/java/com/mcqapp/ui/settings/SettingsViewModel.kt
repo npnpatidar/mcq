@@ -29,6 +29,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setThemeMode(mode) }
     }
 
+    private val _updateAnswersOnDuplicate = MutableStateFlow(false)
+    val updateAnswersOnDuplicate: StateFlow<Boolean> = _updateAnswersOnDuplicate.asStateFlow()
+
     private val _shuffleQuestions = MutableStateFlow(false)
     val shuffleQuestions: StateFlow<Boolean> = _shuffleQuestions.asStateFlow()
 
@@ -42,6 +45,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
         }
+    }
+
+    init {
+        viewModelScope.launch {
+            repository.updateAnswersOnDuplicate()
+                .collect { _updateAnswersOnDuplicate.value = it }
+        }
+    }
+
+    fun setUpdateAnswersOnDuplicate(enabled: Boolean) {
+        viewModelScope.launch { repository.setUpdateAnswersOnDuplicate(enabled) }
     }
 
     fun setShuffleQuestions(enabled: Boolean) {

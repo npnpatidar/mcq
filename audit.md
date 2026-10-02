@@ -74,7 +74,7 @@ Everything else on this list is independent of release state.
 | A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[ ]` |
 | A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[~]` depth guard done, row diagnostics pending |
 | A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[ ]` |
-| A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[ ]` |
+| A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[x]` fixed |
 | A44 | P2 | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[ ]` |
 | A45 | — | Data | `exportSchema = false`, forward-only migrations | `[-]` not needed pre-release |
 
@@ -659,12 +659,17 @@ keystroke with no debounce (`SearchViewModel` uses 300 ms). `TestSessionScreen.k
 body including every `QuestionImage`. `HistoryScreen.kt:83` recomputes trends inside the
 `LazyColumn` content lambda. No `derivedStateOf` anywhere.
 
-### A43 · `[ ]` · XXE hardening fails open *(carried forward)*
+### A43 · `[x]` · XXE hardening failed open — fixed · `read`
 `DocxReader.kt:87-97` sets `disallow-doctype-decl` first (the strongest defence) and swallows any
 failure. `external-parameter-entities`, `load-external-dtd` and `setExpandEntityReferences` are
 never set, so the fallback posture is "general entities off, parameter entities at parser default".
-Not exploitable on Android's parser today; fix by rejecting the part if the strongest feature
-cannot be set.
+**Fixed** in the A43 commit: `hardenXmlFactory` now **fails closed** — if
+`disallow-doctype-decl` cannot be set the part is rejected instead of parsed with weaker settings.
+`external-parameter-entities` and `load-external-dtd` are now disabled too (previously never set),
+alongside `isExpandEntityReferences` and `isXIncludeAware`, each still best-effort because parsers
+differ in which features they recognise. `XxeHardeningTest` feeds a real `SYSTEM` entity payload and
+asserts it is rejected, that an ordinary Word part still parses, and that malformed XML still names
+the part.
 
 ### A44 · `[ ]` · Release readiness
 `isMinifyEnabled = false`, no `signingConfigs`, `versionCode = 1` hardcoded, `proguard-rules.pro` is

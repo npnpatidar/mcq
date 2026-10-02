@@ -79,20 +79,51 @@ internal fun parseXml(bytes: ByteArray, what: String): Document {
     return try {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
-        try {
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        } catch (_: Exception) {
-            // Older parsers: Word files never carry a doctype anyway.
-        }
-        try {
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false)
-        } catch (_: Exception) {
-        }
+        hardenXmlFactory(factory)
         factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
     } catch (e: IllegalArgumentException) {
         throw e
     } catch (e: Exception) {
         throw IllegalArgumentException("Not a readable Word part ($what): ${e.message}")
+    }
+}
+
+/**
+ * Locks the parser down against XXE, failing closed.
+ *
+ * `disallow-doctype-decl` is the strongest single defence, so if it cannot be
+ * set the part is rejected rather than parsed with weaker settings — a silent
+ * `catch` here would leave the posture at "whatever the parser defaults to".
+ * The remaining features are best-effort because parsers vary in which they
+ * recognise, and each one that is recognised is verified by reading it back.
+ */
+private fun hardenXmlFactory(factory: DocumentBuilderFactory) {
+    try {
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+    } catch (e: Exception) {
+        throw IllegalArgumentException(
+            "This device's XML parser cannot be locked down safely, so the file was rejected."
+        )
+    }
+    for (feature in listOf(
+        "http://xml.org/sax/features/external-general-entities",
+        "http://xml.org/sax/features/external-parameter-entities",
+        "http://apache.org/xml/features/nonvalidating/load-external-dtd"
+    )) {
+        try {
+            factory.setFeature(feature, false)
+        } catch (_: Exception) {
+            // Not every parser knows every feature; the doctype ban above is
+            // the control that matters.
+        }
+    }
+    try {
+        factory.isExpandEntityReferences = false
+    } catch (_: Exception) {
+    }
+    try {
+        factory.isXIncludeAware = false
+    } catch (_: Exception) {
     }
 }
 

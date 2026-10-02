@@ -41,7 +41,7 @@ Everything else on this list is independent of release state.
 | A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[~]` teardown fixed, lazy editor pending |
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[x]` fixed |
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[x]` fixed |
-| A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[ ]` |
+| A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[x]` fixed |
 | A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[ ]` |
 | A12 | P1 | Perf | Library badges full-scan history per paper | `[ ]` |
 | A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
@@ -320,7 +320,7 @@ are handed to the existing importer instead of being fetched a second time.
 `BoundedReadTest` includes an endless stream that claims `Int.MAX_VALUE` available.
 The error channel is still the misleadingly named `exportError`; renaming it is part of A30.
 
-### A10 · `[ ]` · No ZIP caps, and OOM escapes the catch · `read`
+### A10 · `[x]` · No ZIP caps, and OOM escaped the catch — fixed · `read`
 
 `app/src/main/java/com/mcqapp/data/anki/AnkiPackageReader.kt:744`, `data/docx/DocxReader.kt:71`
 
@@ -334,8 +334,15 @@ import boundaries catch `Exception` — `OutOfMemoryError` is an `Error` and esc
 user-facing failure path. Zip-slip is **not** a risk: entry names are only map keys and the temp
 file comes from `File.createTempFile`.
 
-Fix: stream with a running total, reject past ~4096 entries / 64 MB per entry / 256 MB total, and
-catch `Throwable` at the import boundary.
+**Fixed** in the A10 commit: new `data/SafeZip` is the single bounded extractor used by both
+readers — max 4096 entries, 64 MB per entry, 256 MB total, all counted from **decompressed** bytes
+rather than the archive's own (hostile-controlled) size metadata. `DocxReader` rethrows
+`ZipLimitException` so the user is told the file was too large instead of "not readable", while
+`AnkiPackageReader` converts it to an `AnkiPackageException` and now also catches
+`OutOfMemoryError`, which the previous `catch (Exception)` could never see.
+`SafeZipTest` builds a real 200 MB-of-zeros archive that compresses under 1 MB and asserts it is
+refused, plus the exact entry-limit boundary. Zip-slip remains a non-issue: entry names are only map
+keys and the temp file comes from `File.createTempFile`.
 
 ### A11 · `[ ]` · Image decode OOM uncaught, no subsampling · `read`+`sub`
 

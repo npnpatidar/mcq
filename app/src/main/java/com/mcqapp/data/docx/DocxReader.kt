@@ -61,20 +61,13 @@ internal fun readDocx(bytes: ByteArray): DocxRead {
 private fun Element.isWord(local: String) = namespaceURI == WORD_NS && localName == local
 
 private fun unzip(bytes: ByteArray): Map<String, ByteArray> {
-    val out = LinkedHashMap<String, ByteArray>()
-    try {
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) {
-                    val buf = ByteArrayOutputStream()
-                    zip.copyTo(buf)
-                    out[entry.name] = buf.toByteArray()
-                }
-                zip.closeEntry()
-                entry = zip.nextEntry
-            }
-        }
+    val out = try {
+        // Bounded: counts decompressed bytes so a zip bomb cannot expand
+        // without limit. The limit error is rethrown as-is so the user is
+        // told the archive was too large, not that it was "not readable".
+        com.mcqapp.data.SafeZip.unzip(bytes)
+    } catch (e: com.mcqapp.data.ZipLimitException) {
+        throw e
     } catch (e: Exception) {
         throw IllegalArgumentException("Not a readable .docx (zip) file: ${e.message}")
     }

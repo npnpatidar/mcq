@@ -92,6 +92,10 @@ object AnkiPackageReader {
             }
         } catch (e: AnkiPackageException) {
             throw e
+        } catch (e: OutOfMemoryError) {
+            // An Error, so the catch below never sees it: without this the
+            // process simply died mid-import.
+            throw AnkiPackageException("This package needs more memory than this device has.", e)
         } catch (e: Exception) {
             throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
         } finally {
@@ -737,13 +741,14 @@ object AnkiPackageReader {
     // ---- helpers ----
 
     private fun unzip(bytes: ByteArray): Map<String, ByteArray> {
-        val out = LinkedHashMap<String, ByteArray>()
-        ZipInputStream(bytes.inputStream()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) out[entry.name] = zip.readBytes()
-                zip.closeEntry()
-            }
+        val out = try {
+            // Bounded: a zip bomb must not expand without limit. Reported as
+            // a package error so the user gets a sentence, not a crash.
+            com.mcqapp.data.SafeZip.unzip(bytes)
+        } catch (e: com.mcqapp.data.ZipLimitException) {
+            throw AnkiPackageException("This package is too large to import: ${e.message}")
+        } catch (e: OutOfMemoryError) {
+            throw AnkiPackageException("This package needs more memory than this device has.")
         }
         if (out.isEmpty()) throw AnkiPackageException("This file is not a readable Anki package")
         return out

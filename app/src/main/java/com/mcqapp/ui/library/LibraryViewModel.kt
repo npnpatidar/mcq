@@ -162,26 +162,47 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun deletePaper(paperId: String) {
-        viewModelScope.launch { repository.deletePaper(paperId) }
+        viewModelScope.launch {
+            try {
+                repository.deletePaper(paperId)
+            } catch (e: Exception) {
+                // Unguarded, a database error here escaped viewModelScope and
+                // took the app down on an ordinary tap.
+                Logger.e("LIBVM", "Delete paper failed", e)
+                _exportError.value = "Delete failed: ${e.message}"
+            }
+        }
     }
 
     fun addPaper(title: String, description: String, durationMinutes: Int, negativeMarking: Double) {
         viewModelScope.launch {
-            val id = "paper-" + System.currentTimeMillis().toString(36)
-            repository.savePaper(
-                Paper(
-                    id = id,
-                    title = title,
-                    description = description,
-                    durationMinutes = durationMinutes,
-                    negativeMarking = negativeMarking
+            try {
+                val id = "paper-" + System.currentTimeMillis().toString(36)
+                repository.savePaper(
+                    Paper(
+                        id = id,
+                        title = title,
+                        description = description,
+                        durationMinutes = durationMinutes,
+                        negativeMarking = negativeMarking
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Add paper failed", e)
+                _exportError.value = "Could not add the paper: ${e.message}"
+            }
         }
     }
 
     fun addCategory(paperId: String, title: String, parentId: String?) {
-        viewModelScope.launch { repository.addCategory(paperId, title, parentId) }
+        viewModelScope.launch {
+            try {
+                repository.addCategory(paperId, title, parentId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Add category failed", e)
+                _exportError.value = "Could not add the category: ${e.message}"
+            }
+        }
     }
 
     fun moveCategory(categoryId: String, delta: Int) {
@@ -197,7 +218,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteCategory(categoryId: String) {
         Logger.i("LIBVM", "deleteCategory($categoryId)")
-        viewModelScope.launch { repository.deleteCategory(categoryId) }
+        viewModelScope.launch {
+            try {
+                repository.deleteCategory(categoryId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Delete category failed", e)
+                _exportError.value = "Delete failed: ${e.message}"
+            }
+        }
     }
 
     private val _importReport = MutableStateFlow<ImportReport?>(null)

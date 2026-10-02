@@ -36,7 +36,7 @@ Everything else on this list is independent of release state.
 | A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[x]` fixed |
 | A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[x]` fixed |
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[x]` fixed |
-| A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[ ]` |
+| A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[x]` fixed |
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[ ]` |
 | A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[ ]` |
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[ ]` |
@@ -179,7 +179,7 @@ and bookmarks go; promoted children's bookmarks survive. Three `RepositoryTest` 
 *Not done (UI):* the delete icon still has no confirmation dialog, so a destructive delete is one
 tap. Worth adding now that the semantics are pinned by tests.
 
-### A5 · `[ ]` · Failed import is silent; ordinary deletes can crash · `read`
+### A5 · `[x]` · Failed import was silent; ordinary deletes could crash — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/importscreen/ImportViewModel.kt:383`
 
@@ -197,7 +197,14 @@ there is no retry path. Worse, `LibraryViewModel.kt:165,184,200` are bare
 ordinary tap crashes the app. Import atomicity itself is fine — `Importer.import` is one
 `withTransaction`.
 
-Fix: set `error = "Import failed: ${e.message}"`; wrap the delete coroutines.
+**Fixed** in the A5 commit: `ImportViewModel.import()` now sets
+`error = "Import failed: …"`, matching every sibling catch, so the dialog the
+screen already renders appears. The four unguarded `viewModelScope.launch` blocks in
+`LibraryViewModel` (`deletePaper`, `addPaper`, `addCategory`, `deleteCategory`) now catch and
+report through `exportError`, following the existing `moveCategory` pattern.
+`LibraryViewModelErrorTest` closes the database to force real failures and asserts each path
+surfaces a message instead of crashing. It clears `AppDatabase.INSTANCE` afterwards, because that
+singleton would otherwise hand the closed handle to every other test in the JVM.
 
 ### A6 · `[ ]` · Load failures produce a dead end or a false success · `read`
 

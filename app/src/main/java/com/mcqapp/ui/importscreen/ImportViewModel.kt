@@ -381,8 +381,12 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     "${report.newQuestions} new questions, ${report.updatedQuestions} updated")
                 _state.update { it.copy(importing = false, importDone = true, importReport = report) }
             } catch (e: Exception) {
+                // Every sibling catch surfaces `error`, which ImportScreen
+                // renders as a dialog. Swallowing it here left the spinner
+                // stopping with no explanation, so a failed import was
+                // indistinguishable from a successful one.
                 Logger.e("IMPORTVM", "Import failed", e)
-                _state.update { it.copy(importing = false) }
+                _state.update { it.copy(importing = false, error = "Import failed: ${e.message}") }
             }
         }
     }

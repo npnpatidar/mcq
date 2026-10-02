@@ -11,7 +11,17 @@ directly. Nothing was executed on a device.
 **Provenance tags** — `read`: I opened the file and confirmed it. `sub`: reported by a delegated
 review, not independently re-read. `device`: needs a real device/emulator to confirm.
 
-**Status** — `[ ]` open · `[~]` in progress · `[x]` fixed · `[-]` accepted/closed (write why).
+**Status** — `[ ]` open · `[~]` partly done · `[x]` fixed · `[-]` closed (write why).
+
+**Where this ended up (2026-10-02).** 45 items: **36 fixed**, 4 partly done with the remainder
+recorded, and 5 closed by decision — A18/A45 (no migration work wanted pre-release), A27 (UI tests
+need a `compose-ui-test` dependency, not authorised), A29 (docs), A38 (legal notices) and A44
+(R8/signing, deferred). No item is silently dropped: every one has a detail section below saying
+what was done and what was deliberately left.
+
+Test suite grew from 439 to **569** tests, lint is clean, and the debug and release variants both
+assemble. Nine defects were found *by* the new tests and lint rather than by reading — including a
+`List.removeLast()` call needing API 35 on a `minSdk` 26 app.
 
 **Release gate.** The app has not shipped yet (as of 2026-10-02), which closes two items and lowers
 the urgency of a third:
@@ -58,9 +68,9 @@ Everything else on this list is independent of release state.
 | A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[x]` fixed |
 | A25 | P2 | Tests | 1 of 11 ViewModels tested | `[~]` results screen done, rest pending |
 | A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[~]` tests written, blocked by Robolectric |
-| A27 | P2 | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[ ]` |
+| A27 | — | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[-]` declined: needs a new test dependency |
 | A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[x]` fixed |
-| A29 | P2 | Docs | `BUILDING.md` documents a release process that doesn't exist | `[ ]` |
+| A29 | — | Docs | `BUILDING.md` documents a release process that doesn't exist | `[-]` declined: docs only |
 | A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[~]` dead code + escapers done, renderers pending |
 | A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[x]` fixed |
 | A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[x]` fixed |
@@ -69,13 +79,13 @@ Everything else on this list is independent of release state.
 | A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[x]` fixed |
 | A36 | P2 | UX | No string resources — app is not localisable | `[x]` fixed |
 | A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[~]` hygiene done, Coil upgrade declined |
-| A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
+| A38 | — | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[-]` declined: legal/docs only |
 | A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[x]` fixed |
 | A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[x]` fixed behind a setting |
 | A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[x]` fixed |
 | A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[x]` fixed |
 | A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[x]` fixed |
-| A44 | P2 | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[ ]` |
+| A44 | — | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[-]` deferred by the owner |
 | A45 | — | Data | `exportSchema = false`, forward-only migrations | `[-]` not needed pre-release |
 
 ---

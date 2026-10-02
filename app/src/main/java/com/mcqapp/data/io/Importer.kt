@@ -206,7 +206,7 @@ class Importer(private val db: AppDatabase) {
                         val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image })
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
-                            "text='${questionDto.text.take(60)}'")
+                            "textLength=${questionDto.text.length}")
 
                         if (contentHash in existingHashes) {
                             // Same text and options, but the hash ignores the

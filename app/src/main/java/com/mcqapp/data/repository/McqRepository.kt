@@ -508,7 +508,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun saveQuestion(question: Question) {
         Logger.d("REPO", "saveQuestion(id=${question.id}, category=${question.categoryId}, " +
             "options=${question.options.size}, correct=${question.correctOptionIds}, " +
-            "text='${question.text.take(60)}')")
+            "textLength=${question.text.length})")
         // One transaction: the question row, its options and its answer key
         // must land together, so a crash can never leave options without a key.
         db.withTransaction {

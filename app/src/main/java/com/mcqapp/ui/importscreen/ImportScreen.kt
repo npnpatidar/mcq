@@ -116,7 +116,7 @@ fun ImportScreen(
     }
     fun editQuestion(question: com.mcqapp.data.io.QuestionDto) {
         Logger.d("IMPORTSCREEN", "edit clicked: id=${question.id}, " +
-            "text='${question.text.take(60)}', options=${question.options.size}")
+            "textLength=${question.text.length}, options=${question.options.size}")
         val order = viewModel.state.value.questions
         com.mcqapp.ui.editor.EditorSession.start(
             ids = order.map { it.id },
@@ -142,7 +142,7 @@ fun ImportScreen(
         if (route == "import/direct" && pendingId != null) {
             val edited = com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion
             Logger.d("IMPORTSCREEN", "returned from editor: holderPresent=${edited != null}, " +
-                "holderId=${edited?.id}, holderText='${edited?.text?.take(60)}'")
+                "holderId=${edited?.id}, holderTextLength=${edited?.text?.length}")
             if (edited != null && edited.id == pendingId) {
                 viewModel.updateQuestionFromImport(edited)
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = null

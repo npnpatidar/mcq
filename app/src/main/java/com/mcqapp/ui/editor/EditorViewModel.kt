@@ -497,7 +497,7 @@ class EditorViewModel(
             return
         }
         Logger.d("EDITORVM", "save(): fromImportSession=$fromImportSession, " +
-            "dtoId=${dto.id}, dtoText='${dto.text.take(60)}', dtoOptions=${dto.options.size}, " +
+            "dtoId=${dto.id}, dtoTextLength=${dto.text.length}, dtoOptions=${dto.options.size}, " +
             "dtoCorrect=${dto.correctOptionIds}")
         // Signature of exactly what is being persisted (state may keep
         // changing under an async save; snapshotting later would mark

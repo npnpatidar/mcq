@@ -70,7 +70,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     fun updateQuestionFromImport(dto: QuestionDto) {
         val before = _state.value.questions.find { it.id == dto.id }
         Logger.d("IMPORTVM", "updateQuestionFromImport(id=${dto.id}): foundInState=${before != null}, " +
-            "beforeText='${before?.text?.take(60)}', afterText='${dto.text.take(60)}', " +
+            "beforeTextLength=${before?.text?.length}, afterTextLength=${dto.text.length}, " +
             "afterOptions=${dto.options.size}, afterCorrect=${dto.correctOptionIds}")
         _state.update { s ->
             s.copy(questions = s.questions.map { if (it.id == dto.id) dto else it })

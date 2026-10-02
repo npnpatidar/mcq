@@ -54,8 +54,8 @@ Everything else on this list is independent of release state.
 | A20 | P1 | Perf | N+1 query loops (bookmarks, attempt save) | `[x]` fixed |
 | A21 | P1 | Data | Unbounded `IN (:ids)` bind lists | `[x]` fixed |
 | A22 | P1 | Data | Backup silently drops all scheduling | `[ ]` |
-| A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[ ]` |
-| A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[ ]` |
+| A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[x]` fixed |
+| A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[x]` fixed |
 | A25 | P2 | Tests | 1 of 11 ViewModels tested | `[ ]` |
 | A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[ ]` |
 | A27 | P2 | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[ ]` |
@@ -548,7 +548,7 @@ test calls `Exporter.exportAll()` at all, so no test would catch it.
 Fix: add an optional `scheduling` map (ignored by `LegacyParser` for foreign files), or state the
 omission in the export UI, plus a DB→JSON→DB round-trip test.
 
-### A23 · `[ ]` · Question text logged in cleartext to a shareable file · `sub`
+### A23 · `[x]` · Question text logged in cleartext to a shareable file — fixed · `read`
 
 `data/io/Importer.kt:208` (`text='${questionDto.text.take(60)}'`), also `McqRepository.kt:458`,
 `ImportViewModel.kt:72`, `ImportScreen.kt:119,145`. `Logger.kt:32` prefers
@@ -557,14 +557,18 @@ omission in the export UI, plus a DB→JSON→DB round-trip test.
 
 Fix: drop the excerpts or gate on `BuildConfig.DEBUG`; prefer `filesDir`; redact before sharing.
 
-### A24 · `[ ]` · `allowBackup="true"` with no data-extraction rules · `sub`
+### A24 · `[x]` · `allowBackup="true"` with no data-extraction rules — fixed · `read`
 
 `app/src/main/AndroidManifest.xml:8`; `res/xml/` holds only `file_paths.xml`. Default rules make the
 whole Room database — every bank, bookmarks, per-attempt history — eligible for cloud/device backup
 with no opt-out.
 
-Fix: add `dataExtractionRules`/`fullBackupContent` excluding the DB and `logs/`, or set
-`allowBackup="false"`.
+**Fixed** in the A24 commit (owner's choice: keep backup on, exclude the data): new
+`res/xml/data_extraction_rules.xml` for Android 12+ covering both cloud backup and device transfer,
+and `res/xml/backup_rules.xml` for older releases, each excluding the `database`, `log`, `file` and
+`external` domains while keeping `sharedpref` so small settings survive a restore. Both are wired
+into the manifest. `BackupRulesTest` asserts the manifest wiring, the exclusions on both transports,
+and that shared preferences are still included.
 
 ---
 

@@ -25,6 +25,7 @@ import kotlin.random.Random
 
 data class TestUiState(
     val loading: Boolean = true,
+    val loadError: String? = null,
     val paper: Paper? = null,
     val questions: List<Question> = emptyList(),
     val currentIndex: Int = 0,
@@ -78,6 +79,10 @@ class TestViewModel(
                 _state.update { it.copy(bookmarked = ids.toSet()) }
             }
         }
+        load()
+    }
+
+    private fun load() {
         viewModelScope.launch {
             try {
                 Logger.d("TESTVM", "Loading paper $paperId")
@@ -137,9 +142,18 @@ class TestViewModel(
                 lastNavMillis = startTimestamp
                 if (totalSeconds > 0) startTimer()
             } catch (e: Exception) {
+                // Without clearing `loading` the screen sat on "Loading…"
+                // forever with no retry and no explanation.
                 Logger.e("TESTVM", "Failed to load test session", e)
+                _state.update { it.copy(loading = false, loadError = "Could not start the test: ${e.message}") }
             }
         }
+    }
+
+    /** Re-runs a failed load after the user asks for it. */
+    fun retry() {
+        _state.update { it.copy(loading = true, loadError = null) }
+        load()
     }
 
     private fun startTimer() {

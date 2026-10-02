@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -91,6 +92,11 @@ fun StudyScreen(
         ) {
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                state.loadError != null -> StudyLoadError(
+                    message = state.loadError ?: "",
+                    onRetry = { viewModel.retry() },
+                    onDone = { navController.popBackStack() }
+                )
                 state.finished -> StudySummary(
                     state = state,
                     onRestart = { viewModel.restart() },
@@ -293,6 +299,25 @@ private fun GradeButton(
         colors = ButtonDefaults.buttonColors(containerColor = color)
     ) {
         Text(label, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+private fun StudyLoadError(message: String, onRetry: () -> Unit, onDone: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            message,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.error
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onRetry) { Text("Retry") }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onDone) { Text("Back to library") }
     }
 }
 

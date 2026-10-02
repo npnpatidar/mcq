@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 
 data class StudyUiState(
     val loading: Boolean = true,
+    val loadError: String? = null,
     val paperTitle: String = "",
     val queue: List<Question> = emptyList(),
     val reasons: Map<String, StudyReason> = emptyMap(),
@@ -48,6 +49,10 @@ class StudyViewModel(
     val state: StateFlow<StudyUiState> = _state.asStateFlow()
 
     init {
+        load()
+    }
+
+    private fun load() {
         viewModelScope.launch {
             try {
                 val paper = repository.getPaper(paperId)
@@ -74,10 +79,19 @@ class StudyViewModel(
                     )
                 }
             } catch (e: Exception) {
+                // `finished = true` with an empty reason rendered the success
+                // branch: "Session complete / 0 reviewed". A failure has to
+                // look like a failure.
                 Logger.e("STUDY", "Failed to load study session", e)
-                _state.update { it.copy(loading = false, finished = true) }
+                _state.update { it.copy(loading = false, loadError = "Could not start the session: ${e.message}") }
             }
         }
+    }
+
+    /** Re-runs a failed load after the user asks for it. */
+    fun retry() {
+        _state.update { it.copy(loading = true, loadError = null) }
+        load()
     }
 
     fun toggleOption(optionId: String) {

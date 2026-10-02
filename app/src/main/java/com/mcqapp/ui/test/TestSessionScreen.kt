@@ -243,6 +243,28 @@ fun TestSessionScreen(
             return@Scaffold
         }
 
+        state.loadError?.let { error ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { viewModel.retry() }) { Text("Retry") }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { navController.popBackStack() }) { Text("Go back") }
+            }
+            return@Scaffold
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()

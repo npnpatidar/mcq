@@ -37,7 +37,7 @@ Everything else on this list is independent of release state.
 | A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[x]` fixed |
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[x]` fixed |
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[x]` fixed |
-| A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[ ]` |
+| A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[x]` fixed |
 | A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[ ]` |
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[ ]` |
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[ ]` |
@@ -206,7 +206,7 @@ report through `exportError`, following the existing `moveCategory` pattern.
 surfaces a message instead of crashing. It clears `AppDatabase.INSTANCE` afterwards, because that
 singleton would otherwise hand the closed handle to every other test in the JVM.
 
-### A6 · `[ ]` · Load failures produce a dead end or a false success · `read`
+### A6 · `[x]` · Load failures produced a dead end or a false success — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt:137` and `ui/study/StudyViewModel.kt:76`
 
@@ -218,8 +218,12 @@ Test: `loading` is never cleared → `TestSessionScreen.kt:234` shows "Loading�
 no error. Study: `it.copy(loading = false, finished = true)` with an empty `emptyReason` renders
 `StudySummary`'s success branch — "Session complete / 0 reviewed • 0 again • 0 remembered".
 
-Fix: add `error: String?` to both states, set it in the catch, render an error state with Back +
-Retry.
+**Fixed** in the A6 commit: both states gained `loadError`, the catches set it and clear `loading`,
+and each screen renders a dedicated error state with **Retry** and a way back. The load body moved
+out of each `init` block into a private `load()` so `retry()` can re-run it.
+`SessionLoadFailureTest` closes the database to force the failure and asserts the test session stops
+loading with a message, the study session does *not* report `finished` (the old false
+"Session complete"), and retry re-runs the load.
 
 ### A7 · `[ ]` · A WebView per math list item, and none is ever destroyed · `read`
 

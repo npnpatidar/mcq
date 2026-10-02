@@ -127,10 +127,13 @@ internal fun mixedContentHtml(
     val body = buildString {
         for (element in elements) {
             when (element) {
-                // Text runs are already HTML (`<sub>`, `<br/>`, …): the
-                // browser is lenient with bare `&`/`<`, as Anki is.
+                // Text runs may carry inline formatting the editor stored as
+                // HTML (<sub>, <br/>, …), but they originate in imported files,
+                // so they are sanitised: only allow-listed tags survive, with
+                // their attributes dropped. This page runs with JavaScript
+                // enabled for MathJax, so unescaped markup here would run.
                 is ContentElement.TextElement ->
-                    append(element.text.replace("\n", "<br/>"))
+                    append(com.mcqapp.data.renderInlineHtml(element.text).replace("\n", "<br/>"))
                 is ContentElement.MathElement -> append(stripMathAttributes(element.mathml))
                 is ContentElement.TableElement -> {
                     append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
@@ -151,6 +154,7 @@ internal fun mixedContentHtml(
         <html>
         <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; img-src data: file:; style-src 'unsafe-inline' file:">
         <script>
         MathJax = { tex: { inlineMath: [['$', '$']] } };
         </script>
@@ -242,8 +246,22 @@ private fun MixedContentView(
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     settings.javaScriptEnabled = true
                     settings.loadWithOverviewMode = true
-                    // The MathJax bundle lives under file:///android_asset.
-                    settings.allowFileAccess = true
+                    // Assets and resources stay reachable without this; it only
+                    // stops the page reading arbitrary file:// paths.
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    // The page content comes from imported files. Refuse to
+                    // navigate anywhere, so a link or injected markup cannot
+                    // take over the frame.
+                    webViewClient = object : android.webkit.WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView,
+                            request: android.webkit.WebResourceRequest
+                        ): Boolean = true
+
+                        @Deprecated("Required for API < 24")
+                        override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean = true
+                    }
                     loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
                 }
             },

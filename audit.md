@@ -39,7 +39,7 @@ Everything else on this list is independent of release state.
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[x]` fixed |
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[x]` fixed |
 | A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[~]` teardown fixed, lazy editor pending |
-| A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[ ]` |
+| A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[x]` fixed |
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[ ]` |
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[ ]` |
 | A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[ ]` |
@@ -263,7 +263,7 @@ list. That overlaps A14 (no `key()` per block). Actual jank/memory still needs a
 
 ## P1 — hardening, leaks, silent failure
 
-### A8 · `[ ]` · Imported question text executes as JavaScript · `read`
+### A8 · `[x]` · Imported question text executed as JavaScript — fixed · `read`
 
 `app/src/main/java/com/mcqapp/util/ContentElements.kt:132`
 
@@ -283,9 +283,20 @@ Not escalatable to native privilege: this WebView has no `addJavascriptInterface
 `allowUniversalAccessFromFileURLs` / `allowFileAccessFromFileURLs` are left at their `false`
 defaults — but that is a Chromium default, not a decision.
 
-Fix: escape text runs before interpolation (or allow-list-sanitise at import); add an explicit
-`WebViewClient` that blocks navigation plus a CSP meta; set `allowFileAccess = false` (per the
-Android docs this still allows `file:///android_asset` subresources).
+**Fixed** in the A8 commit, in three layers:
+1. `renderInlineHtml` now re-emits allow-listed tags from a table instead of copying the original
+   markup, so **attributes are dropped** — `<b onclick=…>` became `<b>`. (It previously passed the
+   whole tag through, which is how a handler could survive.)
+2. `mixedContentHtml` routes `TextElement` runs through that sanitiser, and the page declares
+   `default-src 'none'` with `script-src 'unsafe-inline' file:` so only MathJax may run.
+3. The preview WebView sets `allowFileAccess = false` / `allowContentAccess = false` and installs a
+   `WebViewClient` that refuses every navigation.
+
+`RichTextSanitizingTest` (9 cases) pins the behaviour, including that formatting still renders and
+that unknown tags stay visible as escaped text. Verified to fail against the old verbatim behaviour.
+
+*Residual:* inline `event` attributes and `javascript:` URLs are inert under this CSP, but the
+page's origin is still a `data:`-style null origin rather than a real asset origin.
 
 ### A9 · `[ ]` · Import file read unbounded, on the main thread · `read`
 

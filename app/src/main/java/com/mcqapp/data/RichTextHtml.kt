@@ -4,8 +4,13 @@ package com.mcqapp.data
  * Renders inline HTML tags (`<sub>`, `<sup>`, `<strong>`, `<em>`, …)
  * inside exported text as-is, escaping anything else — including unknown
  * tag shapes like `<one>`, which are literal text in legacy questions
- * and must stay visible rather than vanish. Shared by the HTML and Anki
- * exporters so formatted text looks the same everywhere.
+ * and must stay visible rather than vanish. Shared by the HTML, Anki and
+ * in-app preview renderers so formatted text looks the same everywhere.
+ *
+ * Tags are re-emitted from this table rather than copied verbatim, so any
+ * attributes on them — `onclick`, `onerror`, `style` — are dropped. Copying
+ * the original markup would let an imported question bank smuggle event
+ * handlers into a JS-enabled WebView.
  */
 internal fun renderInlineHtml(text: String): String {
     if (!text.contains('<')) return escapeHtmlText(text)
@@ -14,23 +19,32 @@ internal fun renderInlineHtml(text: String): String {
     val tagPattern = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
     for (match in tagPattern.findAll(text)) {
         sb.append(escapeHtmlText(text.substring(pos, match.range.first)))
-        val tag = match.groupValues[2].lowercase()
-        if (tag in setOf(
-                "b", "strong", "i", "em", "u", "del", "s", "strike",
-                "sub", "sup", "mark", "br", "p", "div", "li", "tr"
-            )
-        ) {
-            sb.append(match.value)
-        } else {
+        val closing = match.groupValues[1] == "/"
+        val canonical = inlineTags[match.groupValues[2].lowercase()]
+        if (canonical == null) {
             // Unknown tag shape: literal text in legacy questions,
             // escape it so it stays visible.
             sb.append(escapeHtmlText(match.value))
+        } else if (closing) {
+            sb.append("</").append(canonical).append(">")
+        } else {
+            sb.append("<").append(canonical)
+            if (canonical == "br") sb.append("/")
+            sb.append(">")
         }
         pos = match.range.last + 1
     }
     sb.append(escapeHtmlText(text.substring(pos)))
     return sb.toString()
 }
+
+/** Allowed inline tag shapes, mapped to the tag actually emitted. */
+private val inlineTags = mapOf(
+    "b" to "b", "strong" to "strong", "i" to "i", "em" to "em",
+    "u" to "u", "del" to "del", "s" to "s", "strike" to "s",
+    "sub" to "sub", "sup" to "sup", "mark" to "mark", "br" to "br",
+    "p" to "p", "div" to "div", "li" to "li", "tr" to "tr"
+)
 
 internal fun escapeHtmlText(s: String): String = s
     .replace("&", "&amp;")

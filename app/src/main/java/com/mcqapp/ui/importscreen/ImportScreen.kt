@@ -155,7 +155,11 @@ fun ImportScreen(
     }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (importText != null) {
+        val pendingDocx = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes
+        if (pendingDocx != null) {
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = null
+            viewModel.loadDocx(pendingDocx)
+        } else if (importText != null) {
             viewModel.loadJsonText(importText)
             // Drop the global copy once consumed: the VM owns the text now
             // (fingerprint-gated), and a 25k-question file is ~9MB retained.

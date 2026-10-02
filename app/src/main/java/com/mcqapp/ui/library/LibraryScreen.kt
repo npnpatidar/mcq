@@ -160,44 +160,41 @@ fun LibraryScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            // Anki packages are binary, so they must not go through the text
-            // reader below. Sniff the magic bytes rather than trusting the name
-            // or the MIME type: pickers report .apkg inconsistently, and our
-            // JSON can arrive under any extension.
-            val isAnkiPackage = try {
-                context.contentResolver.openInputStream(it)?.use { stream ->
-                    val magic = ByteArray(2)
-                    stream.read(magic) == 2 && magic[0] == 'P'.code.toByte() &&
-                        magic[1] == 'K'.code.toByte()
-                } ?: false
+            // Route by content, not by name or MIME type (pickers report
+            // both inconsistently). Both .apkg and .docx are zips, so a
+            // .docx is told apart by its word/document.xml entry; our
+            // JSON can arrive under any extension and stays on the text
+            // path below.
+            val bytes = try {
+                context.contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() }
             } catch (e: Exception) {
-                Logger.e("LIB", "Failed to sniff import file", e)
-                false
-            }
+                Logger.e("LIB", "Failed to read import file", e)
+                null
+            } ?: return@let
+            val isZip = bytes.size >= 2 && bytes[0] == 'P'.code.toByte() &&
+                bytes[1] == 'K'.code.toByte()
 
-            if (isAnkiPackage) {
+            if (isZip && com.mcqapp.data.docx.isDocxArchive(bytes)) {
+                Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
+                navController.navigate("import/direct")
+                return@let
+            }
+            if (isZip) {
                 viewModel.importAnkiPackage(it)
                 return@let
             }
-            try {
-                val text = context.contentResolver.openInputStream(it)
-                    ?.bufferedReader()
-                    ?.use { reader -> reader.readText() }
-                if (text != null) {
-                    val fingerprint = try {
-                        val bytes = java.security.MessageDigest.getInstance("SHA-256")
-                            .digest(text.toByteArray())
-                        bytes.joinToString("") { "%02x".format(it) }.take(12)
-                    } catch (e: Exception) {
-                        "unknown"
-                    }
-                    Logger.i("LIB", "picked import file: chars=${text.length}, sha=$fingerprint")
-                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = text
-                    navController.navigate("import/direct")
-                }
+            val text = bytes.toString(Charsets.UTF_8)
+            val fingerprint = try {
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.toByteArray())
+                digest.joinToString("") { "%02x".format(it) }.take(12)
             } catch (e: Exception) {
-                Logger.e("LIB", "Failed to read import file", e)
+                "unknown"
             }
+            Logger.i("LIB", "picked import file: chars=${text.length}, sha=$fingerprint")
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = text
+            navController.navigate("import/direct")
         }
     }
 

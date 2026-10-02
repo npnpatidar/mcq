@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import androidx.compose.ui.graphics.Color
+import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.MATHJAX_ASSET_URL
 import com.mcqapp.util.mixedContentHtml
@@ -61,6 +62,12 @@ class MathHtmlTest {
     }
 
     @Test
+    fun mathWithSurroundingWhitespaceDoesNotNest() {
+        val mathml = "\n<math display=\"inline\"><mrow><mi>x</mi></mrow></math>\n"
+        assertEquals("<math><mrow><mi>x</mi></mrow></math>", stripMathAttributes(mathml))
+    }
+
+    @Test
     fun semanticsAndAnnotationAreStripped() {
         val mathml = "<math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\">" +
             "<semantics><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>" +
@@ -72,6 +79,58 @@ class MathHtmlTest {
     fun mathWithMrowIsNotDoubleWrapped() {
         val mathml = "<math><mrow><mi>x</mi></mrow></math>"
         assertEquals("<math><mrow><mi>x</mi></mrow></math>", stripMathAttributes(mathml))
+    }
+
+    @Test
+    fun bareTextInMathRunBecomesTokens() {
+        // Compact MathML from the DOCX converter: MathJax throws
+        // "Unexpected text node" (shown as "Math input error") on this.
+        val stored = "<math><msup><mrow>x</mrow><mrow>2</mrow></msup>+2x+1=0</math>"
+        assertEquals(
+            "<math><msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>" +
+                "<mo>+</mo><mn>2</mn><mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn></math>",
+            normalizeMathText(stored)
+        )
+    }
+
+    @Test
+    fun strippedMathIsTokenizedForPreview() {
+        val mathml = "\n<math display=\"inline\"><msup><mrow>x</mrow><mrow>2</mrow></msup>+2x+1=0</math>\n"
+        assertEquals(
+            "<math><mrow><msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>" +
+                "<mo>+</mo><mn>2</mn><mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn></mrow></math>",
+            stripMathAttributes(mathml)
+        )
+    }
+
+    @Test
+    fun normalizeMathTextIsIdempotent() {
+        val strict = "<math><mrow><mfrac><mi>a</mi><mi>b</mi></mfrac>" +
+            "<mo>+</mo><msqrt><mi>x</mi></msqrt></mrow></math>"
+        assertEquals(strict, normalizeMathText(strict))
+        assertEquals(strict, normalizeMathText(normalizeMathText(strict)))
+    }
+
+    @Test
+    fun normalizeMathTextKeepsAnnotationsAndEscapesMarkup() {
+        val mathml = "<math><semantics><mrow><mi>a</mi><mo>&lt;</mo><mi>b</mi></mrow>" +
+            "<annotation encoding=\"application/x-tex\">a &lt; b</annotation></semantics></math>"
+        // No stray bare text anywhere: annotation bodies stay verbatim.
+        assertEquals(mathml, normalizeMathText(mathml))
+        val escaped = normalizeMathText("<math><mrow>a<b</mrow></math>")
+        assertEquals("<math><mrow><mi>a</mi><mo>&lt;</mo><mi>b</mi></mrow></math>", escaped)
+    }
+
+    @Test
+    fun normalizeMathTextHandlesPlainTextAndComments() {
+        assertEquals("<mi>x</mi><mo>=</mo><mn>1</mn>", normalizeMathText("x=1"))
+        // Blank stays blank: there is nothing to render.
+        assertTrue(normalizeMathText("   ").isBlank())
+        // Comment text must never become operators.
+        assertEquals(
+            "<math><mrow><mi>x</mi></mrow></math>",
+            normalizeMathText("<math><!-- 2x + 1 --><mrow><mi>x</mi></mrow></math>")
+        )
     }
 
     @Test

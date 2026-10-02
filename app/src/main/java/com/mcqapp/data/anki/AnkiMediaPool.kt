@@ -2,6 +2,7 @@ package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.imageExtension
 import com.mcqapp.data.export.parseDataUri
+import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.renderInlineHtml
 import com.mcqapp.domain.ContentElement
 
@@ -39,8 +40,9 @@ class AnkiMediaPool {
     fun html(text: String): String = escapeHtml(text)
 
     /**
-     * Renders content elements to Anki field HTML: text is escaped, MathML is
-     * embedded as-is, tables become `<table>` blocks, and images are stored in
+     * Renders content elements to Anki field HTML: text keeps inline
+     * formatting, MathML is normalized (bare text tokenized) so webviews
+     * render it, tables become `<table>` blocks, and images are stored in
      * the media pool and referenced by filename. [legacyImage] is the separate
      * image field of a pre-rich-content question, appended when present.
      */
@@ -51,9 +53,11 @@ class AnkiMediaPool {
         // Inline tags render as formatting in Anki's webview; the shared
         // helper escapes anything else.
         is ContentElement.TextElement -> renderInlineHtml(element.text)
+        // Bare text in mrow is invalid MathML (browsers drop it); the
+        // shared normalizer tokenizes it into mi/mn/mo.
+        is ContentElement.MathElement -> normalizeMathText(element.mathml)
         is ContentElement.ImageElement -> imageElement(element.src)
         is ContentElement.TableElement -> tableToHtml(element)
-        is ContentElement.MathElement -> element.mathml
     }
 
     private fun tableToHtml(table: ContentElement.TableElement): String {

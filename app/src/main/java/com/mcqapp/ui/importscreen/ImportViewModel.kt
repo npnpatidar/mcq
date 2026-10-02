@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 
 object ImportDataHolder {
     var pendingJsonText: String? = null
+    var pendingDocxBytes: ByteArray? = null
     var pendingEditQuestion: QuestionDto? = null
     var editingFromImport: Boolean = false
 }
@@ -185,7 +186,40 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun parseAndLoad(text: String) {
+    /**
+     * Word banks: convert to the labeled JSON our importer reads, then
+     * follow the exact JSON path (preview, warnings, dedup). Docx-stage
+     * warnings ride alongside the parse warnings.
+     */
+    fun loadDocx(bytes: ByteArray) {
+        viewModelScope.launch {
+            try {
+                val parsed = withContext(Dispatchers.Default) {
+                    com.mcqapp.data.docx.parseDocx(bytes)
+                }
+                Logger.i("IMPORTVM", "Converted Word file (${bytes.size} bytes) " +
+                    "with ${parsed.warnings.size} docx warnings")
+                loadJsonTextWithWarnings(parsed.json, parsed.warnings)
+            } catch (e: Exception) {
+                Logger.e("IMPORTVM", "Failed to parse Word file", e)
+                _state.update { it.copy(loading = false, error = "Could not parse the Word file: ${e.message}") }
+            }
+        }
+    }
+
+    private suspend fun loadJsonTextWithWarnings(text: String, extraWarnings: List<String>) {
+        val fp = withContext(Dispatchers.Default) { fingerprint(text) }
+        if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) return
+        loadedDirectFp = fp
+        try {
+            withContext(Dispatchers.Default) { parseAndLoad(text, extraWarnings) }
+        } catch (e: Exception) {
+            loadedDirectFp = null
+            throw e
+        }
+    }
+
+    private suspend fun parseAndLoad(text: String, extraWarnings: List<String> = emptyList()) {
         val file = LegacyParser.parse(text)
         val paper = file.papers.firstOrNull()
         if (paper == null) {
@@ -215,7 +249,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarking = paper.negativeMarking,
             categoryName = effectiveCategory,
             questions = allQuestions,
-            parseWarnings = file.warnings,
+            parseWarnings = extraWarnings + file.warnings,
             originalFile = file
         )
         Logger.i("IMPORTVM", "Loaded ${allQuestions.size} questions for import preview")

@@ -14,6 +14,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
 
 /**
@@ -179,7 +180,13 @@ internal fun androidx.compose.ui.graphics.Color.toCssRgba(): String {
  * `<annotation>`), and ensure an `<mrow>` wrapper remains.
  */
 internal fun stripMathAttributes(mathml: String): String {
-    var result = mathml
+    // Extract the first <math>…</math> block: MathLive output may carry
+    // leading/trailing whitespace, which the old removePrefix logic
+    // turned into nested <math> that MathJax rejects.
+    val block = Regex("<math[\\s>].*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(mathml.trim())?.value
+        ?: return "<math><mrow>${mathml.trim()}</mrow></math>"
+    var result = block
         .replace(Regex("<math\\s+[^>]*>", RegexOption.IGNORE_CASE)) { "<math>" }
         .replace(Regex("</math\\s*>", RegexOption.IGNORE_CASE)) { "</math>" }
         .replace(Regex("<semantics\\s*>", RegexOption.IGNORE_CASE)) { "" }
@@ -191,7 +198,7 @@ internal fun stripMathAttributes(mathml: String): String {
     } else {
         "<math><mrow>$inner</mrow></math>"
     }
-    return wrapped
+    return normalizeMathText(wrapped)
 }
 
 private fun escapeHtmlData(s: String): String = buildString(s.length) {

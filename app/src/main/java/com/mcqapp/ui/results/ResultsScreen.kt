@@ -331,7 +331,9 @@ private fun ResultCard(
                     )
                 }
             }
-            QuestionImage(src = null, modifier = Modifier.padding(top = 4.dp))
+            // QuestionResult carries the question's content elements rather than
+            // a separate image field, so the question image is rendered with
+            // them above; this call was a guaranteed no-op.
             result.options.forEach { option ->
                 val isCorrect = option.id in result.correctOptionIds
                 val wasSelected = option.id in result.selectedOptionIds
@@ -364,7 +366,7 @@ private fun ResultCard(
                     style = MaterialTheme.typography.labelSmall
                 )
             }
-            QuestionImage(src = result.explanationImage)
+            QuestionImage(src = result.explanationImage, contentDescription = "Explanation image")
         }
     }
 }

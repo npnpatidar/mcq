@@ -22,6 +22,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -213,8 +214,8 @@ private fun TrendCard(trend: Trends.PaperTrend) {
                 )
                 if (trend.attempts > 1) {
                     val (arrow, color) = when {
-                        trend.deltaPoints > 0.005 -> "▲" to Color(0xFF2E7D32)
-                        trend.deltaPoints < -0.005 -> "▼" to Color(0xFFC62828)
+                        trend.deltaPoints > 0.005 -> "▲" to verdictColors().rising
+                        trend.deltaPoints < -0.005 -> "▼" to verdictColors().falling
                         else -> "=" to Color.Gray
                     }
                     Text(

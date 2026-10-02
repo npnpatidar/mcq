@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -476,13 +477,17 @@ private fun PreviewQuestionCard(
                     Icon(Icons.Default.Edit, contentDescription = "Edit question")
                 }
             }
-            QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))
+            QuestionImage(
+                src = question.image,
+                contentDescription = "Question image",
+                modifier = Modifier.padding(top = 4.dp)
+            )
             question.options.forEach { option ->
                 Row(modifier = Modifier.padding(vertical = 1.dp)) {
                     val isCorrect = option.id in question.correctOptionIds
                     Text(
                         if (isCorrect) "✓" else "○",
-                        color = if (isCorrect) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+                        color = if (isCorrect) verdictColors().correctBorder else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.width(18.dp),
                         fontWeight = if (isCorrect) FontWeight.Bold else FontWeight.Normal
                     )

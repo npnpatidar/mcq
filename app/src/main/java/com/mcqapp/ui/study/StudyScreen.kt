@@ -3,6 +3,10 @@ package com.mcqapp.ui.study
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -188,7 +192,11 @@ private fun QuestionCard(
                 Spacer(Modifier.height(6.dp))
             }
             ContentElements(question.elements, textStyle = MaterialTheme.typography.bodyMedium)
-            QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))
+            QuestionImage(
+                src = question.image,
+                contentDescription = "Question image",
+                modifier = Modifier.padding(top = 4.dp)
+            )
             question.options.forEach { option ->
                 val isCorrect = option.id in question.correctOptionIds
                 val isSelected = option.id in selection
@@ -203,13 +211,26 @@ private fun QuestionCard(
                     isSelected -> "•"
                     else -> "○"
                 }
+                // Announced as a checkbox with a state description: the glyph
+                // alone left TalkBack reading only "✓ button".
+                val optionState = when {
+                    revealed && isCorrect -> "Correct answer"
+                    revealed && isSelected -> "Selected, wrong answer"
+                    isSelected -> "Selected"
+                    else -> "Not selected"
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
                         .background(container, RoundedCornerShape(8.dp))
-                        .clickable(enabled = !revealed) { onToggleOption(option.id) }
-                        .padding(8.dp),
+                        .selectable(
+                            selected = isSelected,
+                            enabled = !revealed,
+                            role = Role.Checkbox,
+                        ) { onToggleOption(option.id) }
+                        .padding(8.dp)
+                        .semantics { stateDescription = optionState },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -221,7 +242,7 @@ private fun QuestionCard(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         ContentElements(option.elements, textStyle = MaterialTheme.typography.bodySmall)
-                        QuestionImage(src = option.image)
+                        QuestionImage(src = option.image, contentDescription = "Image for this option")
                     }
                 }
             }
@@ -229,7 +250,7 @@ private fun QuestionCard(
                 Spacer(Modifier.height(8.dp))
                 Text("Explanation", style = MaterialTheme.typography.labelMedium)
                 ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodySmall)
-                QuestionImage(src = question.explanationImage)
+                QuestionImage(src = question.explanationImage, contentDescription = "Explanation image")
             }
         }
     }

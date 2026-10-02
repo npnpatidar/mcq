@@ -167,7 +167,7 @@ fun BookmarksScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                QuestionImage(src = question.explanationImage)
+                                QuestionImage(src = question.explanationImage, contentDescription = "Explanation image")
                             }
                             IconButton(onClick = { viewModel.removeBookmark(question.id) }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Remove bookmark")

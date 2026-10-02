@@ -62,8 +62,8 @@ Everything else on this list is independent of release state.
 | A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[ ]` |
 | A29 | P2 | Docs | `BUILDING.md` documents a release process that doesn't exist | `[ ]` |
 | A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[~]` dead code + escapers done, renderers pending |
-| A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[ ]` |
-| A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[ ]` |
+| A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[x]` fixed |
+| A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[x]` fixed |
 | A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[x]` fixed |
 | A34 | P2 | UI | Settings text-size labels scaled twice (`scale²`) | `[ ]` |
 | A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[ ]` |
@@ -624,13 +624,13 @@ deliberately — it also maps `'` and newlines for Anki's renderer.
 files remain large (`McqRepository`, `LibraryScreen`, `AnkiPackageReader`, `SettingsScreen`,
 `TestSessionScreen`). Both are refactors rather than defects.
 
-### A31 · `[ ]` · Hardcoded verdict colours, colour-only signalling
+### A31 · `[x]` · Hardcoded verdict colours, colour-only signalling — fixed · `read`
 `0xFFC8E6C9` / `0xFFFFCDD2` and friends hardcoded in `TestSessionScreen.kt:574-581,616-617`,
 `BrowseScreen.kt:504`, `ImportScreen.kt:485`, `HistoryScreen.kt:216-218`, `util/InlineHtml.kt:43`,
 while `Theme.kt` supports dark mode — so dark mode pairs pale cards with dark text. Fix: a small
 theme-aware verdict palette plus an always-paired text label.
 
-### A32 · `[ ]` · Accessibility cluster
+### A32 · `[x]` · Accessibility cluster — fixed · `read`
 `StudyScreen.kt:195-201` option rows are a bare `clickable` `Row` with a glyph as the only state cue
 (no `role`, no `stateDescription`; the only `semantics {}` in the app is the test palette).
 `QuestionImage` takes `contentDescription` but **no call site passes one**, including where the

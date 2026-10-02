@@ -967,10 +967,10 @@ private fun CategoryRow(
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down", modifier = Modifier.padding(0.dp))
                 }
             }
-            IconButton(onClick = { onExportCategory(node.id, node.title) }, modifier = Modifier.height(32.dp)) {
+            IconButton(onClick = { onExportCategory(node.id, node.title) }) {
                 Icon(Icons.Default.Share, contentDescription = "Export category", modifier = Modifier.padding(0.dp))
             }
-            IconButton(onClick = { onAddQuestion(node.id) }, modifier = Modifier.height(32.dp)) {
+            IconButton(onClick = { onAddQuestion(node.id) }) {
                 Icon(Icons.Default.Add, contentDescription = "Add question", modifier = Modifier.padding(0.dp))
             }
         }

@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -493,7 +494,11 @@ private fun BrowseQuestionCard(
                     modifier = Modifier.weight(1f)
                 )
             }
-            QuestionImage(src = question.image, modifier = Modifier.padding(top = 4.dp))
+            QuestionImage(
+                src = question.image,
+                contentDescription = "Question image",
+                modifier = Modifier.padding(top = 4.dp)
+            )
 
             Spacer(Modifier.height(8.dp))
             question.options.forEach { option ->
@@ -501,7 +506,7 @@ private fun BrowseQuestionCard(
                 Row(modifier = Modifier.padding(vertical = 2.dp)) {
                     Text(
                         if (isCorrect) "✓" else "○",
-                        color = if (isCorrect) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+                        color = if (isCorrect) verdictColors().correctBorder else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.width(20.dp),
                         fontWeight = if (isCorrect) FontWeight.Bold else FontWeight.Normal
                     )
@@ -522,7 +527,7 @@ private fun BrowseQuestionCard(
                     textStyle = MaterialTheme.typography.bodySmall
                 )
             }
-            QuestionImage(src = question.explanationImage)
+            QuestionImage(src = question.explanationImage, contentDescription = "Explanation image")
 
             Spacer(Modifier.height(8.dp))
             if (!selectionMode) {

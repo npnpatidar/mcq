@@ -43,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -62,6 +64,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mcqapp.ui.theme.verdictColors
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
@@ -191,19 +194,22 @@ fun TestSessionScreen(
                         val minutes = state.remainingSeconds / 60
                         val seconds = state.remainingSeconds % 60
                         val urgent = state.remainingSeconds <= 60
-                        IconButton(onClick = {}) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Timer,
-                                    contentDescription = null,
-                                    tint = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    "%02d:%02d".format(minutes, seconds),
-                                    color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
+                        // Was a focusable, unlabelled IconButton that did
+                        // nothing; a plain Row cannot be mistaken for a control.
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Timer,
+                                contentDescription = "Time remaining",
+                                tint = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "%02d:%02d".format(minutes, seconds),
+                                color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                     val question = state.currentQuestion
@@ -213,7 +219,7 @@ fun TestSessionScreen(
                                 Icon(
                                     Icons.Default.Flag,
                                     contentDescription = "Flag question",
-                                    tint = if (question.id in state.flagged) Color(0xFFE65100) else MaterialTheme.colorScheme.onSurface
+                                    tint = if (question.id in state.flagged) verdictColors().tricky else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -413,7 +419,11 @@ fun TestSessionScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 ContentElements(question.elements, textStyle = MaterialTheme.typography.titleMedium)
-                QuestionImage(src = question.image, modifier = Modifier.padding(top = 8.dp))
+                QuestionImage(
+                    src = question.image,
+                    contentDescription = "Question image",
+                    modifier = Modifier.padding(top = 8.dp)
+                )
 
                 Spacer(Modifier.height(16.dp))
                 val questionUngraded = question.correctOptionIds.isEmpty()
@@ -644,17 +654,25 @@ private fun OptionRow(
     multi: Boolean,
     onClick: () -> Unit
 ) {
+    val verdicts = verdictColors()
     val containerColor = when {
-        revealed && isCorrectOption -> Color(0xFFC8E6C9)
-        revealed && selected && !isCorrectOption -> Color(0xFFFFCDD2)
+        revealed && isCorrectOption -> verdicts.correctContainer
+        revealed && selected && !isCorrectOption -> verdicts.wrongContainer
         selected -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surface
     }
     val borderColor = when {
-        revealed && isCorrectOption -> Color(0xFF2E7D32)
-        revealed && selected && !isCorrectOption -> Color(0xFFC62828)
+        revealed && isCorrectOption -> verdicts.correctBorder
+        revealed && selected && !isCorrectOption -> verdicts.wrongBorder
         selected -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.outline
+    }
+    // The option body has to stay legible on the verdict container, which in
+    // dark mode is no longer a pale green.
+    val bodyColor = when {
+        revealed && isCorrectOption -> verdicts.correctOnContainer
+        revealed && selected && !isCorrectOption -> verdicts.wrongOnContainer
+        else -> LocalContentColor.current
     }
 
     Card(
@@ -678,10 +696,16 @@ private fun OptionRow(
             } else {
                 RadioButton(selected = selected, onClick = onClick)
             }
-            Column(modifier = Modifier.weight(1f)) {
-                ContentElements(elements.ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(text)) })
-                if (image != null) {
-                    QuestionImage(src = image, modifier = Modifier.padding(top = 4.dp))
+            CompositionLocalProvider(LocalContentColor provides bodyColor) {
+                Column(modifier = Modifier.weight(1f)) {
+                    ContentElements(elements.ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(text)) })
+                    if (image != null) {
+                        QuestionImage(
+                            src = image,
+                            contentDescription = "Image for this option",
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             }
             if (revealed) {
@@ -691,12 +715,12 @@ private fun OptionRow(
                     com.mcqapp.domain.Feedback.RevealMarker.CORRECT -> Icon(
                         Icons.Default.Check,
                         contentDescription = "Correct answer",
-                        tint = Color(0xFF2E7D32)
+                        tint = verdicts.correctBorder
                     )
                     com.mcqapp.domain.Feedback.RevealMarker.WRONG -> Icon(
                         Icons.Default.Close,
                         contentDescription = "Wrong answer",
-                        tint = Color(0xFFC62828)
+                        tint = verdicts.wrongBorder
                     )
                     com.mcqapp.domain.Feedback.RevealMarker.NONE -> Unit
                 }
@@ -760,13 +784,19 @@ private fun QuestionPalette(
                     val answered = state.selections[question.id]?.isNotEmpty() == true
                     val flagged = question.id in state.flagged
                     val current = index == state.currentIndex
+                    val palette = verdictColors()
                     val bg = when {
                         current -> MaterialTheme.colorScheme.primary
-                        answered -> Color(0xFFA5D6A7)
-                        flagged -> Color(0xFFFFCC80)
+                        answered -> palette.correctContainer
+                        flagged -> palette.trickyContainer
                         else -> MaterialTheme.colorScheme.surfaceVariant
                     }
-                    val fg = if (current) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                    val fg = when {
+                        current -> MaterialTheme.colorScheme.onPrimary
+                        answered -> palette.correctOnContainer
+                        flagged -> palette.trickyOnContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                     val status = when {
                         current -> "current"
                         answered -> "answered"
@@ -775,7 +805,7 @@ private fun QuestionPalette(
                     }
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(48.dp)
                             .background(bg, RoundedCornerShape(8.dp))
                             .semantics {
                                 contentDescription = "Go to question ${index + 1}, $status"

@@ -715,9 +715,19 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     }
 
     suspend fun deleteCategory(categoryId: String) {
-        // One transaction: bookmark cleanup and the category delete (which
-        // cascades its questions) must land together.
+        // One transaction: bookmark cleanup, the reparent and the category
+        // delete (which cascades its own questions) must land together.
         db.withTransaction {
+            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction
+            // `categories` has no self-referencing FK on parentId, so a plain
+            // delete leaves every descendant pointing at a row that no longer
+            // exists: still returned by getByPaper and counted in the UI, but
+            // unreachable from the tree. The user asked to delete this
+            // category, not its subtree, so promote the children one level.
+            db.categoryDao().reparentChildren(
+                fromParentId = categoryId,
+                toParentId = category.parentId
+            )
             val questionIds = db.questionDao().getIdsByCategory(categoryId)
             if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
             db.categoryDao().deleteById(categoryId)

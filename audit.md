@@ -35,7 +35,7 @@ Everything else on this list is independent of release state.
 | A1 | P0 | UI | Wrong answers marked with a red ✓ | `[x]` fixed |
 | A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[x]` fixed |
 | A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[x]` fixed |
-| A4 | P0 | Data | Deleting a parent category orphans its subtree | `[ ]` |
+| A4 | P0 | Data | Deleting a parent category orphans its subtree | `[x]` fixed |
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[ ]` |
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[ ]` |
 | A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[ ]` |
@@ -148,7 +148,7 @@ Retry button, while a failed *clear* is logged and ignored because the attempt i
 `SubmissionTest` pins the ordering, the never-clear-on-failed-save rule and the tolerated clear
 failure.
 
-### A4 · `[ ]` · Deleting a parent category orphans its whole subtree · `read`
+### A4 · `[x]` · Deleting a parent category orphaned its whole subtree — fixed · `read`
 
 `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:717`
 
@@ -168,8 +168,16 @@ so the cascade removes just this category's questions. Descendants keep a dangli
 `RepositoryTest` never sets `parentId`, so this is untested. The UI offers a delete icon on every
 node with no confirmation or descendant warning.
 
-Fix: collect the subtree (recursive `parentId` walk), clean their bookmarks, then either delete the
-subtree or reparent direct children to `null`. Add tests for a 2-level delete.
+**Fixed** in the A4 commit. **Decision (owner, 2026-10-02): deleting a category promotes its
+children one level up** rather than cascade-deleting the subtree — the user asked to delete that
+category, not everything nested under it. New `CategoryDao.reparentChildren(fromParentId,
+toParentId)` runs before the delete in the same transaction and targets the deleted node's *own*
+parent, so nesting is preserved rather than flattened. Only the deleted category's own questions
+and bookmarks go; promoted children's bookmarks survive. Three `RepositoryTest` cases cover a
+3-level tree, a nested delete promoting to the right parent, and bookmark retention.
+
+*Not done (UI):* the delete icon still has no confirmation dialog, so a destructive delete is one
+tap. Worth adding now that the semantics are pinned by tests.
 
 ### A5 · `[ ]` · Failed import is silent; ordinary deletes can crash · `read`
 

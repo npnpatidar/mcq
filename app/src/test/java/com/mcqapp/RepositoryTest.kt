@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -365,6 +366,63 @@ class RepositoryTest {
         repository.deleteCategory("c1")
         assertTrue(db.correctAnswerDao().getCorrectIds("q1").isEmpty())
         assertTrue(db.bookmarkDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun deletingACategoryPromotesItsChildrenInsteadOfOrphaningThem() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Algebra")
+        db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Quadratics", parentId = "c1"))
+        db.categoryDao().upsert(CategoryEntity(id = "c3", paperId = "p1", title = "Polynomials", parentId = "c2"))
+        repository.saveQuestion(question("q1", setOf("q1-a"), categoryId = "c1"))
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
+        repository.saveQuestion(question("q3", setOf("q3-a"), categoryId = "c3"))
+
+        repository.deleteCategory("c1")
+
+        // The deleted category and its own questions are gone.
+        assertNull(db.categoryDao().getById("c1"))
+        assertTrue(db.questionDao().getByCategory("c1").isEmpty())
+        // The child moved up to the deleted node's parent (here: the root), so
+        // it is reachable from the tree again rather than dangling.
+        assertNull(db.categoryDao().getById("c2")?.parentId)
+        // The grandchild keeps its own parent, and no question is stranded:
+        // every surviving question still belongs to a category that exists.
+        assertEquals("c2", db.categoryDao().getById("c3")?.parentId)
+        val surviving = repository.getQuestionsForPaper("p1").map { it.categoryId }.toSet()
+        val existing = db.categoryDao().getByPaper("p1").map { it.id }.toSet()
+        assertEquals(existing, surviving)
+        assertEquals(setOf("c2", "c3"), surviving)
+    }
+
+    @Test
+    fun deletingANestedCategoryPromotesChildrenToItsParent() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Algebra")
+        db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Quadratics", parentId = "c1"))
+        db.categoryDao().upsert(CategoryEntity(id = "c3", paperId = "p1", title = "Roots", parentId = "c2"))
+        repository.saveQuestion(question("q3", setOf("q3-a"), categoryId = "c3"))
+
+        repository.deleteCategory("c2")
+
+        // Promotion targets the deleted node's own parent, not the root, so
+        // the hierarchy is preserved instead of flattened.
+        assertEquals("c1", db.categoryDao().getById("c3")?.parentId)
+        assertEquals(setOf("c3"), repository.getQuestionsForPaper("p1").map { it.categoryId }.toSet())
+    }
+
+    @Test
+    fun deletingACategoryKeepsChildBookmarks() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Algebra")
+        db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Quadratics", parentId = "c1"))
+        repository.saveQuestion(question("q1", setOf("q1-a"), categoryId = "c1"))
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
+        repository.toggleBookmark("q1")
+        repository.toggleBookmark("q2")
+
+        repository.deleteCategory("c1")
+
+        // Only the deleted category's own bookmark goes; the promoted child's
+        // question and bookmark survive.
+        assertEquals(listOf("q2"), db.bookmarkDao().getAll())
     }
 
     @Test

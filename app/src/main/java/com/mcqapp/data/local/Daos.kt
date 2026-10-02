@@ -58,6 +58,15 @@ interface CategoryDao {
     @Query("UPDATE categories SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
 
+    /**
+     * Moves every direct child of [fromParentId] to [toParentId]. Used when a
+     * category is deleted: `categories` has no self-referencing foreign key on
+     * `parentId`, so deleting a parent would otherwise leave its descendants
+     * pointing at a row that no longer exists.
+     */
+    @Query("UPDATE categories SET parentId = :toParentId WHERE parentId = :fromParentId")
+    suspend fun reparentChildren(fromParentId: String, toParentId: String?)
+
     @Query("DELETE FROM categories WHERE id = :id")
     suspend fun deleteById(id: String)
 }

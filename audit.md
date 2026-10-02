@@ -1,117 +1,639 @@
-# Audit — bugs / technically unsound only
+# Audit — improvement tracker
 
-> Auditor ping: verification replies are inline below, marked `**Reply**`.
+Audited at commit `ad7feff` (2026-10-02). Replaces the previous audit, which described a
+partially-reverted scheduler/APKG removal; that break is resolved and its still-open items are
+carried forward below.
 
-**Reply — scope of this verification:** I checked the current dirty working tree, not only `HEAD`. `git status` shows the scheduler removal as uncommitted changes/deletions; committed `HEAD` still contains Room v7, `MIGRATION_6_7`, `CardStateEntity`, scheduler code, and the APKG paths. I independently reran `:app:compileDebugKotlin` and it fails with the unresolved scheduler symbols.
+**Method.** Three independent reviews (data layer, Compose UI, robustness/security) plus a
+tests/build/release review, then every P0 claim was re-verified by reading the code and git history
+directly. Nothing was executed on a device.
 
-Scope: UI and functionality choices are out of scope per request. Only bugs and technically unsound patterns are listed.
+**Provenance tags** — `read`: I opened the file and confirmed it. `sub`: reported by a delegated
+review, not independently re-read. `device`: needs a real device/emulator to confirm.
 
-Verified by `:app:compileDebugKotlin` on the dirty working tree (fails) + code reading. `HEAD` still contains the scheduler implementation and v7 migration; P0 below is a dirty-tree break, not a committed-`HEAD` break.
+**Status** — `[ ]` open · `[~]` in progress · `[x]` fixed · `[-]` accepted/closed (write why).
 
-## P0: working tree does not compile — partial feature removal
+**Release gate.** The app has not shipped yet (as of 2026-10-02), which closes two items and lowers
+the urgency of a third:
 
-`SpacedRepetition.kt`, `ui/study/*`, `MigrationTest`, `SpacedRepetitionTest` were deleted and `AppDatabase.kt`, `Daos.kt`, `Entities.kt`, `McqRepository.kt` were stripped to v6 / no-scheduler, but callers were left intact:
+- **A18** (missing `MIGRATION_2_3`) is closed — no v2 database exists in the wild.
+- **A45** (`exportSchema = false`, downgrade policy) is closed for the same reason: no migration work
+  wanted pre-release. Revisit both at first release.
+- This decision covers **upgrade-time durability only**. Runtime data loss (A3 submitting an exam,
+  A4 deleting a category, A5 a failed import) is unrelated and stays open.
+- **A23/A24** (cleartext logs, `allowBackup`) matter far less while the only data at risk is your
+  own; they become real the moment someone else's question bank is on the device.
 
-**Reply — confirmed for the dirty working tree:** the deletions appear in `git status`; the remaining scheduler references are real; and the compiler stops on them. `ImportSchedulingTest.kt` was not itself deleted, so it also cannot compile once test compilation is reached. This is not a committed-`HEAD` break: `git show HEAD:.../AppDatabase.kt` still has `version = 7` and `MIGRATION_6_7`.
-
-* `app/src/main/java/com/mcqapp/data/io/Importer.kt:5,217-218` — `CardStateEntity` / `db.cardStateDao()`
-* `app/src/main/java/com/mcqapp/data/export/PaperExporter.kt:53-63` — `db.cardStateDao().getByPaper()`
-* `app/src/main/java/com/mcqapp/ui/settings/SettingsViewModel.kt:107-127` — `domain.SchedulerConfig`, `repository.schedulerConfig()` / `setSchedulerConfig()` / `resetSchedulerConfig()` (no longer exist in `McqRepository.kt`)
-* `app/src/main/java/com/mcqapp/ui/settings/SettingsScreen.kt:67,259-262,402-599` — `schedulerConfig`, `AnkiSchedulerSection`, all `config.copy(...)` fields
-* `app/src/main/java/com/mcqapp/ui/library/LibraryScreen.kt:145` — `'when' must be exhaustive, add APKG branch` (format list vs. `when` diverged in same edit)
-* `app/src/test/java/com/mcqapp/ImportSchedulingTest.kt:94,112,124,139,163` — `db.cardStateDao()`
-
-Compiler output (`:app:compileDebugKotlin`):
-
-* `PaperExporter.kt:53: Unresolved reference 'cardStateDao'`
-* `Importer.kt:5,217-218: Unresolved reference 'CardStateEntity' / 'cardStateDao'`
-* `SettingsViewModel.kt:107,112,120-127: Unresolved reference 'SchedulerConfig' / 'schedulerConfig' / 'setSchedulerConfig' / 'resetSchedulerConfig' / 'sanitized'`
-* `SettingsScreen.kt:67,261,407-599: Unresolved reference 'SchedulerConfig' + `collectAsState` type-inference failure`
-* `LibraryScreen.kt:145: 'when' expression must be exhaustive`
-
-**Reply — confirmed:** my compile reproduced the `cardStateDao`, `CardStateEntity`, `SchedulerConfig`, scheduler-method, and `LibraryScreen` exhaustiveness failures. For `LibraryScreen`, the working tree deleted `exportApkgLauncher` and its `ExportFormat.APKG` branch, while `ExportFormat.APKG` remains declared, so the `when` is incomplete. The ImportScheduling references are likewise unresolved by inspection.
-
-Fix: either revert the deletion or finish it (delete scheduler UI / import / export paths + test, fix `LibraryScreen` `when`).
-
-**Reply — agreed, with one missing product decision:** finishing the removal is not only deleting dead references. The same uncommitted diff also removes direct `.apkg` import handling, scheduling import/export, study entry points, scheduler settings, and associated tests. The owner should explicitly choose “no scheduler/APKG scheduling” before this is stitched up.
-
-Downgrade side-effect: `app/src/main/java/com/mcqapp/data/local/AppDatabase.kt:62` is now `version = 6` with only `3_4, 4_5, 5_6`. Any install that already ran v7 has no downgrade path and no destructive fallback → Room `IllegalStateException` on open. Needs an explicit decision: keep `MIGRATION_6_7`, or add a downgrade/migration policy.
-
-**Reply — confirmed as a rollback-specific migration hazard:** the diff removes both the `card_state` entity and `MIGRATION_6_7`; Room has no downgrade fallback configured here. So a database file already at v7 cannot simply be opened by this v6 tree. Whether “any install” is affected depends on which APK/database users actually have, but the code state needs the explicit policy the audit requests.
-
-## P1: data integrity
-
-* `app/src/main/java/com/mcqapp/data/local/Entities.kt:90-98` — `CorrectAnswerEntity` has no `FK(questions)`, unlike `OptionEntity`. `McqRepository.kt:381-388 deleteQuestion/deleteQuestions` relies on `DELETE questions` cascading options but leaves orphan `correct_answers` rows. Same for `BookmarkEntity:100-104` (no FK; skipped in UI but never cleaned, so bookmarks accumulate for deleted questions).
-
-**Reply — confirmed:** neither child table declares a foreign key to `questions`; `deleteQuestion`/`deleteQuestions` delete only the question row; and I found no bookmark cleanup on question deletion. The UI does tolerate missing rows through `mapNotNull`, but tolerance is not cleanup, so orphan bookmark and answer-key rows can accumulate.
-* `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:332-379 saveQuestion`, `402-422 move/copy`, `471-491 bulkUpdate`, `442-468 duplicatePaper`, `494-502 swapQuestionOrder` — multi-row writes with no `withTransaction`. `saveQuestion` does `delete options → insert options → delete answers → insert answers`; a crash in the middle loses the answer key. `swapQuestionOrder` does two `updateSortOrder` calls non-atomically; a crash leaves both rows with the same order.
-
-**Reply — confirmed:** there is no `withTransaction` or Room `@Transaction` anywhere in `McqRepository.kt`. Individual DAO statements are atomic, but these multi-statement repository operations are not all-or-nothing. The `saveQuestion` delete/reinsert ordering and the two-step order swap are the clearest examples.
-* `app/src/main/java/com/mcqapp/data/io/ContentHash.kt:12-15` (+ duplicated logic in `McqRepository.kt:315-319`) — hash covers `text + optionTexts + optionImages` only. The narrow hash is deliberate and documented, and the import report tells the user duplicates were skipped, but the residual defect is real: an answer/explanation/marks-only correction is classified as duplicate and not applied. `McqRepository.computeContentHash` also duplicates the canonical formula despite the "single source of truth" comment and can drift.
-
-**Reply — confirmed in substance, with context:** the narrow hash is deliberate—`ContentHash.kt` and the README both document that answers/explanations do not affect duplication—and the UI/report does tell the user that duplicates were skipped. The remaining technical defect is real: an answer-only correction is not applied, and `McqRepository.computeContentHash` duplicates the canonical hash formula despite the “single source of truth” comment.
-* `app/src/main/java/com/mcqapp/data/io/Importer.kt:60-66` — paper identity falls back from `id` to `title`. Intentional for bare-array imports with parse-local ids (and documented), but the residual hazard is that genuinely different same-titled papers can merge. `109-114` "all hashes exist → skip paper" compares only against the database-wide hash set with no per-category/per-source-paper attribution, so the counter can overstate locally meaningful duplicates.
-
-**Reply — confirmed, with a wording correction:** the title fallback is intentional for bare-array imports whose paper ids are parse-local, and the README documents title merging. The hazard remains that genuinely different same-titled papers can merge. For `109-114`, the incoming hashes are compared, but only against the database-wide hash set; there is no per-category or per-source-paper attribution, so that counter can overstate locally meaningful duplicates.
-* `app/src/main/java/com/mcqapp/data/local/Daos.kt:91-100` — `search` / `searchIncludingOptions` use `LIKE '%' || :query || '%'` with no `ESCAPE`. `%` and `_` are still `LIKE` metacharacters (bound params prevent SQL injection, but not wildcard semantics), and the leading `%` prevents index use; also full-table scan, no FTS. Currently `searchGlobal` post-filters with literal Kotlin `contains`, so the observed impact is overfetch/scan cost, not proven wrong results — frame as performance/future-correctness.
-
-**Reply — partly confirmed:** `%` and `_` are SQLite `LIKE` metacharacters, and the leading `%` prevents index use; I also found no FTS table. Two qualifications: bound parameters still prevent SQL injection, and `\` is not itself a wildcard without an `ESCAPE` clause. More importantly, `searchGlobal` post-filters with literal Kotlin `contains`, so I did not find wildcard-caused wrong results—only overfetch/scan cost. The finding should be framed as performance/future-correctness, not current wrong-result behavior.
-
-## P1: correctness bugs in shipped code
-
-* `app/src/main/java/com/mcqapp/data/export/HtmlPaperWriter.kt:106-107` — `appendImage(question.image)` is called twice in `appendQuestion`; static HTML renders every question image twice (quiz path is correct).
-
-**Reply — confirmed:** both calls are adjacent and unconditional; quiz mode calls the image helper once. The existing HTML image test only asserts presence, not count, which is why this survives.
-* `app/src/main/java/com/mcqapp/data/anki/AnkiPackageWriter.kt:223-224 letterFor` — index ≥ 26 yields `(1A)`-style labels (26 → `(1A)`, 27 → `(1B)`) instead of `AA/AB`. Display-only deviation; the reader's option regex accepts that shape so our round trip is unaffected.
-
-**Reply — confirmed as a display-only deviation, with a small correction:** index 26 yields `(1A)`, index 27 yields `(1B)`, and so on. The reader’s option regex accepts that shape, so this does not break our round trip; it only differs from spreadsheet-style `AA/AB` labeling.
-* `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:584,597` — `saveAttempt` computes `isCorrect` twice with different semantics. The scoring loop treats empty `correctOptionIds` as `ungraded` (excluded from score); the stored `QuestionResultEntity.isCorrect` recomputes `selected == correct` even for ungraded questions, so a stored result can say `false` for a question excluded from the score.
-
-**Reply — confirmed:** aggregate scoring excludes the ungraded row, but line 597 stores strict selected/answer equality for that same row. The surviving repository test checks aggregate score/max, not the per-question stored `isCorrect`, so it would not catch this inconsistency.
-* `app/src/main/java/com/mcqapp/data/io/LegacyParser.kt:47-52,121-125,180-184,283-287` — `catch (_: Exception) { null / emptyList }`. One malformed paper/question is silently dropped; a scalar root returns an empty file ("No papers found" downstream, no diagnostic pointing at the bad row).
-
-**Reply — confirmed as an intentional-but-lossy robustness tradeoff:** line 179 explicitly says malformed rows are skipped rather than fatal. A completely unreadable file still surfaces through `loadJson`, but a bad paper/category/question/answer list inside an otherwise valid file is dropped without row-level diagnostics. The fix should preserve partial-import tolerance while accumulating errors.
-* `app/src/main/java/com/mcqapp/data/anki/AnkiPackageReader.kt:636-680 MediaIndex.mimeOf` — weak sniffing (two-byte PNG/GIF checks, `RIFF`-without-`WEBP` labeled WebP, JPEG fallback). Only the data-URI label is affected; bytes are unchanged. Tag handling is narrower than first stated: our own difficulty is restored from `payload.difficulty` (`AnkiPackageReader.kt:360-365`); the residual issue is foreign packages whose `mcqapp-difficulty-*` tags are stripped with no fallback recovery path.
-
-**Reply — partly confirmed:** the MIME sniffing is weak—two-byte PNG/GIF checks, `RIFF`-without-`WEBP` labeled WebP, and JPEG as the fallback—but only the data-URI label is affected; the bytes are unchanged. The tag observation is also narrower than stated: our own difficulty is restored from `payload.difficulty` at reader lines 360–365. The genuine residual issue is foreign packages: their `mcqapp-difficulty-*` tags are stripped with no fallback recovery path.
-* `app/src/main/java/com/mcqapp/data/anki/AnkiPackageWriter.kt:95,111` — `noteId = nowMillis + index`, `card.id = noteId + 1`. Same-millisecond exports can reuse the timestamp base across packages. Intra-package collision is not established: within one export note ids and card ids are each distinct, and `notes.id` / `cards.id` are separate primary keys, so a note numerically equaling a card is not a SQLite key collision.
-
-**Reply — only partly confirmed:** same-millisecond exports can indeed reuse a timestamp base across packages. But the “large paper”/intra-package part is not established. Within one export the note ids are distinct, the card ids are distinct, and `notes.id` and `cards.id` are separate primary keys in `AnkiSchema11`, so a note numerically equaling a card is not itself a SQLite key collision. Keep the cross-export timestamp risk; drop or separately prove the intra-package collision claim.
-
-## P2: performance / resources / lifecycle
-
-* `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:219-231 observeQuestionsForPaper` — triggered by global `observeCategoryCounts()`, then `getByPaper + flatMap getByCategory` (N queries) + `toDomainBulk` on every emission. Any question write reloads the whole paper. `233-253 observeQuestion` maps `observeAll()` (whole table) to find one id. `255-261 getQuestionsForCategories` issues N queries; should be a single `WHERE categoryId IN`.
-
-**Reply — confirmed as read-path inefficiency:** the query shapes are exactly as described. `toDomainBulk` batches option/answer association, but it does not batch the per-category question fetch, and the single-question observer starts from the whole question table. I did not measure user-visible jank, so this stays P2.
-* `app/src/main/java/com/mcqapp/data/io/Importer.kt:49-310` — `db.withTransaction { ... ImageDownscale.downscaleDataUri (Bitmap decode/scale/compress) ... }`. Image preparation runs inside the SQLite transaction. `ImportViewModel` runs this on `Dispatchers.Default` but `LibraryViewModel.loadSampleData` invokes the importer from Main scope, so the mechanism is real while blocking-readers/ANR impact is unmeasured. Restructure: downscale / prepare images before entering the transaction.
-
-**Reply — confirmed as a valid restructuring opportunity, with a threading qualification:** the whole import body, including `downscaleDataUri`, runs inside `withTransaction`. `ImportViewModel` runs that work on `Dispatchers.Default`, but `LibraryViewModel.loadSampleData` invokes the importer from `viewModelScope`/Main. So the mechanism is real, while “blocks readers” and “risks ANR” are not measured here. Downscaling first or separating image preparation from the database transaction is the right direction.
-* `app/src/main/java/com/mcqapp/util/QuestionImage.kt:32-43` — `produceState` decodes Base64 off Main and does not call `recycle`. Unproven as a leak: unreferenced `Bitmap`s are GC-managed and recycling a bitmap still owned by composition would be unsafe. Rapid `src` changes can transiently retain the old bitmap until collection. Needs a memory profile before calling it a native-heap leak; downgraded from defect to needs-measurement.
-
-**Reply — not confirmed as a leak:** the code does decode off Main and does not call `recycle`, but an unreferenced Android `Bitmap` is GC-managed; recycling a bitmap still owned by composition would be unsafe. Rapid `src` changes can transiently retain the old bitmap until collection, but the audit does not demonstrate accumulation or native-heap growth. This needs a memory profile before being called a leak.
-* `app/src/main/java/com/mcqapp/util/Logger.kt:96-107` — `synchronized + file.appendText` runs synchronously on the caller thread and the `renameTo` rotation result is unchecked. Whether repository `d()` calls hit Main depends on the caller (some import/database paths are backgrounded, view-model/Main call sites are not), so this is a threading/robustness smell; the unchecked `renameTo` is the crispest part.
-
-**Reply — confirmed as a threading/robustness smell, not universally proven as Main-thread IO:** logging and rotation do happen synchronously on whatever thread called them, and the rotation result is unchecked. Whether “every repository `d()`” hits Main depends on the caller: some import/database paths are explicitly backgrounded, while view-model/Main call sites are not. The ignored `renameTo` result is the crispest part.
-* `app/src/main/java/com/mcqapp/ui/navigation/McqNavHost.kt:30` — `repository.fontScale().collectAsState()` instead of `collectAsStateWithLifecycle` (`MainActivity.kt:8` uses the preferred API; feature screens also use plain `collectAsState`). Confirmed as a consistency/low-risk cleanup; continued collection while stopped and CPU/battery cost are unmeasured, so not a demonstrated lifecycle bug.
-
-**Reply — confirmed as an inconsistency/low-risk cleanup:** the lifecycle-aware dependency is already present and `MainActivity` uses the preferred API, while the nav host and feature screens use plain `collectAsState`. I did not establish continued collection while stopped or any resulting CPU/battery cost, so this is a consistency recommendation rather than a demonstrated lifecycle bug.
-* `app/src/main/java/com/mcqapp/data/anki/AnkiPackageReader.kt:557-568 unzip`, `AnkiPackageWriter.kt:297-325 zip`, `PdfPaperWriter`, `ZipPaperWriter`, `ImportViewModel.loadJson` — whole package/file held as `ByteArray` / `Map<String, ByteArray>` with Base64/data-URI copies alongside decoded bytes, so peak memory can substantially exceed the nominal 26 MB input noted in `ImageDownscale.kt`. Demonstrated crash / device-class OOM is unmeasured — keep as P2 memory-architecture concern, not a proven crash. `AnkiMediaPool.kt:25` dedupe by full data-URI string adds to the retained copies.
-
-**Reply — partly confirmed:** the package reader/writer paths do retain whole-package bytes, unzip all entries into a byte map, and add Base64/data-URI copies alongside decoded image bytes, so peak memory can substantially exceed the nominal 26 MB input. But “will OOM on low-end devices” is not proven by the cited comment; no heap measurement, device memory class, or failing large-file reproduction was supplied. Keep it as a P2 memory-architecture concern, not a demonstrated crash.
-* Temp SQLite files in `AnkiPackageWriter.kt:271-294` and `AnkiPackageReader.kt:82-97` — normal-exception cleanup via `finally { file.delete() }` is present. Missing `deleteOnExit` would not fix process kill (`SIGKILL`/Android process death skips shutdown hooks). Stronger fix: startup cleanup of the known temp prefix plus checking the `delete()` result.
-
-**Reply — partly confirmed:** normal-exception cleanup is present, and missing `deleteOnExit` is true, but `deleteOnExit` would not solve process kill either. Shutdown hooks do not run after `SIGKILL`, and Android process death is not orderly JVM shutdown. The stronger fix is startup cleanup of the known temp prefix, plus checking the `delete()` result.
-* `AppDatabase.kt:22 exportSchema = false`, migrations forward-only — ordinary unless schema history or app rollback is required. Actionable part duplicates the P0 rollback issue above: the uncommitted v7→v6 rollback needs an explicit downgrade/migration decision.
-
-**Reply — acknowledged as a duplicate of the P0 rollback issue:** `exportSchema = false` and forward-only migrations are ordinary unless schema history or app rollback is required. The actionable defect remains the uncommitted v7→v6 rollback without a downgrade/migration decision.
-
-## Notes (checked, not bugs)
-
-* `BUILDING.md` / `AGENTS.md` ARM64 notes (`aapt2FromMavenOverride`, Robolectric aarch64 SQLite) match the observed environment behavior.
-* Anki schema-11 legacy `.apkg` with no `meta`, three-field notetype with `mcqapp` JSON payload, front=options / back=answers, and filename-based (not numeric) media `src` are deliberate interop choices per `AGENTS.md` and code comments.
-
-**Reply — no dispute:** I did not rerun the ARM64 SQLite failure in this pass, but the cited Anki shapes match the reader/writer code and comments I inspected.
+Everything else on this list is independent of release state.
 
 ---
 
-**Auditor ping:** verification is complete and inline above. The dirty working tree does not compile; `HEAD` still contains the scheduler implementation and v7 migration. Most P0/P1 code observations check out, while the leak, intra-package ID collision, wildcard-result, and OOM claims need the qualifications noted before they are treated as proven defects.
+## Summary
+
+| ID | Sev | Area | Issue | Status |
+|---|---|---|---|---|
+| A1 | P0 | UI | Wrong answers marked with a red ✓ | `[ ]` |
+| A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[ ]` |
+| A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[ ]` |
+| A4 | P0 | Data | Deleting a parent category orphans its subtree | `[ ]` |
+| A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[ ]` |
+| A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[ ]` |
+| A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[ ]` |
+| A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[ ]` |
+| A9 | P1 | Perf | Import file read unbounded on the main thread | `[ ]` |
+| A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[ ]` |
+| A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[ ]` |
+| A12 | P1 | Perf | Library badges full-scan history per paper | `[ ]` |
+| A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
+| A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
+| A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[ ]` |
+| A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[ ]` |
+| A17 | P1 | Robust | `durationMinutes × 60` overflows to a negative timer | `[ ]` |
+| A18 | — | Data | `MIGRATION_2_3` never existed | `[-]` not needed pre-release |
+| A19 | P1 | Data | `resolveStudyStates` writes N rows with no transaction | `[ ]` |
+| A20 | P1 | Perf | N+1 query loops (bookmarks, attempt save) | `[ ]` |
+| A21 | P1 | Data | Unbounded `IN (:ids)` bind lists | `[ ]` |
+| A22 | P1 | Data | Backup silently drops all scheduling | `[ ]` |
+| A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[ ]` |
+| A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[ ]` |
+| A25 | P2 | Tests | 1 of 11 ViewModels tested | `[ ]` |
+| A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[ ]` |
+| A27 | P2 | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[ ]` |
+| A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[ ]` |
+| A29 | P2 | Docs | `BUILDING.md` documents a release process that doesn't exist | `[ ]` |
+| A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[ ]` |
+| A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[ ]` |
+| A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[ ]` |
+| A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[ ]` |
+| A34 | P2 | UI | Settings text-size labels scaled twice (`scale²`) | `[ ]` |
+| A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[ ]` |
+| A36 | P2 | UX | No string resources — app is not localisable | `[ ]` |
+| A37 | P2 | Deps | Coil 2.7 (old), coroutines undeclared, serialization declared twice | `[ ]` |
+| A38 | P2 | Legal | No LICENSE / third-party notices for MathJax, MathLive, KaTeX | `[ ]` |
+| A39 | P2 | Repo | `.gitignore` misses `questions*.{apkg,docx,json}` | `[ ]` |
+| A40 | P2 | Data | Narrow `ContentHash` — answer-only corrections never applied | `[ ]` |
+| A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[ ]` |
+| A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[ ]` |
+| A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[ ]` |
+| A44 | P2 | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[ ]` |
+| A45 | — | Data | `exportSchema = false`, forward-only migrations | `[-]` not needed pre-release |
+
+---
+
+## P0 — user-visible correctness and data loss
+
+### A1 · `[ ]` · Wrong answers are marked with a red ✓ · `read`
+
+`app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt:616`
+
+```kotlin
+if (isCorrectOption) Icons.Default.Check else if (selected) Icons.Default.Close else Icons.Default.Check,
+```
+
+The third branch duplicates the first, so an **unselected wrong option** renders `Check` tinted
+red (`0xFFC62828`). `Feedback.liveReveal` returns true for every option in practice mode, so this
+is the normal path, not an edge case. A study app marking wrong answers with a tick is the worst
+class of bug in this list.
+
+Fix: `else if (selected) Icons.Default.Close else Icons.Default.Remove` (or render nothing), and
+derive the tint from the same `when` instead of a parallel expression.
+
+### A2 · `[ ]` · Per-question dwell time silently dropped · `read`
+
+`app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt:306`
+
+```kotlin
+"Question ${state.currentIndex + 1} of ${state.questions.size}" +
+    " · ${formatMarks(question.marks)} " +
+    if (question.marks == 1.0) "mark" else "marks" +
+    " · ${Dwell.format(state.dwellSeconds[question.id] ?: 0L)} here",
+```
+
+Kotlin's `if` is an expression with lower precedence than `+`, so it swallows everything after it:
+`marks == 1.0` → `"Question 3 of 10 · 1.0 mark"` with the dwell suffix dropped. `Question.marks`
+defaults to `1.0`, so the indicator the timing feature exists to surface is missing for the
+majority of questions and inconsistently present for the rest.
+
+Fix: wrap in parentheses — `+ (if (...) "mark" else "marks") + " · … here"`.
+
+### A3 · `[ ]` · Submit deletes the resume snapshot before saving the attempt · `read`
+
+`app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt:262`
+
+```kotlin
+_state.update { it.copy(submitted = true) }
+viewModelScope.launch {
+    repository.clearTestProgress()
+    val attemptId = repository.saveAttempt(...)
+```
+
+No `try/catch`, unlike `persistProgress` (`:356`) and almost every other `viewModelScope.launch` in
+the app. Storage full, DB locked, or a process kill between the two lines loses the whole exam —
+hours of work — with no attempt row written, and `submitted = true` already set so the session
+cannot be retried. If the exception escapes instead, `viewModelScope` has no
+`CoroutineExceptionHandler` and the app crashes.
+
+Fix: save first, clear second; wrap in `try/catch` and surface "result could not be saved".
+
+### A4 · `[ ]` · Deleting a parent category orphans its whole subtree · `read`
+
+`app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:717`
+
+```kotlin
+db.withTransaction {
+    val questionIds = db.questionDao().getIdsByCategory(categoryId)
+    if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
+    db.categoryDao().deleteById(categoryId)
+}
+```
+
+`CategoryEntity` has **no self-referencing FK on `parentId`** (`Entities.kt:33-41` — indices only),
+so the cascade removes just this category's questions. Descendants keep a dangling `parentId`;
+`buildTree` (`:319-331`) walks from `byParent[null]` so it never reaches them. Result: the data is
+**invisible but retained** — still returned by `getQuestionsForPaper`, still counted by
+`observeCategoryCounts`, still drawable into a test, and no longer manageable in the UI.
+`RepositoryTest` never sets `parentId`, so this is untested. The UI offers a delete icon on every
+node with no confirmation or descendant warning.
+
+Fix: collect the subtree (recursive `parentId` walk), clean their bookmarks, then either delete the
+subtree or reparent direct children to `null`. Add tests for a 2-level delete.
+
+### A5 · `[ ]` · Failed import is silent; ordinary deletes can crash · `read`
+
+`app/src/main/java/com/mcqapp/ui/importscreen/ImportViewModel.kt:383`
+
+```kotlin
+} catch (e: Exception) {
+    Logger.e("IMPORTVM", "Import failed", e)
+    _state.update { it.copy(importing = false) }
+}
+```
+
+Every sibling catch (`:148,155,184,205,231`) sets `error`, which `ImportScreen` renders as a dialog.
+This one just stops the spinner: the user cannot tell whether their 500-question bank landed, and
+there is no retry path. Worse, `LibraryViewModel.kt:165,184,200` are bare
+`viewModelScope.launch { repository.deletePaper(paperId) }` with no handler, so a DB error on an
+ordinary tap crashes the app. Import atomicity itself is fine — `Importer.import` is one
+`withTransaction`.
+
+Fix: set `error = "Import failed: ${e.message}"`; wrap the delete coroutines.
+
+### A6 · `[ ]` · Load failures produce a dead end or a false success · `read`
+
+`app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt:137` and `ui/study/StudyViewModel.kt:76`
+
+```kotlin
+} catch (e: Exception) { Logger.e("TESTVM", "Failed to load test session", e) }   // loading stays true
+```
+
+Test: `loading` is never cleared → `TestSessionScreen.kt:234` shows "Loading…" forever, no retry,
+no error. Study: `it.copy(loading = false, finished = true)` with an empty `emptyReason` renders
+`StudySummary`'s success branch — "Session complete / 0 reviewed • 0 again • 0 remembered".
+
+Fix: add `error: String?` to both states, set it in the catch, render an error state with Back +
+Retry.
+
+### A7 · `[ ]` · A WebView per math list item, and none is ever destroyed · `read`
+
+`app/src/main/java/com/mcqapp/util/ContentElements.kt:238`
+
+```kotlin
+androidx.compose.runtime.key(html) {
+    AndroidView(factory = { context -> WebView(context).apply { settings.javaScriptEnabled = true
+        settings.allowFileAccess = true
+        loadDataWithBaseURL(null, html, "text/html", "UTF-8", null) } })
+}
+```
+
+Every list row whose content contains a `MathElement` instantiates a WebView that loads
+`file:///android_asset/mathjax/tex-mml-svg.js` — **2,120,598 bytes**. `grep -rn "destroy()\|onRelease"`
+over all of `app/src/main` returns **zero hits**, so each scroll-into-view leaks a renderer and JS
+heap for the process lifetime; `key(html)` also rebuilds every visible WebView on a theme or
+font-scale change. `BlockListEditor.kt:115` renders math blocks inside a plain `Column`, so *all* of
+a question's math blocks are live simultaneously.
+
+Fix (cheapest first): `onRelease = { it.stopLoading(); it.destroy() }` on both `AndroidView`s. Then
+render blocks as a static preview past a small N and promote to a live editor on tap, and make the
+block list lazy. `device` measurement of the actual jank is still outstanding.
+
+---
+
+## P1 — hardening, leaks, silent failure
+
+### A8 · `[ ]` · Imported question text executes as JavaScript · `read`
+
+`app/src/main/java/com/mcqapp/util/ContentElements.kt:132`
+
+```kotlin
+// Text runs are already HTML (`<sub>`, `<br/>`, …): the
+// browser is lenient with bare `&`/`<`, as Anki is.
+is ContentElement.TextElement -> append(element.text.replace("\n", "<br/>"))
+```
+
+Table cells (`:139`) and image `src` (`:145`) *are* escaped; text runs are not, and they land in a
+`javaScriptEnabled` WebView with no `WebViewClient` and no CSP. `LegacyParser.kt:355` puts the raw
+file `text` into a `TextElement`, and `splitTextRuns` means a single `text` value containing
+`<math></math>` plus a payload is enough. A shared bank file can therefore run script inside the
+app's own chrome on study/test/results/browse — UI spoofing, DOM read of the question and answer.
+
+Not escalatable to native privilege: this WebView has no `addJavascriptInterface`, and
+`allowUniversalAccessFromFileURLs` / `allowFileAccessFromFileURLs` are left at their `false`
+defaults — but that is a Chromium default, not a decision.
+
+Fix: escape text runs before interpolation (or allow-list-sanitise at import); add an explicit
+`WebViewClient` that blocks navigation plus a CSP meta; set `allowFileAccess = false` (per the
+Android docs this still allows `file:///android_asset` subresources).
+
+### A9 · `[ ]` · Import file read unbounded, on the main thread · `read`
+
+`app/src/main/java/com/mcqapp/ui/library/LibraryScreen.kt:169`
+
+```kotlin
+context.contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() }
+```
+
+Runs in the `OpenDocument` callback for every format, with no size check and no `Dispatchers.IO`.
+`:187` then holds the byte array and a UTF-16 String at once (~3× file size). For `.apkg` the file
+is read a *second* time off-thread at `LibraryViewModel.kt:228`, so the main-thread read is pure
+waste. `catch (e: Exception)` does not catch `OutOfMemoryError`.
+
+Fix: read `OpenableColumns.SIZE` and refuse above a cap (64 MB is generous); bounded copy on
+`Dispatchers.IO`.
+
+### A10 · `[ ]` · No ZIP caps, and OOM escapes the catch · `read`
+
+`app/src/main/java/com/mcqapp/data/anki/AnkiPackageReader.kt:744`, `data/docx/DocxReader.kt:71`
+
+```kotlin
+if (!entry.isDirectory) out[entry.name] = zip.readBytes()
+val buf = ByteArrayOutputStream(); zip.copyTo(buf)
+```
+
+Every entry is buffered with no limit on entry count, per-entry size, or compression ratio, and both
+import boundaries catch `Exception` — `OutOfMemoryError` is an `Error` and escapes, so there is no
+user-facing failure path. Zip-slip is **not** a risk: entry names are only map keys and the temp
+file comes from `File.createTempFile`.
+
+Fix: stream with a running total, reject past ~4096 entries / 64 MB per entry / 256 MB total, and
+catch `Throwable` at the import boundary.
+
+### A11 · `[ ]` · Image decode OOM uncaught, no subsampling · `read`+`sub`
+
+`app/src/main/java/com/mcqapp/util/QuestionImage.kt:39`, `data/export/PdfPaperWriter.kt:249`,
+`util/ImageUtils.kt:19` — all `catch (e: Exception)` around `decodeByteArray`; no
+`inJustDecodeBounds`/`inSampleSize` pass. A base64 PNG of 20000×20000 (~1 KB of base64, 1.6 GB
+decoded) kills the process. `ImageDownscale.kt:86` already catches `OutOfMemoryError`, so the
+pattern is known — the render paths just don't follow it.
+
+Fix: two-pass decode with subsampling; `catch (e: Throwable)` at all three sites.
+
+### A12 · `[ ]` · Library badges full-scan all history, once per paper · `read`
+
+`app/src/main/java/com/mcqapp/ui/library/LibraryViewModel.kt:50` → `McqRepository.kt:881`
+
+```kotlin
+val attemptsById = db.attemptDao().getAllAttempts()...
+for (row in db.attemptDao().getAllResults()) { ... }
+```
+
+`papers` is a `combine`, so any question write anywhere re-triggers a load of the **entire** attempts
+and results tables per paper, plus a full content-JSON parse per paper. The three DAOs that would
+fix it — `countDue/countLeeches/countNew` (`Daos.kt:173-180`) — are never called from anywhere.
+`question_results` also has no index on `questionId`.
+
+Fix: add `Index("questionId")`, push the filter into SQL, and wire the dead count DAOs.
+
+### A13 · `[ ]` · Bookmarks open the editor with no paper · `read`
+
+`app/src/main/java/com/mcqapp/ui/history/BookmarksScreen.kt:139`
+
+```kotlin
+"editor?questionId=${question.id}&paperId=&categoryId=${question.categoryId}"
+```
+
+`EditorViewModel.kt:173` then loads `categories = emptyList()` and `QuestionEditorScreen.kt:224`
+hides the `CategoryDropdown` entirely. No data loss (the old `categoryId` is preserved on save), but
+the control silently vanishes. Every other entry point passes a real `paperId`.
+
+Fix: select `paperId` in the bookmarks query and pass it through.
+
+### A14 · `[ ]` · MathLive editor is uncontrolled, recycled, never destroyed · `sub`
+
+`app/src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt:62,115`, `ui/editor/MathLiveEditor.kt:46-72`
+
+`AndroidView`'s `factory` runs once and `initialLatex` is only consumed there — there is no
+`update`, so the field never re-syncs when `element.mathml` changes externally. The enclosing
+`forEachIndexed` has no `key()`, so after a block insert/remove/reorder Compose can reuse one
+WebView for a different formula while `onUpdateBlock(index, …)` now points at a different index —
+a plausible path to writing formula A's MathML into block B. Also: no `destroy()`, the
+`addJavascriptInterface(…, "Android")` object is never removed, and the page hardcodes
+`font-size:18px`, ignoring the app's `FontScale` (which `MixedContentView` does honour).
+
+Fix: `key(blockId)`, add an `update`, `DisposableEffect` → `removeJavascriptInterface` +
+`loadUrl("about:blank")` + `destroy()`, and drive the CSS size from `FontScale`.
+
+### A15 · `[ ]` · Unguarded `optionsJson` decode can permanently poison history · `sub`
+
+`app/src/main/java/com/mcqapp/data/repository/McqRepository.kt:1087`
+
+```kotlin
+val options = json.decodeFromString(ListSerializer(QuestionOptionDto.serializer()), optionsJson)
+```
+
+`optionsJson` is ingested from an untrusted file with no validation (`LegacyParser.kt:156`) and
+stored verbatim (`Importer.kt:352`). Import a backup whose `attempts[].results[].optionsJson` is
+`"x"` and every later read of that row throws. All three call sites swallow it
+(`ResultsViewModel.kt:57`, `HistoryViewModel.kt:38`, `LibraryViewModel.kt:42`), so the app looks
+healthy while History and mistake badges are permanently empty with no way to clear the row.
+
+Fix: guard the decode the way `parseContentElements` already is (`Models.kt:122-130`), and validate
+at import time.
+
+### A16 · `[ ]` · IDs interpolated into nav routes unencoded · `sub`
+
+`app/src/main/java/com/mcqapp/ui/importscreen/ImportScreen.kt:133`, `ui/search/SearchScreen.kt:112`,
+`ui/library/LibraryScreen.kt:227,294,306`. IDs come from files unvalidated (`LegacyParser.kt:320`),
+so `"id": "x&paperId=other-paper"` opens the editor against a different paper and a subsequent save
+writes into the wrong paper; a `#` or `/` truncates the route.
+
+Fix: `Uri.encode(...)` every id/csv segment, or pass ids as typed `navArgument`s.
+
+### A17 · `[ ]` · `durationMinutes × 60` overflows · `sub`
+
+`app/src/main/java/com/mcqapp/data/io/LegacyParser.kt:177` (`intOrNull`, no range check) →
+`TestViewModel.kt:110-112`. Values ≳ 35.8M overflow to a negative `totalSeconds`, the timer never
+starts and the UI renders a negative clock.
+
+Fix: coerce to `0..10080` at parse and editor time.
+
+### A18 · `[-]` · `MIGRATION_2_3` never existed — accepted, not needed pre-release · `read` (git history)
+
+**Decision (2026-10-02, owner): the app has not been released, so there is no v2 database in the
+wild and no migration is required.** Closed rather than fixed. Revisit only if a v2/v3/v4 build was
+ever distributed.
+
+`app/src/main/java/com/mcqapp/data/local/AppDatabase.kt:127` registers only `3_4 … 7_8`. Git
+evidence: `8b68feb` shipped `version = 2`; `f1618e6` bumped to 3 and added
+`QuestionEntity.contentHash` with no migration; the first `MIGRATION_3_4` appears in `7e84c9d`.
+There is no `fallbackToDestructiveMigration()`, so Room throws
+`IllegalStateException: A migration from 2 to 3 was required but not found` on open.
+
+**The only residual risk is a local dev device** that ran a pre-CI build and was upgraded in place.
+Since there is no user data to protect yet, **uninstall before installing** rather than adding the
+migration. Symptom if you hit it: the app crashes on launch with that `IllegalStateException`; a
+plain uninstall clears it.
+
+*If it ever needs fixing:* `ALTER TABLE questions ADD COLUMN contentHash TEXT NOT NULL DEFAULT ''`
+as `MIGRATION_2_3`, plus a `MigrationTest` case starting from a v2 schema.
+
+### A19 · `[ ]` · `resolveStudyStates` writes N rows with no transaction · `sub`
+
+`McqRepository.kt:820`. Every other multi-write in the repository uses `db.withTransaction`; this
+one doesn't and runs from a badge read (`getStudyCounts`) as well as `getStudyQueue`, so two
+coroutines can seed the same paper concurrently.
+
+Fix: `db.withTransaction { }`, or better a batched `@Insert(onConflict = REPLACE) upsertAll`.
+
+### A20 · `[ ]` · N+1 query loops · `sub`
+
+`McqRepository.kt:975` calls `categoryTitleOf()` per attempt row; `McqRepository.kt:1066` plus
+`BookmarksViewModel.kt:30` issue 3 queries **per bookmark** and re-run the whole loop on every
+bookmark toggle.
+
+Fix: hoist into a single `getByIds` map; use `getByIds` + `toDomainBulk()`.
+
+### A21 · `[ ]` · Unbounded `IN (:ids)` bind lists · `sub`
+
+`data/local/Daos.kt:137` (`getForQuestions`) is called from `toDomainBulk`, `Exporter.toDtoBulk` and
+`Importer`. `SQLITE_MAX_VARIABLE_NUMBER` is 999 up to API 30, and `minSdk = 26`, so a large paper
+throws "too many SQL variables" on older devices. The empty-list case is guarded; the large case is
+not, and there is no chunking helper in `data/`.
+
+Fix: a `chunked(500)` helper at the three call sites.
+
+### A22 · `[ ]` · Backup silently drops all scheduling · `sub`
+
+`data/io/Exporter.kt:17` writes `McqFileDto(version, papers, bookmarks, attempts)`; there is no
+scheduling field, and `Importer` only writes `card_state` from the Anki path. Deliberate and
+documented (`PaperExporter.kt:52`), but `SettingsViewModel.exportAll` produces a file labelled
+"backup" with no indication that every SM-2 schedule, due date, ease and leech flag is dropped. No
+test calls `Exporter.exportAll()` at all, so no test would catch it.
+
+Fix: add an optional `scheduling` map (ignored by `LegacyParser` for foreign files), or state the
+omission in the export UI, plus a DB→JSON→DB round-trip test.
+
+### A23 · `[ ]` · Question text logged in cleartext to a shareable file · `sub`
+
+`data/io/Importer.kt:208` (`text='${questionDto.text.take(60)}'`), also `McqRepository.kt:458`,
+`ImportViewModel.kt:72`, `ImportScreen.kt:119,145`. `Logger.kt:32` prefers
+`getExternalFilesDir(null)/logs`; `SettingsScreen.kt:365` hands that file to any app via
+`ACTION_SEND`. No `BuildConfig.DEBUG` gate, no redaction.
+
+Fix: drop the excerpts or gate on `BuildConfig.DEBUG`; prefer `filesDir`; redact before sharing.
+
+### A24 · `[ ]` · `allowBackup="true"` with no data-extraction rules · `sub`
+
+`app/src/main/AndroidManifest.xml:8`; `res/xml/` holds only `file_paths.xml`. Default rules make the
+whole Room database — every bank, bookmarks, per-attempt history — eligible for cloud/device backup
+with no opt-out.
+
+Fix: add `dataExtractionRules`/`fullBackupContent` excluding the DB and `logs/`, or set
+`allowBackup="false"`.
+
+---
+
+## P2 — tests, CI, docs, code health
+
+### A25 · `[ ]` · 1 of 11 ViewModels tested
+Only `EditorViewModelTest` exists. `TestViewModel` (364 lines: countdown, auto-submit,
+`persistProgress`) and `StudyViewModel` (grading → schedule write) are uncovered;
+`TestTimingTest` only tests the pure helpers. Fix: per-ViewModel Robolectric tests for catch
+branches and mutations; inject the repository instead of casting `(application as McqApplication)`.
+
+### A26 · `[ ]` · `PdfPaperWriter` untested
+549 lines, zero callers in `app/src/test` — and it is the format users print. Fix: assert on
+`paperToPdfBytes` output (`%PDF-` header, question text present, `Answer Key` heading only when
+`answersAtEnd`, no per-question answers in the body).
+
+### A27 · `[ ]` · UI suite is 2 cases for 12 screens
+`app/src/androidTest/.../CriticalPathTest.kt` asserts on exact copy (`"1.0 / 3"`, `"Study (2 new)"`,
+`"Question 1 of 3"`), so copy changes break CI for no real reason, and the seeded `uitest-sr` paper
+is deleted inline at the end of the test body rather than in `@After`. Only two `testTag`s exist in
+the whole app. Fix: add tags to editor/import/results roots, assert on tags, move cleanup to
+`@After`.
+
+### A28 · `[ ]` · CI gaps
+`.github/workflows/build.yml` has two jobs and no `:app:lintDebug` (there is no `lint { }` block or
+baseline anywhere), no release job, no dependency scanning, no coverage, and it publishes raw JUnit
+XML that GitHub does not render. The `ui-test` job never installs `platforms;android-37.0` /
+`build-tools;36.0.0` the way `build` does, and Robolectric tests are pinned to `@Config(sdk = [34])`
+while `targetSdk = 36`.
+
+### A29 · `[ ]` · `BUILDING.md` documents a process that does not exist
+It describes `./gradlew :app:bundleRelease -PappVersionCode=… -PreleaseStoreFile=…`, a protected
+workflow with `RELEASE_VERSION_CODE` secrets, `.github/workflows/build-apk.yml`, an artifact named
+`ncal-debug-apk` and a committed `gradle/verification-metadata.xml`. None exist: the workflow is
+`build.yml`, the artifact is `app-debug`, there is no `signingConfigs`, and `git ls-files gradle`
+shows only the wrapper. The root project is `MCQApp`, not `ncal` — the doc looks copied from
+another repo. `AGENTS.md:8` also says `cd /sdcard/repo/mcq`, which is not a path on this host.
+Fix: rewrite against reality.
+
+### A30 · `[ ]` · Dead code and duplication
+Unreferenced functions (verified by grep over all of `app/src`): `ImportViewModel.loadJson`,
+`McqRepository.observeQuestion`, `AnkiSchema11.stripHtml`, `Scoring.isGraded`, plus
+`CardStateDao.countDue/countLeeches/countNew`, `QuestionDao.countByCategory`,
+`McqRepository.searchQuestions`. Six independent HTML escapers and four separate "Explanation"
+renderers that will diverge. God files: `McqRepository` (1116), `LibraryScreen` (1097),
+`AnkiPackageReader` (883), `SettingsScreen` (711), `TestSessionScreen` (708).
+
+### A31 · `[ ]` · Hardcoded verdict colours, colour-only signalling
+`0xFFC8E6C9` / `0xFFFFCDD2` and friends hardcoded in `TestSessionScreen.kt:574-581,616-617`,
+`BrowseScreen.kt:504`, `ImportScreen.kt:485`, `HistoryScreen.kt:216-218`, `util/InlineHtml.kt:43`,
+while `Theme.kt` supports dark mode — so dark mode pairs pale cards with dark text. Fix: a small
+theme-aware verdict palette plus an always-paired text label.
+
+### A32 · `[ ]` · Accessibility cluster
+`StudyScreen.kt:195-201` option rows are a bare `clickable` `Row` with a glyph as the only state cue
+(no `role`, no `stateDescription`; the only `semantics {}` in the app is the test palette).
+`QuestionImage` takes `contentDescription` but **no call site passes one**, including where the
+image *is* the question. `LibraryScreen.kt:916-931` forces 32dp `IconButton`s;
+`TestSessionScreen.kt:194` is a focusable, unlabelled `IconButton(onClick = {})` around the
+countdown.
+
+### A33 · `[ ]` · "N tricky" duplicates Study
+`LibraryScreen.kt:779` calls the same `onStudy` lambda as the Study button, and
+`getStudyQueue` returns due + new with leeches merely included, not filtered — so the label promises
+three problem questions and delivers the ordinary queue.
+
+### A34 · `[ ]` · Settings text-size labels scaled twice
+`SettingsScreen.kt:145-151` multiplies an `sp` value by `scale`, but `McqNavHost.kt:35-38` already
+overrides `LocalDensity` with `fontScale = scale`, so labels render at `16 × scale²` while body text
+renders at `16 × scale`.
+
+### A35 · `[ ]` · Stale labels and dead UI
+`ImportScreen.kt:176` still says "Import JSON" (and "Loading JSON…") although the screen also
+handles DOCX since `ad7feff`; `LibraryScreen.kt:656` says "Import JSON/APKG" while the picker
+accepts any file. `ResultsScreen.kt:334` passes `QuestionImage(src = null)`, a guaranteed no-op, so
+question images never appear in results. `ResultsScreen.kt:265` renumbers from 1 after filtering, so
+the "Wrong" chip shows 1..n instead of the original question numbers.
+
+### A36 · `[ ]` · Not localisable
+`grep -rn stringResource app/src/main/java` returns nothing and `res/values/strings.xml` holds only
+`app_name`. Every user-facing string is hardcoded across ~6 files.
+
+### A37 · `[ ]` · Dependency hygiene
+`coil-compose:2.7.0` (2.x is well behind 3.x) drags OkHttp 4.12 + okio + appcompat-resources in for
+a single `AsyncImage` call site (`QuestionImage.kt:63`). `kotlinx-coroutines` is imported in 22 main
+files but never declared (it resolves transitively via `room-ktx`). `kotlinx-serialization-json` is
+declared twice (`:72` and `:81`), so a bump can split runtime and test versions. No version catalog.
+
+### A38 · `[ ]` · No third-party licence notices
+3.3 MB of vendored JS ships with no `LICENSE`/`NOTICE` anywhere: MathJax `tex-mml-svg.js`
+(Apache-2.0), `mathlive.min.js` (MIT), 20 `KaTeX_*.woff2` (SIL OFL 1.1) — and
+`app/build.gradle.kts:41-45` then strips `META-INF/{AL2.0,LGPL2.1}` from the package.
+
+### A39 · `[ ]` · `.gitignore` misses the scratch files
+`questions100.apkg` (189 KB), `questions100-datauri.json` (199 KB), `questions100.docx` (52 KB),
+`questions100.json` (106 KB) sit untracked in the repo root, one `git add -A` from being committed.
+
+### A40 · `[ ]` · Narrow `ContentHash` *(carried forward)*
+`data/io/ContentHash.kt:12-15` hashes text + option texts + option images only, so an
+answer/explanation/marks-only correction is classified as a duplicate and never applied. The
+narrowing is deliberate and documented, and the import report tells the user duplicates were
+skipped — this is a product decision to confirm, not an oversight. `McqRepository` also duplicates
+the formula despite the "single source of truth" comment.
+
+### A41 · `[ ]` · JSON parser robustness *(carried forward)*
+`LegacyParser.kt:33` recurses once per nesting level; a file of `[[[[…` × ~50k should raise
+`StackOverflowError`, which `catch (e: Exception)` cannot catch. Malformed papers/questions are
+also dropped silently with no row-level diagnostic (`LegacyParser.kt:47-52,121-125,180-184`).
+`ParserFuzzTest` caps generated depth at 2, so this shape is untested.
+
+### A42 · `[ ]` · Search and recomposition nits
+`BrowseScreen.kt:175` filters every question's text, tags and option texts on the main thread per
+keystroke with no debounce (`SearchViewModel` uses 300 ms). `TestSessionScreen.kt:309` reads
+`state.dwellSeconds` inside the scroll `Column`, so each 1 Hz tick re-executes the whole question
+body including every `QuestionImage`. `HistoryScreen.kt:83` recomputes trends inside the
+`LazyColumn` content lambda. No `derivedStateOf` anywhere.
+
+### A43 · `[ ]` · XXE hardening fails open *(carried forward)*
+`DocxReader.kt:87-97` sets `disallow-doctype-decl` first (the strongest defence) and swallows any
+failure. `external-parameter-entities`, `load-external-dtd` and `setExpandEntityReferences` are
+never set, so the fallback posture is "general entities off, parameter entities at parser default".
+Not exploitable on Android's parser today; fix by rejecting the part if the strongest feature
+cannot be set.
+
+### A44 · `[ ]` · Release readiness
+`isMinifyEnabled = false`, no `signingConfigs`, `versionCode = 1` hardcoded, `proguard-rules.pro` is
+a single comment. Measured: R8 alone takes the debug APK from **22.19 MB → 3.64 MB**, and
+`material-icons-extended` is a 34 MB / 11,105-class dependency for the 24 icons actually used
+(9 of which are outside `material-icons-core`). Deferred by the owner on 2026-10-02.
+
+### A45 · `[-]` · `exportSchema = false`, forward-only migrations — closed, migration work not wanted yet · `read`
+
+`AppDatabase.kt:22`. Same decision as A18 (owner, 2026-10-02): data durability across upgrades is not
+a concern pre-release, so neither the missing `MIGRATION_2_3` nor a committed schema history is
+worth doing now. The existing `3_4 … 7_8` chain and `MigrationTest` stay untouched — your own
+device is at v8 and those tests genuinely catch data loss, so removing them would be risk without
+upside.
+
+*Revisit at first release:* turn on `exportSchema` with a committed schema directory so future
+migrations become testable, and write down an explicit downgrade policy.
+
+**Do not confuse this decision with the runtime data-loss bugs (A3, A4, A5).** Those lose data during
+ordinary use — submitting an exam, deleting a category, a failed import — not at upgrade time, so
+they stay open.
+
+---
+
+## Resolved since the previous audit
+
+| Previous finding | Status |
+|---|---|
+| Working tree did not compile (partial scheduler/APKG removal) | `[x]` restored; scheduler code, v7 migration and tests all present |
+| `correct_answers` had no FK to questions | `[x]` FK + `CASCADE` added (`Entities.kt:90-102`) |
+| Bookmarks never cleaned up on delete | `[x]` cleanup added — but it misses descendants, see A4 |
+| Repository multi-row writes lacked `withTransaction` | `[x]` wrapped throughout |
+| `HtmlPaperWriter` rendered every question image twice | `[x]` single call (`HtmlPaperWriter.kt:169,182`) |
+| `letterFor` produced `(1A)` instead of `AA` | `[x]` proper bijective base-26 (`AnkiPackageWriter.kt:235`) |
+| `LIKE '%…%'` with no `ESCAPE` | `[x]` proper `ESCAPE '\'` clauses (`QuestionSearch.kt:20-25`) |
+| `saveAttempt` computed `isCorrect` twice with different semantics | `[x]` computed once and reused (`:954,984,1099`) |
+| `collectAsState` instead of `collectAsStateWithLifecycle` | `[x]` lifecycle-aware everywhere |
+
+---
+
+## Genuinely strong — do not regress
+
+1. **Migration testing.** `MigrationTest.kt` hand-builds the v3 and v6 schemas with raw SQL, seeds
+   real rows and lets Room's identity-hash check be the assertion, including 7→8 orphan answer-key
+   cleanup and a full 3→8 chain.
+2. **The Anki round-trip property test.** `SamplePaperApkgRoundTripTest` correctly asserts
+   *idempotence* (export → import → export describes identical questions) rather than meaningless
+   byte equality, with diff-in-message failures.
+3. **Seeded differential fuzzing.** `ParserFuzzTest` generates 1000 random JSON shapes from fixed
+   seeds and asserts both "never throws" and the structural contract.
+4. **SQL hygiene.** All 52 DAO queries are constant strings with zero interpolation; the one place
+   user input meets SQL uses `LIKE` with matching `ESCAPE` clauses.
+5. **Import atomicity.** `Importer.import` wraps every write in one `withTransaction`, hoists
+   CPU-bound image downscaling *outside* it with a comment explaining the write-lock rationale, and
+   snapshots content hashes *before* the first write so cascading deletes cannot corrupt dedup.
+6. **Lazy-list discipline.** Every lazy item supplies a stable key; `collectAsStateWithLifecycle`
+   everywhere, zero `GlobalScope`, zero `TODO/FIXME` in the repo.
+7. **Temp-file lifecycle.** Both sides of the Anki round trip delete in `finally` *and check the
+   result*, with a startup sweep for a killed process.
+
+---
+
+## Not verified
+
+- **No device or emulator run.** The WebView leak (A7), its jank, and the real memory cost of the
+  editor's simultaneous WebViews are all read-and-trace conclusions.
+- **A8 impact** beyond UI spoofing: the reasoning that `allowUniversalAccessFromFileURLs=false`
+  prevents app-private `file://` reads is from Chromium defaults, not a hardware test.
+- **A11/A10 thresholds**: no large-file or large-image reproduction was executed.
+- **A21's 999-variable limit** is from SQLite's documented history, not this repo.
+- **`disallow-doctype-decl` support** on Android's `DocumentBuilderFactory` (Robolectric's native
+  runtime does not run on this ARM64 host, per `AGENTS.md`).
+- **Dependency graph** from the local Gradle cache rather than a resolved report; upstream version
+  currency (AGP 9.4.1 / Kotlin 2.2.10 / Compose BOM 2026.09 / Room 2.8.5) not checked. Internal
+  consistency is fine: the Compose compiler plugin matches the Kotlin version.

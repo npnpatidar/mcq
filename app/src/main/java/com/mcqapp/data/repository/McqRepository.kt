@@ -75,9 +75,17 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     fun shuffleOptions(): Flow<Boolean> =
         context.dataStore.data.map { it[shuffleOptionsKey] ?: false }
-
     suspend fun setShuffleOptions(enabled: Boolean) {
         context.dataStore.edit { it[shuffleOptionsKey] = enabled }
+    }
+
+    private val pdfTwoColumnKey = booleanPreferencesKey("pdf_two_column")
+
+    fun pdfTwoColumn(): Flow<Boolean> =
+        context.dataStore.data.map { it[pdfTwoColumnKey] ?: false }
+
+    suspend fun setPdfTwoColumn(enabled: Boolean) {
+        context.dataStore.edit { it[pdfTwoColumnKey] = enabled }
     }
 
     private val practiceModeKey = booleanPreferencesKey("practice_mode")

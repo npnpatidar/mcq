@@ -21,27 +21,32 @@ class PaperExporter(private val db: AppDatabase) {
 
     private val json = Json { prettyPrint = true }
 
-    suspend fun exportPaper(paperId: String, format: ExportFormat): ExportResult {
+    suspend fun exportPaper(paperId: String, format: ExportFormat, twoColumnPdf: Boolean = false): ExportResult {
         val dto = Exporter(db).getPaperDto(paperId)
             ?: throw IllegalStateException("Paper not found")
         Logger.i("EXPORT", "Exporting paper '${dto.title}' as ${format.name}")
-        return render(dto, dto.title, format, scheduling = loadScheduling(paperId))
+        return render(dto, dto.title, format, scheduling = loadScheduling(paperId), twoColumnPdf = twoColumnPdf)
     }
 
     /** Any assembled DTO (e.g. bookmarks) through the same format writers. */
-    fun exportDto(dto: PaperDto, title: String, format: ExportFormat): ExportResult {
+    fun exportDto(dto: PaperDto, title: String, format: ExportFormat, twoColumnPdf: Boolean = false): ExportResult {
         Logger.i("EXPORT", "Exporting '$title' as ${format.name}")
-        return render(dto, title, format)
+        return render(dto, title, format, twoColumnPdf = twoColumnPdf)
     }
 
     /** Single category (with descendants) through the same format writers. */
-    suspend fun exportCategory(paperId: String, categoryId: String, format: ExportFormat): ExportResult {
+    suspend fun exportCategory(
+        paperId: String,
+        categoryId: String,
+        format: ExportFormat,
+        twoColumnPdf: Boolean = false
+    ): ExportResult {
         val dto = Exporter(db).getCategoriesDto(paperId, setOf(categoryId))
             ?.takeIf { it.categories.isNotEmpty() }
             ?: throw IllegalStateException("Category not found or empty")
         val title = dto.categories.firstOrNull()?.title ?: dto.title
         Logger.i("EXPORT", "Exporting category '$title' as ${format.name}")
-        return render(dto, title, format, scheduling = loadScheduling(paperId))
+        return render(dto, title, format, scheduling = loadScheduling(paperId), twoColumnPdf = twoColumnPdf)
     }
 
     /**
@@ -68,7 +73,8 @@ class PaperExporter(private val db: AppDatabase) {
         dto: PaperDto,
         title: String,
         format: ExportFormat,
-        scheduling: Map<String, CardScheduleDto> = emptyMap()
+        scheduling: Map<String, CardScheduleDto> = emptyMap(),
+        twoColumnPdf: Boolean = false
     ): ExportResult {
         val base = baseName(title)
         return when (format) {
@@ -98,12 +104,12 @@ class PaperExporter(private val db: AppDatabase) {
             ExportFormat.PDF -> ExportResult(
                 "$base.pdf",
                 format.mimeType,
-                PdfPaperWriter.paperToPdfBytes(dto)
+                PdfPaperWriter.paperToPdfBytes(dto, twoColumn = twoColumnPdf)
             )
             ExportFormat.PDF_ANSWER_KEY -> ExportResult(
                 "$base-answer-key.pdf",
                 format.mimeType,
-                PdfPaperWriter.paperToPdfBytes(dto, answersAtEnd = true)
+                PdfPaperWriter.paperToPdfBytes(dto, answersAtEnd = true, twoColumn = twoColumnPdf)
             )
             ExportFormat.APKG -> ExportResult(
                 "$base.apkg",

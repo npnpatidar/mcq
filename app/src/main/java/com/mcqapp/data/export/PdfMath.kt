@@ -296,20 +296,28 @@ private fun measureNode(node: TexNode, paint: TextPaint): Measured {
         }
         is TexNode.Sqrt -> {
             val body = measureNodes(node.body, paint)
+            // The radical glyph is drawn full-size: include its own
+            // extents so it never pokes outside the measured box.
+            val fm = paint.fontMetrics
             val rootW = paint.measureText("√")
             val gap = paint.textSize * 0.08f
-            Measured(rootW + body.width + gap, body.ascent + gap, body.descent)
+            Measured(
+                rootW + body.width + gap,
+                maxOf(body.ascent, -fm.ascent) + gap,
+                maxOf(body.descent, fm.descent)
+            )
         }
         is GroupNode -> measureNodes(node.kids, paint)
         is SkippedNode -> Measured(0f, 0f, 0f)
     }
 }
 
-internal fun drawNodes(canvas: Canvas, nodes: List<TexNode>, x: Float, baselineY: Float, paint: TextPaint) {
+internal fun drawNodes(canvas: Canvas, nodes: List<TexNode>, x: Float, baselineY: Float, paint: TextPaint): Float {
     var cx = x
     for (node in nodes) {
         cx += drawNode(canvas, node, cx, baselineY, paint)
     }
+    return cx - x
 }
 
 private fun drawNode(canvas: Canvas, node: TexNode, x: Float, baselineY: Float, paint: TextPaint): Float {
@@ -338,7 +346,12 @@ private fun drawNode(canvas: Canvas, node: TexNode, x: Float, baselineY: Float, 
             val d = measureNodes(node.den, paint)
             val gap = paint.textSize * 0.12f
             val w = maxOf(n.width, d.width) + paint.textSize * 0.2f
-            val ruleY = baselineY - d.ascent - d.descent - gap
+            // Symmetric around the baseline rule: numerator occupies
+            // [baseline - ascent, baseline - gap], denominator
+            // [baseline + gap, baseline + descent]. The old code keyed
+            // everything off the denominator height and pushed the
+            // numerator above the measured box into the line above.
+            val ruleY = baselineY
             drawNodes(canvas, node.num, x + (w - n.width) / 2, ruleY - gap - n.descent, paint)
             drawNodes(canvas, node.den, x + (w - d.width) / 2, ruleY + gap + d.ascent, paint)
             val oldStyle = paint.style

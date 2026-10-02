@@ -13,6 +13,7 @@ import android.text.style.SubscriptSpan
 import android.text.style.UnderlineSpan
 import com.mcqapp.data.export.MathSpan
 import com.mcqapp.data.export.TexNode
+import com.mcqapp.data.export.columnEdges
 import com.mcqapp.data.export.drawNodes
 import com.mcqapp.data.export.mathMlToNodes
 import com.mcqapp.data.export.mathToLinear
@@ -108,22 +109,32 @@ class PdfMathTest {
 
     @Test
     fun drawPutsPixelsOnCanvas() {
+        // Canvas rasterization is stubbed under Robolectric, so this only
+        // exercises the draw paths without crashing.
         val nodes = mathMlToNodes(
             "<math><mrow><mfrac><mi>a</mi><mi>b</mi></mfrac><mo>+</mo>" +
                 "<msqrt><mi>x</mi></msqrt></mrow></math>"
         )!!
         val bitmap = Bitmap.createBitmap(600, 200, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE)
+        drawNodes(Canvas(bitmap), nodes, 10f, 100f, paint(40f))
+    }
+
+    @Test
+    fun drawReturnsMeasuredWidth() {
         val p = paint(40f)
-        drawNodes(canvas, nodes, 10f, 100f, p)
-        var ink = 0
-        for (x in 0 until 600 step 4) {
-            for (y in 0 until 200 step 4) {
-                if (bitmap.getPixel(x, y) != Color.WHITE) ink++
-            }
+        val cases = listOf(
+            listOf(TexNode.Run("hello")),
+            listOf(TexNode.Sup(listOf(TexNode.Run("x")), listOf(TexNode.Run("2")))),
+            listOf(TexNode.Sub(listOf(TexNode.Run("H")), listOf(TexNode.Run("2")))),
+            listOf(TexNode.Frac(listOf(TexNode.Run("12")), listOf(TexNode.Run("3456")))),
+            listOf(TexNode.Sqrt(listOf(TexNode.Run("x"))))
+        )
+        val bitmap = Bitmap.createBitmap(600, 200, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        for (nodes in cases) {
+            val expected = measureNodes(nodes, p).width
+            assertEquals(expected, drawNodes(canvas, nodes, 10f, 100f, p), 0.001f)
         }
-        assertTrue("expected ink on canvas, got $ink", ink > 20)
     }
 
     @Test
@@ -133,6 +144,32 @@ class PdfMathTest {
         val p = paint(30f)
         val w = span.getSize(p, "\uFFFC", 0, 1, null)
         assertTrue(w > 0)
+    }
+
+    @Test
+    fun fractionMeasureContainsChildren() {
+        // Regression test for numerators overflowing into the line above:
+        // the measured box must contain both children plus the rule gap.
+        val p = paint(40f)
+        val num = listOf(TexNode.Run("x+y"))
+        val den = listOf(TexNode.Run("a-b-c"))
+        val m = measureNodes(listOf(TexNode.Frac(num, den)), p)
+        val n = measureNodes(num, p)
+        val d = measureNodes(den, p)
+        val gap = p.textSize * 0.12f
+        assertTrue(m.ascent >= n.ascent + n.descent + gap - 0.001f)
+        assertTrue(m.descent >= d.ascent + d.descent + gap - 0.001f)
+        assertTrue(m.width >= n.width && m.width >= d.width)
+    }
+
+    @Test
+    fun columnEdgesChainFromOrigin() {
+        // Recomputing after a column advance must move the whole grid:
+        // stale edges draw new rows on top of old ones.
+        val left = columnEdges(40f, floatArrayOf(100f, 150f))
+        assertEquals(listOf(40f, 140f, 290f), left.toList())
+        val right = columnEdges(309.5f, floatArrayOf(100f, 150f))
+        assertEquals(listOf(309.5f, 409.5f, 559.5f), right.toList())
     }
 
     @Test

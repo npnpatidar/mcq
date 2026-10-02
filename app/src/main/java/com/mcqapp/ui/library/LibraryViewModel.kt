@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -101,7 +102,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportPaper(paperId, format)
+                    .exportPaper(paperId, format, twoColumnPdf = repository.pdfTwoColumn().first())
                 Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
                 writeUriBytes(uri, result.bytes)
                 _exportError.value = null
@@ -121,7 +122,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportCategory(paperId, categoryId, format)
+                    .exportCategory(paperId, categoryId, format, twoColumnPdf = repository.pdfTwoColumn().first())
                 Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
                 writeUriBytes(uri, result.bytes)
                 _exportError.value = null

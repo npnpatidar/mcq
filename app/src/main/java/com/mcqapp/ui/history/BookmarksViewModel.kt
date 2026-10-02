@@ -10,6 +10,7 @@ import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -48,7 +49,12 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
                 val dto = repository.getBookmarkExportDto()
                     ?: throw IllegalStateException("No bookmarked questions to export")
                 val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportDto(dto, com.mcqapp.data.io.BookmarkExport.PAPER_TITLE, format)
+                    .exportDto(
+                        dto,
+                        com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                        format,
+                        twoColumnPdf = repository.pdfTwoColumn().first()
+                    )
                 Logger.i("BOOKVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
                 getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
                     it.write(result.bytes)

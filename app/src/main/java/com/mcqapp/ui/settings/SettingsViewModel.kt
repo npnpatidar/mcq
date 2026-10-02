@@ -104,6 +104,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setFontScale(scale) }
     }
 
+    private val _pdfTwoColumn = MutableStateFlow(false)
+    val pdfTwoColumn: StateFlow<Boolean> = _pdfTwoColumn.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.pdfTwoColumn().collect { _pdfTwoColumn.value = it }
+        }
+    }
+
+    fun setPdfTwoColumn(enabled: Boolean) {
+        viewModelScope.launch { repository.setPdfTwoColumn(enabled) }
+    }
+
     private val _schedulerConfig = MutableStateFlow(com.mcqapp.domain.SchedulerConfig())
     val schedulerConfig: StateFlow<com.mcqapp.domain.SchedulerConfig> = _schedulerConfig.asStateFlow()
 

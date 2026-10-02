@@ -65,6 +65,7 @@ fun SettingsScreen(
     val strictMode by viewModel.strictMode.collectAsStateWithLifecycle()
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
+    val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -315,6 +316,30 @@ fun SettingsScreen(
                             "Image weight counts embedded pictures; large banks shrink " +
                                 "automatically at import.",
                             style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("PDF export", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Two-column layout")
+                            Text(
+                                "Flow questions down the left column, then the right",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = pdfTwoColumn,
+                            onCheckedChange = { viewModel.setPdfTwoColumn(it) }
                         )
                     }
                 }

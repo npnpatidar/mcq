@@ -33,17 +33,21 @@ object PdfPaperWriter {
     private val CONTENT_W = (PAGE_W - MARGIN * 2).toFloat()
     private val BOTTOM = (PAGE_H - MARGIN).toFloat()
 
-    fun paperToPdfBytes(paper: PaperDto): ByteArray = paperToPdfBytes(paper, answersAtEnd = false)
-
     /**
      * @param answersAtEnd when true, questions print without correct marks and
      * all answers + explanations move to an "Answer Key" section at the end,
      * so the paper can be attempted without seeing answers.
+     * @param twoColumn flow content down the left column, then the right,
+     * then the next page (single-column pagination is otherwise untouched).
      */
-    fun paperToPdfBytes(paper: PaperDto, answersAtEnd: Boolean): ByteArray {
+    fun paperToPdfBytes(
+        paper: PaperDto,
+        answersAtEnd: Boolean = false,
+        twoColumn: Boolean = false
+    ): ByteArray {
         val doc = PdfDocument()
         try {
-            val w = Writer(doc)
+            val w = Writer(doc, twoColumn)
             w.paragraph(paper.title, 20f, Typeface.BOLD, Color.BLACK, spaceAfter = 4f)
             val meta = buildList {
                 if (paper.description.isNotBlank()) add(paper.description)
@@ -68,6 +72,7 @@ object PdfPaperWriter {
                 w.paragraph(category.title, 14f, Typeface.BOLD, Color.BLACK, spaceBefore = 10f)
                 for (question in category.questions) {
                     number++
+                    w.ensureSpace(120f)
                     // The number prefixes the body flow itself ("Q1. text…"
                     // in one paragraph) instead of a title line, so the
                     // question never prints twice nor starts below its
@@ -149,7 +154,9 @@ object PdfPaperWriter {
         }
     }
 
-    private class Writer(private val doc: PdfDocument) {
+    private class Writer(private val doc: PdfDocument, private val twoColumn: Boolean) {
+        private val geometry = PdfColumns(PAGE_W.toFloat(), MARGIN.toFloat(), twoColumn)
+        private var col = 0
         private var pageNum = 0
         private var page: PdfDocument.Page = newPage()
         private var y = MARGIN.toFloat()
@@ -186,6 +193,26 @@ object PdfPaperWriter {
             page = newPage()
         }
 
+        /** Next column, or next page once past the last one. */
+        private fun advance() {
+            if (twoColumn && col == 0) {
+                col = 1
+                y = MARGIN.toFloat()
+            } else {
+                nextPage()
+                col = 0
+            }
+        }
+
+        /**
+         * Jump past a nearly-empty column end before a question starts,
+         * so questions do not open as widows (two-column only; the
+         * single-column pagination stays exactly as it was).
+         */
+        fun ensureSpace(minRemaining: Float) {
+            if (twoColumn && y > MARGIN && y + minRemaining > BOTTOM) advance()
+        }
+
         fun paragraph(
             text: CharSequence,
             size: Float,
@@ -196,19 +223,19 @@ object PdfPaperWriter {
             spaceAfter: Float = 4f
         ) {
             if (text.isBlank()) return
-            val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint(size, style, color), (CONTENT_W - indent).toInt())
+            val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint(size, style, color), (geometry.contentWidth() - indent).toInt())
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .setLineSpacing(2f, 1f)
                 .setIncludePad(true)
                 .build()
             y += spaceBefore
             if (y + layout.height > BOTTOM && y > MARGIN + spaceBefore) {
-                nextPage()
+                advance()
                 y += spaceBefore
             }
             val canvas = page.canvas
             canvas.save()
-            canvas.translate(MARGIN + indent, y)
+            canvas.translate(geometry.originX(col) + indent, y)
             layout.draw(canvas)
             canvas.restore()
             y += layout.height + spaceAfter
@@ -230,20 +257,20 @@ object PdfPaperWriter {
                 return
             }
             try {
-                val maxW = CONTENT_W - indent
+                val maxW = geometry.contentWidth() - indent
                 val maxH = BOTTOM - MARGIN
                 var scale = minOf(1f, maxW / bitmap.width)
                 if (bitmap.height * scale > maxH) scale = maxH / bitmap.height
                 val dw = (bitmap.width * scale).toInt().coerceAtLeast(1)
                 val dh = (bitmap.height * scale).toInt().coerceAtLeast(1)
-                if (y + dh > BOTTOM && y > MARGIN) nextPage()
+                if (y + dh > BOTTOM && y > MARGIN) advance()
                 val scaled = if (dw != bitmap.width || dh != bitmap.height) {
                     Bitmap.createScaledBitmap(bitmap, dw, dh, true)
                 } else {
                     bitmap
                 }
                 try {
-                    page.canvas.drawBitmap(scaled, MARGIN + indent, y, null)
+                    page.canvas.drawBitmap(scaled, geometry.originX(col) + indent, y, null)
                 } finally {
                     if (scaled !== bitmap) scaled.recycle()
                 }
@@ -335,11 +362,14 @@ object PdfPaperWriter {
                 }
             }
             val total = natural.sum()
-            val avail = CONTENT_W - indent
+            val avail = geometry.contentWidth() - indent
             val scale = if (total > avail && total > 0) avail / total else 1f
-            val edges = FloatArray(cols + 1)
-            edges[0] = MARGIN + indent
-            for (c in 0 until cols) edges[c + 1] = edges[c] + natural[c] * scale
+            // X edges depend on the current column: recompute after
+            // every advance, or rows after a column/page break draw at
+            // the old column's x — on top of earlier rows.
+            val scaled = FloatArray(cols) { natural[it] * scale }
+            fun computeEdges() = columnEdges(geometry.originX(col) + indent, scaled)
+            var edges = computeEdges()
             val linePaint = android.graphics.Paint().apply {
                 style = android.graphics.Paint.Style.STROKE
                 color = Color.BLACK
@@ -367,7 +397,10 @@ object PdfPaperWriter {
                 }
                 val h = ((layouts.maxOfOrNull { it?.height ?: 0 } ?: 0)
                     .coerceAtLeast(lineHeight())) + (2 * pad).toInt()
-                if (y + h > BOTTOM && y > MARGIN) nextPage()
+                if (y + h > BOTTOM && y > MARGIN) {
+                    advance()
+                    edges = computeEdges()
+                }
                 val top = y
                 for (c in 0 until cols) {
                     page.canvas.drawRect(edges[c], top, edges[c + 1], top + h, linePaint)
@@ -382,6 +415,14 @@ object PdfPaperWriter {
             y += 6f
         }
     }
+}
+
+/** X edges for table columns: chained from the origin, so a recompute after a column/page break moves the whole grid. */
+internal fun columnEdges(originX: Float, widths: FloatArray): FloatArray {
+    val edges = FloatArray(widths.size + 1)
+    edges[0] = originX
+    for (c in widths.indices) edges[c + 1] = edges[c] + widths[c]
+    return edges
 }
 
 private val tagLikePattern = Regex("<(/?)\\s*([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
@@ -488,4 +529,21 @@ internal fun mathToLinear(mathml: String): String {
         }
     }
     return decoded.replace(Regex("\\s+"), " ").trim()
+}
+
+/**
+ * Column geometry for PDF pages: one full-width column, or two with a
+ * gutter. Pure so the layout math unit-tests without Android.
+ */
+internal data class PdfColumns(
+    val pageWidth: Float,
+    val margin: Float,
+    val twoColumn: Boolean
+) {
+    val gutter: Float = 24f
+    val count: Int get() = if (twoColumn) 2 else 1
+    fun contentWidth(): Float =
+        if (!twoColumn) pageWidth - 2 * margin
+        else (pageWidth - 2 * margin - gutter) / 2
+    fun originX(col: Int): Float = margin + col * (contentWidth() + gutter)
 }

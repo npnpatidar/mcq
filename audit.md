@@ -40,7 +40,7 @@ Everything else on this list is independent of release state.
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[x]` fixed |
 | A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[~]` teardown fixed, lazy editor pending |
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[x]` fixed |
-| A9 | P1 | Perf | Import file read unbounded on the main thread | `[ ]` |
+| A9 | P1 | Perf | Import file read unbounded on the main thread | `[x]` fixed |
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[ ]` |
 | A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[ ]` |
 | A12 | P1 | Perf | Library badges full-scan history per paper | `[ ]` |
@@ -298,7 +298,7 @@ that unknown tags stay visible as escaped text. Verified to fail against the old
 *Residual:* inline `event` attributes and `javascript:` URLs are inert under this CSP, but the
 page's origin is still a `data:`-style null origin rather than a real asset origin.
 
-### A9 · `[ ]` · Import file read unbounded, on the main thread · `read`
+### A9 · `[x]` · Import file read unbounded, on the main thread — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/library/LibraryScreen.kt:169`
 
@@ -311,8 +311,14 @@ Runs in the `OpenDocument` callback for every format, with no size check and no 
 is read a *second* time off-thread at `LibraryViewModel.kt:228`, so the main-thread read is pure
 waste. `catch (e: Exception)` does not catch `OutOfMemoryError`.
 
-Fix: read `OpenableColumns.SIZE` and refuse above a cap (64 MB is generous); bounded copy on
-`Dispatchers.IO`.
+**Fixed** in the A9 commit: new `util/readBounded(stream, limit)` (`util/BoundedRead.kt`) copies in
+64 KB chunks and throws `ImportTooLargeException` past 64 MB, so the cap is enforced *while* reading
+instead of after allocating — `readBytes()` sizes itself from `available()`, which a content
+provider may report as the whole file. The picker callback now runs on `Dispatchers.IO` and
+reports an over-limit or unreadable file through the screen's error dialog. For `.apkg` the bytes
+are handed to the existing importer instead of being fetched a second time.
+`BoundedReadTest` includes an endless stream that claims `Int.MAX_VALUE` available.
+The error channel is still the misleadingly named `exportError`; renaming it is part of A30.
 
 ### A10 · `[ ]` · No ZIP caps, and OOM escapes the catch · `read`
 

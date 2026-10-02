@@ -82,6 +82,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
 
+    /** Surfaces a failure in the library screen's error dialog. */
+    fun showError(message: String) {
+        _exportError.value = message
+    }
+
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
             try {
@@ -247,14 +252,23 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * by id then title, questions by content hash.
      */
     fun importAnkiPackage(uri: Uri) {
-        val title = uri.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg"
+        importAnkiPackage(uri.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg") {
+            getApplication<Application>().contentResolver.openInputStream(uri)
+                ?.use { it.readBytes() }
+        }
+    }
+
+    /**
+     * Imports a package whose bytes were already read while sniffing the
+     * picked file's format, so the archive is not fetched twice. [read]
+     * supplies the bytes lazily and may run on any dispatcher.
+     */
+    fun importAnkiPackage(title: String, read: suspend () -> ByteArray?) {
         viewModelScope.launch {
             try {
                 Logger.i("LIBVM", "Reading Anki package '$title'")
-                val bytes = withContext(Dispatchers.IO) {
-                    getApplication<Application>().contentResolver.openInputStream(uri)
-                        ?.use { it.readBytes() }
-                } ?: throw AnkiPackageException("Could not open $title.")
+                val bytes = withContext(Dispatchers.IO) { read() }
+                    ?: throw AnkiPackageException("Could not open $title.")
 
                 val read = withContext(Dispatchers.IO) { AnkiPackageReader.read(bytes) }
                 Logger.i(

@@ -83,7 +83,9 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -159,18 +161,38 @@ fun LibraryScreen(
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let {
+        val picked = uri ?: return@rememberLauncherForActivityResult
+        // Off the main thread and size-capped: this used to run in the
+        // picker callback with readBytes(), so a large pick allocated the
+        // whole file on the UI thread and ANR'd or died on OOM, which
+        // catch (Exception) does not cover.
+        scope.launch {
+            val bytes = try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(picked)?.use { stream ->
+                        com.mcqapp.util.readBounded(stream)
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.e("LIB", "Failed to read import file", e)
+                viewModel.showError(
+                    if (e is com.mcqapp.util.ImportTooLargeException) {
+                        "That file is too large to import (limit ${com.mcqapp.util.MAX_IMPORT_BYTES / (1024 * 1024)} MB)."
+                    } else {
+                        "Could not read the file: ${e.message}"
+                    }
+                )
+                return@launch
+            } ?: run {
+                viewModel.showError("Could not read the file.")
+                return@launch
+            }
+
             // Route by content, not by name or MIME type (pickers report
             // both inconsistently). Both .apkg and .docx are zips, so a
             // .docx is told apart by its word/document.xml entry; our
             // JSON can arrive under any extension and stays on the text
             // path below.
-            val bytes = try {
-                context.contentResolver.openInputStream(it)?.use { stream -> stream.readBytes() }
-            } catch (e: Exception) {
-                Logger.e("LIB", "Failed to read import file", e)
-                null
-            } ?: return@let
             val isZip = bytes.size >= 2 && bytes[0] == 'P'.code.toByte() &&
                 bytes[1] == 'K'.code.toByte()
 
@@ -178,11 +200,14 @@ fun LibraryScreen(
                 Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
                 navController.navigate("import/direct")
-                return@let
+                return@launch
             }
             if (isZip) {
-                viewModel.importAnkiPackage(it)
-                return@let
+                // The bytes are already in hand; hand them over rather than
+                // reading the same archive a second time.
+                val title = picked.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg"
+                viewModel.importAnkiPackage(title) { bytes }
+                return@launch
             }
             val text = bytes.toString(Charsets.UTF_8)
             val fingerprint = try {

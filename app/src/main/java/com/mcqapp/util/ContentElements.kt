@@ -247,6 +247,16 @@ private fun MixedContentView(
                     loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
                 }
             },
+            // Every WebView owns a renderer and a JS heap for the life of the
+            // process unless it is destroyed. Without this, scrolling a
+            // maths-heavy list leaked one per row scrolled into view, and a
+            // theme or font-scale change leaked every visible one at once.
+            onRelease = { webView ->
+                webView.onPause()
+                webView.stopLoading()
+                (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                webView.destroy()
+            },
             modifier = modifier.padding(vertical = 4.dp)
         )
     }

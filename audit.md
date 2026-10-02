@@ -38,7 +38,7 @@ Everything else on this list is independent of release state.
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[x]` fixed |
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[x]` fixed |
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[x]` fixed |
-| A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[ ]` |
+| A7 | P0 | Perf | A WebView per math item, none ever destroyed | `[~]` teardown fixed, lazy editor pending |
 | A8 | P1 | Security | Imported question text executes as JS in the preview WebView | `[ ]` |
 | A9 | P1 | Perf | Import file read unbounded on the main thread | `[ ]` |
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[ ]` |
@@ -225,7 +225,7 @@ out of each `init` block into a private `load()` so `retry()` can re-run it.
 loading with a message, the study session does *not* report `finished` (the old false
 "Session complete"), and retry re-runs the load.
 
-### A7 · `[ ]` · A WebView per math list item, and none is ever destroyed · `read`
+### A7 · `[~]` · A WebView per math list item, none ever destroyed — teardown fixed, rest pending · `read`
 
 `app/src/main/java/com/mcqapp/util/ContentElements.kt:238`
 
@@ -244,9 +244,20 @@ heap for the process lifetime; `key(html)` also rebuilds every visible WebView o
 font-scale change. `BlockListEditor.kt:115` renders math blocks inside a plain `Column`, so *all* of
 a question's math blocks are live simultaneously.
 
-Fix (cheapest first): `onRelease = { it.stopLoading(); it.destroy() }` on both `AndroidView`s. Then
-render blocks as a static preview past a small N and promote to a live editor on tap, and make the
-block list lazy. `device` measurement of the actual jank is still outstanding.
+**Partly fixed** in the A7 commit: both `AndroidView`s now pass `onRelease` — the preview WebView
+pauses, stops loading, detaches from its parent and destroys itself; the MathLive one also removes
+the `@JavascriptInterface` object and loads `about:blank` first. Because the preview is wrapped in
+`key(html)`, a theme or font-scale change now recycles the old WebView instead of orphaning it.
+
+`WebViewLifecycleTest` walks every `AndroidView` block in the three WebView-using files and fails if
+one declares a `WebView` without an `onRelease` that calls `destroy()`. **This is a structural
+check, not a runtime proof** — proving teardown needs a device or a Compose test harness, and the
+project has neither in the JVM suite. It was verified to fail when the `onRelease` is removed.
+
+**Still open:** `BlockListEditor` renders every math block live inside a plain `Column`, so a
+question with many formulas still creates all those WebViews at once. The real fix is to render
+blocks as a static preview past a small N and promote to a live editor on tap, plus a lazy block
+list. That overlaps A14 (no `key()` per block). Actual jank/memory still needs a device to measure.
 
 ---
 

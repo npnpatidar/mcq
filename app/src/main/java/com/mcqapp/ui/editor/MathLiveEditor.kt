@@ -68,6 +68,17 @@ fun MathLiveEditor(initialLatex: String, onMathMl: (String) -> Unit, modifier: M
                 null
             )
             view
+        },
+        // Same reason as the preview WebView: without an explicit teardown the
+        // renderer and JS heap survive for the life of the process, once per
+        // math block the editor has ever shown.
+        onRelease = { webView ->
+            webView.removeJavascriptInterface("Android")
+            webView.onPause()
+            webView.stopLoading()
+            webView.loadUrl("about:blank")
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.destroy()
         }
     )
 }

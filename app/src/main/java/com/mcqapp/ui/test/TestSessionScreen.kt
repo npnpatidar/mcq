@@ -285,6 +285,41 @@ fun TestSessionScreen(
                 }
             }
 
+            state.saveError?.let { error ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        // The snapshot is still on disk, so the only thing
+                        // standing between the user and their result is this.
+                        TextButton(
+                            onClick = {
+                                viewModel.dismissSaveError()
+                                viewModel.submit()
+                            },
+                            enabled = !state.saving
+                        ) {
+                            Text(if (state.saving) "Saving…" else "Retry")
+                        }
+                    }
+                }
+            }
+
             val question = state.currentQuestion
             if (question == null) {
                 Box(

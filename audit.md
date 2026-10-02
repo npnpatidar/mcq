@@ -34,7 +34,7 @@ Everything else on this list is independent of release state.
 |---|---|---|---|---|
 | A1 | P0 | UI | Wrong answers marked with a red ✓ | `[x]` fixed |
 | A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[x]` fixed |
-| A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[ ]` |
+| A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[x]` fixed |
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[ ]` |
 | A5 | P0 | UI | Failed import shows no error; deletes can crash the app | `[ ]` |
 | A6 | P0 | UI | Test/study load failure = dead end or false "Session complete" | `[ ]` |
@@ -123,7 +123,7 @@ majority of questions and inconsistently present for the rest.
 extend past it. `QuestionProgressLabelTest` pins the exact 1-mark string that
 used to lose its suffix, plus zero dwell, plural and fractional cases.
 
-### A3 · `[ ]` · Submit deletes the resume snapshot before saving the attempt · `read`
+### A3 · `[x]` · Submit deleted the resume snapshot before saving the attempt — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt:262`
 
@@ -140,7 +140,13 @@ hours of work — with no attempt row written, and `submitted = true` already se
 cannot be retried. If the exception escapes instead, `viewModelScope` has no
 `CoroutineExceptionHandler` and the app crashes.
 
-Fix: save first, clear second; wrap in `try/catch` and surface "result could not be saved".
+**Fixed** in the A3 commit: the sequence moved into
+`submitAttempt(save, clearSnapshot, onClearFailure)` (`domain/Submission.kt`), which returns
+`Saved` or `Failed` and cannot clear before the save returns. `TestViewModel.submit()` gained
+`saving` / `saveError` state — a failed save unlocks the screen, keeps the snapshot and shows a
+Retry button, while a failed *clear* is logged and ignored because the attempt is already durable.
+`SubmissionTest` pins the ordering, the never-clear-on-failed-save rule and the tolerated clear
+failure.
 
 ### A4 · `[ ]` · Deleting a parent category orphans its whole subtree · `read`
 

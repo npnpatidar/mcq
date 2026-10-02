@@ -34,6 +34,8 @@ data class TestUiState(
     val remainingSeconds: Int = 0,
     val totalSeconds: Int = 0,
     val submitted: Boolean = false,
+    val saving: Boolean = false,
+    val saveError: String? = null,
     val attemptId: Long? = null,
     val practiceMode: Boolean = false,
     val strictMode: Boolean = false,
@@ -169,6 +171,10 @@ class TestViewModel(
         _state.update { it.copy(timeWarning = null) }
     }
 
+    fun dismissSaveError() {
+        _state.update { it.copy(saveError = null) }
+    }
+
     /** Credits elapsed time since the last navigation to the question left. */
     private fun flushDwell() {
         val current = _state.value
@@ -248,7 +254,7 @@ class TestViewModel(
 
     fun submit() {
         val current = _state.value
-        if (current.submitted || current.questions.isEmpty()) return
+        if (current.submitted || current.saving || current.questions.isEmpty()) return
         Logger.i("TESTVM", "submit() called: answered=${current.answeredCount}/${current.questions.size}, " +
             "remaining=${current.remainingSeconds}s")
         timerJob?.cancel()
@@ -258,21 +264,44 @@ class TestViewModel(
         } else {
             ((System.currentTimeMillis() - startTimestamp) / 1000)
         }
-        _state.update { it.copy(submitted = true) }
+        _state.update { it.copy(submitted = true, saving = true, saveError = null) }
         viewModelScope.launch {
-            repository.clearTestProgress()
-            val attemptId = repository.saveAttempt(
-                paperId = paperId,
-                paperTitle = current.paper?.title ?: "Test",
-                questions = current.questions,
-                selections = current.selections,
-                negativeMarking = current.paper?.negativeMarking ?: 0.0,
-                durationSeconds = durationSeconds,
-                finishedAt = System.currentTimeMillis(),
-                dwellSeconds = current.dwellSeconds
+            // Save first, clear second: the resume snapshot is the only copy
+            // of this session, so dropping it before the attempt is durable
+            // would lose the whole exam on a storage error or process death.
+            val outcome = com.mcqapp.domain.submitAttempt(
+                save = {
+                    repository.saveAttempt(
+                        paperId = paperId,
+                        paperTitle = current.paper?.title ?: "Test",
+                        questions = current.questions,
+                        selections = current.selections,
+                        negativeMarking = current.paper?.negativeMarking ?: 0.0,
+                        durationSeconds = durationSeconds,
+                        finishedAt = System.currentTimeMillis(),
+                        dwellSeconds = current.dwellSeconds
+                    )
+                },
+                clearSnapshot = { repository.clearTestProgress() },
+                onClearFailure = { Logger.w("TESTVM", "Failed to clear test progress: ${it.message}") }
             )
-            Logger.i("TESTVM", "Attempt saved: attemptId=$attemptId")
-            _state.update { it.copy(attemptId = attemptId) }
+            when (outcome) {
+                is com.mcqapp.domain.SubmissionOutcome.Saved -> {
+                    Logger.i("TESTVM", "Attempt saved: attemptId=${outcome.value}")
+                    _state.update { it.copy(saving = false, attemptId = outcome.value) }
+                }
+                // Keep the snapshot and unlock the screen so the user can retry.
+                is com.mcqapp.domain.SubmissionOutcome.Failed -> {
+                    Logger.e("TESTVM", "Failed to save attempt: ${outcome.message}")
+                    _state.update {
+                        it.copy(
+                            saving = false,
+                            submitted = false,
+                            saveError = "Could not save your result: ${outcome.message}"
+                        )
+                    }
+                }
+            }
         }
     }
 

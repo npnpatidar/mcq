@@ -40,7 +40,8 @@ data class StudyUiState(
 
 class StudyViewModel(
     application: Application,
-    private val paperId: String
+    private val paperId: String,
+    private val leechesOnly: Boolean = false
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -56,13 +57,17 @@ class StudyViewModel(
         viewModelScope.launch {
             try {
                 val paper = repository.getPaper(paperId)
-                val cards = repository.getStudyQueue(paperId)
+                val cards = repository.getStudyQueue(paperId, leechesOnly = leechesOnly)
                 if (cards.isEmpty()) {
                     _state.update {
                         it.copy(
                             loading = false,
                             finished = true,
-                            emptyReason = "Nothing due here. Come back later, or study a different paper."
+                            emptyReason = if (leechesOnly) {
+                                "No tricky questions left. Keep reviewing and they will come back."
+                            } else {
+                                "Nothing due here. Come back later, or study a different paper."
+                            }
                         )
                     }
                     return@launch

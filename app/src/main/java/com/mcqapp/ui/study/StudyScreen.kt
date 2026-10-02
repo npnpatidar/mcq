@@ -64,12 +64,17 @@ import com.mcqapp.util.QuestionImage
 fun StudyScreen(
     repository: McqRepository,
     paperId: String,
-    navController: NavController
+    navController: NavController,
+    leechesOnly: Boolean = false
 ) {
     val context = LocalContext.current
     val viewModel: StudyViewModel = viewModel(
-        key = "study-$paperId",
-        factory = StudyViewModelFactory(context.applicationContext as Application, paperId)
+        key = "study-$paperId-$leechesOnly",
+        factory = StudyViewModelFactory(
+            context.applicationContext as Application,
+            paperId,
+            leechesOnly
+        )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
 

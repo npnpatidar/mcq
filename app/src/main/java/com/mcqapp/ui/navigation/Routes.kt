@@ -25,7 +25,9 @@ fun browseRoute(paperId: String, focusQuestionId: String? = null): String =
     if (focusQuestionId == null) "browse/${encode(paperId)}"
     else "browse/${encode(paperId)}?focus=${encode(focusQuestionId)}"
 
-fun studyRoute(paperId: String): String = "study/${encode(paperId)}"
+fun studyRoute(paperId: String, leechesOnly: Boolean = false): String =
+    if (leechesOnly) "study/${encode(paperId)}?leechesOnly=true"
+    else "study/${encode(paperId)}"
 
 fun resultsRoute(attemptId: Long): String = "results/$attemptId"
 

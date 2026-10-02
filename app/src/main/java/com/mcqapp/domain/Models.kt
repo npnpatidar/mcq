@@ -289,3 +289,11 @@ data class QuestionResult(
         explanationImage
     )
 }
+
+/**
+ * A bookmarked question together with the paper it came from.
+ *
+ * The editor route needs the paper id: without it the editor loads no
+ * categories and silently hides the category picker.
+ */
+data class BookmarkedQuestion(val paperId: String, val question: Question)

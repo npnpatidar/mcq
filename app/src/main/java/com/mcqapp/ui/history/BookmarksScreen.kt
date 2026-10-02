@@ -129,14 +129,19 @@ fun BookmarksScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(state.questions, key = { it.id }) { question ->
+                items(state.questions, key = { it.question.id }) { bookmarked ->
+                    val question = bookmarked.question
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
                                 com.mcqapp.ui.editor.EditorSession.clear()
                                 navController.navigate(
-                                    com.mcqapp.ui.navigation.editorRoute(question.id, "", question.categoryId)
+                                    com.mcqapp.ui.navigation.editorRoute(
+                                        question.id,
+                                        bookmarked.paperId,
+                                        question.categoryId
+                                    )
                                 )
                             }
                     ) {

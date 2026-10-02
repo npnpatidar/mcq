@@ -140,6 +140,50 @@ class BulkQueryTest {
     }
 
     @Test
+    fun bookmarksCarryTheirPaperId() = runBlocking {
+        // Without the paper id the editor loads no categories and the category
+        // picker silently disappears.
+        db.paperDao().upsert(com.mcqapp.data.local.PaperEntity(id = "p2", title = "Other"))
+        db.categoryDao().upsert(
+            com.mcqapp.data.local.CategoryEntity(id = "c2", paperId = "p2", title = "Other")
+        )
+        repository.saveQuestion(question("q1"))
+        repository.saveQuestion(question("q2", categoryId = "c2"))
+        repository.toggleBookmark("q1")
+        repository.toggleBookmark("q2")
+
+        val byQuestion = repository.getBookmarkedQuestions().associate { it.question.id to it.paperId }
+        assertEquals("p1", byQuestion["q1"])
+        assertEquals("p2", byQuestion["q2"])
+    }
+
+    @Test
+    fun aLeechesOnlyQueueReturnsOnlyLeeches() = runBlocking {
+        repository.saveQuestion(question("q1"))
+        repository.saveQuestion(question("q2"))
+        // A lapse needs an "Again" on a card that had memory, and an "Again"
+        // zeroes reps — so memory is restored between each one. The default
+        // leech threshold is 8.
+        var now = 1_000L
+        repeat(9) {
+            repository.recordStudyReview(
+                paperId = "p1", questionId = "q1",
+                grade = com.mcqapp.domain.ReviewGrade.GOOD, now = now++
+            )
+            repository.recordStudyReview(
+                paperId = "p1", questionId = "q1",
+                grade = com.mcqapp.domain.ReviewGrade.AGAIN, now = now++
+            )
+        }
+
+        val all = repository.getStudyQueue("p1")
+        val tricky = repository.getStudyQueue("p1", leechesOnly = true)
+        assertTrue("q1 should be flagged as a leech: $all", all.any { it.state.leech })
+        assertEquals(listOf("q1"), tricky.map { it.questionId })
+        assertTrue("q2 must not appear", tricky.none { it.questionId == "q2" })
+    }
+
+    @Test
     fun seedingStudyStateIsIdempotent() = runBlocking {
         repository.saveQuestion(question("q1"))
         val first = repository.getStudyCounts("p1")

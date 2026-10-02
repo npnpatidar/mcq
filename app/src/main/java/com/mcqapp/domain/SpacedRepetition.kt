@@ -341,4 +341,12 @@ object Study {
         questionIds.count { states[it]?.isNew ?: true }
 
     fun leechCount(states: Collection<CardState>): Int = states.count { it.leech }
+
+    /**
+     * Only the cards flagged as leeches. The library's "N tricky" button
+     * promised the user's problem questions but ran the ordinary due+new queue,
+     * so the label did not match the behaviour.
+     */
+    fun onlyLeeches(cards: List<StudyCard>): List<StudyCard> =
+        cards.filter { it.reason == StudyReason.LEECH || it.state.leech }
 }

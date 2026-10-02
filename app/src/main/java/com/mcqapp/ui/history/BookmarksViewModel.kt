@@ -5,7 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
-import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +14,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 data class BookmarksUiState(
-    val questions: List<Question> = emptyList()
+    val questions: List<com.mcqapp.domain.BookmarkedQuestion> = emptyList()
 )
 
 class BookmarksViewModel(application: Application) : AndroidViewModel(application) {
@@ -28,7 +27,8 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             repository.observeBookmarks().collect { ids ->
                 // Was three queries per bookmark, re-run on every toggle.
-                val questions = repository.getQuestionsByIds(ids)
+                // Carries the paper id so the editor can load its categories.
+                val questions = repository.getBookmarkedQuestions()
                 _state.value = BookmarksUiState(questions = questions)
             }
         }

@@ -440,6 +440,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             .associate { it.id to it.title }
     }
 
+    /** Bookmark rows paired with their owning paper, for the bookmarks screen. */
+    suspend fun getBookmarkedQuestions(): List<com.mcqapp.domain.BookmarkedQuestion> {
+        val ids = db.bookmarkDao().getAll()
+        if (ids.isEmpty()) return emptyList()
+        val questions = getQuestionsByIds(ids)
+        if (questions.isEmpty()) return emptyList()
+        val paperIdByCategory = categoryPaperIdsOf(questions.map { it.categoryId }.toSet())
+        return questions.mapNotNull { question ->
+            paperIdByCategory[question.categoryId]?.let {
+                com.mcqapp.domain.BookmarkedQuestion(it, question)
+            }
+        }
+    }
+
+    /** Owning paper id per category id, in one query instead of one per id. */
+    private suspend fun categoryPaperIdsOf(categoryIds: Set<String>): Map<String, String> {
+        if (categoryIds.isEmpty()) return emptyMap()
+        return db.categoryDao().getByIds(categoryIds.toList()).associate { it.id to it.paperId }
+    }
+
     /** Owning paper's title per category id, in two queries instead of two per id. */
     private suspend fun paperTitlesForCategories(categoryIds: Set<String>): Map<String, String> {
         if (categoryIds.isEmpty()) return emptyMap()
@@ -802,7 +822,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getStudyQueue(
         paperId: String,
         now: Long = System.currentTimeMillis(),
-        newLimit: Int? = null
+        newLimit: Int? = null,
+        leechesOnly: Boolean = false
     ): List<com.mcqapp.domain.StudyCard> {
         val questions = getQuestionsForPaper(paperId)
         if (questions.isEmpty()) return emptyList()
@@ -813,13 +834,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             "getStudyQueue($paperId): ${questions.size} questions, " +
                 "due=${com.mcqapp.domain.Study.dueCount(states.values, now)}"
         )
-        return com.mcqapp.domain.Study.queue(
+        val queue = com.mcqapp.domain.Study.queue(
             com.mcqapp.domain.Sm2Scheduler(config),
             questions.map { it.id },
             states,
             now,
             newLimit ?: config.newLimit
         )
+        return if (leechesOnly) com.mcqapp.domain.Study.onlyLeeches(queue) else queue
     }
 
     /**

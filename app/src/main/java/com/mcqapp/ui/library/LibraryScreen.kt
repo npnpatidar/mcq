@@ -335,6 +335,13 @@ fun LibraryScreen(
                                     navController.navigate(com.mcqapp.ui.navigation.studyRoute(paper.id))
                                     viewModel.refreshStudyCounts()
                                 },
+                                onStudyLeeches = {
+                                    Logger.i("LIB", "Study leeches: paperId=${paper.id}, leeches=$leechCountBadge")
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.studyRoute(paper.id, leechesOnly = true)
+                                    )
+                                    viewModel.refreshStudyCounts()
+                                },
                                 dueCount = dueCountBadge,
                                 freshCount = studyCounts[paper.id]?.fresh ?: 0,
                                 leechCount = leechCountBadge,
@@ -742,6 +749,7 @@ private fun PaperCard(
     onPracticeMistakes: () -> Unit = {},
     onDrill: (Int, Int) -> Unit = { _, _ -> },
     onStudy: () -> Unit = {},
+    onStudyLeeches: () -> Unit = {},
     mistakeCount: Int = 0,
     dueCount: Int = 0,
     freshCount: Int = 0,
@@ -808,7 +816,10 @@ private fun PaperCard(
                     )
                 }
                 if (leechCount > 0) {
-                    TextButton(onClick = onStudy) {
+                    // Used to run the identical handler as "Study", so the
+                    // label promised the tricky questions and delivered the
+                    // ordinary due+new queue.
+                    TextButton(onClick = onStudyLeeches) {
                         Text("${leechCount} tricky")
                     }
                 }

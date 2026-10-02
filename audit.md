@@ -44,7 +44,7 @@ Everything else on this list is independent of release state.
 | A10 | P1 | Robust | No ZIP entry/size caps; OOM escapes the catch | `[x]` fixed |
 | A11 | P1 | Robust | Image decode OOM uncaught, no subsampling | `[x]` fixed |
 | A12 | P1 | Perf | Library badges full-scan history per paper | `[x]` fixed |
-| A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[ ]` |
+| A13 | P1 | UI | Bookmarks open the editor with no paper, hiding the category picker | `[x]` fixed |
 | A14 | P1 | UI | MathLive editor uncontrolled, recycled, never destroyed | `[ ]` |
 | A15 | P1 | Data | Unguarded `optionsJson` decode can permanently poison history | `[x]` fixed |
 | A16 | P1 | Robust | IDs interpolated into nav routes without encoding | `[x]` fixed |
@@ -64,7 +64,7 @@ Everything else on this list is independent of release state.
 | A30 | P2 | Health | Dead code, 6 HTML escapers, 4 explanation renderers | `[ ]` |
 | A31 | P2 | UI | Hardcoded verdict colours, dark mode wrong, colour-only signalling | `[ ]` |
 | A32 | P2 | A11y | Unlabelled option rows, 32dp targets, no-op timer button | `[ ]` |
-| A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[ ]` |
+| A33 | P2 | UX | "N tricky" button is a duplicate of Study | `[x]` fixed |
 | A34 | P2 | UI | Settings text-size labels scaled twice (`scale²`) | `[ ]` |
 | A35 | P2 | UX | Stale labels after DOCX support; results never show question images | `[ ]` |
 | A36 | P2 | UX | No string resources — app is not localisable | `[ ]` |
@@ -390,7 +390,7 @@ finding. Adding it changes the schema, which needs a `MIGRATION_8_9`, and migrat
 declined on 2026-10-02 (see A18/A45). The SQL filter already avoids materialising unrelated rows;
 the index would only speed up the scan. Worth adding when migrations are back on the table.
 
-### A13 · `[ ]` · Bookmarks open the editor with no paper · `read`
+### A13 · `[x]` · Bookmarks opened the editor with no paper — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/history/BookmarksScreen.kt:139`
 
@@ -402,7 +402,10 @@ the index would only speed up the scan. Worth adding when migrations are back on
 hides the `CategoryDropdown` entirely. No data loss (the old `categoryId` is preserved on save), but
 the control silently vanishes. Every other entry point passes a real `paperId`.
 
-Fix: select `paperId` in the bookmarks query and pass it through.
+**Fixed** in the A13 commit: `getBookmarkedQuestions()` returns `BookmarkedQuestion(paperId, question)`
+by resolving each category's owning paper in one query, and the bookmarks screen passes the real
+paper id to `editorRoute`. No data was ever lost — the old category id was preserved on save — but the
+category picker was silently absent. Covered by `bookmarksCarryTheirPaperId` in `BulkQueryTest`.
 
 ### A14 · `[ ]` · MathLive editor is uncontrolled, recycled, never destroyed · `sub`
 
@@ -623,7 +626,7 @@ image *is* the question. `LibraryScreen.kt:916-931` forces 32dp `IconButton`s;
 `TestSessionScreen.kt:194` is a focusable, unlabelled `IconButton(onClick = {})` around the
 countdown.
 
-### A33 · `[ ]` · "N tricky" duplicates Study
+### A33 · `[x]` · "N tricky" duplicated Study — fixed · `read`
 `LibraryScreen.kt:779` calls the same `onStudy` lambda as the Study button, and
 `getStudyQueue` returns due + new with leeches merely included, not filtered — so the label promises
 three problem questions and delivers the ordinary queue.

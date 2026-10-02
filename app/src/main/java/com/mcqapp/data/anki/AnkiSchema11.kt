@@ -229,7 +229,7 @@ object AnkiSchema11 {
             put(
                 "css",
                 ".card {\n font-family: arial;\n font-size: 20px;\n" +
-                    " text-align: center;\n color: black;\n background-color: white;\n}"
+                    " text-align: left;\n color: black;\n background-color: white;\n}"
             )
             put(
                 "latexPre",

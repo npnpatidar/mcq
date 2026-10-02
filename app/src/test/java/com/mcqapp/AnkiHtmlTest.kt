@@ -212,4 +212,27 @@ class AnkiHtmlTest {
         } while (n >= 0)
         return sb.reverse().toString()
     }
+
+    @Test
+    fun richTextKeepsFormattingDropsCentering() {
+        assertEquals(
+            "H<sub>2</sub>O <strong>x</strong>",
+            AnkiHtml.toRichText("H<sub>2</sub>O <strong>x</strong>")
+        )
+        assertEquals("centered", AnkiHtml.toRichText("<center>centered</center>"))
+        assertEquals(
+            "Title\nbody",
+            AnkiHtml.toRichText("<div style=\"text-align:center\">Title</div>body")
+        )
+    }
+
+    @Test
+    fun richTextBreaksAndEntities() {
+        assertEquals("a\nb", AnkiHtml.toRichText("a<br/>b"))
+        assertEquals("A & B", AnkiHtml.toRichText("A &amp; B"))
+        // Tag-only runs survive here; addTextRun drops them via its
+        // plain-text blank check.
+        assertEquals("<b></b>", AnkiHtml.toRichText("<b></b>"))
+        assertEquals("", AnkiHtml.toRichText(null))
+    }
 }

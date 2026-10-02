@@ -356,10 +356,10 @@ object AnkiPackageReader {
             val questionHtml = AnkiHtml.splitFront(media.rewrite(frontHtml).orEmpty()).first
             return ParsedQuestion(QuestionDto(
                 id = questionId,
-                text = AnkiHtml.toPlainText(IMG_TAG.replace(questionHtml, "")),
+                text = AnkiHtml.toRichText(IMG_TAG.replace(questionHtml, "")),
                 elements = payload.elements.ifEmpty {
                     listOf(com.mcqapp.domain.ContentElement.TextElement(
-                        AnkiHtml.toPlainText(IMG_TAG.replace(questionHtml, ""))
+                        AnkiHtml.toRichText(IMG_TAG.replace(questionHtml, ""))
                     ))
                 },
                 image = media.rewrite(payload.image)
@@ -431,7 +431,7 @@ object AnkiPackageReader {
 
         if (back.hasMarkers) {
             val options = back.options.mapIndexed { i, opt ->
-                OptionDto("o$i", AnkiHtml.toPlainText(opt.text))
+                OptionDto("o$i", AnkiHtml.toRichText(opt.text))
             }
             return ParsedQuestion(
                 QuestionDto(
@@ -440,7 +440,7 @@ object AnkiPackageReader {
                     image = front.second,
                     options = options,
                     correctOptionIds = options.filterIndexed { i, _ -> back.options[i].correct }.map { it.id },
-                    explanation = AnkiHtml.toPlainText(back.explanation),
+                    explanation = AnkiHtml.toRichText(back.explanation),
                     difficulty = difficulty,
                     tags = note.tags
                 ),
@@ -515,8 +515,11 @@ object AnkiPackageReader {
     }
 
     private fun addTextRun(out: MutableList<ContentElement>, text: String) {
-        val plain = AnkiHtml.toPlainText(text)
-        if (plain.isNotEmpty()) out += ContentElement.TextElement(plain)
+        // Formatting survives; the plain check keeps tag-only runs
+        // (e.g. a lone <br/>) from becoming empty-looking elements.
+        if (AnkiHtml.toPlainText(text).isNotEmpty()) {
+            out += ContentElement.TextElement(AnkiHtml.toRichText(text))
+        }
     }
 
     /** Index just past the matching close tag, honouring nesting. */
@@ -541,13 +544,13 @@ object AnkiPackageReader {
         return html.length
     }
 
-    /** `<table>` rows and cells; cell markup is flattened to text. */
+    /** `<table>` rows and cells; inline formatting inside cells survives. */
     private fun parseTable(tableHtml: String): ContentElement.TableElement? {
         val rowPattern = Regex("(?is)<tr\\b[^>]*>(.*?)</tr>")
         val cellPattern = Regex("(?is)<t[dh]\\b[^>]*>(.*?)</t[dh]>")
         val rows = rowPattern.findAll(tableHtml).map { rowMatch ->
             cellPattern.findAll(rowMatch.groupValues[1]).map { cellMatch ->
-                AnkiHtml.toPlainText(cellMatch.groupValues[1])
+                AnkiHtml.toRichText(cellMatch.groupValues[1])
             }.toList()
         }.toList()
         return if (rows.isEmpty()) null else ContentElement.TableElement(rows)

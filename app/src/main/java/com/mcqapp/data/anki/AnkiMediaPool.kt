@@ -2,6 +2,7 @@ package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.imageExtension
 import com.mcqapp.data.export.parseDataUri
+import com.mcqapp.data.renderInlineHtml
 import com.mcqapp.domain.ContentElement
 
 /**
@@ -47,7 +48,9 @@ class AnkiMediaPool {
         elements.joinToString("") { elementToHtml(it) } + imageElement(legacyImage)
 
     private fun elementToHtml(element: ContentElement): String = when (element) {
-        is ContentElement.TextElement -> escapeHtml(element.text)
+        // Inline tags render as formatting in Anki's webview; the shared
+        // helper escapes anything else.
+        is ContentElement.TextElement -> renderInlineHtml(element.text)
         is ContentElement.ImageElement -> imageElement(element.src)
         is ContentElement.TableElement -> tableToHtml(element)
         is ContentElement.MathElement -> element.mathml
@@ -58,7 +61,7 @@ class AnkiMediaPool {
         table.rows.forEach { row ->
             sb.append("<tr>")
             row.forEach { cell ->
-                sb.append("<td>").append(escapeHtml(cell)).append("</td>")
+                sb.append("<td>").append(renderInlineHtml(cell)).append("</td>")
             }
             sb.append("</tr>")
         }

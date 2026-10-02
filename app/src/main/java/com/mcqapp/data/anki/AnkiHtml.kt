@@ -1,21 +1,28 @@
 package com.mcqapp.data.anki
 
 /**
- * Converts Anki notefield HTML into the plain text the app stores, and back.
+ * Converts Anki notefield HTML into app text, and back.
  *
- * Question and option text is plain text in this app, so an import has to
- * flatten the HTML Anki stores; an export re-escapes it (see
- * [AnkiMediaPool.htmlField]). Round-tripping therefore strips then re-adds
- * markup rather than preserving it.
+ * Inline formatting (`<b>`, `<sub>`, …) survives the trip: import keeps
+ * it in text runs ([toRichText]) and export re-emits it, while layout
+ * wrappers (`<center>`, aligned `<div>`) are dropped — cards render
+ * left-aligned. Answer detection and blank checks still use [toPlainText].
  */
 object AnkiHtml {
 
     private val TAG = Regex("<[^>]*>")
     private val BREAK = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
     private val BLOCK_BREAK = Regex("</(p|div|li|tr|h[1-6])\\s*>", RegexOption.IGNORE_CASE)
+    private val RICH_TAG = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
     private val WHITESPACE = Regex("[ \\t]+")
     private val BLANK_LINES = Regex("\n{3,}")
     private val NUMERIC_ENTITY = Regex("&#(x?[0-9a-fA-F]+);")
+
+    /** Inline formatting tags kept verbatim by [toRichText]. */
+    private val RICH_KEEP = setOf(
+        "b", "strong", "i", "em", "u", "del", "s", "strike",
+        "sub", "sup", "mark"
+    )
 
     fun toPlainText(html: String?): String {
         if (html == null) return ""
@@ -23,6 +30,30 @@ object AnkiHtml {
         text = BREAK.replace(text, "\n")
         text = TAG.replace(text, "")
         text = decodeEntities(text)
+        text = WHITESPACE.replace(text, " ")
+        text = text.lines().joinToString("\n") { it.trim() }
+        return BLANK_LINES.replace(text, "\n\n").trim()
+    }
+
+    /**
+     * Like [toPlainText], but inline formatting tags survive: `<center>`
+     * and other layout wrappers vanish with their content kept inline,
+     * block closings still break lines. Used for element text; answer
+     * detection and blank checks stay on [toPlainText].
+     */
+    fun toRichText(html: String?): String {
+        if (html == null) return ""
+        var text = BLOCK_BREAK.replace(html, "\n")
+        text = BREAK.replace(text, "\n")
+        val sb = StringBuilder()
+        var pos = 0
+        for (match in RICH_TAG.findAll(text)) {
+            sb.append(text.substring(pos, match.range.first))
+            if (match.groupValues[2].lowercase() in RICH_KEEP) sb.append(match.value)
+            pos = match.range.last + 1
+        }
+        sb.append(text.substring(pos))
+        text = decodeEntities(sb.toString())
         text = WHITESPACE.replace(text, " ")
         text = text.lines().joinToString("\n") { it.trim() }
         return BLANK_LINES.replace(text, "\n\n").trim()

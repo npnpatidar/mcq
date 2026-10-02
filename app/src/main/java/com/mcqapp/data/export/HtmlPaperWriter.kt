@@ -3,6 +3,7 @@ package com.mcqapp.data.export
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.renderInlineHtml
 import com.mcqapp.domain.ContentElement
 
 /**
@@ -189,27 +190,6 @@ object HtmlPaperWriter {
      * visible rather than vanish. Matches the app's InlineHtml display
      * for known tags, so the export looks the same as the screen.
      */
-    private fun renderInlineHtml(text: String): String {
-        if (!text.contains('<')) return esc(text)
-        val sb = StringBuilder()
-        var pos = 0
-        val tagPattern = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
-        for (match in tagPattern.findAll(text)) {
-            sb.append(esc(text.substring(pos, match.range.first)))
-            val tag = match.groupValues[2].lowercase()
-            if (tag in setOf("b", "strong", "i", "em", "u", "del", "s", "strike", "sub", "sup", "mark", "br", "p", "div", "li", "tr")) {
-                sb.append(match.value)
-            } else {
-                // Unknown tag shape: literal text in legacy questions,
-                // escape it so it stays visible.
-                sb.append(esc(match.value))
-            }
-            pos = match.range.last + 1
-        }
-        sb.append(esc(text.substring(pos)))
-        return sb.toString()
-    }
-
     /** Legacy fallback: render plain text when no elements are stored. */
     private fun questionText(question: QuestionDto): String =
         if (question.elements.isNotEmpty()) elementsToHtml(question.elements, question.image)

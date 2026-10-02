@@ -16,4 +16,18 @@ object Feedback {
 
     fun showExplanation(practiceMode: Boolean, manuallyRevealed: Boolean): Boolean =
         practiceMode || manuallyRevealed
+
+    /**
+     * What to draw beside a revealed option: a tick for the correct answer,
+     * a cross for the answer the user wrongly picked, and nothing at all for
+     * an option that is neither. Deciding this in one place keeps a wrong
+     * option from being marked with a tick.
+     */
+    enum class RevealMarker { CORRECT, WRONG, NONE }
+
+    fun revealMarker(isCorrectOption: Boolean, selected: Boolean): RevealMarker = when {
+        isCorrectOption -> RevealMarker.CORRECT
+        selected -> RevealMarker.WRONG
+        else -> RevealMarker.NONE
+    }
 }

@@ -611,11 +611,21 @@ private fun OptionRow(
                 }
             }
             if (revealed) {
-                Icon(
-                    if (isCorrectOption) Icons.Default.Check else if (selected) Icons.Default.Close else Icons.Default.Check,
-                    contentDescription = null,
-                    tint = if (isCorrectOption) Color(0xFF2E7D32) else Color(0xFFC62828)
-                )
+                // One decision drives both the glyph and its colour: an
+                // option that is neither correct nor picked gets no marker.
+                when (com.mcqapp.domain.Feedback.revealMarker(isCorrectOption, selected)) {
+                    com.mcqapp.domain.Feedback.RevealMarker.CORRECT -> Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Correct answer",
+                        tint = Color(0xFF2E7D32)
+                    )
+                    com.mcqapp.domain.Feedback.RevealMarker.WRONG -> Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Wrong answer",
+                        tint = Color(0xFFC62828)
+                    )
+                    com.mcqapp.domain.Feedback.RevealMarker.NONE -> Unit
+                }
             }
         }
     }

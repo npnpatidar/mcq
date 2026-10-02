@@ -32,7 +32,7 @@ Everything else on this list is independent of release state.
 
 | ID | Sev | Area | Issue | Status |
 |---|---|---|---|---|
-| A1 | P0 | UI | Wrong answers marked with a red ✓ | `[ ]` |
+| A1 | P0 | UI | Wrong answers marked with a red ✓ | `[x]` fixed |
 | A2 | P0 | UI | Dwell time silently dropped for 1-mark questions | `[ ]` |
 | A3 | P0 | Data | Submit deletes the resume snapshot before saving the attempt | `[ ]` |
 | A4 | P0 | Data | Deleting a parent category orphans its subtree | `[ ]` |
@@ -82,7 +82,7 @@ Everything else on this list is independent of release state.
 
 ## P0 — user-visible correctness and data loss
 
-### A1 · `[ ]` · Wrong answers are marked with a red ✓ · `read`
+### A1 · `[x]` · Wrong answers were marked with a red ✓ — fixed · `read`
 
 `app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt:616`
 
@@ -95,8 +95,11 @@ red (`0xFFC62828`). `Feedback.liveReveal` returns true for every option in pract
 is the normal path, not an edge case. A study app marking wrong answers with a tick is the worst
 class of bug in this list.
 
-Fix: `else if (selected) Icons.Default.Close else Icons.Default.Remove` (or render nothing), and
-derive the tint from the same `when` instead of a parallel expression.
+**Fixed** in the A1 commit: the decision moved to
+`Feedback.revealMarker(isCorrectOption, selected)` (`domain/Feedback.kt`), returning `CORRECT` /
+`WRONG` / `NONE`. `OptionRow` now switches on that single value for both glyph and tint, so an
+untouched wrong option draws nothing and can never inherit a tick. Three cases covered in
+`FeedbackTest`.
 
 ### A2 · `[ ]` · Per-question dwell time silently dropped · `read`
 

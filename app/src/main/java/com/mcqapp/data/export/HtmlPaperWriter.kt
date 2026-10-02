@@ -3,6 +3,7 @@ package com.mcqapp.data.export
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 
 /**
  * Renders a paper as a single self-contained HTML page. Data-URI images are
@@ -73,8 +74,7 @@ object HtmlPaperWriter {
     private fun appendQuizQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
         sb.append("<div class=\"q\">\n")
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
-            .append(esc(question.text)).append(marksSuffix(question)).append("</p>\n")
-        appendImage(sb, question.image)
+            .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
             for (option in question.options) {
@@ -88,22 +88,24 @@ object HtmlPaperWriter {
         val correct = question.options.filter { it.id in question.correctOptionIds }
         if (correct.isNotEmpty()) {
             sb.append("<p class=\"answer\">Answer: ")
-                .append(esc(correct.joinToString(", ") { it.text }))
+                .append(correct.joinToString(", ") { renderInlineHtml(it.text) })
                 .append("</p>\n")
         }
-        if (question.explanation.isNotBlank()) {
+        if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
             sb.append("<p class=\"expl\">Explanation: ")
-                .append(esc(question.explanation)).append("</p>\n")
+                .append(
+                    if (question.explanationElements.isNotEmpty())
+                        elementsToHtml(question.explanationElements, question.explanationImage)
+                    else renderInlineHtml(question.explanation) + imageTag(question.explanationImage)
+                ).append("</p>\n")
         }
-        appendImage(sb, question.explanationImage)
         sb.append("</div>\n</div>\n")
     }
 
     private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
         sb.append("<div class=\"q\">\n")
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
-            .append(esc(question.text)).append(marksSuffix(question)).append("</p>\n")
-        appendImage(sb, question.image)
+            .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
             for (option in question.options) {
@@ -114,14 +116,17 @@ object HtmlPaperWriter {
         val correct = question.options.filter { it.id in question.correctOptionIds }
         if (correct.isNotEmpty()) {
             sb.append("<p class=\"answer\">Answer: ")
-                .append(esc(correct.joinToString(", ") { it.text }))
+                .append(correct.joinToString(", ") { renderInlineHtml(it.text) })
                 .append("</p>\n")
         }
-        if (question.explanation.isNotBlank()) {
+        if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
             sb.append("<p class=\"expl\">Explanation: ")
-                .append(esc(question.explanation)).append("</p>\n")
+                .append(
+                    if (question.explanationElements.isNotEmpty())
+                        elementsToHtml(question.explanationElements, question.explanationImage)
+                    else renderInlineHtml(question.explanation) + imageTag(question.explanationImage)
+                ).append("</p>\n")
         }
-        appendImage(sb, question.explanationImage)
         sb.append("</div>\n")
     }
 
@@ -130,19 +135,85 @@ object HtmlPaperWriter {
         if (isCorrect) sb.append(" class=\"correct\"")
         sb.append(">")
         sb.append(if (isCorrect) "✓ " else "○ ")
-        sb.append(esc(option.id)).append(") ").append(esc(option.text))
+        sb.append(esc(option.id)).append(") ")
+        .append(
+            if (option.elements.isNotEmpty()) elementsToHtml(option.elements, option.image)
+            else renderInlineHtml(option.text) + imageTag(option.image)
+        )
         sb.append("</li>\n")
-        if (option.image != null) {
-            sb.append("<li class=\"optimg\">")
-            appendImage(sb, option.image)
-            sb.append("</li>\n")
-        }
     }
 
     private fun appendImage(sb: StringBuilder, src: String?) {
         if (src == null) return
         sb.append("<img src=\"").append(esc(src)).append("\" alt=\"question image\">\n")
     }
+
+    private fun imageTag(src: String?): String {
+        if (src == null) return ""
+        return "<img src=\"${esc(src)}\" alt=\"question image\">\n"
+    }
+
+    /**
+     * Renders content elements to HTML: text is escaped, MathML is
+     * embedded as-is, tables become `<table>` blocks, and images are
+     * embedded. Falls back to plain text for legacy questions with no
+     * elements.
+     */
+    private fun elementsToHtml(elements: List<ContentElement>, legacyImage: String? = null): String {
+        if (elements.isEmpty()) return ""
+        val sb = StringBuilder()
+        for (element in elements) {
+            when (element) {
+                is ContentElement.TextElement -> sb.append(renderInlineHtml(element.text))
+                is ContentElement.ImageElement -> appendImage(sb, element.src)
+                is ContentElement.TableElement -> {
+                    sb.append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+                    for (row in element.rows) {
+                        sb.append("<tr>")
+                        for (cell in row) sb.append("<td>").append(esc(cell)).append("</td>")
+                        sb.append("</tr>")
+                    }
+                    sb.append("</table>")
+                }
+                is ContentElement.MathElement -> sb.append(element.mathml)
+            }
+        }
+        appendImage(sb, legacyImage)
+        return sb.toString()
+    }
+
+    /**
+     * Renders inline HTML tags (`<sub>`, `<sup>`, `<strong>`, `<em>`, etc.)
+     * as-is, escaping anything else — including unknown tag shapes like
+     * `<one>`, which are literal text in legacy questions and must stay
+     * visible rather than vanish. Matches the app's InlineHtml display
+     * for known tags, so the export looks the same as the screen.
+     */
+    private fun renderInlineHtml(text: String): String {
+        if (!text.contains('<')) return esc(text)
+        val sb = StringBuilder()
+        var pos = 0
+        val tagPattern = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
+        for (match in tagPattern.findAll(text)) {
+            sb.append(esc(text.substring(pos, match.range.first)))
+            val tag = match.groupValues[2].lowercase()
+            if (tag in setOf("b", "strong", "i", "em", "u", "del", "s", "strike", "sub", "sup", "mark", "br", "p", "div", "li", "tr")) {
+                sb.append(match.value)
+            } else {
+                // Unknown tag shape: literal text in legacy questions,
+                // escape it so it stays visible.
+                sb.append(esc(match.value))
+            }
+            pos = match.range.last + 1
+        }
+        sb.append(esc(text.substring(pos)))
+        return sb.toString()
+    }
+
+    /** Legacy fallback: render plain text when no elements are stored. */
+    private fun questionText(question: QuestionDto): String =
+        if (question.elements.isNotEmpty()) elementsToHtml(question.elements, question.image)
+        else renderInlineHtml(question.text) + imageTag(question.image)
 
     fun esc(s: String): String = s
         .replace("&", "&amp;")
@@ -167,7 +238,7 @@ h1 { font-size: 1.5em; border-bottom: 2px solid #333; padding-bottom: 8px; }
 h2 { font-size: 1.2em; color: #444; margin-top: 1.5em; }
 .meta { color: #666; font-size: 0.9em; }
 .q { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 12px 0; }
-.qt { font-weight: bold; margin: 0 0 8px 0; }
+.qt { margin: 0 0 8px 0; }
 ul.opts { list-style: none; padding: 0; margin: 8px 0; }
 ul.opts li { padding: 2px 0; }
 ul.opts li.correct { color: #2E7D32; font-weight: bold; }

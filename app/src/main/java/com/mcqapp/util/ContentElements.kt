@@ -130,7 +130,7 @@ internal fun mixedContentHtml(
                 // browser is lenient with bare `&`/`<`, as Anki is.
                 is ContentElement.TextElement ->
                     append(element.text.replace("\n", "<br/>"))
-                is ContentElement.MathElement -> append(element.mathml)
+                is ContentElement.MathElement -> append(stripMathAttributes(element.mathml))
                 is ContentElement.TableElement -> {
                     append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
@@ -170,6 +170,28 @@ internal fun androidx.compose.ui.graphics.Color.toCssRgba(): String {
     fun channel(v: Float) = (v * 255 + 0.5f).toInt().coerceIn(0, 255)
     val a = if (alpha >= 1f) "1" else alpha.toString()
     return "rgba(${channel(red)},${channel(green)},${channel(blue)},$a)"
+}
+
+/**
+ * MathJax's MathML input is strict about the root `<math>` element and
+ * doesn't handle MathLive's `<semantics>`/`<annotation>` wrapper. Strip
+ * `display`/`xmlns` from `<math>`, unwrap `<semantics>` (dropping
+ * `<annotation>`), and ensure an `<mrow>` wrapper remains.
+ */
+internal fun stripMathAttributes(mathml: String): String {
+    var result = mathml
+        .replace(Regex("<math\\s+[^>]*>", RegexOption.IGNORE_CASE)) { "<math>" }
+        .replace(Regex("</math\\s*>", RegexOption.IGNORE_CASE)) { "</math>" }
+        .replace(Regex("<semantics\\s*>", RegexOption.IGNORE_CASE)) { "" }
+        .replace(Regex("</semantics\\s*>", RegexOption.IGNORE_CASE)) { "" }
+        .replace(Regex("<annotation\\s+[^>]*>.*?</annotation\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))) { "" }
+    val inner = result.removePrefix("<math>").removeSuffix("</math>").trim()
+    val wrapped = if (inner.startsWith("<mrow", ignoreCase = true)) {
+        "<math>$inner</math>"
+    } else {
+        "<math><mrow>$inner</mrow></math>"
+    }
+    return wrapped
 }
 
 private fun escapeHtmlData(s: String): String = buildString(s.length) {

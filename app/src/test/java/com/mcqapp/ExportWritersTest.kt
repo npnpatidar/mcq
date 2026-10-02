@@ -187,4 +187,96 @@ class ExportWritersTest {
         assertEquals(listOf("paper.json"), names)
         assertTrue(json.contains("https://example.com/x.png"))
     }
+
+    private fun richPaper(): PaperDto {
+        val q = QuestionDto(
+            id = "q1",
+            text = "Water?",
+            elements = listOf(
+                com.mcqapp.domain.ContentElement.TextElement("H<sub>2</sub>O <strong>x</strong> <foo>y</foo>"),
+                com.mcqapp.domain.ContentElement.TableElement(listOf(listOf("a<b", "c"))),
+                com.mcqapp.domain.ContentElement.MathElement("<math><mi>x</mi></math>")
+            ),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a"),
+            explanation = "Because"
+        )
+        return PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+    }
+
+    @Test
+    fun htmlRendersInlineFormattingTags() {
+        val html = HtmlPaperWriter.paperToHtml(richPaper())
+        assertTrue(html.contains("H<sub>2</sub>O <strong>x</strong>"))
+        assertFalse(html.contains("&lt;sub&gt;"))
+    }
+
+    @Test
+    fun htmlEscapesUnknownInlineTags() {
+        val html = HtmlPaperWriter.paperToHtml(richPaper())
+        assertFalse(html.contains("<foo>"))
+        assertTrue(html.contains("&lt;foo&gt;y&lt;/foo&gt;"))
+    }
+
+    @Test
+    fun htmlRendersTableAndMathElements() {
+        val html = HtmlPaperWriter.paperToHtml(richPaper())
+        assertTrue(html.contains("<td>a&lt;b</td>"))
+        assertTrue(html.contains("<math><mi>x</mi></math>"))
+    }
+
+    @Test
+    fun htmlAnswerLineRendersInlineTags() {
+        val q = QuestionDto(
+            id = "q1",
+            text = "Pick one?",
+            options = listOf(
+                OptionDto(
+                    id = "a",
+                    text = "10<sup>-3</sup>",
+                    elements = listOf(
+                        com.mcqapp.domain.ContentElement.TextElement("10<sup>-3</sup>")
+                    )
+                )
+            ),
+            correctOptionIds = listOf("a")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        val html = HtmlPaperWriter.paperToHtml(paper)
+        assertTrue(html.contains("Answer: 10<sup>-3</sup>"))
+        assertFalse(html.contains("&lt;sup&gt;"))
+    }
+
+    @Test
+    fun stripInlineHtmlKeepsBareSymbols() {
+        assertEquals("H2O", com.mcqapp.data.export.stripInlineHtml("H<sub>2</sub>O"))
+        assertEquals("5 < 6 & 7", com.mcqapp.data.export.stripInlineHtml("5 < 6 & 7"))
+        assertEquals("axb", com.mcqapp.data.export.stripInlineHtml("a<foo>x</foo>b"))
+    }
+
+    @Test
+    fun mathToLinearPrefersTexAnnotation() {
+        val mathml = "<math><semantics><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>" +
+            "<annotation encoding=\"application/x-tex\">x^{2} + 2x + 1 = 0</annotation></semantics></math>"
+        assertEquals(
+            "x^{2} + 2x + 1 = 0",
+            com.mcqapp.data.export.mathToLinear(mathml)
+        )
+    }
+
+    @Test
+    fun mathToLinearStripsTagsWithoutAnnotation() {
+        assertEquals(
+            "x2+2",
+            com.mcqapp.data.export.mathToLinear("<math><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>2</mn></math>")
+        )
+    }
 }

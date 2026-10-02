@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.MATHJAX_ASSET_URL
 import com.mcqapp.util.mixedContentHtml
+import com.mcqapp.util.stripMathAttributes
 import com.mcqapp.util.toCssRgba
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -25,7 +26,7 @@ class MathHtmlTest {
         val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")
         // One body, no per-element block wrappers: the browser lays text
         // and the formula out in a single sentence.
-        assertTrue(html.contains("हल करें: <math><mi>x</mi></math> जारी"))
+        assertTrue(html.contains("हल करें: <math><mrow><mi>x</mi></mrow></math> जारी"))
         assertTrue(html.contains(MATHJAX_ASSET_URL))
         assertTrue(html.contains("font-size:48.0px"))
         assertTrue(html.contains("color:rgba(0,0,0,1)"))
@@ -51,6 +52,26 @@ class MathHtmlTest {
     fun cssColorFormatsRgba() {
         assertEquals("rgba(0,0,0,1)", Color(0f, 0f, 0f, 1f).toCssRgba())
         assertEquals("rgba(255,255,255,1)", Color.White.toCssRgba())
+    }
+
+    @Test
+    fun mathAttributesAreStrippedForMathJax() {
+        val mathml = "<math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\"><mi>x</mi></math>"
+        assertEquals("<math><mrow><mi>x</mi></mrow></math>", stripMathAttributes(mathml))
+    }
+
+    @Test
+    fun semanticsAndAnnotationAreStripped() {
+        val mathml = "<math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\">" +
+            "<semantics><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>" +
+            "<annotation encoding=\"application/x-tex\">x^{2}</annotation></semantics></math>"
+        assertEquals("<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>", stripMathAttributes(mathml))
+    }
+
+    @Test
+    fun mathWithMrowIsNotDoubleWrapped() {
+        val mathml = "<math><mrow><mi>x</mi></mrow></math>"
+        assertEquals("<math><mrow><mi>x</mi></mrow></math>", stripMathAttributes(mathml))
     }
 
     @Test

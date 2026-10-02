@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.ContentElements
@@ -111,12 +112,9 @@ fun BlockListEditor(
                             QuestionImage(src = element.src, modifier = Modifier.padding(top = 8.dp))
                         }
                     }
-                    is ContentElement.MathElement -> OutlinedTextField(
-                        value = element.mathml,
-                        onValueChange = { onUpdateBlock(index, ContentElement.MathElement(it)) },
-                        label = { Text("MathML formula") },
-                        minLines = 3,
-                        modifier = Modifier.fillMaxWidth()
+                    is ContentElement.MathElement -> MathLiveEditor(
+                        initialLatex = mathMlToLatex(element.mathml),
+                        onMathMl = { onUpdateBlock(index, ContentElement.MathElement(it)) }
                     )
                     is ContentElement.TableElement -> {
                         if (tablesEditable) {

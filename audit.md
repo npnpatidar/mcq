@@ -793,6 +793,68 @@ they stay open.
 
 ---
 
+## Found by the owner after A36 — regressions from my own work
+
+Reported on 2026-10-02, all traced to changes in this session rather than to long-standing defects.
+
+| ID | Sev | Area | Issue | Status |
+|---|---|---|---|---|
+| A46 | P0 | UI | 198 button labels rendered nothing (lost `Text(` wrapper) | `[x]` fixed |
+| A47 | P0 | Data | Every `.docx` refused: XXE hardening defeated the feature | `[x]` fixed |
+| A48 | P1 | UI | Literal `$index` / `$mistakeCount` shown instead of values | `[x]` fixed |
+| A49 | P1 | UI | Bookmark tap opened the editor instead of browse | `[x]` fixed |
+| A50 | P1 | UI | MathLive virtual keyboard lost focus while typing | `[x]` fixed |
+
+### A47 · `[x]` · Every `.docx` was refused by my own XXE hardening · `read`
+
+`hardenXmlFactory` threw when the parser could not apply
+`disallow-doctype-decl`, on the reasoning that a silent `catch` would leave the posture at the
+parser's defaults. **Android's `DocumentBuilderFactory` does not implement that Apache-specific
+feature at all**, so every real Word file was rejected with *"This device's XML parser cannot be
+locked down safely"*. The hardening had defeated the feature it protected.
+
+`hardenXmlFactory` now applies every vector it recognises and never refuses on that basis. The
+control that actually holds is an `EntityResolver` that resolves every external entity to an empty
+stream, so a `DOCTYPE` cannot read a local file or fetch a URL regardless of which features the
+platform supports. `XxeHardeningTest` asserts the *property* — refused, or parsed with the entity
+resolving to nothing — because both are safe and only a leak is not. Robolectric supports the
+feature (so it refuses) while a device does not (so the resolver handles it); the test accepts both.
+
+### A48 · `[x]` · Literal `$index` and `$mistakeCount` on screen · `read`
+
+The extraction treated only `${…}` as a Kotlin template, so brace-less templates such as
+`"Mistakes ($mistakeCount)"` and `"$index."` were stored as literal resource text and rendered
+verbatim. All 14 affected resources are back to being Kotlin templates and removed from
+`strings.xml`; `StringResourceUsageTest` now fails if any resource value contains a raw `$`.
+
+### A49 · `[x]` · Bookmark tap opened the editor · `read`
+
+Bookmarks always navigated to `editor?…`; that only became noticeable once the paper-id fix (A13)
+made the tap reliable. Bookmarks are a reading list, so the tap now goes to
+`browse/{paperId}?focus={question}` — which also removes the risk of a stray keystroke editing the
+question. *Commit attribution: this landed inside the A36 strings commit because that commit staged
+the whole `ui/` directory; noted here so it is traceable.*
+
+### A50 · `[x]` · MathLive keyboard lost focus while typing · `read`
+
+A14's update block pushed LaTeX back into the WebView whenever the block's value changed — including
+when the change was the field's **own** output coming back after a keystroke. Resetting a MathLive
+field mid-edit drops its focus, so the virtual keyboard vanished. `shouldPushLatex` now also takes
+the LaTeX the field's last report converts back to and skips the push in that case; outside changes
+still go through, so recycled blocks are still corrected. The block also shows "Tap the formula to
+edit it", since the keyboard only appears once the field has focus.
+
+### A46 · `[x]` · 198 labels rendered nothing · `read`
+
+The extraction regex matched the **whole** `Text("…")` call and replaced all of it with
+`stringResource(…)`, discarding the wrapper. That compiles — Kotlin discards a `String` expression
+where a `Unit` return is expected — so it passed the compiler, lint and all 565 tests while blanking
+almost every label. Fixed by reverting the twelve files and re-running with the wrapper preserved;
+`StringResourceUsageTest` fails the build if any `stringResource` call is not inside `Text(`,
+`contentDescription =` or `label =`.
+
+---
+
 ## Resolved since the previous audit
 
 | Previous finding | Status |

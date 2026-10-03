@@ -21,7 +21,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Shrinking and obfuscation. This is what takes the APK from
+            // ~22 MB to single figures: material-icons-extended alone is a
+            // 34 MB dependency for the two dozen icons actually used, and R8
+            // deletes the other ~11,000 classes.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

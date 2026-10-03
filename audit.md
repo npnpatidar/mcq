@@ -88,7 +88,7 @@ Everything else on this list is independent of release state.
 | A41 | P2 | Robust | JSON: silent row drops, no depth guard (`StackOverflowError`) | `[x]` fixed |
 | A42 | P2 | Perf | Browse search undebounced on Main; recomposition nits | `[x]` fixed |
 | A43 | P2 | Security | XXE hardening fails open if the parser rejects the feature | `[x]` fixed |
-| A44 | — | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[~]` R8 on (3.37 MB), signing open |
+| A44 | — | Build | R8 off, no signing, 34 MB icon dependency (22.19 MB APK) | `[~]` R8 + signing wired, awaiting the key |
 | A45 | — | Data | `exportSchema = false`, forward-only migrations | `[-]` not needed pre-release |
 
 ---

@@ -19,6 +19,7 @@ local.properties
 # Keystores
 *.jks
 *.keystore
+keystore.properties
 
 # Generated question-bank scratch files (exports, converted DOCX/APKG used
 # for manual verification). Regenerate rather than commit.

@@ -94,21 +94,55 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
+      - name: Restore signing key
+        id: signing
+        # Secrets cannot be used in a job-level `if`, so this probes one and
+        # exports the result. With no secrets the release variant still builds,
+        # just unsigned — which keeps the job useful on forks.
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No RELEASE_KEYSTORE_BASE64 secret: building unsigned."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            echo "::add-mask::$(cat keystore.properties 2>/dev/null || true)"
+          fi
+
+      - name: Write signing properties
+        if: steps.signing.outputs.available == 'true'
+        env:
+          STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          umask 077
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+          echo "::add-mask::$STORE_PASSWORD"
+          echo "::add-mask::$KEY_PASSWORD"
+
       - name: Build release APK
-        # Unsigned: there is no keystore in CI. What matters is that the
-        # release variant assembles at all.
         run: sh gradlew :app:assembleRelease --no-daemon
 
       - name: Report the release APK size
-        run: |
-          ls -l app/build/outputs/apk/release/ || true
-          du -h app/build/outputs/apk/release/*.apk || true
+        run: du -h app/build/outputs/apk/release/*.apk || true
+
+      - name: Remove the key
+        if: always()
+        run: rm -f keystore.properties "$RUNNER_TEMP/release.jks"
 
       - name: Upload release APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-unsigned
+          name: app-release
           path: app/build/outputs/apk/release/*.apk
 
   ui-test:

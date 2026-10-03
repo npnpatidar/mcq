@@ -1,9 +1,34 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
 }
+
+// Signing credentials are never committed. They come from, in order:
+//   1. environment variables (this is what CI uses, fed from repo secrets)
+//   2. keystore.properties in this directory, which is git-ignored
+// With neither present, `assembleRelease` still builds, just unsigned — so a
+// contributor without the key is not blocked, and CI can still smoke-test the
+// release variant.
+val signingProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.isFile) file.inputStream().use { load(it) }
+}
+
+fun signingValue(env: String, key: String): String? =
+    System.getenv(env) ?: signingProperties.getProperty(key)?.takeIf { it.isNotBlank() }
+
+val releaseKeystoreFile = signingValue("MCQ_KEYSTORE_FILE", "storeFile")
+val releaseStorePassword = signingValue("MCQ_KEYSTORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("MCQ_KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("MCQ_KEY_PASSWORD", "keyPassword")
+
+val releaseSigningConfigured =
+    releaseKeystoreFile != null && releaseStorePassword != null &&
+        releaseKeyAlias != null && releaseKeyPassword != null
 
 android {
     namespace = "com.mcqapp"
@@ -14,13 +39,33 @@ android {
         applicationId = "com.mcqapp"
         minSdk = 26
         targetSdk = 36
+        // Semantic versioning from 0.0.1: pre-release while the app is still
+        // finding its shape. Bump the patch for fixes, minor for features.
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "0.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = rootProject.file(releaseKeystoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                // Enables v1+v2+v3 so every Android release can install it.
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             // Shrinking and obfuscation. This is what takes the APK from
             // ~22 MB to single figures: material-icons-extended alone is a
             // 34 MB dependency for the two dozen icons actually used, and R8

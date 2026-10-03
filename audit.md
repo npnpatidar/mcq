@@ -69,7 +69,7 @@ Everything else on this list is independent of release state.
 | A22 | P1 | Data | Backup silently drops all scheduling | `[x]` fixed |
 | A23 | P1 | Privacy | Question text logged in cleartext to a shareable file | `[x]` fixed |
 | A24 | P1 | Privacy | `allowBackup="true"` with no data-extraction rules | `[x]` fixed |
-| A25 | P2 | Tests | 1 of 11 ViewModels tested | `[~]` results screen done, rest pending |
+| A25 | P2 | Tests | ViewModel test coverage (5 of 11) | `[~]` 6 ViewModels still uncovered |
 | A26 | P2 | Tests | `PdfPaperWriter` (549 lines) untested | `[~]` tests written, blocked by Robolectric |
 | A27 | — | Tests | 2 UI tests for 12 screens, string-keyed assertions | `[-]` declined: needs a new test dependency |
 | A28 | P2 | CI | No lint job, no release build, divergent SDK setup | `[x]` fixed |
@@ -588,11 +588,22 @@ and that shared preferences are still included.
 
 ## P2 — tests, CI, docs, code health
 
-### A25 · `[~]` · 1 of 11 ViewModels tested — results screen done · `read`
-Only `EditorViewModelTest` exists. `TestViewModel` (364 lines: countdown, auto-submit,
-`persistProgress`) and `StudyViewModel` (grading → schedule write) are uncovered;
-`TestTimingTest` only tests the pure helpers. Fix: per-ViewModel Robolectric tests for catch
-branches and mutations; inject the repository instead of casting `(application as McqApplication)`.
+### A25 · `[~]` · ViewModel test coverage — 5 of 11 now covered · `read`
+
+**Partly fixed.** `TestViewModel`, `StudyViewModel`, `LibraryViewModel` and `ResultsViewModel` were all
+covered as a side effect of fixing real defects in them: `SubmissionTest` and `SessionLoadFailureTest`
+(A3/A6), `LibraryViewModelErrorTest` (A5) and `ResultsViewModelTest`. Writing that last one found a
+bug the audit had missed — `ResultsViewModel` had the same stuck-`loading` defect as A6 — which is
+exactly the argument for writing the tests.
+
+**Still uncovered:** `BrowseViewModel`, `HistoryViewModel`, `SearchViewModel`, `BookmarksViewModel`,
+`ImportViewModel` and `SettingsViewModel`.
+
+**Caveat learned the hard way:** a ViewModel test that depends on a *suspending repository call
+completing* was unreliable on this host — the coroutine never ran under looper idling — so that case
+was dropped rather than left flaky. Failure paths, which are what actually regress, are deterministic.
+The structural fix is still to inject the repository instead of casting
+`(application as McqApplication).repository` in each ViewModel.
 
 ### A26 · `[~]` · `PdfPaperWriter` untested — tests written, blocked by the environment · `read`
 549 lines, zero callers in `app/src/test` — and it is the format users print. Fix: assert on

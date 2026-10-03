@@ -13,11 +13,14 @@ review, not independently re-read. `device`: needs a real device/emulator to con
 
 **Status** — `[ ]` open · `[~]` partly done · `[x]` fixed · `[-]` closed (write why).
 
-**Where this ended up (2026-10-02).** 45 items: **36 fixed**, 4 partly done with the remainder
-recorded, and 5 closed by decision — A18/A45 (no migration work wanted pre-release), A27 (UI tests
-need a `compose-ui-test` dependency, not authorised), A29 (docs), A38 (legal notices) and A44
-(R8/signing, deferred). No item is silently dropped: every one has a detail section below saying
-what was done and what was deliberately left.
+**Where this ended up (2026-10-03).** 53 items: **44 fixed**, 1 partly done with the remainder
+recorded (A26), and 8 closed by decision — A18/A45 (no migration work wanted pre-release), A27 (UI
+tests need a `compose-ui-test` dependency, not authorised), A29 (docs), A38 (legal notices) and A44
+(R8/signing, deferred). No item is silently dropped: every one has a detail section below saying what
+was done and what was deliberately left.
+
+Items A46–A53 were regressions introduced by this session's own work and reported by the owner; see
+their own section below.
 
 Test suite grew from 439 to **569** tests, lint is clean, and the debug and release variants both
 assemble. Nine defects were found *by* the new tests and lint rather than by reading — including a
@@ -806,7 +809,7 @@ Reported on 2026-10-02, all traced to changes in this session rather than to lon
 | A50 | P1 | UI | MathLive virtual keyboard lost focus while typing | `[x]` fixed |
 | A51 | P1 | UI | Editor keys blocks by content hash: every keystroke rebuilds the block | `[x]` fixed |
 | A52 | P2 | UX | Always-visible blank image fields in the editor | `[x]` fixed |
-| A53 | P0 | UI | Formula editor deletes characters as you type | `[~]` write-path removed, needs device confirmation |
+| A53 | P0 | UI | Formula editor deletes characters as you type | `[x]` fixed |
 
 ### A47 · `[x]` · Every `.docx` was refused by my own XXE hardening · `read`
 
@@ -874,7 +877,7 @@ the WebView survive typing; a block that moves still gets a new key and is rebui
 `update` block covers value sync so reuse cannot show a stale formula. Two tests now assert the key
 is stable across edits and distinct across position and kind.
 
-### A53 · `[~]` · The formula editor deletes characters as you type · `read`
+### A53 · `[x]` · The formula editor deleted characters as you type — fixed · `read`
 
 The symptom — each keystroke appearing to erase the previous characters — is what a programmatic
 `setValue` does to a MathLive field: it drops the selection, so the next character is inserted at the
@@ -889,10 +892,10 @@ gets a different WebView, because the block key includes position and kind, so n
 `window.setLatex` additionally saves and restores `mf.selection.position` around `setValue`, as
 defence in depth if a write is ever needed.
 
-**Not confirmed:** I cannot observe the WebView from here, so this is reasoned elimination rather than
-a verified fix. Three tests pin the latch and the caret preservation. If characters are still lost,
-the next step is to stop pushing on *any* recomposition and rebuild the WebView only when the block
-identity changes — and to check MathLive's own auto-correct rewriting the input.
+**Confirmed on device 2026-10-02:** the owner verified characters are no longer lost. Three tests pin
+the latch and the caret preservation, but the thing that actually settled it was testing on a real
+device — every one of these editor defects (A50, A51, A53) passed the compiler, lint and the full
+suite while broken.
 
 ### A52 · `[x]` · Three always-visible blank image fields in the editor · `read`
 

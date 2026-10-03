@@ -806,6 +806,7 @@ Reported on 2026-10-02, all traced to changes in this session rather than to lon
 | A50 | P1 | UI | MathLive virtual keyboard lost focus while typing | `[x]` fixed |
 | A51 | P1 | UI | Editor keys blocks by content hash: every keystroke rebuilds the block | `[x]` fixed |
 | A52 | P2 | UX | Always-visible blank image fields in the editor | `[x]` fixed |
+| A53 | P0 | UI | Formula editor deletes characters as you type | `[~]` write-path removed, needs device confirmation |
 
 ### A47 · `[x]` · Every `.docx` was refused by my own XXE hardening · `read`
 
@@ -872,6 +873,26 @@ exactly wrong for the two interactive block types.
 the WebView survive typing; a block that moves still gets a new key and is rebuilt, and the MathLive
 `update` block covers value sync so reuse cannot show a stale formula. Two tests now assert the key
 is stable across edits and distinct across position and kind.
+
+### A53 · `[~]` · The formula editor deletes characters as you type · `read`
+
+The symptom — each keystroke appearing to erase the previous characters — is what a programmatic
+`setValue` does to a MathLive field: it drops the selection, so the next character is inserted at the
+start of the field. The host was pushing a value back in on every recomposition.
+
+Rather than guess at why the "is this my own output?" comparison failed, the whole class of failure
+is removed: `shouldPushLatex` is now a **one-way latch**. Before the user touches the field, an
+external change is still pushed (which is what makes loading and restoring a formula work); on the
+first keystroke the latch closes and the host never writes to that field again. A different block
+gets a different WebView, because the block key includes position and kind, so nothing is left stale.
+
+`window.setLatex` additionally saves and restores `mf.selection.position` around `setValue`, as
+defence in depth if a write is ever needed.
+
+**Not confirmed:** I cannot observe the WebView from here, so this is reasoned elimination rather than
+a verified fix. Three tests pin the latch and the caret preservation. If characters are still lost,
+the next step is to stop pushing on *any* recomposition and rebuild the WebView only when the block
+identity changes — and to check MathLive's own auto-correct rewriting the input.
 
 ### A52 · `[x]` · Three always-visible blank image fields in the editor · `read`
 

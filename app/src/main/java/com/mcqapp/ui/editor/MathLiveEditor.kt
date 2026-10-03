@@ -52,7 +52,13 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         "var applying = false;" +
         "window.setLatex = function (tex) {" +
         "applying = true;" +
+        // Keep the caret where the user left it: a bare setValue drops the
+        // selection, so the next character lands at the start of the field,
+        // which reads as the formula deleting what was already typed.
+        "var pos = null;" +
+        "try { pos = mf.selection.position; } catch (e) {}" +
         "mf.setValue(tex);" +
+        "try { if (pos !== null) mf.selection.position = pos; } catch (e) {}" +
         "setTimeout(function () { applying = false; }, 0);" +
         "};" +
         "mf.addEventListener('input', function () {" +
@@ -76,21 +82,24 @@ internal fun mathLiveFontPx(fontScale: Float): Int =
     (16f * fontScale.coerceIn(0.8f, 1.6f)).roundToInt().coerceIn(12, 26)
 
 /**
- * Whether the field's own value must be pushed back into the WebView.
+ * Whether a programmatic write into the field is allowed at all.
  *
- * Pure so it can be tested. Pushing unconditionally resets the caret on every
- * recomposition; never pushing leaves a recycled WebView showing the previous
- * block's formula. [emitted] is the value this field last reported upwards:
- * when the new value is simply that coming back, the user is the one typing
- * and pushing it again would fight them — which showed up as the virtual
- * keyboard losing focus mid-edit. [latexFromOwnOutput] is the LaTeX this
- * field's own last report converts back to.
+ * Once the user has typed in this field, they own it: writing to it again can
+ * only destroy their input. A bare `setValue` also drops the selection, so the
+ * next character lands at the start of the field and the formula appears to
+ * delete what was already there — which is exactly what was reported. So this
+ * is a one-way latch: once [userEdited] is true, the host never writes again
+ * for the life of this WebView. A different block gets a different WebView
+ * (the block key includes its position and kind), so nothing is left stale.
+ *
+ * Before the user has touched it, an external change is still pushed, which is
+ * what makes loading or restoring a formula work.
  */
 internal fun shouldPushLatex(
     current: String?,
     incoming: String,
-    latexFromOwnOutput: String?
-): Boolean = current != null && current != incoming && incoming != latexFromOwnOutput
+    userEdited: Boolean
+): Boolean = !userEdited && current != null && current != incoming
 
 @Composable
 fun MathLiveEditor(
@@ -101,9 +110,8 @@ fun MathLiveEditor(
     val fontScale = com.mcqapp.util.FontScale.LocalScale.current
     val fontPx = mathLiveFontPx(fontScale)
     val initialJson = remember(initialLatex) { JSONObject.quote(initialLatex) }
-    // The MathML this field last reported upwards, so the update block can tell
-    // "the user is typing" from "the block changed underneath me".
-    val emittedMml = remember { mutableStateOf<String?>(null) }
+    // Latches on the first keystroke; see [shouldPushLatex].
+    val userEdited = remember { mutableStateOf(false) }
     AndroidView(
         // The virtual keyboard panel is absolutely positioned at the
         // bottom of the page; the WebView must be tall enough to show
@@ -121,7 +129,7 @@ fun MathLiveEditor(
                 fun onMathMl(mml: String) {
                     // Bridge callbacks arrive off the main thread.
                     view.post {
-                        emittedMml.value = mml
+                        userEdited.value = true
                         onMathMl(mml)
                     }
                 }
@@ -139,8 +147,7 @@ fun MathLiveEditor(
         // AndroidView's factory runs once. Without this, a block that moved
         // or changed from outside kept showing the previous formula.
         update = { view ->
-            val ownOutput = emittedMml.value?.let { mathMlToLatex(it) }
-            if (shouldPushLatex(view.tag as? String, initialLatex, ownOutput)) {
+            if (shouldPushLatex(view.tag as? String, initialLatex, userEdited.value)) {
                 view.tag = initialLatex
                 view.evaluateJavascript("window.setLatex && window.setLatex(${initialJson});", null)
             }

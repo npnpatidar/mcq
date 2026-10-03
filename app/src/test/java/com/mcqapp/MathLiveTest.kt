@@ -18,30 +18,37 @@ import java.io.File
 class MathLiveTest {
 
     @Test
-    fun theUsersOwnTypingIsNeverPushedBackAtThem() {
-        // The field reports MathML, the block turns it into LaTeX and hands
-        // it straight back. Pushing that would fight the user mid-edit and
-        // cost them the virtual keyboard focus.
-        assertFalse(shouldPushLatex("x^2", "x^3", latexFromOwnOutput = "x^3"))
-        // A change from outside the field still goes through.
-        assertTrue(shouldPushLatex("x^2", "x^4", latexFromOwnOutput = "x^3"))
+    fun theFieldIsNeverWrittenToOnceTheUserHasTypedInIt() {
+        // Regression: a programmatic setValue drops the selection, so the next
+        // character landed at the start and the formula appeared to delete what
+        // was already typed. Once the user has edited, the host must stop
+        // writing entirely.
+        assertFalse(shouldPushLatex("x^2", "x^3", userEdited = true))
+        assertFalse(shouldPushLatex("x^2", "x^2", userEdited = true))
+        assertFalse(shouldPushLatex(null, "anything", userEdited = true))
     }
 
     @Test
-    fun aReportedFormulaRoundTripsToTheLatexTheFieldHolds() {
-        val mml = mathMlToLatex("<math><msup><mi>x</mi><mn>2</mn></msup></math>")
-        assertEquals("x^{2}", mml)
-        assertFalse(shouldPushLatex(null, mml, latexFromOwnOutput = mml))
+    fun anUntouchedFieldStillAcceptsAnExternalChange() {
+        // Loading or restoring a formula has to reach the field.
+        assertTrue(shouldPushLatex("x^2", "x^3", userEdited = false))
+    }
+
+    @Test
+    fun aProgrammaticSetKeepsTheCaret() {
+        // Defence in depth: if a write is ever needed, the selection survives.
+        val html = mathLiveHtml("\"x^2\"")
+        assertTrue("the caret must be saved and restored", html.contains("mf.selection.position"))
     }
 
     @Test
     fun aRecycledEditorOnlyPushesAChangedFormula() {
         // Pushing unconditionally would reset the caret on every
         // recomposition; never pushing leaves the previous formula on screen.
-        assertFalse(shouldPushLatex("x^2", "x^2", latexFromOwnOutput = null))
-        assertTrue(shouldPushLatex("x^2", "x^3", latexFromOwnOutput = null))
+        assertFalse(shouldPushLatex("x^2", "x^2", userEdited = false))
+        assertTrue(shouldPushLatex("x^2", "x^3", userEdited = false))
         // Nothing loaded yet: the factory already set the value.
-        assertFalse(shouldPushLatex(null, "x^2", latexFromOwnOutput = null))
+        assertFalse(shouldPushLatex(null, "x^2", userEdited = false))
     }
 
     @Test

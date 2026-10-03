@@ -809,6 +809,13 @@ succeeds unsigned, so a contributor without the key is not blocked.
 
 Version is **0.0.1** (code 1), semantic versioning from a pre-release start.
 
+**Releases are published by CI, not by hand.** `.github/workflows/release.yml` triggers on any
+two-dot tag (`*.*.*`, glob not regex): `git tag 0.0.1 && git push origin 0.0.1` builds, signs and
+attaches `mcq-<tag>-signed.apk` plus its SHA-256 to a GitHub Release, reusing a hand-made release for
+the same tag rather than duplicating it, and `--clobber` means a re-run leaves one canonical file. It
+fails loudly if the keystore secret is missing rather than publishing something unsigned, and writes
+the keystore fingerprint into the run summary.
+
 **Two risks with the backup arrangement**, both the owner's to resolve:
 1. The key and its password sit in the **same folder**, so anyone who obtains it holds the app's
    signing identity and can ship updates. The password belongs in a password manager instead.

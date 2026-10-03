@@ -1,16 +1,23 @@
 # MCQ App
 
 An offline-first Android app for practicing multiple-choice questions: build papers with
-recursive categories, import question banks from JSON, take timed tests with negative
-marking and per-question weights, study in practice/strict/mistakes modes, review
-explanations, track mastery over time, keep questions fresh with SM-2 spaced repetition,
-and export papers as JSON, ZIP, HTML, or PDF.
+recursive categories, import question banks from **Word (.docx)** or **JSON**, take timed
+tests with negative marking and per-question weights, study in practice/strict/mistakes
+modes, review explanations, track mastery over time, keep questions fresh with SM-2
+spaced repetition, and export papers as JSON, ZIP, HTML, or PDF.
 
 - **Stack:** Kotlin, Jetpack Compose (Material 3), Room, Navigation-Compose, DataStore, Coil, kotlinx.serialization
-- **Requires:** Android 8.0+ (minSdk 26), targetSdk 36. Version 1.0.0.
+- **Requires:** Android 8.0+ (minSdk 26), targetSdk 36. The version shown in Settings → About is
+  derived from the git tag the build came from (`<major>.<minor>.<patch>`); an untagged local
+  build reports `0.0.1-dev`.
 - **Offline:** fully usable without network. The only thing that needs network is loading
   remote-URL images (see [Images](#images)).
-- **Tests:** ~200 JVM unit tests + on-device critical-path UI tests; CI runs both on every push (see [Development](#development--ci)).
+- **Tests:** 580+ JVM unit tests + on-device critical-path UI tests; CI runs both on every push (see [Development](#development--ci)).
+
+New here? The fastest way to get a bank in is to **type it in Word** — see
+[Import: Word documents (.docx)](#import-word-documents-docx). JSON is the fully-featured
+format (papers, categories, bookmarks, history) and is documented in
+[Import: JSON reference](#import-json-reference).
 
 ## Screens
 
@@ -24,7 +31,7 @@ and export papers as JSON, ZIP, HTML, or PDF.
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to edit; export all bookmarks in any format |
 | Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
-| Import | Paste/file-pick JSON → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups) |
+| Import | Import a **Word** bank or **JSON** → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups). See [Word](#import-word-documents-docx) / [JSON](#import-json-reference) |
 | Settings | Theme; Test options (shuffle, practice, strict, auto-advance); full backup; Storage breakdown; export diagnostic logs; about |
 
 ## Question model
@@ -172,10 +179,124 @@ Explanations support an image alongside the text, end to end:
   `explanationImageUrl`); exported in all formats (inline in JSON/HTML, as a file in
   ZIP, drawn in PDF).
 
-## Import: supported JSON
+## Import: Word documents (.docx)
+
+The fastest way to get a bank in: type it in Word (Google Docs and LibreOffice save the same
+format) and pick the file. Nothing to install and no network needed.
+
+A `.docx` is recognised by its **content**, not its name — any zip containing
+`word/document.xml` near the front counts, so renaming it to `.zip` still works. Other files
+fall through to the Anki (`.apkg`) or JSON paths below.
+
+### The document format
+
+One question per block, built from literal marker text at the **start of a line**:
+
+| Line | Marker | Notes |
+|---|---|---|
+| Question | `1.)` | 1–7 digits, a period, then **`)`** — the closing bracket is required |
+| Option A–D | `(a)` `(b)` `(c)` `(d)` | lowercase only; **exactly four**, always |
+| Answer | `Ans.` | case-sensitive, trailing period included |
+| Explanation | `Exp:` | case-sensitive, trailing colon included |
+
+All seven fields are mandatory (stem, all four options, answer, explanation). A document
+missing any of them is **rejected in full** with the offending question number, rather than
+silently losing questions — so if one question is broken, nothing imports.
+
+A complete, valid document:
+
+```
+1.) Which gas do plants absorb during photosynthesis?
+(a) Oxygen
+(b) Carbon dioxide
+(c) Nitrogen
+(d) Hydrogen
+Ans. b
+Exp: Photosynthesis fixes carbon dioxide into glucose using light energy.
+2.) What is the capital of France?
+(a) Rome
+(b) Madrid
+(c) Paris
+(d) Berlin
+Ans. c
+Exp: Paris has been the capital of France since 987.
+```
+
+Rules that follow from how the file is read:
+
+- **Press Enter, not Shift+Enter**, between lines. A hard line break (Shift+Enter) inside a
+  paragraph becomes a real newline, so a continued sentence can sprout a bogus marker. Ordinary
+  soft-wrapping at the right margin is fine — it stays inside the paragraph.
+- **Never indent with Tab.** A tab becomes a space, so `(a) Oxygen` turns into ` (a) Oxygen`
+  and the marker is missed. (Indenting with the ruler or Paragraph dialog is fine — that is
+  formatting, not text.)
+- **Don't let Word auto-format the line into a list.** List numbers and bullets are
+  formatting, so they never reach the parser and the marker disappears. Type `1.)` literally;
+  if Word converts it, undo the automatic formatting.
+- **Markers are lowercase/exact.** `(A)`, `Ans:`, `Ans -`, `answer:`, `Exp.` and `1)` are all
+  *not* markers. In particular `1.` without the bracket is not a question marker.
+- **Anything before the first `1.)` is ignored silently** — that is how a title page works.
+- Options are split off from the end of the question, so a repeated `(b)` swallows the earlier
+  one, and a continuation line beginning with `(a)`–`(d)` corrupts an option. Keep exactly one
+  marker per line and one option per line.
+- `Ans.` takes a **single** option: `Ans. b` is correct, `Ans. b, c` is not (it resolves to
+  nothing and the question imports ungraded). `Ans. 1` means option **(b)** — numeric answers
+  are zero-based.
+
+### Formatting, images and equations
+
+| In Word | Effect |
+|---|---|
+| Bold, italic, underline, strikethrough | preserved |
+| Subscript, superscript | preserved |
+| Text highlight | preserved |
+| Tracked **deletions** | kept, marked as deleted |
+| Tracked **insertions** | **silently dropped** — turn Track Changes off before saving |
+| Tables | become a table element in the question |
+| Inline pictures | embedded as base64, so they work offline |
+
+**Pictures** must be pasted inline into a normal paragraph — in the question, an option, or the
+`Exp:` paragraph. Pictures inside table cells or text boxes do not survive: a cell shows the
+markup as text, and a text box loses its text and reports a skipped-picture warning. A picture
+whose file is missing is skipped with a warning, never fatal. `.docx` images are stored at full
+size and are **not** downscaled on import.
+
+**Equations** (Word's equation editor) become MathML for the common cases: plain runs,
+superscripts, subscripts, fractions, and square roots. Anything more elaborate — Σ or ∫,
+auto-brackets, matrices, hats, combined sub-and-superscript — is kept as plain linear text and
+the preview warns you:
+
+> An equation uses unsupported constructs and was kept as plain text — check its question after import.
+
+Check the import preview for that warning before shipping an equation-heavy bank.
+
+### What a .docx import produces
+
+A Word import always creates **one paper** titled `Imported Questions` holding **one category**
+titled `Uncategorized`. Papers, categories, per-question marks, difficulty and tags cannot be
+expressed in a Word document, so every question arrives with `marks` 1, difficulty `medium` and
+no tags. Re-importing the same document merges into that paper by title, so edits update in
+place instead of duplicating.
+
+### If a .docx is rejected
+
+| Message | Cause |
+|---|---|
+| `No questions found: the document is empty.` | nothing readable in the document body |
+| `No questions found: expected 'N.)' numbered questions with '(a)..(d)', 'Ans.' and 'Exp:' markers.` | no `N.)` line was found — check for auto-numbering, leading tabs, or `N.` written without the bracket |
+| `Malformed question 3.): missing answer, explanation.` … | that question is missing a required field; the number says which. The message ends by restating the expected layout. |
+| `That file is too large to import (limit 64 MB).` | over the 64 MB import cap |
+| `Not a Word document: w:body is missing.` | the file uses Strict OOXML (`purl.oclc.org`); re-save it from Word in the normal format |
+
+Limits: 64 MB per picked file, at most 4096 archive entries, 64 MB per decompressed part and
+256 MB decompressed in total. `.doc` (old binary Word), `.rtf` and `.odt` are **not** supported
+— save as `.docx`.
+
+## Import: JSON reference
 
 Three shapes are accepted. Missing ids are filled in; unknown fields are ignored.
-Malformed rows are skipped, never fatal (a 1000-case seeded fuzzer pins this).
+Malformed rows are skipped, never fatal (a 1000-case seeded fuzzer pins this). Files nested
+more than 200 levels deep are rejected.
 
 **1. Bare array** (simplest — e.g. `simple_questions.json`):
 
@@ -185,6 +306,11 @@ Malformed rows are skipped, never fatal (a 1000-case seeded fuzzer pins this).
     "options": ["Venus", "Mars", "Jupiter", "Mercury"] }
 ]
 ```
+
+A bare array carries no structure, so it is wrapped for you: one paper `Imported Questions`,
+one category `Uncategorized`, and **no** bookmarks, attempts or schedules. Option ids are
+assigned `a`, `b`, `c`, … in order. Use the full schema when you want papers, categories or
+an answer key.
 
 **2. Full schema** (canonical — what export produces; `sample_paper.json` demos it):
 
@@ -207,9 +333,18 @@ Malformed rows are skipped, never fatal (a 1000-case seeded fuzzer pins this).
     "questions": [ /* optional top-level questions, kept in an "Uncategorized" category */ ]
   }],
   "bookmarks": ["q-s1"],
-  "attempts": [ /* full backups only; restored with history, see below */ ]
+  "attempts": [ /* full backups only; restored with history, see below */ ],
+  "scheduling": { /* optional: SM-2 card state keyed by question id */
+    "q-s1": { "ease": 2.5, "intervalDays": 6, "dueAt": 1767225600000,
+              "reps": 2, "lapses": 0, "leech": false,
+              "lastReviewedAt": 1766601600000 }
+  }
 }
 ```
+
+`bookmarks`, `attempts` and `scheduling` are optional and ignored by foreign files. Paper and
+category ids are optional too — a missing paper id is generated, and a missing question id is
+derived from the question's content so re-imports line up.
 
 **3. Legacy aliases.** Every level accepts common variants:
 
@@ -226,8 +361,42 @@ Malformed rows are skipped, never fatal (a 1000-case seeded fuzzer pins this).
 | explanation | `explanation`, `explain`, `reason` |
 | option text | `text`, `value` (plain strings also accepted as options) |
 | tags | array, or comma-separated string |
-| correct answer | `correctOptionIds` (array or comma string) → `correctIndex` → `answer` / `correct` / `correctAnswer`, resolved as option id first, then option text (case-insensitive), then numeric index. Absent = no answer key. Dangling ids are dropped (question becomes ungraded). |
+| correct answer | `correctOptionIds` (array or comma string) → `correctIndex` → `answer` / `correct` / `correctAnswer`, each resolved as option **id** first, then option **text** (case-insensitive), then a **zero-based** index. Absent = no answer key. Ids that match no option are dropped; if that empties the key, the next form is tried and failing that the question is ungraded (never unwinnable). |
 | marks | `marks`, `points`, `weight` (default `1`; invalid/negative → `1`). A correct answer scores `marks`; a wrong one deducts `marks × negativeMarking`. `maxScore` is the sum of graded marks. |
+
+**4. Rich content.** Where a plain string is accepted (`text`/`question`,
+`explanation`/`explain`/`reason`, `options`), you can instead supply a **list of elements**.
+These take precedence over the plain-string form, and they are what export writes and what the
+[Word importer](#import-word-documents-docx) produces:
+
+```json
+{
+  "question_elements": [
+    { "type": "text",  "content": "Which expression equals " },
+    { "type": "math",  "content": "<math><mfrac>…</math>" },
+    { "type": "image", "content": "<img src=\"data:image/png;base64,iVBORw0…\">" },
+    { "type": "table", "content": [["Ruler", "Year"], ["Akbar", "1556"]] }
+  ],
+  "options_elements": {
+    "a": [{ "type": "text", "content": "Akbar — 1556" }],
+    "b": [{ "type": "text", "content": "Akbar — 1605" }]
+  },
+  "explanation_elements": [{ "type": "text", "content": "He acceded in 1556." }]
+}
+```
+
+| `type` | `content` |
+|---|---|
+| `text` | a string; inline HTML (`<strong>`, `<em>`, `<u>`, `<del>`, `<mark>`, `<sub>`, `<sup>`) and `<math>…</math>` blocks are rendered |
+| `math` | a `<math>…</math>` MathML fragment |
+| `image` | an `<img src="…">` tag; the `src` is extracted |
+| `table` | an array of rows, each row an array of cell strings |
+
+In `options_elements` the object **keys are the option ids**, which is also what
+`correctOptionIds` must then refer to. Only these four `type` values are read; anything else is
+ignored rather than guessed at. Image `src` values are portable when they are `data:` URIs or
+`http(s):`/`content:` links — a local file path (`/storage/…`, `file://…`, a bare relative
+path) cannot travel with the JSON, so the import warns you and the image will not display.
 
 ## Import semantics and nuances
 
@@ -325,6 +494,22 @@ be deleted along with the paper, and be rebuilt from attempt history. See
 
 ## Edge cases & gotchas (observed, not theoretical)
 
+**Word imports**
+
+- **One bad question rejects the whole document.** Unlike JSON, which skips only the broken
+  row, a malformed marker anywhere in a `.docx` aborts the import with that question's number.
+- **The `)` in `1.)` is not optional**, even though a stray `)` never leaks into the question
+  text. `1.` alone yields "No questions found".
+- **Word's automatic list numbering is invisible to the parser**, so a bank that looks perfect
+  on screen can import as zero questions. This is the single most common Word failure.
+- **A leading Tab destroys any marker**, including `1.)`. Ruler indentation is fine.
+- **A `.docx` import cannot carry structure**: papers, categories, marks, difficulty and tags
+  are all fixed (1 paper, 1 category, `marks` 1, `medium`, no tags).
+- **Unresolvable answers import ungraded instead of failing** — `Ans. b, c` is not multi-answer.
+- Tracked-change **insertions vanish**; turn Track Changes off before saving.
+
+**JSON imports**
+
 - **Answer-only edits do re-import.** The duplicate hash covers text and options, but a
   re-imported question kept under the same id with a fixed key, explanation, marks,
   difficulty, or tags updates that question instead of being skipped as a duplicate.
@@ -374,8 +559,9 @@ Local builds need the Android SDK and a QEMU aapt2 wrapper on ARM64 hosts (see
 `BUILDING.md` for the exact command). CI (`.github/workflows/build.yml`, x86_64) runs
 on every push/PR:
 
-- **build**: `assembleDebug` + full JVM unit test suite (~200 tests: scoring, parser +
-  1000-case seeded fuzz, import/export writers, domain rules, SM-2 scheduling), uploads
+- **build**: `assembleDebug` + full JVM unit test suite (580+ tests: scoring, JSON + DOCX
+  parsers + 1000-case seeded fuzz, import/export writers, domain rules, SM-2 scheduling),
+  uploads
   APK + results.
 - **ui-test**: boots an API-34 emulator (KVM enabled) and runs the critical-path tests
   (library → start → answer/skip/wrong → submit → results score, and library → study →

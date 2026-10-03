@@ -64,15 +64,17 @@ class StringResourceUsageTest {
     @Test
     fun noResourceValueContainsAKotlinTemplatePlaceholder() {
         // A literal like "$mistakeCount" must never be extracted: it rendered
-        // on screen as the text "$mistakeCount" instead of the count.
+        // on screen as the text "$mistakeCount" instead of the count. This also
+        // caught the version resource when "%1$s" was first added.
         val xml = File("src/main/res/values/strings.xml").readText()
+        // A legitimate format specifier ("%1$s") also contains a '$', so those
+        // are removed before looking for a raw Kotlin template.
+        val formatSpecifier = Regex("""%\d+\$[sd]""")
         val offenders = Regex("""<string name="([a-z0-9_]+)">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
             .findAll(xml)
-            .map { it.groupValues[1] }
-            .filter { name ->
-                Regex("""<string name="$name">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
-                    .find(xml)?.groupValues?.get(1)?.contains('$') == true
-            }
+            .map { it.groupValues[1] to it.groupValues[2] }
+            .filter { (_, value) -> value.replace(formatSpecifier, "").contains('$') }
+            .map { it.first }
             .toList()
         assertTrue("these resources hold a raw Kotlin template: $offenders", offenders.isEmpty())
     }

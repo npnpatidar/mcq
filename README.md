@@ -24,12 +24,12 @@ format (papers, categories, bookmarks, history) and is documented in
 | Screen | What it does |
 |---|---|
 | Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Settings, per-paper category trees (reorderable), test-by-category, JSON import |
-| Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); edit, duplicate, delete; **selection mode** for bulk delete / move / copy (incl. cross-paper); manual up/down reorder |
+| Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
 | Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume |
 | Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. SM-2 schedules the next review (see below) |
 | Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
-| Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to edit; export all bookmarks in any format |
+| Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
 | Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
 | Import | Import a **Word** bank or **JSON** → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups). See [Word](#import-word-documents-docx) / [JSON](#import-json-reference) |
 | Settings | Theme; Test options (shuffle, practice, strict, auto-advance); full backup; Storage breakdown; export diagnostic logs; about |
@@ -146,13 +146,19 @@ UI.
 
 ## Browse: search, filters, bulk ops
 
+- **Per-question time** ticks once a second from its own flow, so the header updates
+  without re-running the question body and its images. It works for untimed papers
+  too, and the last question's time is banked before the attempt is saved.
 - **Search** matches text, tags, and option texts (case-insensitive), composed with the
   attribute chips.
 - **Uncategorized** chip shows top-level questions (kept in a category literally titled
   `Uncategorized`) plus any blank-`categoryId` rows (which imports never produce).
-- **Select mode**: checkbox multiple questions, then Delete (with confirmation) or
-  Move/Copy — the move dialog offers Move vs Copy chips, a paper picker, and that
-  paper's categories. Cross-paper moves reuse import-grade id namespacing.
+- **Select mode**: checkbox multiple questions, then Edit (bulk marks/difficulty/tags),
+  Move/Copy, Delete (with confirmation), or **Export** — the export dialog offers the
+  same formats as a paper export and writes only the ticked questions, grouped under
+  the categories they came from, with their ids intact so a re-import merges.
+  The move dialog offers Move vs Copy chips, a paper picker, and that paper's
+  categories. Cross-paper moves reuse import-grade id namespacing.
 - **Reorder**: up/down arrows on the unfiltered list swap same-category neighbours
   (shown only where neighbours are real siblings); the observed list refreshes live.
 - Per-card Edit (arms the Prev/Next queue), Duplicate (`-copy` ids), Delete.
@@ -394,9 +400,15 @@ These take precedence over the plain-string form, and they are what export write
 
 In `options_elements` the object **keys are the option ids**, which is also what
 `correctOptionIds` must then refer to. Only these four `type` values are read; anything else is
-ignored rather than guessed at. Image `src` values are portable when they are `data:` URIs or
-`http(s):`/`content:` links — a local file path (`/storage/…`, `file://…`, a bare relative
-path) cannot travel with the JSON, so the import warns you and the image will not display.
+ignored rather than guessed at.
+
+> **Careful:** every entry must be an element *object*. A bare string is dropped without any
+> warning, so `{"a": ["Oxygen"]}` imports an option with **blank text**. Use
+> `[{"type": "text", "content": "Oxygen"}]`, or just the simpler `"options": ["Oxygen"]`.
+
+Image `src` values are portable when they are `data:` URIs or `http(s):`/`content:` links — a
+local file path (`/storage/…`, `file://…`, a bare relative path) cannot travel with the JSON, so
+the import warns you and the image will not display.
 
 ## Import semantics and nuances
 
@@ -463,12 +475,34 @@ weight with refresh.
 
 ## Demo data
 
-`Load sample paper` imports `assets/sample_paper.json` — **General Knowledge Demo**, 27
-questions in 9 categories: Science (+ nested Physics), History, Geography, Sports, Visual
-Round (question/option images, a bar-chart interpretation), **Order Check** (sequentially
-titled steps with varied `marks`, for verifying shuffle and weighting), and **Edge Cases**
-(missing answer, missing explanation, missing id, empty options) plus a top-level Titanic
-question landing in Uncategorized. Re-loading merges by stable ids — never duplicates.
+`Load sample paper` imports `assets/sample_paper.json` — **Sample Bank — English + हिन्दी**,
+44 questions across 12 categories, covering everything the format can carry:
+
+| Category | Shows off |
+|---|---|
+| Science (+ nested Chemistry, Physics) | states of matter, a molecule **picture**, an atom-number **table**, a **chemical equation** in MathML, a conservation-law question in Hindi |
+| Physics | the `v = u + at` **formula**, an analogue **clock picture**, Planck's `E = hν` against a **spectrum picture** (with E = mc² as a distractor), a worked-values table in the explanation |
+| Mathematics | the quadratic **formula**, a **bar-chart picture** read for two bars, a speed question whose explanation is a **table**, a right-triangle **diagram** plus Pythagoras, a Hindi place-value question, and four **harder** ones: differentiating a cubic (multi-correct, worked from a **table** of values), a **combinatorics** block count, an **arithmetic-series** sum, and a **probability** fraction read off a **table** of outcomes |
+| Visual Reasoning | four **option pictures** (which two are quadrilaterals — multi-correct), a **pie-chart picture** with two equal sectors, a **number-line picture** |
+| History | a **table of rulers as options** read for two correct pairs (multi-correct), British ascendancy in Hindi, the Titanic |
+| Geography | a **dam table as options** deliberately left with **no answer key**, and the longest east-flowing river in Hindi |
+| Sports | uses the legacy `name` alias for the category title |
+| Multiple Correct Answers | three multi-correct questions, including one with **five options** and three right answers |
+| Bilingual — English + हिन्दी | each question states itself in both languages |
+| Order Check and Marks | ordered steps with `marks` of 2, 1 and 3 for verifying shuffle and weighting |
+| Edge Cases | no answer key, no options, no explanation, only one option, and one question with no id that uses the older scalar `image` / `options[].image` / `explanationImage` fields |
+
+Plus one top-level question that lands in **Uncategorized**, with a picture in its explanation.
+
+Everything is regenerated by `tools/gen_sample_paper.py`, which draws the figures with a
+built-in PNG encoder (no Pillow needed) and writes the asset. The asset is full of base64, so
+edit the script rather than the JSON:
+
+```bash
+python3 tools/gen_sample_paper.py
+```
+
+Re-loading merges by stable ids — never duplicates.
 
 ## Data & storage
 

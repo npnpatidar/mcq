@@ -3,57 +3,419 @@
   "papers": [
     {
       "id": "paper-demo",
-      "title": "General Knowledge Demo",
-      "description": "A sample paper to explore the app: text, images, explanations, every question format and incomplete edge cases",
-      "durationMinutes": 15,
+      "title": "Sample Bank — English + हिन्दी",
+      "description": "A showcase bank: MathML formulas and chemical equations, tables and pictures in the question, the options and the explanation, single and multiple correct answers, English and Hindi, plus deliberate edge cases.",
+      "durationMinutes": 20,
       "negativeMarking": 0.25,
       "categories": [
         {
           "id": "cat-science",
           "title": "Science",
-          "parentId": null,
           "questions": [
             {
-              "id": "q-s1",
-              "text": "Which planet is known as the Red Planet?",
-              "options": [
-                { "id": "a", "text": "Venus" },
-                { "id": "b", "text": "Mars" },
-                { "id": "c", "text": "Jupiter" },
-                { "id": "d", "text": "Mercury" }
+              "id": "q-sci-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which two statements about the states of matter are correct?"
+                }
               ],
-              "correctOptionIds": ["b"],
-              "explanation": "Mars appears red because of iron oxide (rust) on its surface.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "A gas has a fixed volume but no fixed shape."
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "A liquid keeps its volume but takes the shape of its container."
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "A solid has both a fixed shape and a fixed volume."
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "All three states are compressible to the same degree."
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Liquids and solids both have definite volume, and only solids have a definite shape. Gases have neither, and they compress readily, so (a) and (d) are both wrong."
+                }
+              ],
               "difficulty": "easy",
-              "tags": ["space", "planets"]
+              "marks": 1,
+              "tags": [
+                "states-of-matter",
+                "multi-correct"
+              ],
+              "correctOptionIds": [
+                "b",
+                "c"
+              ]
             },
             {
-              "id": "q-s2",
-              "text": "What is the chemical symbol for gold?",
-              "options": [
-                { "id": "a", "text": "Go" },
-                { "id": "b", "text": "Gd" },
-                { "id": "c", "text": "Au" },
-                { "id": "d", "text": "Ag" }
+              "id": "q-sci-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The diagram shows one molecule of water. How many atoms does it contain?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAL4AAACECAIAAACh9wYBAAADZ0lEQVR42u3cYXKbMBAGUB0nx8zxeiu3f5KhgEEISUar902n4zpAyfJYYQykl0hRkhIIOoKOjEgn/eT3n8sfLSdYTrZdyPb1wZJXE6wmO12fnOXsruTuf3T/91ot5/idIHTeQTneVO+2yupFziY/3VRly8lBcH+unNc5P41DZ/fvnBK/m6uMzqWug85T6GwbyelYUEYnZ1ArWE4mgrLfa3fG1euDQS3ygNVo7xy36xzvEvldZ2g3I9F5yLHO6THcpQErTtfp/Anr9JPIdq7i5eR8wmp3rLNdw2jHOiLoCDqCjqAjgo6gI+gIOoKOCDqCjqAj6Ag6IugIOoKOoCOCjoSjM/q9JuHrkB5Vo+PMY2WIOqRR6jWJnoHqkB5VrPuTxUAzRB3SQ+rVaPrh3AxUhzRQvaLqGbQOn6eT8+Zr86SfeHSGq0N6VL3y3w+jZ9w6pA/W637Jhn/OyMh1SI/a1S7thWHoDFoHdNBBBx10Ms+izkDnyXVIn6pXrZIN/FSswetgwDJgoYMOOuiggw46HY8QnU0epQ6+w3po4/EdVmG7zpnx+ydD0/m3/jfr8LHN99gTG6dzfS/Sbg1bu/ml43qdtnp23dTS0/m64OXKu0rw7ga7OlkVQKk0VdD8rrZrk3vv8Xf0rBb+5+sr589NQMcr7I6IJnryN0YOoAI07wAVo9ldT/dh9T5EvaTnDppdQHVXr+ehekA6VY4htlvoZrMpaD9lTXGAM1KvcDnYTnXR5LSfkGjC0jnY0Ru5WeoJ32yC09ndeE3drPTERhOfznITthuqdoet8G5ekzyaqY+bXT2RqzoPnUsCDpaWqSe2mynolLWc+3TCPw0oaTnV6Ww/baETn06Oj5xp0Jmu5dSiM4MedNBBBx100EEHHXTQQWcqOgUnA6vTCaxH19F10EEHHXTQQQcddNBBBx10muipRcc35zM2HtfroFN+YtBVguiUN577dOJXdR46ne+IQIcebuam82p81/BUQ9V0dF597zlHx7BlqELnfz3dnq+Djvaj2aBTo/1M22zQWevp9gRTdMIC6vDcZHQmNaRQ6GRhUgR0BB1BR9ARdETQEXQEHUFHBB1BR9ARdAQdEXQEHUFH0BF0RNARdAQdQUfQUQJBR9ARdAQdEXQEHUFH0BF0RNARdORh+QtCJS94kQ1OWwAAAABJRU5ErkJggg==\" alt=\"One water molecule: two hydrogen atoms bonded to one oxygen atom\">"
+                }
               ],
-              "correctOptionIds": ["c"],
-              "explanation": "Au comes from the Latin word 'aurum', meaning shining dawn.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "1"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "2"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "3"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "6"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The picture shows a single molecule made of one oxygen atom and two hydrogen atoms, so three atoms in total. One molecule is the smallest unit that still has the formula "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": "."
+                }
+              ],
               "difficulty": "easy",
-              "tags": ["chemistry"]
+              "marks": 1,
+              "tags": [
+                "atoms",
+                "image-question"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cat-chemistry",
+          "title": "Chemistry",
+          "parentId": "cat-science",
+          "questions": [
+            {
+              "id": "q-chem-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which of these chemical equations are balanced?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "math",
+                    "content": "<math><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></math>"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "math",
+                    "content": "<math><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><msub><mi>O</mi><mn>2</mn></msub></math>"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "math",
+                    "content": "<math><mi>Na</mi><mo>+</mo><mi>Cl</mi><mo>&#x2192;</mo><mi>NaCl</mi></math>"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "math",
+                    "content": "<math><mi>C</mi><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mi>CO</mi></math>"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "math",
+                  "content": "<math><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " balances: four hydrogen atoms and two oxygen atoms on each side. "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>Na</mi><mo>+</mo><mi>Cl</mi><mo>&#x2192;</mo><mi>NaCl</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " balances with one atom of each element on both sides. The other two do not conserve atoms."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "equations",
+                "multi-correct"
+              ],
+              "correctOptionIds": [
+                "a",
+                "c"
+              ]
             },
             {
-              "id": "q-s3",
-              "text": "Which of the following are noble gases?",
-              "options": [
-                { "id": "a", "text": "Helium" },
-                { "id": "b", "text": "Oxygen" },
-                { "id": "c", "text": "Neon" },
-                { "id": "d", "text": "Argon" }
+              "id": "q-chem-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Use the table to answer: which element has the atomic number 17?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Atomic number",
+                      "Symbol",
+                      "Element name"
+                    ],
+                    [
+                      "8",
+                      "O",
+                      "Oxygen"
+                    ],
+                    [
+                      "11",
+                      "Na",
+                      "Sodium"
+                    ],
+                    [
+                      "17",
+                      "Cl",
+                      "Chlorine"
+                    ],
+                    [
+                      "26",
+                      "Fe",
+                      "Iron"
+                    ]
+                  ]
+                }
               ],
-              "correctOptionIds": ["a", "c", "d"],
-              "explanation": "Helium, neon and argon are noble gases (group 18). Oxygen is not.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Oxygen"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Sodium"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Chlorine"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Iron"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Reading across the row that starts with 17 gives the symbol Cl and the name Chlorine. Atomic numbers increase with the number of protons, so 17 protons is chlorine."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "periodic-table",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
+            },
+            {
+              "id": "q-chem-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The table lists four acids. Which two are mineral (inorganic) acids rather than organic acids?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Acid",
+                      "Formula",
+                      "Class"
+                    ],
+                    [
+                      "Sulfuric",
+                      "H₂SO₄",
+                      "Mineral"
+                    ],
+                    [
+                      "Acetic",
+                      "CH₃COOH",
+                      "Organic"
+                    ],
+                    [
+                      "Nitric",
+                      "HNO₃",
+                      "Mineral"
+                    ],
+                    [
+                      "Citric",
+                      "C₆H₈O₇",
+                      "Organic"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Sulfuric only"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Acetic only"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Sulfuric and Nitric"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Citric only"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Sulfuric and nitric acids contain no carbon and are classed as mineral acids. Acetic and citric acids are organic because they are built on a carbon chain."
+                }
+              ],
               "difficulty": "medium",
-              "tags": ["chemistry"]
+              "marks": 1,
+              "tags": [
+                "acids",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
+            },
+            {
+              "id": "q-chem-4",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "रासायनिक संयोजन में क्या संरक्षित रहता है?"
+                },
+                {
+                  "type": "text",
+                  "content": "(Which quantity is conserved in a chemical reaction?)"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "केवल द्रव्यमान"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "केवल ऊर्जा"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "द्रव्यमान और आवेश दोनों"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "केवल आयतन"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "रासायनिक संयोजन में परमाणुओं की संख्या बदलती नहीं है, इसलिए द्रव्यमान और आवेश दोनों संरक्षित रहते हैं।"
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " में बाईं और दाईं ओर परमाणुओं की गिनती समान है।"
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "hindi",
+                "conservation"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
             }
           ]
         },
@@ -63,134 +425,1436 @@
           "parentId": "cat-science",
           "questions": [
             {
-              "id": "q-p1",
-              "text": "What is the SI unit of force?",
-              "options": [
-                { "id": "a", "text": "Joule" },
-                { "id": "b", "text": "Newton" },
-                { "id": "c", "text": "Watt" },
-                { "id": "d", "text": "Pascal" }
+              "id": "q-phy-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "A car starts from rest and accelerates at a constant rate. Using "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>v</mi><mo>=</mo><mi>u</mi><mo>+</mo><mi>a</mi><mi>t</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ", which quantities stay constant?"
+                }
               ],
-              "correctOptionIds": ["b"],
-              "explanation": "Force is measured in newtons (N), after Isaac Newton.",
-              "difficulty": "easy",
-              "tags": ["physics"]
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "The velocity"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "The acceleration"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "The starting velocity u"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "The time elapsed"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "math",
+                  "content": "<math><mi>v</mi><mo>=</mo><mi>u</mi><mo>+</mo><mi>a</mi><mi>t</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " treats u and a as fixed inputs, so both stay constant, while the velocity grows from zero and the elapsed time keeps increasing. Two worked rows:"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "u (m/s)",
+                      "a (m/s²)",
+                      "t (s)",
+                      "v (m/s)"
+                    ],
+                    [
+                      "0",
+                      "2",
+                      "3",
+                      "6"
+                    ],
+                    [
+                      "4",
+                      "2",
+                      "3",
+                      "10"
+                    ]
+                  ]
+                },
+                {
+                  "type": "text",
+                  "content": " Only the last column changes between rows, which is exactly why velocity cannot be the constant."
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "kinematics",
+                "formula"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
             },
             {
-              "id": "q-p2",
-              "text": "The speed of light in vacuum is approximately:",
-              "options": [
-                { "id": "a", "text": "3 × 10^6 m/s" },
-                { "id": "b", "text": "3 × 10^7 m/s" },
-                { "id": "c", "text": "3 × 10^8 m/s" },
-                { "id": "d", "text": "3 × 10^9 m/s" }
+              "id": "q-phy-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "What time does the clock show?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJYAAACWCAIAAACzY+a1AAADwUlEQVR42u3d0bKDIAxF0fz/T3tf70zHjpWQnBx23ltDlihQLXERwyMoAYQEhASEEBIQEhDubWEEhOpC6wHhPDMn0UBuumVMl3v4DbuPAuFvNX3xVS2HPpQwvXYrHx8BGa5yKYQjLMMYL5FQGTLU/DYdYlzaAwjLqrDvy0UgwxhvN6EIZHj7tRAWK0aj31WyBl1AeNc6K8IvzRu9yvyZfD1k9Pr5EdYrRq/faMUvaZeO18r8rvOipvnR2PlOU9w1PcVvumLgN10xXP0+py69Ke2rTLj6fc6420e/u36KcR1/ChJuKlFY+t0RipxbuYUKS7/rZunScr4Yln5fLqR+iuHq9//iqTnPyUopEoslPidzzS38uuBEwqWnLL399K8T62UMb79Zl/p3SYZrXWalWk04axV7FuGLPMO7Cw7Kto5w3G9J4wh/fnVr8TCMSLMyfK0YKeVgXriIt5JtFPR0CO8SSylyeJzOTmlDCKGX39DMf8oZwjMIRz9UOJrw0b+yeHfBE27hEB5AOP25bPtbAIQQQihOaPB2i/2NHEIIIVQm9HhN0IPw23v93l3whOEYhBBCCCGEuwht/u/AfkQGIYQQQgghhBBCCCGEEEKoSmj8t2fFOfQQ/v9gS/nUtnXZ1xkgVPd7SZiySWPn7ht6m1Wu76F4d6BI/8b0c3CE4nodXh9l+4hUZBzRRZhyQ2kekSqMxXt74e6x/RHzQu+prT+hQUAIIQEhASGEEEJIjCREcYQfhBASEBJFhCi2+70kpCPqd0EIIST0CVEU94MQQmIEIYrKfhCeR4iizoz+N0I6omwXhPAkQhQ1/SA8lXDWtlvKVCkjx9Wd0+iX6x1u8VL3fv9C8NIhK/YvZI4oMhdcImRcIzKKySFEsb0LXifsa+/dBRMIUeztgu8JURTxWyJEUcFvlZCbokL1QuE8Kl4BceqCCYTiiuInVs4/+6glhF8Poaai7ImVm1UYl6z93xhrSrSLUKFkaoSb6hMjsjSY8+yrTAzK1WMKn16TGJcxfhWEKFbWIcoaMHQOt5JzzUkcCqfh6M0F2y9CoXAxMSMsvolEWVPvWmWwS2nvICCKW/vZPBvCrhFc/w4SNUc0a1QnYX2Dtw8Iux+PVtkTa1/LN07INJ5tb74PFVRhy5qW1IZeausX+Qv5ib/MbU51KuHu6mRtWySIp0W4r1gpez8qL/kOeLpksYI/v+uVd+ijCR8W9OHGget7B0qXaNAiiODGkhCKWg4ryDU8DjRzI3xibN7Ai4CQgJCAEEICQqIz/gDq01nw14JV6QAAAABJRU5ErkJggg==\" alt=\"An analogue clock showing three o'clock\">"
+                }
               ],
-              "correctOptionIds": ["c"],
-              "explanation": "Light travels at about 299,792,458 m/s ≈ 3 × 10^8 m/s.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "3:00"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "12:15"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "6:00"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "9:45"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The short hour hand points at 3 and the long minute hand points at 12, which is three o'clock."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "clock",
+                "image-question"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-phy-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The spectrum runs from violet down to red. Which formula links the energy of a single photon to its frequency?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAO4AAAA+CAIAAACjsrBaAAAB4ElEQVR42u3dvXWDMBQGUE2Smjo1Q6T2JBkik2QS166zQYZIqhDMr4AjQOJ+RwUh9pNMrvELBQ4/IkUkOARSIOUQQn87/KX9q87OsR/be7oTP2d0fc+PmZg6cj0TdTqvffBoSMaUI/+o048fpDy/uMlnxVSO3x7c09kQlA+jvG6F7T1js0j2lAdbjv7jFzUY05pnW5fZuZauEOWrUN748b2u+4yvE7/apedpyekKxqCYfCnPbvu3r1jKs+3EYGOwqA3oX0OYeKusuxIS0wLNXqtBOXvKIiiLoCyCsgjKgrIIyiIoi6Asl6IcUkZ99TfWX0b5/XZPMZqXWtf3FKOp/3J7pBhN/erzLcVo6n9/1SnGf/2PKsVo6j9eqxQDZZRRRhlllFFGGWWUUUYZZZRRRhlllFFGGWWUUUYZZZRRRhlllFFGGWWUUUYZZZRRRhlllFFGGWWUUUYZZZRRRhlllFFGGWWUUUYZZZRRRhlllHOl7O446pdwdyIRtz8UQVnkEMo7fJtdfHu0pXi6r+JLvX7HPxvKu1VOMYv6R9VHOZuVd6bI9KyPcjYNRueylLe6BkODUfLxSVL5bB9wKF/k+Bx/Vt6hI3QFo+zjf5ZeWeScQVlQFkFZBGURlAVlkfPnF6y3m7dG2SwBAAAAAElFTkSuQmCC\" alt=\"The visible spectrum from violet to red\">"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "math",
+                    "content": "<math><mi>E</mi><mo>=</mo><mi>h</mi><mi>&#x03BD;</mi></math>"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "math",
+                    "content": "<math><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></math>"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "math",
+                    "content": "<math><mi>V</mi><mo>=</mo><mi>I</mi><mi>R</mi></math>"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "math",
+                    "content": "<math><mi>&#x03C1;</mi><mo>=</mo><mfrac><mi>m</mi><mi>V</mi></mfrac></math>"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "math",
+                  "content": "<math><mi>E</mi><mo>=</mo><mi>h</mi><mi>&#x03BD;</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " ties a photon's energy to its frequency, where h is Planck's constant. "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " is mass-energy equivalence and says nothing about frequency. Red sits at the lowest-frequency end of the spectrum shown, so it carries the least energy per photon."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "photons",
+                "formula",
+                "image-question"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cat-mathematics",
+          "title": "Mathematics",
+          "questions": [
+            {
+              "id": "q-math-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The roots of a quadratic equation are given by "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>x</mi><mo>=</mo><mfrac><mrow><mo>&#x2212;</mo><mi>b</mi><mo>&#x00B1;</mo><msqrt><mrow><msup><mi>b</mi><mn>2</mn></msup><mo>&#x2212;</mo><mn>4</mn><mi>a</mi><mi>c</mi></mrow></msqrt></mrow><mrow><mn>2</mn><mi>a</mi></mrow></mfrac></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ". Which expression is the sum of the two roots?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "−b/a"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "b/a"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "−c/a"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "2a"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Adding the two branches cancels the square root and leaves "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mo>&#x2212;</mo><mfrac><mi>b</mi><mi>a</mi></mfrac></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ", which is the standard sum-of-roots result."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "quadratic",
+                "formula"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-math-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "In the bar chart, which two bars are taller than bar C?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAACcCAIAAADOAbHkAAADyElEQVR42u3dwVHjMBQGYCrhnEq2CKpJFZypZM9UwWEPtLEcmMkYK1aMbclP0vePhwmOk3jCx4us5MVP/0U6ypOnQIDe9EiTzNbcfs3cJL1Vun16w/Vr7j6WAL0oLLPm+3J+m6U1+cdK73nNGgE6EOh0+1kZXtpGeQZ6y5Bj6SU+P+TIDB4e/hdN7392w7v3wzTQ26vmryr0tmuXRupL9wA00LFAZ8rw0jHoGugCdG6KIzOKXbNmzWNlZlQebiNAiwAtUgH09Xqd/fqdzBqRoKBTu7PLS9eKNFChb5dv0NM1Io2Bzv8UaQn0tCTfXSPS3pBj8xja/K6cf1CYn9P41SwH0HJyhT42H/8+LZb9SxTQKrR0VaGBFqBFgBaggRaggRagRYAWAVqABlqABrorDVUCtNQD/X65FF2AFqCBFqCnObzHG2igTwNdoscbaKAjgt5cpIEGOtCQY3+PN9BAx6rQO3u8gQbaGFqANsshQFeIduUmljqgdX2LCh2sQgMNNNACNNACNNACNNBAAy1AAy1AAy1AAw000K2D7qDPGWigf+zY5fVP0QVooIEGGmiggc6f1m2Ez0MDPQTo9Mz1S1cBDXRLLVizNf11fQM9BOhxur6BHqtCd9/1DfSgoI2hgdb1DTTQur6r9zlXAK3rW9e3Cq1CB67QQAMNNNBAAw000EADDTTQQAMNNNBAAw000EADDTTQQAMNNNBAAw000EDvBO3jo0D32fXtA/5A99D1nYLWJFsIdJBvJOu8BUuTbE3Qn2/PRZehQc8avzXJAt3VQaExNNBmOYAGWpPsqE2ydUBrkvXGigqtQgMNNNBAAw000EADDTTQQAMNNNBAAw000EADDTTQQAN9KOg4nwAGGuhjQF9e/hZdgAYaaKCBBhpoJw0CGuhKoOuc1g1ooE8YcqTt30AD3UlP4bFd30ADXRV0OoA25AC67S+ayYyqgQa64e/lMMsBtHnoH7nfbl0etK5vXd/eWFGhVWiggQYaaKCBBhpooIEGGmiggQYaaKCBBhpooIEGGmiggQYaaKCBBhpooIuB3vlhUaCBDt0kCzTQnZxJFmigOwG9pyUWaKDDtWAZcgBtDA000APPcgT5Ol27EW03GpiHDntqZEtby8P/h6pvrIiULvARTxMhEn3IIQK0SKeg6xwgrz8M8GzEeTbaAz19yk58+uxGwN0Auqvd8EdpFXSEF7ggL7JAq9AqNNBA2w2gu/8TmuUwyyECtAjQIkAL0CJAiwAtArQALQK0CNAiQIsALUCLAC0CtAjQIkDLaPkCxM3/eGBVx0cAAAAASUVORK5CYII=\" alt=\"Bar chart of 2025 sales with bars A to D\">"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "A and D"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "B and D"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "B only"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "All except A"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Bar C stands at 45. Bar B reaches 70 and bar D reaches 90, so both clear it, while bar A at 30 does not."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "charts",
+                "image-question",
+                "multi-correct"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-math-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "A car covers 240 km in 4 hours and then 150 km in 2 hours. What is its average speed for the whole journey?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "60 km/h"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "65 km/h"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "70 km/h"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "75 km/h"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Leg",
+                      "Distance",
+                      "Time",
+                      "Speed"
+                    ],
+                    [
+                      "First",
+                      "240 km",
+                      "4 h",
+                      "60 km/h"
+                    ],
+                    [
+                      "Second",
+                      "150 km",
+                      "2 h",
+                      "75 km/h"
+                    ],
+                    [
+                      "Total",
+                      "390 km",
+                      "6 h",
+                      "65 km/h"
+                    ]
+                  ]
+                },
+                {
+                  "type": "text",
+                  "content": " Average speed is total distance over total time, 390 ÷ 6, which is 65 km/h. Taking the mean of the two leg speeds instead gives 67.5 km/h, which is wrong because the faster leg covered less time."
+                }
+              ],
               "difficulty": "medium",
-              "tags": ["physics"]
+              "marks": 1,
+              "tags": [
+                "speed",
+                "table-explanation"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-math-4",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "भारतीय संख्या पद्धति में 47 का अंतिम अंक क्या है?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "7"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "4"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "11"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "1"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "दशमलव प्रणाली में संख्या 47 के दाहिने सातवाँ अंक इकाई का है, इसलिए अंतिम अंक 7 है।"
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "hindi",
+                "number-place-value"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-math-5",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "A right-angled triangle has the measurements below. What is the length of the hypotenuse?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Measurement",
+                      "Value"
+                    ],
+                    [
+                      "Short leg (a)",
+                      "5 cm"
+                    ],
+                    [
+                      "Other leg (b)",
+                      "12 cm"
+                    ],
+                    [
+                      "Angle at A",
+                      "90°"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "13 cm"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "15 cm"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "17 cm"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "19 cm"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The diagram shows the right angle at A, which is what makes side BC the hypotenuse:"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAL4AAACYCAIAAADV48ThAAAC5UlEQVR42u3cwW6DMBQEQP7/dyv1kEvbU5Qa28BDYBvPKqoiikIUpm9NonT5EQll8RIIOoKODEdn+Z9ky3q30pbkV5v7lI6ef8arx9nzDOWOqZM98Yfur4lk96kct+Km8jilLTISnezPOpQr6EhLOtnhX9onOXnJluw+m8c6WqnodDR16hMiViKmziyFVZ863dLBqK+1zub11LpKsrVSqZ7SKS8tyV1hPep9nRIaQWcDzf7tgg466FxDR9BBR9ARdAQdQUfQcXEu6EjfdD6h+CACHXTkLjqCjgg6go6gI+gIOtddqHu50QnSoQedOB2A0DlFhx50jtH5+n793ehBJ0jnUw9A6ByjQw86cTrKC51TdIwfdOJ06EEnTkd5oXOKjvGDTpwOPejE6SgvdE7RMX7QidOhB504HeWFzik69KATp6O80HnRg04DOsoLnZfxg04bOvSgo7zQaUTH+EGHHnRa0FFe6Bg/6DSiQw86ygudRnToQUd5odOCDj3oKC90GtExftChB50OADn36Bg/6NCDTv90lBc6xg869KAzHB3lhY7xgw496AxHR3mhQw86ygud4ejQg47yQsf4QYcedCaio7zQMX7QoQcd5YXOXHQmHz/o0DMBnfcZqmxRXuhkzk1yf73F+EHnGJ0Ov+Q1g55R/1t7AqjPb+qg090y+c3lc/C4bkdnb3P1ttaZrbzGK6z6NRc96HjTGZ3p6Tx1/KBDDzrKCx3jBx10nqwHHeWFjvGDDj3opHQORXmhE5k6E46o4fSgo7zQoQedmekMVF7oGD/o0IMOOkOU1xJDcPQPAp37x0/pDTN06BmHTunAe54QOveX15nzhc7U4wcdt6AedNyC5dUdndjiC537x093y2R0RtHzqCssuTqPXesIOpc8Fbniwx90BB25l87wy2SZmo4IOoKOoCPoCDoi6Ag6go6gI+iIoCPoCDqCjgg6go6gI+gIOiLoCDqCjqAj6IigI5fnF3/VgHSCLU5OAAAAAElFTkSuQmCC\" alt=\"Triangle ABC with a right angle marked at A\">"
+                },
+                {
+                  "type": "text",
+                  "content": "Pythagoras gives "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><msup><mi>c</mi><mn>2</mn></msup><mo>=</mo><msup><mi>a</mi><mn>2</mn></msup><mo>+</mo><msup><mi>b</mi><mn>2</mn></msup></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " so the hypotenuse is √(25 + 144) = √169 = 13 cm."
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 2,
+              "tags": [
+                "geometry",
+                "formula",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-math-6",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Differentiate "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>f</mi><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><msup><mi>x</mi><mn>3</mn></msup><mo>&#x2212;</mo><mn>6</mn><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>9</mn><mi>x</mi></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " and find every value of "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><msup><mi>f</mi><mo>&prime;</mo></msup><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><mn>3</mn><msup><mi>x</mi><mn>2</mn></msup><mo>&#x2212;</mo><mn>12</mn><mi>x</mi><mo>+</mo><mn>9</mn></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " that equals zero."
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "x",
+                      "f(x)"
+                    ],
+                    [
+                      "0",
+                      "0"
+                    ],
+                    [
+                      "1",
+                      "4"
+                    ],
+                    [
+                      "2",
+                      "2"
+                    ],
+                    [
+                      "3",
+                      "0"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "0 only"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "1 only"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "1 and 3"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "2 only"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Differentiating term by term gives "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><msup><mi>f</mi><mo>&prime;</mo></msup><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><mn>3</mn><msup><mi>x</mi><mn>2</mn></msup><mo>&#x2212;</mo><mn>12</mn><mi>x</mi><mo>+</mo><mn>9</mn></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ", which factors as "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>3</mn><mo>(</mo><mi>x</mi><mo>&#x2212;</mo><mn>1</mn><mo>)</mo><mo>(</mo><mi>x</mi><mo>&#x2212;</mo><mn>3</mn><mo>)</mo></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ". It vanishes at x = 1 and x = 3, and the table agrees: f(1) = 4 and f(3) = 0 are the turning points."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 3,
+              "tags": [
+                "calculus",
+                "formula",
+                "table-question",
+                "multi-correct"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
+            },
+            {
+              "id": "q-math-7",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "In how many ways can five people be seated in a row if two of them insist on sitting together?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "24"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "48"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "96"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "120"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Treat the pair as one block: the block plus the other three people is 4 units, giving "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>4</mn><mo>!</mo><mo>=</mo><mn>24</mn></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " arrangements, and the two inside the block can swap, giving "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>24</mn><mo>&#x00D7;</mo><mn>2</mn><mo>=</mo><mn>48</mn></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ". Ignoring the constraint would give 5! = 120, which is option (d)."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "combinatorics",
+                "formula"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-math-8",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Find the sum of the first 20 terms of "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>3</mn><mo>+</mo><mn>7</mn><mo>+</mo><mn>11</mn><mo>+</mo><mo>&#x22EF;</mo></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " using "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><msub><mi>S</mi><mi>n</mi></msub><mo>=</mo><mfrac><mi>n</mi><mn>2</mn></mfrac><mo>(</mo><mn>2</mn><mi>a</mi><mo>+</mo><mo>(</mo><mi>n</mi><mo>&#x2212;</mo><mn>1</mn><mo>)</mo><mi>d</mi><mo>)</mo></math>"
+                },
+                {
+                  "type": "text",
+                  "content": "."
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "n",
+                      "1",
+                      "2",
+                      "3",
+                      "20"
+                    ],
+                    [
+                      "Term",
+                      "3",
+                      "7",
+                      "11",
+                      "79"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "800"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "820"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "840"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "860"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Here a = 3 and d = 4, so the twentieth term is 3 + 19 × 4 = 79 and the sum is "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mfrac><mi>n</mi><mn>2</mn></mfrac><mo>(</mo><mn>2</mn><mi>a</mi><mo>+</mo><mo>(</mo><mi>n</mi><mo>&#x2212;</mo><mn>1</mn><mo>)</mo><mi>d</mi><mo>)</mo></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " = 10 × (6 + 76) = "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mn>820</mn></math>"
+                },
+                {
+                  "type": "text",
+                  "content": "."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "series",
+                "formula",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-math-9",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "A fair six-sided die is rolled twice. What is the probability that the two numbers add up to 7?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "First die",
+                      "Second die"
+                    ],
+                    [
+                      "1",
+                      "6"
+                    ],
+                    [
+                      "2",
+                      "5"
+                    ],
+                    [
+                      "3",
+                      "4"
+                    ],
+                    [
+                      "4",
+                      "3"
+                    ],
+                    [
+                      "5",
+                      "2"
+                    ],
+                    [
+                      "6",
+                      "1"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "1/6"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "1/12"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "5/36"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "1/3"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "There are 36 equally likely ordered outcomes and the table lists the 6 that sum to 7, so "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>P</mi><mo>=</mo><mfrac><mi>w</mi><mn>36</mn></mfrac><mo>=</mo><mfrac><mn>6</mn><mn>36</mn></mfrac></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ". Treating the sum as unordered would halve the count and give the wrong 1/12."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "probability",
+                "formula",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cat-visual",
+          "title": "Visual Reasoning",
+          "questions": [
+            {
+              "id": "q-vis-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which two of the four shapes are quadrilaterals? Look at each option and tick every shape with exactly four straight sides."
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfElEQVR42u3ZsQ3AIAwEQO8/WaZACgVD0EBGoEiBrXu9B7j2Ha2P8o3vVulAQkJCQkJCQkJCQkJCQkJCQkJC5kFGkkCeIef7XFtISEhISEhISEhISEhISEhISEhIyIxIC3p+pK8WJCQkJCQkJCQkJCQkJCQkJCQk5N/I8t3rMpbw72mfVAAAAABJRU5ErkJggg==\" alt=\"A rectangle\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Rectangle"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Square"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAABW0lEQVR42u3aMQ7CQBBD0b3/BekoKKi5ASCQUEQgZGZs77KytTnA058y7Xg6T//a/btOPSONNNJII4000kgjjTRya+2xmZFtMSP/FtlWmxZ5uBzub07kq94SKXB2QD6Fypg65FtGZUwR8qNQ5pQi10LN0SqQGxk1MXXIb0JBTDryZ0ZBTBFyW8iOyUXuzMiOqUDuEVJjEpGhjNSYLGRCyHNykVEh6WgpyHRGUkwiMidkxMQjixkZMVnIihAeE4yEZITHRCKBQqwTj0QJgUcLQ8IzAmOCkVghKiYGScqIiolEMoSQmAAkNSMkZhUpENadGCRbWDzaElKWsRgTgNQIKzHzSHHGSswqUilMx0wiu2RMxywh9cJczAyyY8ZczDCyuzDhTCL7CqNHG0MOkjEaM4McQRiKGUAOlTEUM4wcR7g/5l5kG35G+qdeI4000kgjjTTSSCONHA05/bsBgRCY7ue8pGIAAAAASUVORK5CYII=\" alt=\"An equilateral triangle\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Triangle"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAABLklEQVR42u3aOw7CMBBFUe9/g3QUFNTZASAKhIhAeH5+Gd2Rs4Cj58SfyThfru3HeDy31gUSJEiQIEGCBAkyp8az2iLHrrohx5dqgnwnbaftNWqcFchvwg9nHjUX+ZtX5kxE/iksoKYgZ3nZznikWZj3NQpGOnlJkYYh/QHmOWOQ4cJYqheZxwt0upAFwhCqEVnJ8zstyCVCzwIzh1zLM0c6gRQRGpzTyOW8PTUlSSlhMFItzJR3EqT0QmJcQg4Uo2UzALIXUmTHk753PUqMIFVnbPopRCHMovMkSLm5GnD9oR+j6yILZC/kktu6Bfeu4jGCFJuxnk5BTC9EOUaQSsiVXa2y13Jxf7ImTJCFyIJOs9A/A0ml9WNEW6R4gQQJEiRIkCBBggQJUg/ZftwBynmcQGTsO58AAAAASUVORK5CYII=\" alt=\"A regular pentagon\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Pentagon"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "A quadrilateral is any closed shape with four straight sides. The rectangle and the square both qualify, the triangle has three sides and the pentagon has five."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "shapes",
+                "option-images",
+                "multi-correct"
+              ],
+              "correctOptionIds": [
+                "a",
+                "b"
+              ]
+            },
+            {
+              "id": "q-vis-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The circle shows four sectors labelled A to D. Which two sectors are equal in area?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "A and B"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "B and C"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "A and D"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "C and D"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The sectors run 35, 25, 25 and 15 per cent of the circle. B and C are both 25 per cent, so they are exactly equal in area, while A is the largest and D the smallest."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "pie-chart",
+                "image-question"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-vis-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which number is marked on the number line?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAO4AAABKCAIAAAAzAf+NAAACCUlEQVR42u3cQXKDIBiAUY6T+5+it0p2WUCkyI8i+r7pdDJpFYuvSl00vaVblEyBbkg5pZS9bnzn2/f97M3ye34cyq8vlXuujF7ZuR5HOUOzRSd7UeG+RbCRcrlt5QiF8g+IdaYt33MQ5croQjlH8+8VN/tcWWBsvROhXN4crC40Zq3ceFWua9tF2VVZMynX5aGsAynvfYZQeYLRQrayK08wtIOyhLKEsoSyhLJQllC+cn+vl0lAeW3B5QcWKN/BMc0ooyyUURbKRzimGWVXZaGMslBGWW/PlTlG+Z6mzQPKKAtllIUyykIZZZRRFsooC2WUhTLKKKMslFEWyigLZZRRFsrPoxz536/B/xt76NB1ylc+8lsO3bE5yo4cZWfFpKHsrBgaZZRN2lDK0jmhLJTdKx25tbKzYtJQdlYMjTLKJg1lR/5oytI1Q1koS+tS7nhwnW0eXDl17KH7kfuQg4+PHtwwPm/nn6++/aS+MbqnJs5o4i/SyYPGN+/eT/xc922ezfOu/fRQnnVeg1fH4IjxS+MqjidS3tq2ZQJT3xmdRXnKCmHWwU9cFw1cYMQpN5LrvPgvereduNQ+/y4/ajE296duJ5eWmNkrnJX4j/xAygMXJyMpB286Q7ad8sf4xDv1io+MIn9QlYMe8gRDunIoC2UJZQllCWWhLKEsoSyhLJQllCWUpXgfBKtx8DwqK4QAAAAASUVORK5CYII=\" alt=\"A number line from 0 to 10 with a marker between 3 and 4\">"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "3"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "3.5"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "4"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "7.5"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The marker sits exactly halfway between 3 and 4, so it reads 3.5. It is well to the left of 7, so 7.5 is not a candidate."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "number-line",
+                "image-question"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
             }
           ]
         },
         {
           "id": "cat-history",
           "title": "History",
-          "parentId": null,
           "questions": [
             {
-              "id": "q-h1",
-              "text": "Who was the first President of the United States?",
-              "options": [
-                { "id": "a", "text": "Thomas Jefferson" },
-                { "id": "b", "text": "John Adams" },
-                { "id": "c", "text": "George Washington" },
-                { "id": "d", "text": "Benjamin Franklin" }
+              "id": "q-his-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Match each ruler to the year their reign in India began. Which two matches are correct?"
+                }
               ],
-              "correctOptionIds": ["c"],
-              "explanation": "George Washington served as the first U.S. President from 1789 to 1797.",
-              "difficulty": "easy",
-              "tags": ["history", "usa"]
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "table",
+                    "content": [
+                      [
+                        "Ruler",
+                        "Began reign"
+                      ],
+                      [
+                        "Akbar",
+                        "1556"
+                      ]
+                    ]
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "table",
+                    "content": [
+                      [
+                        "Ruler",
+                        "Began reign"
+                      ],
+                      [
+                        "Aurangzeb",
+                        "1707"
+                      ]
+                    ]
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "table",
+                    "content": [
+                      [
+                        "Ruler",
+                        "Began reign"
+                      ],
+                      [
+                        "Babur",
+                        "1526"
+                      ]
+                    ]
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "table",
+                    "content": [
+                      [
+                        "Ruler",
+                        "Began reign"
+                      ],
+                      [
+                        "Humayun",
+                        "1600"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Akbar acceded in 1556 after Humayun's death, and Babur founded the empire at Panipat in 1526, so (a) and (c) are right. "
+                },
+                {
+                  "type": "text",
+                  "content": "Aurangzeb took the throne in 1658 and died in 1707, so (b) gives his death, not his accession. Humayun ruled from 1540 and was restored in 1555, never in 1600, so (d) is wrong too."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "mughal",
+                "table-question",
+                "multi-correct"
+              ],
+              "correctOptionIds": [
+                "a",
+                "c"
+              ]
             },
             {
-              "id": "q-h2",
-              "text": "The Berlin Wall fell in which year?",
-              "options": [
-                { "id": "a", "text": "1987" },
-                { "id": "b", "text": "1989" },
-                { "id": "c", "text": "1991" },
-                { "id": "d", "text": "1985" }
+              "id": "q-his-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "भारत में अंग्रेज़ों का स्थापत्य काल कौन-सा था?"
+                },
+                {
+                  "type": "text",
+                  "content": "(Which period saw British ascendancy in India?)"
+                }
               ],
-              "correctOptionIds": ["b"],
-              "explanation": "The Berlin Wall fell on 9 November 1989.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "1858 से 1947 तक"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "1600 से 1761 तक"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "1947 से 1999 तक"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "1757 से 1857 तक"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "1858 में भारत पर क्राउन नियंत्रण स्थापित हुआ और यह 1947 तक रहा। 1757 से 1857 का समय केवल कंपनी शासन का था।"
+                }
+              ],
               "difficulty": "medium",
-              "tags": ["history", "world"]
+              "marks": 1,
+              "tags": [
+                "hindi",
+                "colonial"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-his-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which ship carried the Titanic on its maiden voyage, and in which year did it sink?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "RMS Olympic, 1912"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "RMS Titanic, 1912"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "RMS Britannic, 1915"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "RMS Titanic, 1898"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "RMS Titanic struck an iceberg on 15 April 1912 on her maiden voyage. Britannic sank in 1916 during the First World War, and Olympic never sank at all."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "general-knowledge",
+                "legacy-fields"
+              ],
+              "correctOptionIds": [
+                "b"
+              ],
+              "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKoAAAB4CAIAAADt4v7xAAAC2UlEQVR42u3bO1LjQBQFUC3MMWua1RHPckiImcBFwaCPhax+77X63HJkjKTqcyXb3fL0IQNnMgT4Bb/gnz6z9sz0f9Ze8/3fl3e89PzD7cz3Pj8YOci/ONwbz2wjHeCfb+3HdvbsXZrwrw3x2n+tbeFX/A+3hj+a/+HbwY8/Pcn/fTvbe8dZ6Ow/5eK/83jY13rvD+bXgLRP/of5D3yD2LN38b1f8At+wS/4Bb/gF/yCH7/gF/yCX/ALfsFf7HDd1IUfG37BL6Pxv729a8DQ/BqAH//A/BowOr8GjM6vAaPzV2tAX19Nr8BfqgH4E/jrNAA/fvzh/EUa0Ne85KX4K4x7XxNTV+NPH3f8yfy5Q9/XvOQ1+ROHvq95ycvyZw19X/OS+COOsGwDrsyfMu715yUH4o8f9/oTU2PxB497/Ymp4fjv4/6r4L8U/33o/95uex7t+MstT4/Dv78BTflrLU/jj+cvtD45FP/OBgTwV1mfHI1/TwNi+EusTw7I/7ABYfz565Nj8m83IJI/eX1yWP6NBuAfgn+tAcH8mcvT+Cvwp61PDs6/2IAU/pz1SfzzBmTxJ6xP4p83IJE/en0S/7wBufyRDcC/0IB0/rAG4F++MwA//vx5SfzR/E+O++nzkvij+Z8Z9xYTU/i/BjcydY4Q/9fg7nzlzjv7Tp/09ft+/Pjxj8M/SXjw4y9z8b8f0+324tH0ceL7y/n8GhBgX5FfA/qyb/LJH38Xl/22/BpQ/9Rv9b0ffxenflt+DSh+6jec9dOA+vZtJ33xV77sB/FrQNlTv/mSjwZUto9Y8cNf87Ifyq8BBU/9oPV+DahpH3e7B/5ql/0Efg0odeqH3uyFv9qpn8CvAXVO/ehbPTWglH3Cnb74i1z2M/kl5Tc9+fwaUMf+o7ufeQh+wS/4Bb/gF/yCX/ALfjnO//LndfHhNVd6DX784uIv+AW/4Bf8gl/wC37BLxfKP4DWNaPmcnk7AAAAAElFTkSuQmCC"
             }
           ]
         },
         {
           "id": "cat-geography",
           "title": "Geography",
-          "parentId": null,
           "questions": [
             {
-              "id": "q-g1",
-              "question": "What is the capital of Australia?",
-              "options": [
-                "Sydney",
-                "Canberra",
-                "Melbourne",
-                "Perth"
+              "id": "q-geo-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The table lists four dams. Which two are on the same river?"
+                }
               ],
-              "answer": "Canberra",
-              "explanation": "Canberra was purpose-built as the capital as a compromise between Sydney and Melbourne.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "table",
+                    "content": [
+                      [
+                        "Dam",
+                        "River"
+                      ],
+                      [
+                        "Bhakra",
+                        "Sutlej"
+                      ],
+                      [
+                        "Hirakud",
+                        "Mahanadi"
+                      ],
+                      [
+                        "Sardar Sarovar",
+                        "Narmada"
+                      ],
+                      [
+                        "Nagarjuna Sagar",
+                        "Krishna"
+                      ]
+                    ]
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Bhakra and Hirakud"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Hirakud and Sardar Sarovar"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Sardar Sarovar and Nagarjuna Sagar"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Every dam in the table sits on a different river, so no pair shares one. Read the River column to check: Sutlej, Mahanadi, Narmada, Krishna. This question is deliberately left without an answer key."
+                }
+              ],
               "difficulty": "medium",
-              "tags": "geography, capitals"
-            },
-            {
-              "id": "q-g2",
-              "text": "Which is the largest ocean on Earth?",
-              "options": [
-                "Atlantic Ocean",
-                "Indian Ocean",
-                "Arctic Ocean",
-                "Pacific Ocean"
-              ],
-              "correctIndex": 3,
-              "explanation": "The Pacific Ocean covers about one-third of Earth's surface.",
-              "difficulty": "easy",
+              "marks": 1,
               "tags": [
-                "geography",
-                "oceans"
+                "dams",
+                "table-question",
+                "ungraded"
               ]
             },
             {
-              "id": "q-g3",
-              "text": "Which river flows north through Egypt into the Mediterranean Sea?",
-              "options": [
+              "id": "q-geo-2",
+              "question_elements": [
                 {
-                  "id": "a",
-                  "text": "Amazon"
+                  "type": "text",
+                  "content": "भारत की सबसे लंबी नदी कौन-सी है?"
                 },
                 {
-                  "id": "b",
-                  "text": "Nile"
-                },
-                {
-                  "id": "c",
-                  "text": "Mississippi"
-                },
-                {
-                  "id": "d",
-                  "text": "Yangtze"
+                  "type": "text",
+                  "content": "(Which is the longest river in India?)"
                 }
               ],
-              "correct": "b",
-              "explanation": "The Nile flows northward through Egypt into the Mediterranean Sea (see its course).",
-              "explanationImage": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAABkCAIAAABM5OhcAAADX0lEQVR42u3dwVHjUBCE4Q6HSDaSjWmD4Ew4XDhvEksVewBTyJI18zQ981fN3Wr1ZyFsvWf9fX1hmPARp4ABFgMsBlgMAywGWAywGAZYl83T72dOArBiJG0PpwhYkZ4QBqx0UvAC1llVv/68YQtYAaTeJW0PvIB1QNVdT3uEAQtVp0ht8AIWpAJUcekC1ksGKS5d02Flq8LWRFhrVGFLY1WlkvqJF7BQhS1g1VY105ZQhS1gnYV1oaobW8BCFbaAVV7VHFtCFbaA5XfDPvZGXqjCFrD6qGpvS9xacbMFrG6qGtsSqrCVAqtNGF9VLW01gWV0wz7kRl49kriranbReo+gBmGWPbqetP6ima2P45d7mIyOH1hcj62bOmT91z2815N7Nwy39flUyDfJgiWBV9kyfat/PgkyfZfEdvnwFgx5vOxs3WSX6RU4VVWRddXWdcgxTJ6qaosWfeuQ3RU4aQOPqLzhly6XOu7AKm7LZVuYIbY2MsrozjGqqjUr3wNtOdYhlzBeqtrbuptLFmGs6+lna08i1Q/ToJhOtnZmUfEwbSrpEWR/ClUO0+yPiHucQ8evsmFa/rue8XFJzTpUM0zjD4EcbT1QhwqGaf/Ropetx+pQqTBzvgxx/Arh0IGpTpi8vfx7P/ZTsw5V+AY374vbys8F5NmqUIeqPcY0RNUCW9c+WKbwMDvzLHiud+Bj+7F1nDkqJYW5/GnxsUtCitShkDAn87BwqtRyo5ADCIPFcjwWSH6BdckC4vAXbbDxwZqTs2xJtxpsedBm14MeO1B81KEGYTpt0tKmDrlvANRvy7Iedch6c6muG3i61/EflvvWnY1h+W6mKvfNhrtuwG9n66YOmV6BJ/wcjXUdcgwz58fZfOuQ3RV42m/gutRxB1ZxWzN/Eb5+Hd8bkdGd48yfgzetQy5hxqoyrUMWYYarcqxD9cOgyrEOFQ+DKtM6VDkMqnzrUNkwqLKuQzXDoMq9DhUMg6oGdahUmJUbhPazld3IoQNTnTCoKmXrZB0KCRO7kzGqGtSha8NE7TjARC3qiqpD4WF25oFUKV5ntuGIh7XN6+jAIs/W+jpUIQ8aSvEKOQBdGwYB1XhFvbSuykPrpXiFv6g470zGAIsBFgMsBlicBQZYDLAYYDFM8PwD/rf4KpVXteQAAAAASUVORK5CYII=",
-              "difficulty": "hard",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "गंगा"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "ब्रह्मपुत्र"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "गोदावरी"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "महानदी"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "गंगा की लंबाई लगभग 2525 किलोमीटर है, जो भारत की किसी भी अन्य नदी से अधिक है, इसलिए यही सही उत्तर है।"
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
               "tags": [
-                "geography",
+                "hindi",
                 "rivers"
+              ],
+              "correctOptionIds": [
+                "a"
               ]
             }
           ]
@@ -198,251 +1862,746 @@
         {
           "id": "cat-sports",
           "name": "Sports",
-          "parentId": null,
           "questions": [
             {
-              "id": "q-sp1",
-              "text": "How many players does a football (soccer) team field on the pitch?",
-              "options": [
-                "9",
-                "10",
-                "11",
-                "12"
-              ],
-              "correctAnswer": "11",
-              "explanation": "A football team fields 11 players, including the goalkeeper.",
-              "difficulty": "easy",
-              "tags": "sports, football"
-            },
-            {
-              "id": "q-sp2",
-              "text": "Which of these are Olympic sports?",
-              "options": [
+              "id": "q-spt-1",
+              "question_elements": [
                 {
-                  "id": "a",
-                  "text": "Swimming"
-                },
-                {
-                  "id": "b",
-                  "text": "Chess"
-                },
-                {
-                  "id": "c",
-                  "text": "Athletics"
-                },
-                {
-                  "id": "d",
-                  "text": "Formula 1"
+                  "type": "text",
+                  "content": "How many players from one team are on the field in a standard association football match?"
                 }
               ],
-              "correctOptionIds": [
-                "a",
-                "c"
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "9"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "10"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "11"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "12"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Each side fields eleven players, one of whom is the goalkeeper, with no substitutes counted until the match is under way."
+                }
               ],
-              "explanation": "Swimming and athletics are core Olympic sports; chess and Formula 1 are not.",
-              "difficulty": "medium",
+              "difficulty": "easy",
+              "marks": 1,
               "tags": [
-                "sports",
-                "olympics"
+                "football"
+              ],
+              "correctOptionIds": [
+                "c"
+              ]
+            },
+            {
+              "id": "q-spt-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which resting heart rate would most likely belong to a trained endurance athlete?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Athlete",
+                      "Resting rate"
+                    ],
+                    [
+                      "A",
+                      "72 bpm"
+                    ],
+                    [
+                      "B",
+                      "50 bpm"
+                    ],
+                    [
+                      "C",
+                      "68 bpm"
+                    ],
+                    [
+                      "D",
+                      "65 bpm"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "A"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "B"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "C"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "D"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "A larger stroke volume from endurance training lowers resting heart rate, so the fastest resting rate in the table belongs to the trained athlete."
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "table-question",
+                "fitness"
+              ],
+              "correctOptionIds": [
+                "b"
               ]
             }
           ]
         },
         {
-          "id": "cat-visual",
-          "title": "Visual Round",
-          "parentId": null,
+          "id": "cat-multichoice",
+          "title": "Multiple Correct Answers",
           "questions": [
             {
-              "id": "q-v1",
-              "text": "Which colour is shown in the image?",
-              "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAAB4CAIAAAD6wG44AAAA4UlEQVR42u3RAQ0AIAgAQUIQgsSmM4wpHMpu+wR/sTI1uLAAsAALsJ4A3lX6OsCABViABViABViAAQMGLMACLMACLMCAAQMWYAEWYAEWYAEGbBBgARZgARZgAQYMGLAAC7AAC7AAAwYMWIAFWIAFWIAFGDBgwAIswAIswAIMGDBgARZgARZgAQYMGLAAC7AAC7AACzBgwIAFWIAFWIAFGDBgwAIswAIswAIswIA9AizAAizAAizAgAEDFmABFmABFmDAgAELsAALsAALsAADBgxYgAVYgHUHWMMCDFiABVg9HUUAYLbMoI09AAAAAElFTkSuQmCC",
-              "options": [
-                "Red",
-                "Green",
-                "Blue",
-                "Yellow"
-              ],
-              "correctIndex": 0,
-              "explanation": "The picture is a solid red rectangle.",
-              "difficulty": "easy",
-              "tags": [
-                "visual",
-                "colours"
-              ]
-            },
-            {
-              "id": "q-v2",
-              "text": "Which swatch below is blue?",
-              "options": [
+              "id": "q-mc-1",
+              "question_elements": [
                 {
-                  "id": "a",
-                  "text": "Red",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAVElEQVR42u3aQQ0AMAzEsANWsANWMIOxtbIUAv4nJ1lZwMbCumpBYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgP8McpmBPu/gCMo8c6Fv3AAAAAElFTkSuQmCC"
-                },
-                {
-                  "id": "b",
-                  "text": "Green",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAV0lEQVR42u3aQQ0AIAwAsYmYHESgBGFTiYzB0uQM9H8RJ2cG9i1s1R4QGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBjYyzCHKVhrFyOqatGJzAzIAAAAAElFTkSuQmCC"
-                },
-                {
-                  "id": "c",
-                  "text": "Blue",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAVUlEQVR42u3aQQ0AMAgAMYQhbHIQNjGTMSBNzkD/F5G1M7CxsDx3QWBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYJ1hDlOwrz1G+MH8gxqazwAAAABJRU5ErkJggg=="
-                },
-                {
-                  "id": "d",
-                  "text": "Yellow",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAAA2CAIAAADrp0ihAAAAWElEQVR42u3aQQ0AIBAEsRWGRJSgBCXoQMbBpckY6H+yZloWsG9hZ48GgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBvQxzmIKVdgFOChk2qmRfdgAAAABJRU5ErkJggg=="
+                  "type": "text",
+                  "content": "Select every prime number."
                 }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "2"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "9"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "13"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "21"
+                  }
+                ],
+                "e": [
+                  {
+                    "type": "text",
+                    "content": "1"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "A prime has exactly two positive factors. 2 and 13 qualify; 9 = 3², 21 = 3 × 7 and 1 has a single factor."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "multi-correct",
+                "number-theory"
               ],
               "correctOptionIds": [
+                "a",
                 "c"
-              ],
-              "explanation": "The third swatch is blue.",
-              "difficulty": "easy",
-              "tags": [
-                "visual",
-                "colours"
               ]
             },
             {
-              "id": "q-v3",
-              "text": "Which of these shapes is a triangle?",
-              "options": [
+              "id": "q-mc-2",
+              "question_elements": [
                 {
-                  "id": "a",
-                  "text": "Circle",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAABaklEQVR42u3cu7FCMQxF0VMJlRBTGPGrkzaAgJDxs7H1s7fGBdxZc5RcS9aTapYgAAgggAACCCCAAKIAAggggAD6py7XP4A+EKPnCKAfXGKlVIvGn0nlXJyllE3ndn+kMlIgzdui/0QxyV9nyGVUqgCQHU0nU14gHxpnJlnrGNH0MCUCCtSxNjIEctNpGKUACqdpMwUDpdKxMFL1zrLuNW0Wn+Uh0n46a420pc5CI4BcgBLqfDVyAioRn1Uh0sbxWRIibRyfJSHS3vGZDxFAS4HK9dd8l2n7+EyGCCCAAAIIIICOAKqrM2NEggACCCCAAAIIIP4H8UcRoAggbjW4F+Nmlbt5pjsYfykHxIQZM4pMuTInHT8nzaR9pV6rt8zCtk8WowL7Ym0jNg4DmErurPYYsfXcZXT63vwQ06EvL8wYHfR2h6mUz2fzflAyoBmpkO/kDbNqQNkKIIAAAggggAACCCAKIIAA8q8XxncHROmjZ4wAAAAASUVORK5CYII="
-                },
-                {
-                  "id": "b",
-                  "text": "Triangle",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAABhElEQVR42u3cwW0DQQxDUVbiInJ2JVtimkyuhg3sJvGMRCqfmAoe/lEYfbHTCQKAAAIIIIAAAgggBhBAAAEE0MVuxwdAZzoAXei4GQEUAvSoY2UEUALQq46PkR3Q/fMA6EznEcjByBHIKiIZ6lhFZArkE5E8dXwi8gUyiUi2OiYRWQM5RCRnHYeI3IHaI5K5TntEAUC9EclfpzeiDKDGiBSh0xhRDFBXRErR6YooCaglIgXptEQUBlQfkbJ06iPKAyqOSHE6xRFFAlVGpESdyohSgcqMFKoTD/R0hrADqMZIoflkA9XkU2Ok3HxSgSrzKTBSdD55QPX57DZSej5JQF35bDXSgHwygHrz2WekGfm4Aznks8lIY/LxBfLJZ4eRJuXjCOSWz3IjDcvHC8gzn7VGmpePC5BzPguNNDKffiD/fFYZaWo+nUAp+Swx0uB8eoCy8nnf6F2guLcXKF3nD0YArQOaofNbo38K9HMj/jADCCCAAAIIIIAAYgABBBBAAAE0bN9PA9VFvB7FQAAAAABJRU5ErkJggg=="
-                },
-                {
-                  "id": "c",
-                  "text": "Square",
-                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAAqUlEQVR42u3cUREAEBRE0RdCEnEEE0I6DWjg0wzv3NkEJ8DG0rFAAAgQIECAAAECJECAAAF6GGi08tMAAQIE6Gug2etbAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAuS7w7kJIECAMgLlDBAgQIAAAQIECJAAAQJ0vw0F7tx0hvY0lwAAAABJRU5ErkJggg=="
+                  "type": "text",
+                  "content": "Which three are physical quantities, rather than units?"
                 }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Length"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Metre"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Force"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Kilogram"
+                  }
+                ],
+                "e": [
+                  {
+                    "type": "text",
+                    "content": "Time"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Length, force and time are quantities; metre and kilogram are the SI units used to measure other quantities."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "multi-correct",
+                "measurement"
+              ],
+              "correctOptionIds": [
+                "a",
+                "c",
+                "e"
+              ]
+            },
+            {
+              "id": "q-mc-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "A body is thrown straight up. Which statements are true while it is in the air, ignoring air resistance?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "The acceleration is constant and downward."
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "The speed decreases all the way to the ground."
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "The velocity reverses direction at the top."
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "The acceleration is zero at the top."
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "math",
+                  "content": "<math><mi>a</mi><mo>=</mo><mi>g</mi><mo>&#x2248;</mo><mn>9.8</mn><mfrac><mi>m</mi><msup><mi>s</mi><mn>2</mn></msup></mfrac></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " The acceleration stays constant and downward throughout, so it is certainly not zero at the top, and the speed falls to zero then rises again. Only (a) and (c) hold."
+                }
+              ],
+              "difficulty": "hard",
+              "marks": 2,
+              "tags": [
+                "multi-correct",
+                "kinematics",
+                "formula"
+              ],
+              "correctOptionIds": [
+                "a",
+                "c"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cat-bilingual",
+          "title": "Bilingual — English + हिन्दी",
+          "questions": [
+            {
+              "id": "q-bi-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "What is the capital of Japan? / जापान की राजधानी क्या है?"
+                },
+                {
+                  "type": "text",
+                  "content": "Choose one option only — the two languages describe the same question."
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Tokyo / टोक्यो"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Osaka / ओसाका"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Kyoto / क्योटो"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Nagoya / नागोया"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Tokyo has been the seat of government since 1868, when the capital was moved from Kyoto."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "bilingual",
+                "japan"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-bi-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The table gives the composition of the human body by mass. Which two entries are largest?"
+                },
+                {
+                  "type": "text",
+                  "content": "मानव शरीर का द्रव्यमान-अनुसार संघटन नीचे दिया गया है।"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Component",
+                      "Share of body mass"
+                    ],
+                    [
+                      "Water",
+                      "60%"
+                    ],
+                    [
+                      "Protein",
+                      "16%"
+                    ],
+                    [
+                      "Fat",
+                      "12%"
+                    ],
+                    [
+                      "Mineral salts",
+                      "6%"
+                    ],
+                    [
+                      "Carbohydrate",
+                      "1%"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Water and Protein / जल और प्रोटीन"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Protein and Fat / प्रोटीन और वसा"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Fat and Mineral salts / वसा और खनिज लवण"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Mineral salts and Carbohydrate / खनिज लवण और कार्बोहाइड्रेट"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Water at 60 per cent is the largest single component and protein at 16 per cent is next, so the pair is (a). वही क्रम तालिका से सीधे पढ़ा जा सकता है।"
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "bilingual",
+                "table-question",
+                "hindi"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-bi-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "भारत का संविधान कब लागू हुआ? / When did the Constitution of India come into force?"
+                },
+                {
+                  "type": "text",
+                  "content": "26 January 1950 is the date to compare against."
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "15 August 1947"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "26 January 1950"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "26 November 1949"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "2 October 1950"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The Constitution was adopted on 26 November 1949 but came into force on 26 January 1950, when India became a republic."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "bilingual",
+                "hindi",
+                "constitution"
               ],
               "correctOptionIds": [
                 "b"
-              ],
-              "explanation": "A triangle has three straight sides; only the second shape qualifies.",
-              "difficulty": "easy",
-              "tags": [
-                "visual",
-                "shapes"
-              ]
-            },
-            {
-              "id": "q-v4",
-              "text": "The chart compares three values A, B and C from left to right. Which value is the largest?",
-              "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAACWCAIAAAA6+3HcAAAB/UlEQVR42u3cwQ2DMBBFQZdDJZz3TDlUQjl0BTWAjTHLPFHAij+KcknKIQ1W8QoEpQSloJSgFJQSlIJSglJqiDIivEFBKSihFJQSlIJSglJQSlAKSigF5ZtNy9bzwRFKKKGEEkoo65vXveeDI5RQQgkllFBCCSWUUEIJJZRQQgkllFBCCSWUUEIJJZRQQgkllFBCCSWUUEIJJZRQQgmloIQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiivl++fXaGEEkoooYQyPcp8X3yhhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEEkoooYQSSiihhBJKKKGEsg3KT/wwFEoooYQSSiihtDeUUEIJpb0dCaW9oYTSkVDaG0ooHQmlvaGE0pFQ2tuRUEIJJZSOhNLeUELpSCjtDSWUjoTS3lBCCSWU9nYklPaGEkpHQmlvKKF0JJT2hhJKR0Jpb0dCCSWUUDoSSntDCaUjobQ3lFA6Ekp7QwkllFDa25FQQgkllI6E0t5QQulIKO0NJZSOhNLejoQSSiihdCSU9oYSSkdCaW8o61BK93oKpTTcJ6UEpaCUoJSgFJQSlIJSglJQSlAKSglKCUpBKUEpKCUo9YNOGPvOwC3zBrQAAAAASUVORK5CYII=",
-              "options": [
-                "A",
-                "B",
-                "C"
-              ],
-              "correctIndex": 1,
-              "explanation": "Bar B in the middle is the tallest, so it represents the largest value.",
-              "difficulty": "medium",
-              "tags": [
-                "visual",
-                "data"
               ]
             }
           ]
         },
         {
           "id": "cat-order",
-          "title": "Order Check",
-          "parentId": null,
+          "title": "Order Check and Marks",
           "questions": [
             {
               "id": "q-o1",
-              "text": "Step 1 of 5: which option is labelled Alpha?",
-              "options": [
-                "Alpha",
-                "Beta",
-                "Gamma",
-                "Delta"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "These steps are listed out of order. Which option gives the correct sequence for preparing a sample slide?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Step",
+                      "Action"
+                    ],
+                    [
+                      "1",
+                      "Fix the tissue"
+                    ],
+                    [
+                      "2",
+                      "Cut thin sections"
+                    ],
+                    [
+                      "3",
+                      "Stain the section"
+                    ],
+                    [
+                      "4",
+                      "Mount on a slide"
+                    ]
+                  ]
+                }
               ],
-              "correctIndex": 0,
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "2, 1, 4, 3"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "1, 2, 4, 3"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "4, 3, 2, 1"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "1, 4, 2, 3"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Fix first, then cut thin sections, mount those on a slide and stain last, giving 1, 2, 4, 3."
+                }
+              ],
+              "difficulty": "medium",
               "marks": 2,
-              "explanation": "First step, first option.",
-              "difficulty": "easy",
               "tags": [
-                "order-check"
+                "ordering"
+              ],
+              "correctOptionIds": [
+                "b"
               ]
             },
             {
               "id": "q-o2",
-              "text": "Step 2 of 5: which option is labelled Beta?",
-              "options": [
-                "Alpha",
-                "Beta",
-                "Gamma",
-                "Delta"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Rank these states of matter from lowest to highest particle attraction."
+                }
               ],
-              "correctIndex": 1,
-              "marks": 1,
-              "explanation": "Second step, second option.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Gas, Liquid, Solid"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Solid, Liquid, Gas"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Liquid, Gas, Solid"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Gas, Solid, Liquid"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Attraction is weakest in a gas, intermediate in a liquid and strongest in a solid, which is why solids keep a fixed shape."
+                }
+              ],
               "difficulty": "easy",
+              "marks": 1,
               "tags": [
-                "order-check"
+                "ordering"
+              ],
+              "correctOptionIds": [
+                "a"
               ]
             },
             {
               "id": "q-o3",
-              "text": "Step 3 of 5: which option is labelled Gamma?",
-              "options": [
-                "Alpha",
-                "Beta",
-                "Gamma",
-                "Delta"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Rank these planets by their average distance from the Sun, nearest first."
+                }
               ],
-              "correctIndex": 2,
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Mercury, Venus, Earth, Mars"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Venus, Mercury, Earth, Mars"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Earth, Mars, Venus, Mercury"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Mars, Earth, Venus, Mercury"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "math",
+                  "content": "<math><msup><mi>T</mi><mn>2</mn></msup><mo>&#x221D;</mo><msup><mi>a</mi><mn>3</mn></msup></math>"
+                },
+                {
+                  "type": "text",
+                  "content": " tells us that a planet's orbital period grows with its distance from the Sun, and the mean distances rise in the same order: Mercury 57.9, Venus 108.2, Earth 149.6 and Mars 227.9 million kilometres."
+                }
+              ],
+              "difficulty": "hard",
               "marks": 3,
-              "explanation": "Third step, third option.",
-              "difficulty": "easy",
               "tags": [
-                "order-check"
+                "ordering",
+                "formula"
+              ],
+              "correctOptionIds": [
+                "a"
               ]
             },
             {
               "id": "q-o4",
-              "text": "Step 4 of 5: which option is labelled Delta?",
-              "options": [
-                "Alpha",
-                "Beta",
-                "Gamma",
-                "Delta"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which three practices make a numerical answer trustworthy?"
+                }
               ],
-              "correctIndex": 3,
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Writing the units"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Checking significant figures"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Guessing first"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Rounding early"
+                  }
+                ],
+                "e": [
+                  {
+                    "type": "text",
+                    "content": "Stating the assumptions"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Units, significant figures and stated assumptions all have to be in place before the number means anything. Guessing sets no basis at all, and rounding early discards precision."
+                }
+              ],
+              "difficulty": "medium",
               "marks": 1,
-              "explanation": "Fourth step, fourth option.",
-              "difficulty": "easy",
               "tags": [
-                "order-check"
-              ]
-            },
-            {
-              "id": "q-o5",
-              "text": "Step 5 of 5: which option is labelled Alpha again?",
-              "options": [
-                "Alpha",
-                "Beta",
-                "Gamma",
-                "Delta"
+                "multi-correct",
+                "measurement"
               ],
-              "correctIndex": 0,
-              "marks": 2,
-              "explanation": "Final step, back to the first option.",
-              "difficulty": "easy",
-              "tags": [
-                "order-check"
+              "correctOptionIds": [
+                "a",
+                "b",
+                "e"
               ]
             }
           ]
@@ -450,68 +2609,197 @@
         {
           "id": "cat-edge",
           "title": "Edge Cases",
-          "parentId": null,
           "questions": [
             {
               "id": "q-e1",
-              "text": "Which planet is known as the Blue Planet?",
-              "options": [
-                "Venus",
-                "Earth",
-                "Mars",
-                "Jupiter"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "This question has no answer key on purpose, so it imports ungraded and never affects a score."
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "True"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "False"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "A question with no correct option is still stored and shown, it just cannot be scored."
+                }
               ],
               "difficulty": "easy",
-              "tags": ["edge"]
+              "marks": 1,
+              "tags": [
+                "edge-case",
+                "ungraded"
+              ]
             },
             {
               "id": "q-e2",
-              "text": "What gas do plants absorb from the atmosphere?",
-              "options": [
-                "Oxygen",
-                "Carbon dioxide",
-                "Nitrogen",
-                "Hydrogen"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "This question has no options at all, which the import preview flags as unanswerable."
+                }
               ],
-              "correctOptionIds": ["b"],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "An empty option list is legal in the file format; the editor will ask for options before the question can be saved from there."
+                }
+              ],
               "difficulty": "easy",
-              "tags": ["edge"]
+              "marks": 1,
+              "tags": [
+                "edge-case",
+                "no-options"
+              ]
             },
             {
               "id": "q-e3",
-              "text": "How many days are there in a leap year?",
-              "options": [
-                "365",
-                "366",
-                "367",
-                "364"
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "This question deliberately has no explanation."
+                }
               ],
-              "explanation": "A leap year has 366 days, with 29 February as the extra day.",
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "First"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Second"
+                  }
+                ]
+              },
+              "explanation_elements": [],
               "difficulty": "easy",
-              "tags": ["edge"]
+              "marks": 1,
+              "tags": [
+                "edge-case",
+                "no-explanation"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
             },
             {
-              "text": "What is the boiling point of pure water at sea level?",
-              "options": ["90°C", "100°C", "110°C", "120°C"],
-              "correctIndex": 1,
-              "explanation": "Pure water boils at 100°C at standard atmospheric pressure."
+              "question": "This question has no id and uses the older scalar fields for its pictures, so the importer derives a stable id from its content.",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Scalar field",
+                  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII="
+                },
+                {
+                  "id": "b",
+                  "text": "Content element"
+                }
+              ],
+              "correctIndex": 0,
+              "explanation": "Structured elements are the modern shape; the scalar fields still import and still render.",
+              "explanationImage": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAABW0lEQVR42u3aMQ7CQBBD0b3/BekoKKi5ASCQUEQgZGZs77KytTnA058y7Xg6T//a/btOPSONNNJII4000kgjjTRya+2xmZFtMSP/FtlWmxZ5uBzub07kq94SKXB2QD6Fypg65FtGZUwR8qNQ5pQi10LN0SqQGxk1MXXIb0JBTDryZ0ZBTBFyW8iOyUXuzMiOqUDuEVJjEpGhjNSYLGRCyHNykVEh6WgpyHRGUkwiMidkxMQjixkZMVnIihAeE4yEZITHRCKBQqwTj0QJgUcLQ8IzAmOCkVghKiYGScqIiolEMoSQmAAkNSMkZhUpENadGCRbWDzaElKWsRgTgNQIKzHzSHHGSswqUilMx0wiu2RMxywh9cJczAyyY8ZczDCyuzDhTCL7CqNHG0MOkjEaM4McQRiKGUAOlTEUM4wcR7g/5l5kG35G+qdeI4000kgjjTTSSCONHA05/bsBgRCY7ue8pGIAAAAASUVORK5CYII=",
+              "difficulty": "easy",
+              "tags": [
+                "edge-case",
+                "generated-id",
+                "legacy-fields"
+              ]
             },
             {
               "id": "q-e5",
-              "text": "This question arrived with no options at all.",
-              "options": [],
-              "explanation": "Imports tolerate empty option lists; the question simply has nothing to answer.",
-              "difficulty": "medium",
-              "tags": ["edge"]
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "This question has only one option and no explanation, so the preview flags both."
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Only choice"
+                  }
+                ]
+              },
+              "explanation_elements": [],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "edge-case",
+                "one-option"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
             }
           ]
         }
       ],
       "questions": [
         {
-          "question": "In which year did the Titanic sink?",
-          "options": ["1905", "1912", "1915", "1920"],
-          "answer": "1912"
+          "id": "q-top-1",
+          "question_elements": [
+            {
+              "type": "text",
+              "content": "This question sits at the top level of the file with no category, so the importer files it under Uncategorized."
+            },
+            {
+              "type": "text",
+              "content": "शीर्षक स्तर की प्रश्नावली।"
+            }
+          ],
+          "options_elements": {
+            "a": [
+              {
+                "type": "text",
+                "content": "Categorised"
+              }
+            ],
+            "b": [
+              {
+                "type": "text",
+                "content": "Uncategorized / अवर्गीकृत"
+              }
+            ]
+          },
+          "correctOptionIds": [
+            "b"
+          ],
+          "explanation_elements": [
+            {
+              "type": "text",
+              "content": "Top-level questions are kept rather than dropped, which is what this question demonstrates."
+            },
+            {
+              "type": "image",
+              "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJYAAACWCAIAAACzY+a1AAAEnUlEQVR42u3dwY3bQAwFUFaS81ayRaSwnFNJzqkkbSgbBDAMSTOWJX7yk/qEDgtjYct6+NSMbGtsURUv0yEQoUqEKhGKUCVClQhVIhShSoQqEapEKEKVCFnfnpkICyBdKRHWM+snatXlfn98TLavf/j4/muyNbC0cnJzs3cJX4qK0A3vLbnThCNLEUbLXScsZGld8bwI+SGN0M8Fz5dwCylCOB6CkBPSuuLhCNkgLd0PhIcmXEHeizAgfGGEDHG0xn4xhOmK1q95xhPmNlVr7BdMmKVojf3iCVMUrbFfCmG8ojX2yyIMVrQAvxS8XMJnyMKEjvkbvUQJQrSileifRQljFK3E+W8E9hIynTBA0UqMX0oTohWN368BIVQRQug+sGxAiBugGiKCSmFkEM3d78/Pb1+bzoVhis6E//3cFdsQItqpgfweio5T+x6E7opYQq84ihBLOPdzUWxG6KtovqOYueJpyLoX2ALGNRYQwetx7EfoGESLiSBijMP/YVNMEC0ygqApR1FCryCmEcYoihDoF9NU0YTbwxKvmEyIjqMII/ygijjCEdgJyIuKLISgpirCUEJEHEUY7ecexxKEFxUZCR3jiCYclQjdFEWY6efSVKs00iuK7IQX4yhCFsLTiiIkIjzXVEXIRXgijiKk83tXsRDhacWShMebKvmHTbcmPBhHEbITvoyjCAsQzuMowjKEI0URViLcbaoiLEa4jaMI/Qm3zwlVFGFVwkdTFaHDd7dXeMcf94IsR/iuYlwK4wn/+f34LJRF9kYKTduE8P9WQlGEQ78qiiKc+T0U+/1crSHhyI8/jiI8SkirKMKjfrRNtSqhI+1xP8443p3whB9bHO9+ge00IU8cIwivK4IIL/oxKN7oS4ggv/SmKsJPxy1xdYs7Err7ZSnelBDkl9JU4wipvtON8wuOY9ufiDIQxijekTDML6apRhOmKwb7oePY7aYltH64OIqwfBxzCBN/dJ/u56vY5DZ65fwcm2omYbAim59LHMvfUrYH4RVFFsKYm3nR+p1uqhT35o4JIr/fuThyLXKAvjFiFcLjcSRapwIdRBe/0Z4nxpFotRioolf+4gnnivWW3UrvnyOwgCzuQjISLpgbrlcn3I0j+xKUjsseOB7EXMJnRepVRB0V3Yeg6YSPpkq9lq9XO0VMIVKGMyPFxbtQ69qLcJRCdsKLiqBZPMO5EOQHIVwurGsIOoLpI1KcH4rwnGJLQrQfkPBdReiF0NypPdQPS3h8gIq+kJ01nAnwgxMeyWLABxEpl7lj/CIIXyrW+iyJzS+IcKIovzKEu4ryK0a4UpRfScJnxU6EuEvYjIT9FHP9cghXkGqeVQmrxzE9fBSERSF58FgIC0Gy4XERrhQ5f8RE6MdFyAnJjEdKSGLJL1eAcBcSbbl9uYW+CuziyNJFdPS0S52qtK9zS5daClbJnXYUXepXh/cwB166V/93KEKVCFUiVIlQhCoRqtoSrqbYz3O4x9+rOfh2Vt5vql6GcHu4t4TvPqIUilCEZxvpqCXOHxm1VhGmJfJ45nbPmkphJcLdP0SYPBy9ci7UiFRVu/4CY67/QH8F1FEAAAAASUVORK5CYII=\" alt=\"A pie chart divided into four labelled sectors\">"
+            }
+          ],
+          "difficulty": "easy",
+          "marks": 1,
+          "tags": [
+            "edge-case",
+            "uncategorized",
+            "hindi"
+          ]
         }
       ]
     }

@@ -123,19 +123,28 @@ class SamplePaperApkgRoundTripTest {
     }
 
     /**
-     * The concrete report: a question with no image of its own and three options
-     * that each have one. Its options' images must stay on the options.
+     * The concrete report: a question with no image of its own whose options
+     * carry images. Those images must stay on their options.
+     *
+     * Scans the whole paper rather than one category: the sample bank is
+     * regenerated, so a hard-coded category title would quietly turn this into
+     * a no-op instead of a guard.
      */
     @Test
     fun aQuestionsImageIsNotTakenFromItsOptions() {
-        val visual = samplePaper.categories.first { it.title == "Visual Round" }
-        val shapes = visual.questions.map { it.text to it.shape() }
+        val withOptionImages = allQuestions(samplePaper)
+            .filter { question -> question.options.any { it.image != null } }
 
-        val withOptionImages = shapes.filter { (_, shape) -> shape.options.any { it.image != null } }
-        assertTrue("the sample paper should have such questions", withOptionImages.isNotEmpty())
-        withOptionImages.forEach { (text, shape) ->
-            assertEquals("question '$text' has no image of its own", null, shape.image)
-            assertTrue("options keep their images", shape.options.any { it.image != null })
+        assertTrue(
+            "the sample paper should contain a question whose options have images",
+            withOptionImages.isNotEmpty()
+        )
+        withOptionImages.forEach { question ->
+            assertEquals(
+                "question '${question.id}' has no image of its own",
+                null,
+                question.image
+            )
         }
     }
 

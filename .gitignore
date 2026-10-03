@@ -27,3 +27,7 @@ keystore.properties
 /questions*.docx
 /questions*.apkg
 /questions*.pdf
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc

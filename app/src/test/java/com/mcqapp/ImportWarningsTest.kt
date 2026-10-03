@@ -76,7 +76,8 @@ class ImportWarningsTest {
         val questions = file.papers.single().categories.flatMap { it.questions }
         val byId = ImportWarnings.forFile(questions).groupBy { it.questionId }
         assertTrue(byId["q-e1"]!!.any { it.message.startsWith("No answer key") })
-        assertTrue(byId["q-e5"]!!.any { it.message.startsWith("No options") })
+        assertTrue(byId["q-e2"]!!.any { it.message.startsWith("No options") })
+        assertTrue(byId["q-e5"]!!.any { it.message.startsWith("Only one option") })
         assertTrue(byId["q-o3"].orEmpty().isEmpty())
     }
 }

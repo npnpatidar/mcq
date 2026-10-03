@@ -784,11 +784,42 @@ differ in which features they recognise. `XxeHardeningTest` feeds a real `SYSTEM
 asserts it is rejected, that an ordinary Word part still parses, and that malformed XML still names
 the part.
 
-### A44 · `[ ]` · Release readiness
-`isMinifyEnabled = false`, no `signingConfigs`, `versionCode = 1` hardcoded, `proguard-rules.pro` is
-a single comment. Measured: R8 alone takes the debug APK from **22.19 MB → 3.64 MB**, and
-`material-icons-extended` is a 34 MB / 11,105-class dependency for the 24 icons actually used
-(9 of which are outside `material-icons-core`). Deferred by the owner on 2026-10-02.
+### A44 · `[x]` · Release readiness — fixed: signed 3.39 MB release APK · `read`
+
+**R8 enabled** (2026-10-03): `isMinifyEnabled = true` and `isShrinkResources = true`, with a real
+`proguard-rules.pro`. The release APK went from **22.66 MB to 3.37 MB** (−85%), from 16 dex files to
+one, and R8 removed **all** `material-icons-extended` classes — the 34 MB / 11,105-class dependency is
+now entirely absent from the release dex. Verified in the artifact: manifest, dex and resources
+present; app, Room and kotlinx.serialization classes retained; `mapping.txt` produced so release crash
+reports stay deobfuscatable; no dynamic resource lookups (`getIdentifier`) exist that resource
+shrinking could break.
+
+**Signing complete.** A 4096-bit RSA / PKCS#12 keystore (alias `mcq`, valid to 2054) now lives at
+**`/mnt/filen/Sync_M_L_I_C/GT2_Backup/mcq-key/`** alongside its password file — a cloud-synced rclone
+mount, so it is off this machine and off any single disk. The four `RELEASE_*` secrets are in GitHub.
+Locally, `keystore.properties` (mode 600, git-ignored) points at that path so `assembleRelease` signs
+without environment variables. The move was checksum-verified, and a signed 3.39 MB APK was rebuilt
+from the new location afterwards.
+
+Verified on the real artifact: `app-release.apk` carries v1 (`CERT.SF`/`CERT.RSA`) **and** v2/v3
+signing blocks, and its certificate's SHA-256 matches the keystore exactly —
+`46:81:51:D2:0E:73:BD:BE:73:F3:BA:E6:4C:CE:C0:98:21:D3:E6:17:34:C4:BC:8F:62:74:36:18:4C:7D:F8:3E`.
+Both branches are covered: with credentials present the build is signed, without them it still
+succeeds unsigned, so a contributor without the key is not blocked.
+
+Version is **0.0.1** (code 1), semantic versioning from a pre-release start.
+
+**Two risks with the backup arrangement**, both the owner's to resolve:
+1. The key and its password sit in the **same folder**, so anyone who obtains it holds the app's
+   signing identity and can ship updates. The password belongs in a password manager instead.
+2. That mount **ignores `chmod`** — everything lands `0664`/`0775` regardless of what is requested, so
+   the files are readable by anyone with access to the mount and by the cloud provider behind it.
+   Verified by probe rather than assumed.
+
+**Still unverified:** the R8'd APK has never been installed. The failure mode to watch for on first
+launch is a `kotlinx.serialization` or Room class stripped by name — which is why the rules file keeps
+both explicitly rather than trusting consumer rules alone. If it crashes, `adb logcat` plus
+`app/build/outputs/mapping/release/mapping.txt` will pinpoint it immediately.
 
 ### A45 · `[-]` · `exportSchema = false`, forward-only migrations — closed, migration work not wanted yet · `read`
 

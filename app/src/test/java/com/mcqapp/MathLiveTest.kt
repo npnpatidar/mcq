@@ -17,13 +17,30 @@ import java.io.File
 class MathLiveTest {
 
     @Test
+    fun theUsersOwnTypingIsNeverPushedBackAtThem() {
+        // The field reports MathML, the block turns it into LaTeX and hands
+        // it straight back. Pushing that would fight the user mid-edit and
+        // cost them the virtual keyboard focus.
+        assertFalse(shouldPushLatex("x^2", "x^3", latexFromOwnOutput = "x^3"))
+        // A change from outside the field still goes through.
+        assertTrue(shouldPushLatex("x^2", "x^4", latexFromOwnOutput = "x^3"))
+    }
+
+    @Test
+    fun aReportedFormulaRoundTripsToTheLatexTheFieldHolds() {
+        val mml = mathMlToLatex("<math><msup><mi>x</mi><mn>2</mn></msup></math>")
+        assertEquals("x^{2}", mml)
+        assertFalse(shouldPushLatex(null, mml, latexFromOwnOutput = mml))
+    }
+
+    @Test
     fun aRecycledEditorOnlyPushesAChangedFormula() {
         // Pushing unconditionally would reset the caret on every
         // recomposition; never pushing leaves the previous formula on screen.
-        assertFalse(shouldPushLatex(current = "x^2", incoming = "x^2"))
-        assertTrue(shouldPushLatex(current = "x^2", incoming = "x^3"))
+        assertFalse(shouldPushLatex("x^2", "x^2", latexFromOwnOutput = null))
+        assertTrue(shouldPushLatex("x^2", "x^3", latexFromOwnOutput = null))
         // Nothing loaded yet: the factory already set the value.
-        assertFalse(shouldPushLatex(current = null, incoming = "x^2"))
+        assertFalse(shouldPushLatex(null, "x^2", latexFromOwnOutput = null))
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.data.docx.parseXml
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -13,6 +14,8 @@ import org.junit.Test
  */
 class XxeHardeningTest {
 
+    private val wordNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
     private val doctypePayload = """
         <?xml version="1.0"?>
         <!DOCTYPE root [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
@@ -22,16 +25,28 @@ class XxeHardeningTest {
     """.trimIndent()
 
     @Test
-    fun aDoctypeCarryingExternalEntityIsRejected() {
-        val e = runCatching { parseXml(doctypePayload.toByteArray(), "document.xml") }.exceptionOrNull()
-        // The doctype ban rejects it outright. What must never happen is the
-        // external entity resolving and the file's contents leaking in.
-        if (e == null) fail("a DOCTYPE carrying an entity must not be accepted")
-        assertTrue("message was: $e", e is IllegalArgumentException)
+    fun aDoctypeCarryingExternalEntityCanNeverReadAnything() {
+        // Two acceptable outcomes, depending on what the platform parser
+        // supports: the part is refused outright, or it parses with the
+        // entity resolving to nothing. The one unacceptable outcome is the
+        // local file's contents ending up in the document.
+        val parsed = runCatching { parseXml(doctypePayload.toByteArray(), "document.xml") }
+        if (parsed.isFailure) {
+            assertTrue(
+                "a refusal must be reported as an unreadable Word part",
+                parsed.exceptionOrNull() is IllegalArgumentException
+            )
+            return
+        }
+        val doc = parsed.getOrThrow()
+        val nodes = doc.getElementsByTagNameNS(wordNs, "t")
+        val text = (0 until nodes.length).joinToString("") { nodes.item(it).textContent }
+        assertEquals("the entity must not expand", "", text)
+        assertFalse("no file contents may leak in", text.contains("root:"))
     }
 
     @Test
-    fun aPlainWordPartStillParses() {
+    fun anOrdinaryWordPartStillParses() {
         val doc = parseXml(
             """
             <?xml version="1.0"?>
@@ -41,7 +56,8 @@ class XxeHardeningTest {
             """.trimIndent().toByteArray(),
             "document.xml"
         )
-        assertEquals("w:document", doc.documentElement.tagName)
+        val nodes = doc.getElementsByTagNameNS(wordNs, "t")
+        assertEquals("hello", nodes.item(0).textContent)
     }
 
     @Test

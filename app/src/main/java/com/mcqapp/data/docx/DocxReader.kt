@@ -2,6 +2,7 @@ package com.mcqapp.data.docx
 
 import org.w3c.dom.Document
 import org.w3c.dom.Element
+import org.xml.sax.InputSource
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
@@ -80,7 +81,14 @@ internal fun parseXml(bytes: ByteArray, what: String): Document {
         val factory = DocumentBuilderFactory.newInstance()
         factory.isNamespaceAware = true
         hardenXmlFactory(factory)
-        factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
+        val builder = factory.newDocumentBuilder()
+        // The control that actually holds, whatever the parser supports: an
+        // external entity resolves to nothing, so a DOCTYPE cannot pull in a
+        // local file or a URL no matter how the features below are handled.
+        builder.setEntityResolver { _, _ ->
+            InputSource(ByteArrayInputStream(ByteArray(0)))
+        }
+        builder.parse(ByteArrayInputStream(bytes))
     } catch (e: IllegalArgumentException) {
         throw e
     } catch (e: Exception) {
@@ -89,43 +97,61 @@ internal fun parseXml(bytes: ByteArray, what: String): Document {
 }
 
 /**
- * Locks the parser down against XXE, failing closed.
+ * Turns off every XXE vector this parser understands, best first.
  *
- * `disallow-doctype-decl` is the strongest single defence, so if it cannot be
- * set the part is rejected rather than parsed with weaker settings — a silent
- * `catch` here would leave the posture at "whatever the parser defaults to".
- * The remaining features are best-effort because parsers vary in which they
- * recognise, and each one that is recognised is verified by reading it back.
+ * Deliberately does **not** reject the file when the strongest feature is
+ * unavailable: Android's own `DocumentBuilderFactory` does not implement
+ * `disallow-doctype-decl` at all, so requiring it rejected every real `.docx`.
+ * Anything recognised is applied, and the caller installs an
+ * [org.xml.sax.EntityResolver] that resolves nothing, which covers the rest.
  */
-private fun hardenXmlFactory(factory: DocumentBuilderFactory) {
-    try {
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-    } catch (e: Exception) {
-        throw IllegalArgumentException(
-            "This device's XML parser cannot be locked down safely, so the file was rejected."
-        )
-    }
-    for (feature in listOf(
+private fun hardenXmlFactory(factory: DocumentBuilderFactory): Int {
+    var applied = 0
+    applied += setFeature(
+        factory,
+        "http://apache.org/xml/features/disallow-doctype-decl",
+        true
+    )
+    applied += setFeature(
+        factory,
         "http://xml.org/sax/features/external-general-entities",
+        false
+    )
+    applied += setFeature(
+        factory,
         "http://xml.org/sax/features/external-parameter-entities",
-        "http://apache.org/xml/features/nonvalidating/load-external-dtd"
-    )) {
-        try {
-            factory.setFeature(feature, false)
-        } catch (_: Exception) {
-            // Not every parser knows every feature; the doctype ban above is
-            // the control that matters.
-        }
-    }
+        false
+    )
+    applied += setFeature(
+        factory,
+        "http://apache.org/xml/features/nonvalidating/load-external-dtd",
+        false
+    )
+    applied += setFeature(
+        factory,
+        "http://javax.xml.XMLConstants/feature/secure-processing",
+        true
+    )
     try {
         factory.isExpandEntityReferences = false
+        applied++
     } catch (_: Exception) {
     }
     try {
         factory.isXIncludeAware = false
+        applied++
     } catch (_: Exception) {
     }
+    return applied
 }
+
+private fun setFeature(factory: DocumentBuilderFactory, name: String, value: Boolean): Int =
+    try {
+        factory.setFeature(name, value)
+        1
+    } catch (_: Exception) {
+        0
+    }
 
 private fun parseRels(xml: ByteArray?): Map<String, String> {
     if (xml == null) return emptyMap()

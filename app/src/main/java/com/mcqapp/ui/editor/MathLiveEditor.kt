@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
 import org.json.JSONObject
 
@@ -25,11 +26,16 @@ internal const val DEFAULT_MATHLIVE_FONT_PX = 18
 // with JSONObject.quote, so this stays a pure string builder for tests).
 // fontPx follows the app's text-size setting, which the page used to ignore
 // by hardcoding 18px while the rest of the editor honoured FontScale.
+//
+// It is in **CSS pixels**, which are density-independent: passing device
+// pixels here made the field (and MathLive's virtual keyboard, which sizes
+// itself from the font) render at ~48px on a 3x screen, so the keyboard was
+// taller than the WebView and got clipped.
 internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLIVE_FONT_PX): String =
     "<!DOCTYPE html><html><head>" +
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
         "<link rel=\"stylesheet\" href=\"" + MATHLIVE_FONTS_CSS_URL + "\">" +
-        "</head><body style=\"margin:0;background:transparent;\">" +
+        "</head><body style=\"margin:0;background:transparent;overflow:auto;\">" +
         "<math-field id=\"mf\" style=\"min-height:120px;font-size:" + fontPx + "px;\"></math-field>" +
         "<script src=\"" + MATHLIVE_JS_URL + "\"></script>" +
         "<script>" +
@@ -58,6 +64,18 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         "</script></body></html>"
 
 /**
+ * Formula font size for the page, in **CSS pixels**.
+ *
+ * CSS pixels are density-independent, so this must never be computed from
+ * `roundToPx()`: on a 3x screen that produced a 48px field, and since
+ * MathLive sizes its virtual keyboard from the font size the panel grew past
+ * the WebView and was clipped. The scale is clamped so the keyboard stays
+ * inside the editor however large the user's text setting is.
+ */
+internal fun mathLiveFontPx(fontScale: Float): Int =
+    (16f * fontScale.coerceIn(0.8f, 1.6f)).roundToInt().coerceIn(12, 26)
+
+/**
  * Whether the field's own value must be pushed back into the WebView.
  *
  * Pure so it can be tested. Pushing unconditionally resets the caret on every
@@ -81,10 +99,7 @@ fun MathLiveEditor(
     modifier: Modifier = Modifier
 ) {
     val fontScale = com.mcqapp.util.FontScale.LocalScale.current
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val fontPx = with(density) {
-        (16 * fontScale.coerceAtLeast(0.8f)).dp.roundToPx().coerceIn(12, 96)
-    }
+    val fontPx = mathLiveFontPx(fontScale)
     val initialJson = remember(initialLatex) { JSONObject.quote(initialLatex) }
     // The MathML this field last reported upwards, so the update block can tell
     // "the user is typing" from "the block changed underneath me".
@@ -93,7 +108,9 @@ fun MathLiveEditor(
         // The virtual keyboard panel is absolutely positioned at the
         // bottom of the page; the WebView must be tall enough to show
         // the field plus the whole keyboard without clipping.
-        modifier = modifier.height(520.dp),
+        // Tall enough for the formula plus MathLive's keyboard panel; the
+        // page scrolls if the layout is bigger than that.
+        modifier = modifier.height(560.dp),
         factory = { ctx ->
             val view = WebView(ctx)
             view.settings.javaScriptEnabled = true

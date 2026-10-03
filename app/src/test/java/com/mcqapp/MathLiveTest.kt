@@ -4,6 +4,7 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.ui.editor.blockKey
 import com.mcqapp.ui.editor.DEFAULT_MATHLIVE_FONT_PX
 import com.mcqapp.ui.editor.MATHLIVE_JS_URL
+import com.mcqapp.ui.editor.mathLiveFontPx
 import com.mcqapp.ui.editor.mathLiveHtml
 import com.mcqapp.ui.editor.mathMlToLatex
 import com.mcqapp.ui.editor.shouldPushLatex
@@ -41,6 +42,27 @@ class MathLiveTest {
         assertTrue(shouldPushLatex("x^2", "x^3", latexFromOwnOutput = null))
         // Nothing loaded yet: the factory already set the value.
         assertFalse(shouldPushLatex(null, "x^2", latexFromOwnOutput = null))
+    }
+
+    @Test
+    fun theFormulaFontStaysSmallEnoughForTheKeyboardToFit() {
+        // MathLive sizes its virtual keyboard from the field font size. An
+        // earlier version passed device pixels (48 on a 3x screen) and the
+        // panel was taller than the WebView, so it was clipped.
+        assertEquals("default text size", 16, mathLiveFontPx(1.0f))
+        assertEquals(13, mathLiveFontPx(0.8f))
+        assertEquals(21, mathLiveFontPx(1.3f))
+        // Clamped: however large the user's setting, the panel must fit.
+        assertEquals(26, mathLiveFontPx(2.0f))
+        assertEquals(26, mathLiveFontPx(4.0f))
+        assertTrue("must never exceed the cap", mathLiveFontPx(3.0f) <= 26)
+    }
+
+    @Test
+    fun theFormulaFontIsNeverDevicePixels() {
+        // A 3x screen would give 48 device pixels; CSS pixels must not scale
+        // with density.
+        assertTrue(mathLiveFontPx(1.0f) <= 20)
     }
 
     @Test

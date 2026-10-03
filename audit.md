@@ -844,6 +844,17 @@ the LaTeX the field's last report converts back to and skips the push in that ca
 still go through, so recycled blocks are still corrected. The block also shows "Tap the formula to
 edit it", since the keyboard only appears once the field has focus.
 
+**Second cause, also mine, found on the second report: the keyboard was clipped, not missing.**
+A14 sized the field with `16.dp.roundToPx()`, which is **device** pixels, but WebView CSS pixels are
+density-independent — so on a 3x screen the field rendered at 48px. MathLive scales its virtual
+keyboard from the field font size, so the panel grew to roughly 700px inside a 520dp WebView and only
+its top third was visible. `mathLiveFontPx()` now works in CSS pixels and clamps the scale to
+0.8–1.6 (12–26px), and the page scrolls if a layout is still taller than the editor. Two tests pin
+the mapping, including an explicit "never device pixels" case.
+
+This is the third defect in this batch traceable to A14's font-scale change — the same line that
+was supposed to make the editor respect the text-size setting.
+
 ### A46 · `[x]` · 198 labels rendered nothing · `read`
 
 The extraction regex matched the **whole** `Text("…")` call and replaced all of it with

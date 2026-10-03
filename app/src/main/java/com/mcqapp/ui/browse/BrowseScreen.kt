@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -21,6 +23,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -32,6 +36,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +52,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -85,6 +92,51 @@ fun BrowseScreen(
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    // The id set is captured at pick time: CreateDocument hands back a Uri
+    // later, by which point selection mode may already be over.
+    var exportIds by remember { mutableStateOf(emptySet<String>()) }
+    var exportFormat by remember { mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE) }
+
+    val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+
+    fun exportTitle(): String {
+        val paper = state.paper?.title ?: "Selected"
+        return if (exportIds.size == 1) "$paper (1 question)"
+        else "$paper (${exportIds.size} questions)"
+    }
+
+    fun onExportDocument(uri: android.net.Uri?) {
+        val format = exportFormat
+        val ids = exportIds
+        if (uri != null && ids.isNotEmpty()) viewModel.exportSelection(uri, ids, exportTitle(), format)
+    }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.JSON_INLINE.mimeType)
+    ) { uri: android.net.Uri? -> onExportDocument(uri) }
+    val exportZipLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.ZIP.mimeType)
+    ) { uri: android.net.Uri? -> onExportDocument(uri) }
+    val exportHtmlLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.HTML.mimeType)
+    ) { uri: android.net.Uri? -> onExportDocument(uri) }
+    val exportPdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.PDF.mimeType)
+    ) { uri: android.net.Uri? -> onExportDocument(uri) }
+    val exportApkgLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.APKG.mimeType)
+    ) { uri: android.net.Uri? -> onExportDocument(uri) }
+
+    fun exportSaver(format: com.mcqapp.data.export.ExportFormat) = when (format) {
+        com.mcqapp.data.export.ExportFormat.JSON_INLINE -> exportJsonLauncher
+        com.mcqapp.data.export.ExportFormat.ZIP -> exportZipLauncher
+        com.mcqapp.data.export.ExportFormat.HTML, com.mcqapp.data.export.ExportFormat.HTML_QUIZ ->
+            exportHtmlLauncher
+        com.mcqapp.data.export.ExportFormat.PDF, com.mcqapp.data.export.ExportFormat.PDF_ANSWER_KEY ->
+            exportPdfLauncher
+        com.mcqapp.data.export.ExportFormat.APKG -> exportApkgLauncher
+    }
     var showBulkDialog by remember { mutableStateOf(false) }
     var bulkMarks by remember { mutableStateOf("") }
     var bulkTags by remember { mutableStateOf("") }
@@ -130,6 +182,14 @@ fun BrowseScreen(
                             onClick = { showMoveDialog = true },
                             enabled = selectedIds.isNotEmpty()
                         ) { Text(stringResource(R.string.move)) }
+                        TextButton(
+                            onClick = {
+                                exportFormat = com.mcqapp.data.export.ExportFormat.JSON_INLINE
+                                exportIds = selectedIds
+                                showExportDialog = true
+                            },
+                            enabled = selectedIds.isNotEmpty()
+                        ) { Text(stringResource(R.string.export)) }
                         TextButton(
                             onClick = { showDeleteConfirm = true },
                             enabled = selectedIds.isNotEmpty()
@@ -377,6 +437,72 @@ fun BrowseScreen(
             )
         }
 
+        exportError?.let { message ->
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissExportError() },
+                title = { Text(stringResource(R.string.export)) },
+                text = { Text(message) },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.dismissExportError() }) {
+                        Text(stringResource(R.string.ok))
+                    }
+                }
+            )
+        }
+
+        if (showExportDialog) {
+            AlertDialog(
+                onDismissRequest = { showExportDialog = false },
+                title = { Text("Export ${exportIds.size} selected questions") },
+                text = {
+                    Column {
+                        com.mcqapp.data.export.ExportFormat.entries.forEach { format ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { exportFormat = format }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = exportFormat == format,
+                                    onClick = { exportFormat = format }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(format.title, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        format.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showExportDialog = false
+                        exportSaver(exportFormat).launch(
+                            com.mcqapp.data.export.PaperExporter.fileNameFor(
+                                exportTitle(), exportFormat
+                            )
+                        )
+                        // Selection mode ends with the export: the ids are now
+                        // held by exportIds, and the user asked for a file.
+                        selectionMode = false
+                        selectedIds = emptySet()
+                    }) { Text(stringResource(R.string.export)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExportDialog = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
+
         if (showMoveDialog) {
             // Local to the dialog: forgotten on dismiss, so every open starts fresh.
             var moveIsCopy by remember { mutableStateOf(false) }
@@ -539,10 +665,22 @@ private fun BrowseQuestionCard(
 
             if (question.explanationElements.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                ContentElements(
-                    question.explanationElements,
-                    textStyle = MaterialTheme.typography.bodySmall
-                )
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Icon(
+                        Icons.Default.Lightbulb,
+                        contentDescription = stringResource(R.string.explanation),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    ContentElements(
+                        question.explanationElements,
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
             QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
 

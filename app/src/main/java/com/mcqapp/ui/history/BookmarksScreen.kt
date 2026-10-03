@@ -161,16 +161,11 @@ fun BookmarksScreen(
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                if (question.explanationElements.isNotEmpty()) {
-                                    Spacer(Modifier.height(4.dp))
-                                    ContentElements(
-                                        question.explanationElements,
-                                        textStyle = MaterialTheme.typography.bodySmall,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
+                                // Deliberately no explanation here, image
+                                // included. A bookmark list is a reading list
+                                // of questions; with no options shown, the
+                                // explanation gave the answer away against
+                                // half a question.
                             }
                             IconButton(onClick = { viewModel.removeBookmark(question.id) }) {
                                 Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_bookmark))

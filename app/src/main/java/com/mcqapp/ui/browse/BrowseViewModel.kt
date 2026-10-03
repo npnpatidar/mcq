@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -31,6 +32,8 @@ class BrowseViewModel(
     private val repository: McqRepository = (application as McqApplication).repository
 
     private val _state = MutableStateFlow(BrowseUiState())
+    private val _exportError = MutableStateFlow<String?>(null)
+    val exportError: StateFlow<String?> = _exportError.asStateFlow()
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
     init {
@@ -105,6 +108,54 @@ class BrowseViewModel(
             repository.copyQuestionsToCategory(questionIds, targetCategoryId)
             Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
         }
+    }
+
+    /**
+     * Writes just the selected questions out as a paper of their own, so a
+     * subset can leave the app without a temporary paper being created.
+     */
+    fun exportSelection(
+        uri: android.net.Uri,
+        questionIds: Set<String>,
+        title: String,
+        format: com.mcqapp.data.export.ExportFormat
+    ) {
+        viewModelScope.launch {
+            try {
+                val selected = _state.value.questions.filter { it.id in questionIds }
+                if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
+                val dto = com.mcqapp.data.io.SelectionExport.paperDto(
+                    title = title,
+                    questions = selected,
+                    categoryTitleById = categoryTitles()
+                )
+                val result = com.mcqapp.data.export.PaperExporter(repository.db())
+                    .exportDto(dto, title, format, twoColumnPdf = repository.pdfTwoColumn().first())
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
+                    it.write(result.bytes)
+                } ?: throw IllegalStateException("Could not open output stream")
+                Logger.i("BROWSEVM", "Exported ${selected.size} questions as ${result.fileName}")
+                _exportError.value = null
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "Export of selection failed", e)
+                _exportError.value = "Export failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Every category in this paper, flattened to id -> title for the export. */
+    private fun categoryTitles(): Map<String, String> = buildMap {
+        fun walk(nodes: List<com.mcqapp.domain.CategoryNode>) {
+            for (node in nodes) {
+                put(node.id, node.title)
+                walk(node.children)
+            }
+        }
+        walk(_state.value.paper?.categories.orEmpty())
+    }
+
+    fun dismissExportError() {
+        _exportError.value = null
     }
 
     fun bulkEdit(

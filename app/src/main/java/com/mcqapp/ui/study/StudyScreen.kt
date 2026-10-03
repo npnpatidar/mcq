@@ -193,7 +193,7 @@ private fun QuestionCard(
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            ContentElements(question.elements, textStyle = MaterialTheme.typography.bodyMedium)
+            ContentElements(question.elements, textStyle = MaterialTheme.typography.titleMedium)
             QuestionImage(
                 src = question.image,
                 contentDescription = stringResource(R.string.question_image),
@@ -207,10 +207,16 @@ private fun QuestionCard(
                     revealed && isSelected -> MaterialTheme.colorScheme.errorContainer
                     else -> MaterialTheme.colorScheme.surface
                 }
+                // A multi-correct question can take several picks, so its
+                // marker is a square — the same circle/square distinction the
+                // test screen draws with a radio button vs a checkbox.
+                val multi = question.isMultiCorrect
                 val mark = when {
                     revealed && isCorrect -> "✓"
                     revealed && isSelected -> "✗"
+                    isSelected && multi -> "▣"
                     isSelected -> "•"
+                    multi -> "▢"
                     else -> "○"
                 }
                 // Announced as a checkbox with a state description: the glyph
@@ -237,13 +243,14 @@ private fun QuestionCard(
                 ) {
                     Text(
                         mark,
-                        modifier = Modifier.width(20.dp),
+                        modifier = Modifier.width(28.dp),
+                        style = MaterialTheme.typography.titleMedium,
                         color = if (revealed && isCorrect) MaterialTheme.colorScheme.primary
                         else if (revealed && isSelected) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurface
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        ContentElements(option.elements, textStyle = MaterialTheme.typography.bodySmall)
+                        ContentElements(option.elements, textStyle = MaterialTheme.typography.bodyMedium)
                         QuestionImage(src = option.image, contentDescription = stringResource(R.string.image_for_this_option))
                     }
                 }
@@ -251,7 +258,7 @@ private fun QuestionCard(
             if (revealed && question.explanation.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.explanation), style = MaterialTheme.typography.labelMedium)
-                ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodySmall)
+                ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodyMedium)
                 QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
             }
         }

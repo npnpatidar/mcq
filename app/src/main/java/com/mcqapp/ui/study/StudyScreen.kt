@@ -87,7 +87,7 @@ fun StudyScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { stringResource(R.string.study) },
+                title = { Text(stringResource(R.string.study)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -143,7 +143,7 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                 onClick = { viewModel.reveal() },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                stringResource(R.string.show_answer)
+                Text(stringResource(R.string.show_answer))
             }
         } else {
             GradeButtons(enabled = !state.grading, onGrade = { viewModel.grade(it) })
@@ -343,9 +343,9 @@ private fun StudyLoadError(message: String, onRetry: () -> Unit, onDone: () -> U
             color = MaterialTheme.colorScheme.error
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onRetry) { stringResource(R.string.retry) }
+        Button(onClick = onRetry) { Text(stringResource(R.string.retry)) }
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onDone) { stringResource(R.string.back_to_library) }
+        OutlinedButton(onClick = onDone) { Text(stringResource(R.string.back_to_library)) }
     }
 }
 
@@ -370,7 +370,7 @@ private fun StudySummary(
             )
             // There is nothing to repeat, so only offer a way out.
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                stringResource(R.string.back_to_library)
+                Text(stringResource(R.string.back_to_library))
             }
             return@Column
         } else {
@@ -387,11 +387,11 @@ private fun StudySummary(
             Spacer(Modifier.height(16.dp))
         }
         OutlinedButton(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {
-            stringResource(R.string.study_again)
+            Text(stringResource(R.string.study_again))
         }
         Spacer(Modifier.height(8.dp))
         Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-            stringResource(R.string.done)
+            Text(stringResource(R.string.done))
         }
     }
 }

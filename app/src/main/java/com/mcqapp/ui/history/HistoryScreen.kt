@@ -57,7 +57,7 @@ fun HistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { stringResource(R.string.history) },
+                title = { Text(stringResource(R.string.history)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -73,7 +73,7 @@ fun HistoryScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                stringResource(R.string.no_attempts_yet)
+                Text(stringResource(R.string.no_attempts_yet))
             }
         } else {
             // Hoisted: was recomputed inside the lazy content lambda on every

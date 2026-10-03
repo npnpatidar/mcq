@@ -178,7 +178,7 @@ fun QuestionEditorScreen(
                             },
                             enabled = canProceed && prevId != null
                         ) {
-                            stringResource(R.string.prev)
+                            Text(stringResource(R.string.prev))
                         }
                         TextButton(
                             onClick = {
@@ -190,7 +190,7 @@ fun QuestionEditorScreen(
                             },
                             enabled = canProceed && nextId != null
                         ) {
-                            stringResource(R.string.next)
+                            Text(stringResource(R.string.next))
                         }
                     }
                 }
@@ -258,12 +258,12 @@ fun QuestionEditorScreen(
                 OutlinedTextField(
                     value = state.image,
                     onValueChange = viewModel::updateImage,
-                    label = { stringResource(R.string.image_url_optional) },
+                    label = { Text(stringResource(R.string.image_url_optional)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedButton(onClick = { pickImageLauncher.launch("image/*") }) {
-                    stringResource(R.string.pick)
+                    Text(stringResource(R.string.pick))
                 }
             }
             if (state.image.isNotBlank()) {
@@ -311,7 +311,7 @@ fun QuestionEditorScreen(
             }
 
             OutlinedButton(onClick = viewModel::addOption) {
-                stringResource(R.string.add_option)
+                Text(stringResource(R.string.add_option))
             }
 
             Spacer(Modifier.height(16.dp))
@@ -323,7 +323,7 @@ fun QuestionEditorScreen(
             OutlinedTextField(
                 value = state.marks,
                 onValueChange = viewModel::updateMarks,
-                label = { stringResource(R.string.marks_default_1) },
+                label = { Text(stringResource(R.string.marks_default_1)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -350,12 +350,12 @@ fun QuestionEditorScreen(
                 OutlinedTextField(
                     value = state.explanationImage,
                     onValueChange = viewModel::updateExplanationImage,
-                    label = { stringResource(R.string.explanation_image_url_optional) },
+                    label = { Text(stringResource(R.string.explanation_image_url_optional)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedButton(onClick = { pickExplanationImageLauncher.launch("image/*") }) {
-                    stringResource(R.string.pick)
+                    Text(stringResource(R.string.pick))
                 }
             }
             if (state.explanationImage.isNotBlank()) {
@@ -365,7 +365,7 @@ fun QuestionEditorScreen(
             OutlinedTextField(
                 value = state.tags,
                 onValueChange = viewModel::updateTags,
-                label = { stringResource(R.string.tags_comma_separated) },
+                label = { Text(stringResource(R.string.tags_comma_separated)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -379,7 +379,7 @@ fun QuestionEditorScreen(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(Modifier.padding(2.dp))
-                    stringResource(R.string.save)
+                    Text(stringResource(R.string.save))
                 }
                 if (!state.isNew) {
                     OutlinedButton(onClick = {
@@ -456,12 +456,12 @@ private fun OptionEditorRow(
             OutlinedTextField(
                 value = option.image,
                 onValueChange = onImageChange,
-                label = { stringResource(R.string.option_image_url_optional) },
+                label = { Text(stringResource(R.string.option_image_url_optional)) },
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             OutlinedButton(onClick = { onPickImage() }) {
-                stringResource(R.string.pick)
+                Text(stringResource(R.string.pick))
             }
         }
         if (option.image.isNotBlank()) {
@@ -490,7 +490,7 @@ private fun CategoryDropdown(
             value = selectedTitle,
             onValueChange = {},
             readOnly = true,
-            label = { stringResource(R.string.category) },
+            label = { Text(stringResource(R.string.category)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -522,7 +522,7 @@ private fun DifficultyDropdown(
             value = difficulty.label,
             onValueChange = {},
             readOnly = true,
-            label = { stringResource(R.string.difficulty) },
+            label = { Text(stringResource(R.string.difficulty)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()

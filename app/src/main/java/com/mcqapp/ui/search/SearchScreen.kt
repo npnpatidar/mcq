@@ -51,7 +51,7 @@ fun SearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { stringResource(R.string.search_all_papers) },
+                title = { Text(stringResource(R.string.search_all_papers)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -69,7 +69,7 @@ fun SearchScreen(
             OutlinedTextField(
                 value = state.query,
                 onValueChange = viewModel::updateQuery,
-                label = { stringResource(R.string.search_text_or_tags) },
+                label = { Text(stringResource(R.string.search_text_or_tags)) },
                 singleLine = true,
                 trailingIcon = {
                     if (state.query.isNotEmpty()) {

@@ -263,7 +263,7 @@ fun LibraryScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { stringResource(R.string.mcq_app) },
+                    title = { Text(stringResource(R.string.mcq_app)) },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.AutoMirrored.Filled.List, contentDescription = stringResource(R.string.open_menu))
@@ -297,7 +297,7 @@ fun LibraryScreen(
                             )
                             Spacer(Modifier.height(8.dp))
                             TextButton(onClick = { viewModel.loadSampleData() }) {
-                                stringResource(R.string.load_sample_paper)
+                                Text(stringResource(R.string.load_sample_paper))
                             }
                         }
                     }
@@ -418,10 +418,10 @@ fun LibraryScreen(
     exportError?.let { error ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissError() },
-            title = { stringResource(R.string.error) },
+            title = { Text(stringResource(R.string.error)) },
             text = { Text(error) },
             confirmButton = {
-                TextButton(onClick = { viewModel.dismissError() }) { stringResource(R.string.ok) }
+                TextButton(onClick = { viewModel.dismissError() }) { Text(stringResource(R.string.ok)) }
             }
         )
     }
@@ -429,7 +429,7 @@ fun LibraryScreen(
     importReport?.let { report ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissImportReport() },
-            title = { stringResource(R.string.imported) },
+            title = { Text(stringResource(R.string.imported)) },
             text = {
                 Text(
                     buildString {
@@ -454,7 +454,7 @@ fun LibraryScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.dismissImportReport() }) { stringResource(R.string.ok) }
+                TextButton(onClick = { viewModel.dismissImportReport() }) { Text(stringResource(R.string.ok)) }
             }
         )
     }
@@ -521,7 +521,7 @@ fun LibraryScreen(
                         pendingExportCategory = null
                         pendingExportFormat = null
                     }
-                }) { stringResource(R.string.export) }
+                }) { Text(stringResource(R.string.export)) }
             },
             dismissButton = {
                 TextButton(onClick = {
@@ -529,7 +529,7 @@ fun LibraryScreen(
                     pendingExportPaperId = null
                     pendingExportCategory = null
                     pendingExportFormat = null
-                }) { stringResource(R.string.cancel) }
+                }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -571,7 +571,7 @@ private fun DrawerContent(
                 ) {
                     Icon(Icons.Default.History, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
-                    stringResource(R.string.history)
+                    Text(stringResource(R.string.history))
                 }
             }
             item {
@@ -587,7 +587,7 @@ private fun DrawerContent(
                 ) {
                     Icon(Icons.Default.Bookmark, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
-                    stringResource(R.string.bookmarks)
+                    Text(stringResource(R.string.bookmarks))
                 }
             }
             item {
@@ -603,7 +603,7 @@ private fun DrawerContent(
                 ) {
                     Icon(Icons.Default.Search, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
-                    stringResource(R.string.search)
+                    Text(stringResource(R.string.search))
                 }
             }
             item {
@@ -619,7 +619,7 @@ private fun DrawerContent(
                 ) {
                     Icon(Icons.Default.Settings, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
-                    stringResource(R.string.settings)
+                    Text(stringResource(R.string.settings))
                 }
             }
             item { Divider() }
@@ -675,7 +675,7 @@ private fun DrawerContent(
                                 ) {
                                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                                     Spacer(Modifier.width(4.dp))
-                                    stringResource(R.string.start_test_selected_size_categories)
+                                    Text("Start test (${selected.size} categories)")
                                 }
                             }
                         }
@@ -696,7 +696,7 @@ private fun DrawerContent(
             ) {
                 Icon(Icons.Default.FileUpload, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
-                stringResource(R.string.import_questions)
+                Text(stringResource(R.string.import_questions))
             }
         }
     }
@@ -808,7 +808,7 @@ private fun PaperCard(
                 }) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
-                    stringResource(R.string.start)
+                    Text(stringResource(R.string.start))
                 }
                 OutlinedButton(onClick = onStudy) {
                     Text(
@@ -825,37 +825,37 @@ private fun PaperCard(
                     // label promised the tricky questions and delivered the
                     // ordinary due+new queue.
                     TextButton(onClick = onStudyLeeches) {
-                        stringResource(R.string.leechcount_tricky)
+                        Text("${leechCount} tricky")
                     }
                 }
                 OutlinedButton(onClick = onExport) {
-                    stringResource(R.string.export)
+                    Text(stringResource(R.string.export))
                 }
                 OutlinedButton(onClick = onBrowse) {
-                    stringResource(R.string.browse)
+                    Text(stringResource(R.string.browse))
                 }
                 OutlinedButton(onClick = { showDrillDialog = true }) {
-                    stringResource(R.string.drill)
+                    Text(stringResource(R.string.drill))
                 }
                 if (mistakeCount > 0) {
                     OutlinedButton(onClick = {
                         Logger.i("LIB", "Start paper: paperId=${paper.id}")
                         onPracticeMistakes()
                     }) {
-                        stringResource(R.string.mistakes_mistakecount)
+                        Text(stringResource(R.string.mistakes_mistakecount))
                     }
                 }
             }
             if (showDrillDialog) {
                 AlertDialog(
                     onDismissRequest = { showDrillDialog = false },
-                    title = { stringResource(R.string.quick_drill) },
+                    title = { Text(stringResource(R.string.quick_drill)) },
                     text = {
                         Column {
                             OutlinedTextField(
                                 value = drillCountText,
                                 onValueChange = { drillCountText = it.filter { c -> c.isDigit() }.take(4) },
-                                label = { stringResource(R.string.questions) },
+                                label = { Text(stringResource(R.string.questions)) },
                                 singleLine = true,
                                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -866,7 +866,7 @@ private fun PaperCard(
                             OutlinedTextField(
                                 value = drillMinutesText,
                                 onValueChange = { drillMinutesText = it.filter { c -> c.isDigit() }.take(4) },
-                                label = { stringResource(R.string.minutes) },
+                                label = { Text(stringResource(R.string.minutes)) },
                                 singleLine = true,
                                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -892,10 +892,10 @@ private fun PaperCard(
                                 onDrill(drillCount!!, drillMinutes!!)
                             },
                             enabled = drillCount != null && drillMinutes != null
-                        ) { stringResource(R.string.start_drill) }
+                        ) { Text(stringResource(R.string.start_drill)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showDrillDialog = false }) { stringResource(R.string.cancel) }
+                        TextButton(onClick = { showDrillDialog = false }) { Text(stringResource(R.string.cancel)) }
                     }
                 )
             }
@@ -919,17 +919,17 @@ private fun PaperCard(
                         TextButton(onClick = onAddCategory, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
-                            stringResource(R.string.add_category)
+                            Text(stringResource(R.string.add_category))
                         }
                         TextButton(onClick = onDuplicate, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.ContentCopy, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
-                            stringResource(R.string.duplicate)
+                            Text(stringResource(R.string.duplicate))
                         }
                         TextButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.Delete, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
-                            stringResource(R.string.delete_paper)
+                            Text(stringResource(R.string.delete_paper))
                         }
                     }
                 }
@@ -1006,13 +1006,13 @@ private fun PaperDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { stringResource(R.string.new_paper) },
+        title = { Text(stringResource(R.string.new_paper)) },
         text = {
             Column {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { stringResource(R.string.title) },
+                    label = { Text(stringResource(R.string.title)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1020,14 +1020,14 @@ private fun PaperDialog(
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { stringResource(R.string.description) },
+                    label = { Text(stringResource(R.string.description)) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = duration,
                     onValueChange = { duration = it.filter { c -> c.isDigit() } },
-                    label = { stringResource(R.string.duration_minutes_0_untimed) },
+                    label = { Text(stringResource(R.string.duration_minutes_0_untimed)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1035,7 +1035,7 @@ private fun PaperDialog(
                 OutlinedTextField(
                     value = negative,
                     onValueChange = { input -> negative = input.filter { it.isDigit() || it == '.' } },
-                    label = { stringResource(R.string.negative_marking_e_g_0_33) },
+                    label = { Text(stringResource(R.string.negative_marking_e_g_0_33)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1052,10 +1052,10 @@ private fun PaperDialog(
                     )
                 },
                 enabled = title.isNotBlank()
-            ) { stringResource(R.string.save) }
+            ) { Text(stringResource(R.string.save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { stringResource(R.string.cancel) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
 }
@@ -1076,13 +1076,13 @@ private fun CategoryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { stringResource(R.string.new_category) },
+        title = { Text(stringResource(R.string.new_category)) },
         text = {
             Column {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { stringResource(R.string.title) },
+                    label = { Text(stringResource(R.string.title)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -1094,7 +1094,7 @@ private fun CategoryDialog(
                             selected = selectedParent == null,
                             onClick = { selectedParent = null }
                         )
-                        stringResource(R.string.none_top_level)
+                        Text(stringResource(R.string.none_top_level))
                     }
                     categories.forEach { node ->
                         ParentOptions(
@@ -1111,10 +1111,10 @@ private fun CategoryDialog(
             TextButton(
                 onClick = { onSave(title.trim(), selectedParent) },
                 enabled = title.isNotBlank()
-            ) { stringResource(R.string.save) }
+            ) { Text(stringResource(R.string.save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { stringResource(R.string.cancel) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
 }

@@ -98,7 +98,7 @@ fun BookmarksScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { stringResource(R.string.bookmarks) },
+                title = { Text(stringResource(R.string.bookmarks)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -121,7 +121,7 @@ fun BookmarksScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                stringResource(R.string.no_bookmarked_questions)
+                Text(stringResource(R.string.no_bookmarked_questions))
             }
         } else {
             LazyColumn(
@@ -184,10 +184,10 @@ fun BookmarksScreen(
     exportError?.let { error ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissError() },
-            title = { stringResource(R.string.error) },
+            title = { Text(stringResource(R.string.error)) },
             text = { Text(error) },
             confirmButton = {
-                TextButton(onClick = { viewModel.dismissError() }) { stringResource(R.string.ok) }
+                TextButton(onClick = { viewModel.dismissError() }) { Text(stringResource(R.string.ok)) }
             }
         )
     }
@@ -198,7 +198,7 @@ fun BookmarksScreen(
                 showFormatDialog = false
                 pendingFormat = null
             },
-            title = { stringResource(R.string.export_state_questions_size_bookmarked_questions) },
+            title = { Text("Export ${state.questions.size} bookmarked questions") },
             text = {
                 Column {
                     ExportFormat.entries.forEach { format ->
@@ -236,13 +236,13 @@ fun BookmarksScreen(
                             exportFormat
                         )
                     )
-                }) { stringResource(R.string.export) }
+                }) { Text(stringResource(R.string.export)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showFormatDialog = false
                     pendingFormat = null
-                }) { stringResource(R.string.cancel) }
+                }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }

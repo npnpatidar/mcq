@@ -90,7 +90,7 @@ fun BlockListEditor(
                     is ContentElement.TextElement -> OutlinedTextField(
                         value = element.text,
                         onValueChange = { onUpdateBlock(index, ContentElement.TextElement(it)) },
-                        label = { stringResource(R.string.text) },
+                        label = { Text(stringResource(R.string.text)) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     is ContentElement.ImageElement -> {
@@ -102,7 +102,7 @@ fun BlockListEditor(
                             OutlinedTextField(
                                 value = element.src,
                                 onValueChange = { onUpdateBlock(index, ContentElement.ImageElement(it)) },
-                                label = { stringResource(R.string.image_url) },
+                                label = { Text(stringResource(R.string.image_url)) },
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
@@ -111,7 +111,7 @@ fun BlockListEditor(
                                     onUpdateBlock(index, ContentElement.ImageElement(picked))
                                 }
                             }) {
-                                stringResource(R.string.pick)
+                                Text(stringResource(R.string.pick))
                             }
                         }
                         if (element.src.isNotBlank()) {
@@ -192,7 +192,7 @@ private fun TableBlockEditor(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         IconButton(onClick = { onRemoveColumn(col) }) {
-                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_column_col_1))
+                            Icon(Icons.Default.Delete, contentDescription = "Remove column ${col + 1}")
                         }
                     }
                 }
@@ -219,14 +219,14 @@ private fun TableBlockEditor(
                     Spacer(Modifier.weight(1f))
                 }
                 IconButton(onClick = { onRemoveRow(row) }) {
-                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_row_row_1))
+                    Icon(Icons.Default.Delete, contentDescription = "Remove row ${row + 1}")
                 }
             }
             Spacer(Modifier.height(4.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onAddRow) { stringResource(R.string.add_row) }
-            OutlinedButton(onClick = onAddColumn) { stringResource(R.string.add_column) }
+            OutlinedButton(onClick = onAddRow) { Text(stringResource(R.string.add_row)) }
+            OutlinedButton(onClick = onAddColumn) { Text(stringResource(R.string.add_column)) }
         }
     }
 }
@@ -240,26 +240,26 @@ private fun AddBlockMenu(onAddBlock: (EditorBlockType) -> Unit) {
             onClick = { expanded = true },
             modifier = Modifier.menuAnchor()
         ) {
-            stringResource(R.string.add_block)
+            Text(stringResource(R.string.add_block))
         }
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
             DropdownMenuItem(
-                text = { stringResource(R.string.text) },
+                text = { Text(stringResource(R.string.text)) },
                 onClick = { onAddBlock(EditorBlockType.TEXT); expanded = false }
             )
             DropdownMenuItem(
-                text = { stringResource(R.string.image) },
+                text = { Text(stringResource(R.string.image)) },
                 onClick = { onAddBlock(EditorBlockType.IMAGE); expanded = false }
             )
             DropdownMenuItem(
-                text = { stringResource(R.string.table) },
+                text = { Text(stringResource(R.string.table)) },
                 onClick = { onAddBlock(EditorBlockType.TABLE); expanded = false }
             )
             DropdownMenuItem(
-                text = { stringResource(R.string.formula) },
+                text = { Text(stringResource(R.string.formula)) },
                 onClick = { onAddBlock(EditorBlockType.MATH); expanded = false }
             )
         }

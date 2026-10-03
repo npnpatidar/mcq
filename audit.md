@@ -676,8 +676,20 @@ decision, which is a localisation task rather than a defect.
 The rendered text is byte-for-byte unchanged, so the instrumented UI test's exact-string assertions
 still hold, and the whole suite (565 tests) plus lint and both build variants pass.
 
-**Known rough edge:** names are mechanical (`dd_mmm_yyyy_hh_mm`, `l_2_plus_2`), so a translator will
-want to rename some. That is normal for a first extraction.
+**Regression, found by the user and fixed in the follow-up commit.** The first extraction replaced the
+*whole* `Text("…")` match rather than the string inside it, so 198 labels became a bare
+`stringResource(…)` expression. That compiles — Kotlin discards a String expression in a `Unit`
+lambda — and renders **nothing**, which is why it passed the compiler, lint and all 565 tests while
+blanking almost every label in the app. Caught by reading the screen, not by any test.
+
+Fixed by reverting the twelve files and re-running the extraction with the `Text(` wrapper preserved.
+`StringResourceUsageTest` now fails the build if any `stringResource` call is not inside `Text(`,
+`contentDescription =` or a `label =`; it also checks every referenced resource exists and that
+`strings.xml` has not been truncated. Note this class of bug is invisible to the compiler and to unit
+tests by construction — only a structural check or a real screen catches it.
+
+**Known rough edge:** names are mechanical (`dd_mmm_yyyy_hh_mm`, `l_0f`), so a translator will want to
+rename some. That is normal for a first extraction.
 
 ### A37 · `[~]` · Dependency hygiene — hygiene done, Coil upgrade declined · `read`
 `coil-compose:2.7.0` (2.x is well behind 3.x) drags OkHttp 4.12 + okio + appcompat-resources in for

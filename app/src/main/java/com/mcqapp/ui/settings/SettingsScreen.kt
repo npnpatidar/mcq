@@ -84,7 +84,7 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { stringResource(R.string.settings) },
+                title = { Text(stringResource(R.string.settings)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -178,7 +178,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.shuffle_question_order)
+                            Text(stringResource(R.string.shuffle_question_order))
                             Text(
                                 stringResource(R.string.present_questions_in_random_order_each_attempt),
                                 style = MaterialTheme.typography.bodySmall
@@ -195,7 +195,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.refresh_answers_on_re_import)
+                            Text(stringResource(R.string.refresh_answers_on_re_import))
                             Text(
                                 stringResource(R.string.when_a_file_repeats_a_question_s_text_and_options_but_correc) +
                                     "its answer key, update the stored answer instead of " +
@@ -214,7 +214,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.shuffle_options)
+                            Text(stringResource(R.string.shuffle_options))
                             Text(
                                 stringResource(R.string.present_answer_options_in_random_order),
                                 style = MaterialTheme.typography.bodySmall
@@ -231,7 +231,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.practice_mode)
+                            Text(stringResource(R.string.practice_mode))
                             Text(
                                 stringResource(R.string.show_correct_answers_and_explanations_instantly),
                                 style = MaterialTheme.typography.bodySmall
@@ -248,7 +248,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.strict_exam_mode)
+                            Text(stringResource(R.string.strict_exam_mode))
                             Text(
                                 stringResource(R.string.hides_answers_flags_and_the_question_palette),
                                 style = MaterialTheme.typography.bodySmall
@@ -265,7 +265,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.auto_advance)
+                            Text(stringResource(R.string.auto_advance))
                             Text(
                                 stringResource(R.string.move_to_the_next_question_after_answering_single_answer_only),
                                 style = MaterialTheme.typography.bodySmall
@@ -305,7 +305,7 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { viewModel.refreshStorage() }) {
-                            stringResource(R.string.refresh)
+                            Text(stringResource(R.string.refresh))
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -360,7 +360,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            stringResource(R.string.two_column_layout)
+                            Text(stringResource(R.string.two_column_layout))
                             Text(
                                 stringResource(R.string.flow_questions_down_the_left_column_then_the_right),
                                 style = MaterialTheme.typography.bodySmall
@@ -383,7 +383,7 @@ fun SettingsScreen(
                         onClick = { exportLauncher.launch("mcq-export.json") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        stringResource(R.string.export_all_data_json)
+                        Text(stringResource(R.string.export_all_data_json))
                     }
                     Spacer(Modifier.height(8.dp))
                     Button(
@@ -406,7 +406,7 @@ fun SettingsScreen(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        stringResource(R.string.export_logs)
+                        Text(stringResource(R.string.export_logs))
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -438,10 +438,10 @@ fun SettingsScreen(
     exportError?.let { error ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { exportError = null },
-            title = { stringResource(R.string.export_failed) },
+            title = { Text(stringResource(R.string.export_failed)) },
             text = { Text(error) },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { exportError = null }) { stringResource(R.string.ok) }
+                androidx.compose.material3.TextButton(onClick = { exportError = null }) { Text(stringResource(R.string.ok)) }
             }
         )
     }
@@ -473,7 +473,7 @@ private fun AnkiSchedulerSection(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onReset) { stringResource(R.string.reset) }
+                TextButton(onClick = onReset) { Text(stringResource(R.string.reset)) }
             }
             Text(
                 stringResource(R.string.sm_2_scheduling_for_study_these_match_anki_s_review_options_) +

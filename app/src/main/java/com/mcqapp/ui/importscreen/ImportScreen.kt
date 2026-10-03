@@ -80,20 +80,20 @@ fun ImportScreen(
     state.error?.let { error ->
         AlertDialog(
             onDismissRequest = { },
-            title = { stringResource(R.string.cannot_open_file) },
+            title = { Text(stringResource(R.string.cannot_open_file)) },
             text = { Text(error) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.dismissError()
                     navController.popBackStack()
-                }) { stringResource(R.string.go_back) }
+                }) { Text(stringResource(R.string.go_back)) }
             }
         )
     }
     if (state.importDone && report != null) {
         AlertDialog(
             onDismissRequest = { },
-            title = { stringResource(R.string.import_complete) },
+            title = { Text(stringResource(R.string.import_complete)) },
             text = {
                 Text(
                     "• ${report.newQuestions} new questions added\n" +
@@ -118,7 +118,7 @@ fun ImportScreen(
                     navController.navigate("library") {
                         popUpTo("library") { inclusive = true }
                     }
-                }) { stringResource(R.string.ok) }
+                }) { Text(stringResource(R.string.ok)) }
             }
         )
     }
@@ -181,7 +181,7 @@ fun ImportScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { stringResource(R.string.import_questions) },
+                title = { Text(stringResource(R.string.import_questions)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -201,7 +201,7 @@ fun ImportScreen(
             ) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(8.dp))
-                stringResource(R.string.loading)
+                Text(stringResource(R.string.loading))
             }
             return@Scaffold
         }
@@ -230,7 +230,7 @@ fun ImportScreen(
                     OutlinedTextField(
                         value = state.paperTitle,
                         onValueChange = viewModel::updatePaperTitle,
-                        label = { stringResource(R.string.paper_title) },
+                        label = { Text(stringResource(R.string.paper_title)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -238,7 +238,7 @@ fun ImportScreen(
                     OutlinedTextField(
                         value = state.paperDescription,
                         onValueChange = viewModel::updatePaperDescription,
-                        label = { stringResource(R.string.description_optional) },
+                        label = { Text(stringResource(R.string.description_optional)) },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -246,7 +246,7 @@ fun ImportScreen(
                         OutlinedTextField(
                             value = if (state.durationMinutes == 0) "" else state.durationMinutes.toString(),
                             onValueChange = { input -> viewModel.updateDuration(input.filter { it.isDigit() }.toIntOrNull() ?: 0) },
-                            label = { stringResource(R.string.duration_min) },
+                            label = { Text(stringResource(R.string.duration_min)) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -256,7 +256,7 @@ fun ImportScreen(
                                 val filtered = input.filter { it.isDigit() || it == '.' }
                                 viewModel.updateNegativeMarking(filtered.toDoubleOrNull() ?: 0.0)
                             },
-                            label = { stringResource(R.string.negative_marking) },
+                            label = { Text(stringResource(R.string.negative_marking)) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
@@ -265,7 +265,7 @@ fun ImportScreen(
                     OutlinedTextField(
                         value = state.categoryName,
                         onValueChange = viewModel::updateCategoryName,
-                        label = { stringResource(R.string.category_name_for_all_questions) },
+                        label = { Text(stringResource(R.string.category_name_for_all_questions)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )

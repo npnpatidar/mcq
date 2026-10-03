@@ -125,17 +125,17 @@ fun BrowseScreen(
                                 showBulkDialog = true
                             },
                             enabled = selectedIds.isNotEmpty()
-                        ) { stringResource(R.string.edit) }
+                        ) { Text(stringResource(R.string.edit)) }
                         TextButton(
                             onClick = { showMoveDialog = true },
                             enabled = selectedIds.isNotEmpty()
-                        ) { stringResource(R.string.move) }
+                        ) { Text(stringResource(R.string.move)) }
                         TextButton(
                             onClick = { showDeleteConfirm = true },
                             enabled = selectedIds.isNotEmpty()
-                        ) { stringResource(R.string.delete) }
+                        ) { Text(stringResource(R.string.delete)) }
                     } else {
-                        TextButton(onClick = { selectionMode = true }) { stringResource(R.string.select) }
+                        TextButton(onClick = { selectionMode = true }) { Text(stringResource(R.string.select)) }
                     }
                 }
             )
@@ -226,7 +226,7 @@ fun BrowseScreen(
                     // later, so the filter does not run on every keystroke.
                     value = searchInput,
                     onValueChange = { searchInput = it },
-                    label = { stringResource(R.string.search_text_tags_options) },
+                    label = { Text(stringResource(R.string.search_text_tags_options)) },
                     singleLine = true,
                     trailingIcon = {
                         if (searchInput.isNotEmpty()) {
@@ -301,7 +301,7 @@ fun BrowseScreen(
         if (showBulkDialog) {
             AlertDialog(
                 onDismissRequest = { showBulkDialog = false },
-                title = { stringResource(R.string.edit_selectedids_size_questions) },
+                title = { Text("Edit ${selectedIds.size} questions") },
                 text = {
                     Column {
                         Text(
@@ -312,7 +312,7 @@ fun BrowseScreen(
                         androidx.compose.material3.OutlinedTextField(
                             value = bulkMarks,
                             onValueChange = { bulkMarks = it },
-                            label = { stringResource(R.string.marks_blank_keep) },
+                            label = { Text(stringResource(R.string.marks_blank_keep)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -324,7 +324,7 @@ fun BrowseScreen(
                             FilterChip(
                                 selected = bulkDifficulty == null,
                                 onClick = { bulkDifficulty = null },
-                                label = { stringResource(R.string.keep) }
+                                label = { Text(stringResource(R.string.keep)) }
                             )
                             com.mcqapp.domain.Difficulty.entries.forEach { d ->
                                 FilterChip(
@@ -338,7 +338,7 @@ fun BrowseScreen(
                         androidx.compose.material3.OutlinedTextField(
                             value = bulkTags,
                             onValueChange = { bulkTags = it },
-                            label = { stringResource(R.string.tags_comma_separated_blank_keep) },
+                            label = { Text(stringResource(R.string.tags_comma_separated_blank_keep)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -350,10 +350,10 @@ fun BrowseScreen(
                         selectedIds = emptySet()
                         selectionMode = false
                         showBulkDialog = false
-                    }) { stringResource(R.string.apply) }
+                    }) { Text(stringResource(R.string.apply)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showBulkDialog = false }) { stringResource(R.string.cancel) }
+                    TextButton(onClick = { showBulkDialog = false }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }
@@ -361,18 +361,18 @@ fun BrowseScreen(
         if (showDeleteConfirm) {
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
-                title = { stringResource(R.string.delete_selectedids_size_questions) },
-                text = { stringResource(R.string.this_cannot_be_undone) },
+                title = { Text("Delete ${selectedIds.size} questions?") },
+                text = { Text(stringResource(R.string.this_cannot_be_undone)) },
                 confirmButton = {
                     TextButton(onClick = {
                         viewModel.deleteQuestions(selectedIds)
                         selectedIds = emptySet()
                         selectionMode = false
                         showDeleteConfirm = false
-                    }) { stringResource(R.string.delete) }
+                    }) { Text(stringResource(R.string.delete)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showDeleteConfirm = false }) { stringResource(R.string.cancel) }
+                    TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }
@@ -399,12 +399,12 @@ fun BrowseScreen(
                             FilterChip(
                                 selected = !moveIsCopy,
                                 onClick = { moveIsCopy = false },
-                                label = { stringResource(R.string.move) }
+                                label = { Text(stringResource(R.string.move)) }
                             )
                             FilterChip(
                                 selected = moveIsCopy,
                                 onClick = { moveIsCopy = true },
-                                label = { stringResource(R.string.copy) }
+                                label = { Text(stringResource(R.string.copy)) }
                             )
                         }
                         Spacer(Modifier.height(8.dp))
@@ -417,7 +417,7 @@ fun BrowseScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 singleLine = true,
-                                label = { stringResource(R.string.paper) },
+                                label = { Text(stringResource(R.string.paper)) },
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults.TrailingIcon(expanded = paperMenuOpen)
                                 },
@@ -464,7 +464,7 @@ fun BrowseScreen(
                 },
                 confirmButton = {},
                 dismissButton = {
-                    TextButton(onClick = { showMoveDialog = false }) { stringResource(R.string.cancel) }
+                    TextButton(onClick = { showMoveDialog = false }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }

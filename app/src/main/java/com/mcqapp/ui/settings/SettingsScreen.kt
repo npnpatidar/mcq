@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.io.Exporter
+import com.mcqapp.BuildConfig
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
 import com.mcqapp.R
@@ -429,7 +430,13 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text(stringResource(R.string.version_1_0_0), style = MaterialTheme.typography.labelMedium)
+                    // From BuildConfig, not a literal: the version used to be
+                    // hardcoded here and went stale the moment the build's
+                    // versionName changed.
+                    Text(
+                        stringResource(R.string.version, BuildConfig.VERSION_NAME),
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }

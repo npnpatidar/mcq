@@ -1,5 +1,51 @@
 import java.util.Properties
 
+/**
+ * The release tag pointing at HEAD, if there is one, e.g. "0.0.1" or "v0.0.2-rc1".
+ *
+ * The tag is the single source of truth for a release, so the About screen
+ * (which reads BuildConfig.VERSION_NAME) and the uploaded asset name can never
+ * disagree with it. Returns null for an untagged build, which is normal on a
+ * working branch and in CI's ordinary (untagged) builds.
+ */
+fun releaseTag(): String? {
+    val tag = try {
+        val process = ProcessBuilder("git", "describe", "--tags", "--exact-match", "HEAD")
+            .redirectErrorStream(false)
+            .start()
+        if (process.waitFor() == 0) {
+            process.inputStream.bufferedReader().readText().trim()
+        } else {
+            ""
+        }
+    } catch (e: Exception) {
+        // No git, or not a repository: fall back rather than fail the build.
+        ""
+    }
+    return tag.removePrefix("v").takeIf { SEMVER.matches(it) }
+}
+
+private val SEMVER = Regex("""\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?""")
+private val SEMVER_PARTS = Regex("""(\d+)\.(\d+)\.(\d+)""")
+
+// Untagged builds are labelled as such rather than borrowing a release number.
+private val DEV_VERSION = "0.0.1-dev"
+// Gradle cannot see that the generated BuildConfig depends on git state, so it
+// would happily reuse a cached one and the About screen would show a stale
+// version. Always regenerate.
+tasks.matching { it.name.contains("GenerateBuildConfig", ignoreCase = true) }
+    .configureEach {
+        outputs.upToDateWhen { false }
+    }
+
+val tagVersion: String? = releaseTag()
+val versionCodeFromTag: Int? = tagVersion?.let { v ->
+    SEMVER_PARTS.find(v)?.groupValues?.let { (_, major, minor, patch) ->
+        (major.toLong() * 1_000_000L + minor.toLong() * 1_000L + patch.toLong())
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -39,10 +85,11 @@ android {
         applicationId = "com.mcqapp"
         minSdk = 26
         targetSdk = 36
-        // Semantic versioning from 0.0.1: pre-release while the app is still
-        // finding its shape. Bump the patch for fixes, minor for features.
-        versionCode = 1
-        versionName = "0.0.1"
+        // Derived from the release tag (git tag 0.0.2 -> code 2002), so the
+        // versionCode can never need bumping by hand and can never disagree
+        // with the tag. Untagged builds fall back to a dev label.
+        versionCode = versionCodeFromTag ?: 1
+        versionName = tagVersion ?: DEV_VERSION
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -86,6 +133,9 @@ android {
 
     buildFeatures {
         compose = true
+        // For BuildConfig.VERSION_NAME, so the About row cannot drift from
+        // the version Gradle actually builds.
+        buildConfig = true
     }
 
     packaging {

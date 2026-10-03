@@ -199,8 +199,8 @@
     <string name="tick_the_correct_answer_s">Tick the correct answer(s)</string>
     <string name="time_taken_02d_02d">Time taken: %02d:%02d</string>
     <string name="trends">Trends</string>
-    <string name="version_1_0_0">Version 1.0.0</string>
     <string name="weakest_categories">Weakest categories</string>
     <string name="when_a_file_repeats_a_question_s_text_and_options_but_correc">When a file repeats a question\'s text and options but corrects </string>
     <string name="you_keep_missing_this_one">You keep missing this one</string>
+    <string name="version">Version %1$s</string>
 </resources>

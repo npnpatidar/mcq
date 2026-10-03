@@ -816,6 +816,14 @@ the same tag rather than duplicating it, and `--clobber` means a re-run leaves o
 fails loudly if the keystore secret is missing rather than publishing something unsigned, and writes
 the keystore fingerprint into the run summary.
 
+**The version comes from the release tag, not a hand-bumped number.** `releaseTag()` reads
+`git describe --tags --exact-match HEAD`, `versionName` is that tag (`v` stripped), and `versionCode`
+is derived as `major*1_000_000 + minor*1_000 + patch`, so it increases monotonically and can never
+need editing by hand. An untagged build is labelled `0.0.1-dev` rather than borrowing a release
+number. The About row reads `BuildConfig.VERSION_NAME`, so it always matches the tag and the uploaded
+asset name. `GenerateBuildConfig` is forced to re-run (`upToDateWhen { false }`) because Gradle
+cannot see that its output depends on git state and would otherwise serve a cached, stale version.
+
 **Two risks with the backup arrangement**, both the owner's to resolve:
 1. The key and its password sit in the **same folder**, so anyone who obtains it holds the app's
    signing identity and can ship updates. The password belongs in a password manager instead.

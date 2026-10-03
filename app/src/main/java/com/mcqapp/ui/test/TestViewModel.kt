@@ -67,9 +67,29 @@ class TestViewModel(
     private val _state = MutableStateFlow(TestUiState())
     val state: StateFlow<TestUiState> = _state.asStateFlow()
 
+    /**
+     * Seconds spent on the question currently on screen, ticking once a
+     * second.
+     *
+     * Separate from [TestUiState.dwellSeconds] on purpose: the header reads
+     * this, so the per-second tick invalidates only the header instead of the
+     * whole question body and its images.
+     */
+    private val _liveDwell = MutableStateFlow(0L)
+    val liveDwell: StateFlow<Long> = _liveDwell.asStateFlow()
+
     private var timerJob: Job? = null
+    private var dwellJob: Job? = null
     private var startTimestamp: Long = 0
     private var lastNavMillis: Long = 0
+
+    /**
+     * Dwell banked per question as of the last navigation. The published
+     * [TestUiState.dwellSeconds] adds the time spent on the current question
+     * since then, so the running total is derived from this plus the
+     * navigation anchor rather than accumulated once per second.
+     */
+    private val dwellCommitted = mutableMapOf<String, Long>()
     private val warnedThresholds = mutableSetOf<Int>()
 
     init {
@@ -141,6 +161,8 @@ class TestViewModel(
                 checkResumeOffer()
                 startTimestamp = System.currentTimeMillis()
                 lastNavMillis = startTimestamp
+                dwellCommitted.clear()
+                startDwellTicker()
                 if (totalSeconds > 0) startTimer()
             } catch (e: Exception) {
                 // Without clearing `loading` the screen sat on "Loading…"
@@ -190,15 +212,49 @@ class TestViewModel(
         _state.update { it.copy(saveError = null) }
     }
 
-    /** Credits elapsed time since the last navigation to the question left. */
+    /**
+     * Ticks the per-question dwell clock.
+     *
+     * Deliberately independent of [startTimer]: that loop only runs for a
+     * timed paper, but dwell is recorded for untimed papers too. Without a
+     * clock of its own the readout could only ever change on navigation, so it
+     * sat at 0:00 for the whole time the user was looking at a question.
+     */
+    private fun startDwellTicker() {
+        dwellJob?.cancel()
+        dwellJob = viewModelScope.launch {
+            while (true) {
+                delay(1000)
+                if (_state.value.submitted) break
+                publishDwell(System.currentTimeMillis())
+            }
+        }
+    }
+
+    /**
+     * Publishes banked dwell plus the time since the current question was
+     * reached, without moving [lastNavMillis] — the anchor stays where
+     * navigation put it so ticks cannot lose a sub-second remainder.
+     */
+    private fun publishDwell(now: Long) {
+        val current = _state.value
+        val question = current.currentQuestion ?: return
+        val total = (dwellCommitted[question.id] ?: 0L) + (now - lastNavMillis) / 1000
+        if (_liveDwell.value != total) _liveDwell.value = total
+        if (current.dwellSeconds[question.id] == total) return
+        _state.update { it.copy(dwellSeconds = it.dwellSeconds + (question.id to total)) }
+    }
+
+    /** Banks time on the question being left, so the next visit starts from it. */
     private fun flushDwell() {
         val current = _state.value
         val question = current.currentQuestion ?: return
-        val elapsed = (System.currentTimeMillis() - lastNavMillis) / 1000
-        if (elapsed > 0) {
-            _state.update { it.copy(dwellSeconds = Dwell.add(it.dwellSeconds, question.id, elapsed)) }
-        }
-        lastNavMillis = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        val banked = (dwellCommitted[question.id] ?: 0L) + (now - lastNavMillis) / 1000
+        dwellCommitted[question.id] = banked
+        lastNavMillis = now
+        if (_liveDwell.value != banked) _liveDwell.value = banked
+        _state.update { it.copy(dwellSeconds = it.dwellSeconds + (question.id to banked)) }
     }
 
     fun toggleOption(optionId: String) {
@@ -260,6 +316,9 @@ class TestViewModel(
         if (index in questions.indices) {
             flushDwell()
             _state.update { it.copy(currentIndex = index) }
+            // The header reads the live value, so it has to follow the
+            // question rather than keep showing the one just left.
+            publishDwell(System.currentTimeMillis())
             persistProgress()
         }
     }
@@ -268,12 +327,16 @@ class TestViewModel(
     fun previous() = goTo(_state.value.currentIndex - 1)
 
     fun submit() {
-        val current = _state.value
-        if (current.submitted || current.saving || current.questions.isEmpty()) return
-        Logger.i("TESTVM", "submit() called: answered=${current.answeredCount}/${current.questions.size}, " +
-            "remaining=${current.remainingSeconds}s")
+        val snapshot = _state.value
+        if (snapshot.submitted || snapshot.saving || snapshot.questions.isEmpty()) return
+        Logger.i("TESTVM", "submit() called: answered=${snapshot.answeredCount}/${snapshot.questions.size}, " +
+            "remaining=${snapshot.remainingSeconds}s")
         timerJob?.cancel()
+        dwellJob?.cancel()
         flushDwell()
+        // Read after the flush: the state read before it predates the last
+        // question's dwell, which then saved as zero.
+        val current = _state.value
         val durationSeconds = if (current.totalSeconds > 0) {
             (current.totalSeconds - current.remainingSeconds).toLong()
         } else {
@@ -372,6 +435,11 @@ class TestViewModel(
         warnedThresholds.clear()
         startTimestamp = System.currentTimeMillis()
         lastNavMillis = startTimestamp
+        // The snapshot's map becomes the new baseline, so time already spent
+        // on a question is not counted again from this visit onwards.
+        dwellCommitted.clear()
+        dwellCommitted.putAll(saved.dwellSeconds)
+        startDwellTicker()
         if (saved.totalSeconds > 0 && saved.remainingSeconds > 0) startTimer()
     }
 

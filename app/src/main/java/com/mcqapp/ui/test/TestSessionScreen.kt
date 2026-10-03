@@ -56,6 +56,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -367,14 +370,15 @@ fun TestSessionScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                // Own composable: reading dwellSeconds here made the 1 Hz
-                // timer tick re-execute the whole question body below,
+                // Own composable, and it reads the dwell clock from its own
+                // flow: a read of `state` here would put the per-second tick
+                // in this scope and re-execute the whole question body below,
                 // including every image.
                 QuestionHeader(
                     index = state.currentIndex,
                     total = state.questions.size,
                     marks = question.marks,
-                    dwellSeconds = state.dwellSeconds[question.id] ?: 0L
+                    liveDwell = viewModel.liveDwell
                 )
                 val practice = ExamMode.effectivePractice(state.practiceMode, state.strictMode)
                 if (practice) {
@@ -630,14 +634,29 @@ private fun formatMarks(marks: Double): String =
         marks.toString()
     }
 
+/**
+ * The "Question 2 of 10 · 1 mark · 0:07 here" line.
+ *
+ * Collects the dwell flow itself so the once-a-second tick is confined to
+ * this composable. `dwellSeconds` also arrives as a parameter for
+ * previews and tests that have no ViewModel.
+ */
 @Composable
-private fun QuestionHeader(index: Int, total: Int, marks: Double, dwellSeconds: Long) {
+private fun QuestionHeader(
+    index: Int,
+    total: Int,
+    marks: Double,
+    liveDwell: StateFlow<Long>? = null,
+    dwellSeconds: Long = 0L
+) {
+    val live by (liveDwell ?: MutableStateFlow(dwellSeconds))
+        .collectAsStateWithLifecycle()
     Text(
         questionProgressLabel(
             index = index,
             total = total,
             marks = marks,
-            dwellSeconds = dwellSeconds
+            dwellSeconds = live
         ),
         style = MaterialTheme.typography.labelMedium
     )

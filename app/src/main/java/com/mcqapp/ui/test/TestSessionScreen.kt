@@ -132,7 +132,7 @@ fun TestSessionScreen(
             title = { Text(stringResource(R.string.resume_previous_attempt)) },
             text = {
                 Text(
-                    stringResource(R.string.answered_question_s_answered) +
+                    "$answered question(s) answered" +
                         if (resumeOffer.totalSeconds > 0) {
                             ", %02d:%02d left.".format(minutes, seconds)
                         } else {

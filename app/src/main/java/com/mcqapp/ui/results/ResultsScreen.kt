@@ -324,7 +324,7 @@ private fun ResultCard(
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    stringResource(R.string.index),
+                    "$index.",
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(end = 8.dp)
                 )

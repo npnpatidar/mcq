@@ -118,10 +118,19 @@ fun BlockListEditor(
                             QuestionImage(src = element.src, modifier = Modifier.padding(top = 8.dp))
                         }
                     }
-                    is ContentElement.MathElement -> MathLiveEditor(
-                        initialLatex = mathMlToLatex(element.mathml),
-                        onMathMl = { onUpdateBlock(index, ContentElement.MathElement(it)) }
-                    )
+                    is ContentElement.MathElement -> {
+                        MathLiveEditor(
+                            initialLatex = mathMlToLatex(element.mathml),
+                            onMathMl = { onUpdateBlock(index, ContentElement.MathElement(it)) }
+                        )
+                        // The MathLive keyboard only appears once the field has
+                        // focus, which is not obvious from a formula on screen.
+                        Text(
+                            "Tap the formula to edit it",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                     is ContentElement.TableElement -> {
                         if (tablesEditable) {
                             TableBlockEditor(

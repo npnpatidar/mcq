@@ -4,6 +4,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -59,21 +60,35 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
 /**
  * Whether the field's own value must be pushed back into the WebView.
  *
- * Pure so it can be tested: pushing unconditionally would reset the caret on
- * every recomposition, and never pushing leaves a recycled WebView showing the
- * previous block's formula.
+ * Pure so it can be tested. Pushing unconditionally resets the caret on every
+ * recomposition; never pushing leaves a recycled WebView showing the previous
+ * block's formula. [emitted] is the value this field last reported upwards:
+ * when the new value is simply that coming back, the user is the one typing
+ * and pushing it again would fight them — which showed up as the virtual
+ * keyboard losing focus mid-edit. [latexFromOwnOutput] is the LaTeX this
+ * field's own last report converts back to.
  */
-internal fun shouldPushLatex(current: String?, incoming: String): Boolean =
-    current != null && current != incoming
+internal fun shouldPushLatex(
+    current: String?,
+    incoming: String,
+    latexFromOwnOutput: String?
+): Boolean = current != null && current != incoming && incoming != latexFromOwnOutput
 
 @Composable
-fun MathLiveEditor(initialLatex: String, onMathMl: (String) -> Unit, modifier: Modifier = Modifier) {
+fun MathLiveEditor(
+    initialLatex: String,
+    onMathMl: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val fontScale = com.mcqapp.util.FontScale.LocalScale.current
     val density = androidx.compose.ui.platform.LocalDensity.current
     val fontPx = with(density) {
         (16 * fontScale.coerceAtLeast(0.8f)).dp.roundToPx().coerceIn(12, 96)
     }
     val initialJson = remember(initialLatex) { JSONObject.quote(initialLatex) }
+    // The MathML this field last reported upwards, so the update block can tell
+    // "the user is typing" from "the block changed underneath me".
+    val emittedMml = remember { mutableStateOf<String?>(null) }
     AndroidView(
         // The virtual keyboard panel is absolutely positioned at the
         // bottom of the page; the WebView must be tall enough to show
@@ -88,7 +103,10 @@ fun MathLiveEditor(initialLatex: String, onMathMl: (String) -> Unit, modifier: M
                 @JavascriptInterface
                 fun onMathMl(mml: String) {
                     // Bridge callbacks arrive off the main thread.
-                    view.post { onMathMl(mml) }
+                    view.post {
+                        emittedMml.value = mml
+                        onMathMl(mml)
+                    }
                 }
             }, "Android")
             view.tag = initialLatex
@@ -104,7 +122,8 @@ fun MathLiveEditor(initialLatex: String, onMathMl: (String) -> Unit, modifier: M
         // AndroidView's factory runs once. Without this, a block that moved
         // or changed from outside kept showing the previous formula.
         update = { view ->
-            if (shouldPushLatex(view.tag as? String, initialLatex)) {
+            val ownOutput = emittedMml.value?.let { mathMlToLatex(it) }
+            if (shouldPushLatex(view.tag as? String, initialLatex, ownOutput)) {
                 view.tag = initialLatex
                 view.evaluateJavascript("window.setLatex && window.setLatex(${initialJson});", null)
             }

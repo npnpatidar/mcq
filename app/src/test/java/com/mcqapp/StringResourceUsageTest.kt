@@ -62,6 +62,22 @@ class StringResourceUsageTest {
     }
 
     @Test
+    fun noResourceValueContainsAKotlinTemplatePlaceholder() {
+        // A literal like "$mistakeCount" must never be extracted: it rendered
+        // on screen as the text "$mistakeCount" instead of the count.
+        val xml = File("src/main/res/values/strings.xml").readText()
+        val offenders = Regex("""<string name="([a-z0-9_]+)">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(xml)
+            .map { it.groupValues[1] }
+            .filter { name ->
+                Regex("""<string name="$name">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+                    .find(xml)?.groupValues?.get(1)?.contains('$') == true
+            }
+            .toList()
+        assertTrue("these resources hold a raw Kotlin template: $offenders", offenders.isEmpty())
+    }
+
+    @Test
     fun theResourcesFileIsNotEmptyOrTruncated() {
         val defined = definedResources()
         assertTrue("strings.xml looks truncated: ${defined.size} entries", defined.size > 150)

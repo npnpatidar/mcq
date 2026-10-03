@@ -500,7 +500,7 @@ private fun BrowseQuestionCard(
                     Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
                 } else {
                     Text(
-                        stringResource(R.string.index),
+                        "$index.",
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier.padding(end = 8.dp)
                     )

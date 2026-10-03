@@ -842,7 +842,7 @@ private fun PaperCard(
                         Logger.i("LIB", "Start paper: paperId=${paper.id}")
                         onPracticeMistakes()
                     }) {
-                        Text(stringResource(R.string.mistakes_mistakecount))
+                        Text("Mistakes ($mistakeCount)")
                     }
                 }
             }

@@ -699,7 +699,7 @@ private fun AnkiNumberRow(
             onClick = { onChange((current - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
             enabled = current > range.start
         ) {
-            Icon(Icons.Default.Remove, contentDescription = stringResource(R.string.decrease_label))
+            Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
         }
         OutlinedTextField(
             value = text,
@@ -723,7 +723,7 @@ private fun AnkiNumberRow(
             onClick = { onChange((current + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
             enabled = current < range.endInclusive
         ) {
-            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.increase_label))
+            Icon(Icons.Default.Add, contentDescription = "Increase $label")
         }
     }
 }

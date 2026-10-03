@@ -137,12 +137,13 @@ fun BookmarksScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                com.mcqapp.ui.editor.EditorSession.clear()
+                                // Bookmarks are a reading list: opening one
+                                // should show the question in context, not
+                                // drop straight into the editor.
                                 navController.navigate(
-                                    com.mcqapp.ui.navigation.editorRoute(
-                                        question.id,
-                                        bookmarked.paperId,
-                                        question.categoryId
+                                    com.mcqapp.ui.navigation.browseRoute(
+                                        paperId = bookmarked.paperId,
+                                        focusQuestionId = question.id
                                     )
                                 )
                             }

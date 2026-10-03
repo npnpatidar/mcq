@@ -28,12 +28,10 @@
     <string name="continue_label">Continue</string>
     <string name="copy">Copy</string>
     <string name="correct_answer">Correct answer</string>
-    <string name="decrease_label">Decrease $label</string>
     <string name="delete">Delete</string>
     <string name="delete_category">Delete category</string>
     <string name="delete_paper">Delete paper</string>
     <string name="delete_question">Delete question</string>
-    <string name="delete_selectedids_size_questions">Delete ${selectedIds.size} questions?</string>
     <string name="description">Description</string>
     <string name="description_optional">Description (optional)</string>
     <string name="difficulty">Difficulty</string>
@@ -46,7 +44,6 @@
     <string name="duration_minutes_0_untimed">Duration (minutes, 0 = untimed)</string>
     <string name="edit">Edit</string>
     <string name="edit_question">Edit question</string>
-    <string name="edit_selectedids_size_questions">Edit ${selectedIds.size} questions</string>
     <string name="error">Error</string>
     <string name="explanation_image">Explanation image</string>
     <string name="explanation_image_url_optional">Explanation image URL (optional)</string>
@@ -56,11 +53,9 @@
     <string name="export_category">Export category</string>
     <string name="export_failed">Export failed</string>
     <string name="export_logs">Export Logs</string>
-    <string name="export_state_questions_size_bookmarked_questions">Export ${state.questions.size} bookmarked questions</string>
     <string name="flag_question">Flag question</string>
     <string name="formula">Formula</string>
     <string name="go_back">Go back</string>
-    <string name="go_to_question_index_1_status">Go to question ${index + 1}, $status</string>
     <string name="history">History</string>
     <string name="image">Image</string>
     <string name="image_for_this_option">Image for this option</string>
@@ -69,9 +64,7 @@
     <string name="import_complete">Import complete</string>
     <string name="import_questions">Import questions</string>
     <string name="imported">Imported</string>
-    <string name="increase_label">Increase $label</string>
     <string name="keep">Keep</string>
-    <string name="leechcount_tricky">${leechCount} tricky</string>
     <string name="load_sample_paper">Load sample paper</string>
     <string name="loading">Loading…</string>
     <string name="manage">Manage</string>
@@ -79,7 +72,6 @@
     <string name="marks_default_1">Marks (default 1)</string>
     <string name="mcq_app">MCQ App</string>
     <string name="minutes">Minutes</string>
-    <string name="mistakes_mistakecount">Mistakes ($mistakeCount)</string>
     <string name="move">Move</string>
     <string name="move_block_down">Move block down</string>
     <string name="move_block_up">Move block up</string>
@@ -111,10 +103,8 @@
     <string name="refresh_answers_on_re_import">Refresh answers on re-import</string>
     <string name="remove_block">Remove block</string>
     <string name="remove_bookmark">Remove bookmark</string>
-    <string name="remove_column_col_1">Remove column ${col + 1}</string>
     <string name="remove_option">Remove option</string>
     <string name="remove_question">Remove question</string>
-    <string name="remove_row_row_1">Remove row ${row + 1}</string>
     <string name="reset">Reset</string>
     <string name="resume">Resume</string>
     <string name="resume_previous_attempt">Resume previous attempt?</string>
@@ -134,8 +124,6 @@
     <string name="start">Start</string>
     <string name="start_drill">Start drill</string>
     <string name="start_fresh">Start fresh</string>
-    <string name="start_test_selected_size_categories">Start test (${selected.size} categories)</string>
-    <string name="state_answeredcount_state_questions_size_answered">${state.answeredCount}/${state.questions.size} answered</string>
     <string name="strict_exam_mode">Strict exam mode</string>
     <string name="study">Study</string>
     <string name="study_again">Study again</string>
@@ -153,7 +141,6 @@
     <string name="wrong_answer">Wrong answer</string>
     <string name="your_answers">Your answers</string>
     <string name="about">About</string>
-    <string name="answered_question_s_answered">$answered question(s) answered</string>
     <string name="attempt_not_found">Attempt not found</string>
     <string name="attempts">Attempts</string>
     <string name="backs_up_every_paper_bookmark_and_attempt_to_one_json_file">Backs up every paper, bookmark and attempt to one JSON file. </string>
@@ -168,7 +155,6 @@
     <string name="hides_answers_flags_and_the_question_palette">Hides answers, flags and the question palette</string>
     <string name="how_well_did_you_recall_it">How well did you recall it?</string>
     <string name="image_weight_counts_embedded_pictures_large_banks_shrink">Image weight counts embedded pictures; large banks shrink </string>
-    <string name="index">$index.</string>
     <string name="l_02d_02d">%02d:%02d</string>
     <string name="l_0f">%.0f%%</string>
     <string name="l_1f_0f">%.1f / %.0f</string>

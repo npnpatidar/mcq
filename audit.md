@@ -804,6 +804,8 @@ Reported on 2026-10-02, all traced to changes in this session rather than to lon
 | A48 | P1 | UI | Literal `$index` / `$mistakeCount` shown instead of values | `[x]` fixed |
 | A49 | P1 | UI | Bookmark tap opened the editor instead of browse | `[x]` fixed |
 | A50 | P1 | UI | MathLive virtual keyboard lost focus while typing | `[x]` fixed |
+| A51 | P1 | UI | Editor keys blocks by content hash: every keystroke rebuilds the block | `[x]` fixed |
+| A52 | P2 | UX | Always-visible blank image fields in the editor | `[x]` fixed |
 
 ### A47 · `[x]` · Every `.docx` was refused by my own XXE hardening · `read`
 
@@ -854,6 +856,34 @@ the mapping, including an explicit "never device pixels" case.
 
 This is the third defect in this batch traceable to A14's font-scale change — the same line that
 was supposed to make the editor respect the text-size setting.
+
+### A51 · `[x]` · Text and MathLive keyboards closed on every keystroke · `read`
+
+A single cause for both remaining "keyboard hides" reports. A14 introduced `key(blockKey(...))` around
+each block to stop a WebView being recycled onto a different formula, and `blockKey` was derived from
+the block's **content hash**. Every keystroke therefore changed the key, so Compose destroyed and
+rebuilt the block: the caret and soft keyboard vanished from a text field after each letter, and the
+MathLive WebView was recreated — taking its virtual keyboard with it.
+
+The comment I wrote at the time claimed this was desirable ("editing a block changes its key"). It was
+exactly wrong for the two interactive block types.
+
+`blockKey` is now the block's position and kind. Content edits keep the same key, so text fields and
+the WebView survive typing; a block that moves still gets a new key and is rebuilt, and the MathLive
+`update` block covers value sync so reuse cannot show a stale formula. Two tests now assert the key
+is stable across edits and distinct across position and kind.
+
+### A52 · `[x]` · Three always-visible blank image fields in the editor · `read`
+
+The editor presented an "Image URL (optional)" field plus a Pick button for the question, for every
+option, and for the explanation — three empty rows before the user had done anything, which read as
+persistent blank image blocks.
+
+Removed. Images are added as **Image blocks** from the block menu, alongside text, tables and
+formulas, which is how every other content type already worked. A record that already has a legacy
+`image` still shows it through a new `LegacyImageRow` with a **Remove** action, so importing a bank
+with images does not silently drop them on the next save. The three now-unused image pickers and the
+`onPickImage` parameter were deleted with them.
 
 ### A46 · `[x]` · 198 labels rendered nothing · `read`
 

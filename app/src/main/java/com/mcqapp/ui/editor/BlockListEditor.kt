@@ -157,19 +157,20 @@ fun BlockListEditor(
 }
 
 /**
- * Stable identity for a content block.
+ * Stable identity for a content block: its position and its kind.
  *
- * The content model carries no ids, so identity is the block's own payload
- * plus its position: editing a block changes its key (a fresh editor is the
- * right answer when the formula itself changed), while an unrelated block
- * moving does not.
+ * Deliberately **not** derived from the content. Keying on the payload meant
+ * every keystroke changed the key, so Compose tore the block down and rebuilt
+ * it: the caret and the soft keyboard vanished from text fields after each
+ * letter, and the MathLive WebView was recreated, taking its virtual keyboard
+ * with it.
+ *
+ * A block that moves gets a new key and is rebuilt, which is correct; the
+ * MathLive editor additionally syncs a changed value through its `update`
+ * block, so reuse cannot leave a stale formula on screen.
  */
-internal fun blockKey(element: ContentElement, index: Int): String = when (element) {
-    is ContentElement.TextElement -> "text:$index:${element.text.hashCode()}"
-    is ContentElement.ImageElement -> "image:$index:${element.src.hashCode()}"
-    is ContentElement.TableElement -> "table:$index:${element.rows.hashCode()}"
-    is ContentElement.MathElement -> "math:$index:${element.mathml.hashCode()}"
-}
+internal fun blockKey(element: ContentElement, index: Int): String =
+    "$index:${element::class.simpleName}"
 
 private fun blockLabel(element: ContentElement): String = when (element) {
     is ContentElement.TextElement -> "Text"

@@ -82,48 +82,6 @@ fun QuestionEditorScreen(
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    val pickImageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            val encoded = ImageUtils.encodeImageUri(context, uri)
-            if (encoded != null) {
-                viewModel.updateImage(encoded)
-            } else {
-                Logger.e("EDITOR", "Failed to encode question image")
-            }
-        }
-    }
-
-    val pickExplanationImageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            val encoded = ImageUtils.encodeImageUri(context, uri)
-            if (encoded != null) {
-                viewModel.updateExplanationImage(encoded)
-            } else {
-                Logger.e("EDITOR", "Failed to encode explanation image")
-            }
-        }
-    }
-
-    var pickingOptionImageId by remember { mutableStateOf<String?>(null) }
-    val pickOptionImageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        val optionId = pickingOptionImageId
-        pickingOptionImageId = null
-        if (uri != null && optionId != null) {
-            val encoded = ImageUtils.encodeImageUri(context, uri)
-            if (encoded != null) {
-                viewModel.updateOptionImage(optionId, encoded)
-            } else {
-                Logger.e("EDITOR", "Failed to encode option image for $optionId")
-            }
-        }
-    }
-
     // Generic gallery picker for image blocks: stores the block's write-back
     // until the gallery returns, then delivers the encoded image to it.
     var pendingBlockPick by remember { mutableStateOf<((String) -> Unit)?>(null) }
@@ -250,24 +208,16 @@ fun QuestionEditorScreen(
             )
             Spacer(Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = state.image,
-                    onValueChange = viewModel::updateImage,
-                    label = { Text(stringResource(R.string.image_url_optional)) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedButton(onClick = { pickImageLauncher.launch("image/*") }) {
-                    Text(stringResource(R.string.pick))
-                }
-            }
+            // No blank image field any more: images are added as Image blocks
+            // from the block menu, like text, tables and formulas. A legacy
+            // question that already has one still shows it, with a way to
+            // remove it rather than silently dropping it on save.
             if (state.image.isNotBlank()) {
-                QuestionImage(src = state.image, modifier = Modifier.padding(top = 8.dp))
+                LegacyImageRow(
+                    image = state.image,
+                    label = stringResource(R.string.question_image),
+                    onRemove = { viewModel.updateImage("") }
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -297,10 +247,6 @@ fun QuestionEditorScreen(
                     onMoveBlockDown = { viewModel.moveOptionBlockDown(option.id, it) },
                     onPickBlockImage = pickBlockImage,
                     onImageChange = { viewModel.updateOptionImage(option.id, it) },
-                    onPickImage = {
-                        pickingOptionImageId = option.id
-                        pickOptionImageLauncher.launch("image/*")
-                    },
                     onToggleCorrect = { viewModel.toggleCorrect(option.id) },
                     onMoveUp = { viewModel.moveOptionUp(option.id) },
                     onMoveDown = { viewModel.moveOptionDown(option.id) },
@@ -342,24 +288,12 @@ fun QuestionEditorScreen(
                 onPickImage = pickBlockImage
             )
             Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = state.explanationImage,
-                    onValueChange = viewModel::updateExplanationImage,
-                    label = { Text(stringResource(R.string.explanation_image_url_optional)) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedButton(onClick = { pickExplanationImageLauncher.launch("image/*") }) {
-                    Text(stringResource(R.string.pick))
-                }
-            }
             if (state.explanationImage.isNotBlank()) {
-                QuestionImage(src = state.explanationImage, modifier = Modifier.padding(top = 8.dp))
+                LegacyImageRow(
+                    image = state.explanationImage,
+                    label = stringResource(R.string.explanation_image),
+                    onRemove = { viewModel.updateExplanationImage("") }
+                )
             }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
@@ -404,7 +338,6 @@ private fun OptionEditorRow(
     onMoveBlockDown: (index: Int) -> Unit,
     onPickBlockImage: ((String) -> Unit) -> Unit,
     onImageChange: (String) -> Unit,
-    onPickImage: () -> Unit,
     onToggleCorrect: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
@@ -447,30 +380,43 @@ private fun OptionEditorRow(
             onMoveDown = onMoveBlockDown,
             onPickImage = onPickBlockImage
         )
+        // As with the question image, no blank field: an option image is added
+        // as an Image block. A pre-existing one stays visible and removable.
+        if (option.image.isNotBlank()) {
+            LegacyImageRow(
+                image = option.image,
+                label = stringResource(R.string.option_image),
+                onRemove = { onImageChange("") },
+                modifier = Modifier.padding(start = 48.dp),
+            )
+        }
+    }
+}
+
+/**
+ * A question/option/explanation image that already exists on the record.
+ *
+ * Only shown when there is something to show, so the editor no longer presents
+ * three empty image fields; the way to add an image is an Image block.
+ */
+@Composable
+private fun LegacyImageRow(
+    image: String,
+    label: String,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.padding(top = 4.dp)) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 48.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedTextField(
-                value = option.image,
-                onValueChange = onImageChange,
-                label = { Text(stringResource(R.string.option_image_url_optional)) },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedButton(onClick = { onPickImage() }) {
-                Text(stringResource(R.string.pick))
+            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = onRemove) {
+                Text(stringResource(R.string.remove))
             }
         }
-        if (option.image.isNotBlank()) {
-            QuestionImage(
-                src = option.image,
-                modifier = Modifier
-                    .padding(start = 48.dp, top = 4.dp)
-            )
-        }
+        QuestionImage(src = image)
     }
 }
 

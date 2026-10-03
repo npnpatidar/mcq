@@ -83,13 +83,27 @@ class MathLiveTest {
     }
 
     @Test
-    fun blockKeysDistinguishBlocksAndFollowEdits() {
+    fun blockKeysSurviveEditsSoTheFieldKeepsFocus() {
+        val before = ContentElement.MathElement("<math><mi>x</mi></math>")
+        val after = ContentElement.MathElement("<math><msup><mi>x</mi><mn>2</mn></msup></math>")
+        // The key must NOT change when the content changes: a key derived from
+        // the payload made Compose rebuild the block on every keystroke, which
+        // closed the soft keyboard in text fields and destroyed the WebView
+        // holding the MathLive keyboard.
+        assertEquals(blockKey(before, 0), blockKey(after, 0))
+        assertEquals(blockKey(before, 1), blockKey(after, 1))
+    }
+
+    @Test
+    fun blockKeysSeparateBlocksAndKinds() {
         val math = ContentElement.MathElement("<math><mi>x</mi></math>")
         val other = ContentElement.MathElement("<math><mi>y</mi></math>")
-        assertEquals(blockKey(math, 0), blockKey(math, 0))
-        // A different block, or the same block after an edit, gets a new key.
-        assertNotEquals(blockKey(math, 0), blockKey(other, 0))
+        val text = ContentElement.TextElement("x")
+        // Different position, and different kind, are different blocks.
         assertNotEquals(blockKey(math, 0), blockKey(math, 1))
+        assertNotEquals(blockKey(math, 0), blockKey(text, 0))
+        // Two blocks of the same kind at the same slot are the same block.
+        assertEquals(blockKey(math, 0), blockKey(other, 0))
     }
 
 

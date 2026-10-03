@@ -20,7 +20,7 @@ object BookmarkExport {
             CategoryDto(
                 id = "bookmarked-$index",
                 title = title,
-                questions = qs.map { it.toDto() }
+                questions = qs.map { it.toQuestionDto() }
             )
         }
         return PaperDto(
@@ -29,19 +29,4 @@ object BookmarkExport {
             categories = categories
         )
     }
-
-    private fun Question.toDto() = QuestionDto(
-        id = id,
-        text = text,
-        elements = elements,
-        image = image,
-        options = options.map { OptionDto(it.id, text = it.text, image = it.image) },
-        correctOptionIds = correctOptionIds.toList(),
-        explanation = explanation,
-        explanationElements = explanationElements,
-        explanationImage = explanationImage,
-        difficulty = difficulty.label,
-        marks = marks,
-        tags = tags
-    )
 }

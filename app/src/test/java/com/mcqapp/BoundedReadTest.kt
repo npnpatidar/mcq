@@ -66,4 +66,35 @@ class BoundedReadTest {
     fun theDefaultLimitIsGenerousButBounded() {
         assertEquals(64L * 1024 * 1024, MAX_IMPORT_BYTES)
     }
+
+    /**
+     * The cap is unavoidable without streaming the parser, but the message can
+     * at least say how far over the file is and why pictures are often the
+     * cause, rather than repeating the limit.
+     */
+    @Test
+    fun theTooLargeMessageSaysHowBigAndWhy() {
+        val limit = com.mcqapp.util.MAX_IMPORT_BYTES
+        val message = com.mcqapp.util.tooLargeMessage(atLeastBytes = 97L * 1024 * 1024, limit = limit)
+        assertTrue("should name the limit: $message", message.contains("64 MB"))
+        assertTrue("should size the file: $message", message.contains("97 MB"))
+        assertTrue("should mention pictures: $message", message.contains("pictures"))
+    }
+
+    @Test
+    fun anUnknownSizeStillReadsAsAtLeastOneMegabyte() {
+        val message = com.mcqapp.util.tooLargeMessage(atLeastBytes = 1024L, limit = 64L * 1024 * 1024)
+        assertTrue("should not say 0 MB: $message", message.contains("at least 1 MB"))
+    }
+
+    @Test
+    fun theExceptionCarriesHowMuchWasRead() {
+        val e = try {
+            readBounded(java.io.ByteArrayInputStream(ByteArray(4096)), limit = 1024)
+            throw AssertionError("expected the cap to be enforced")
+        } catch (thrown: com.mcqapp.util.ImportTooLargeException) {
+            thrown
+        }
+        assertTrue("should report at least the limit", e.atLeastBytes > 1024)
+    }
 }

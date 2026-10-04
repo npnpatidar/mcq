@@ -198,7 +198,10 @@ fun LibraryScreen(
                 Logger.e("LIB", "Failed to read import file", e)
                 viewModel.showError(
                     if (e is com.mcqapp.util.ImportTooLargeException) {
-                        "That file is too large to import (limit ${com.mcqapp.util.MAX_IMPORT_BYTES / (1024 * 1024)} MB)."
+                        com.mcqapp.util.tooLargeMessage(
+                            e.atLeastBytes,
+                            com.mcqapp.util.MAX_IMPORT_BYTES
+                        )
                     } else {
                         "Could not read the file: ${e.message}"
                     }

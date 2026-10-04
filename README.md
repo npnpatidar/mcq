@@ -315,11 +315,14 @@ place instead of duplicating.
 | `No questions found: the document is empty.` | nothing readable in the document body |
 | `No questions found: expected 'N.)' numbered questions with '(a)..(d)', 'Ans.' and 'Exp:' markers.` | no `N.)` line was found — check for auto-numbering, leading tabs, or `N.` written without the bracket |
 | `Malformed question 3.): missing answer, explanation.` … | that question is missing a required field; the number says which. The message ends by restating the expected layout. |
-| `That file is too large to import (limit 64 MB).` | over the 64 MB import cap |
+| `That file is over the 64 MB import limit (at least N MB). …` | over the import cap. The message says how far over and notes that pictures, stored inline, add about a third |
 | `Not a Word document: w:body is missing.` | the file uses Strict OOXML (`purl.oclc.org`); re-save it from Word in the normal format |
 
 Limits: 64 MB per picked file, at most 4096 archive entries, 64 MB per decompressed part and
-256 MB decompressed in total. `.doc` (old binary Word), `.rtf` and `.odt` are **not** supported
+256 MB decompressed in total. The per-file cap is worth knowing about before you hit it:
+pictures are inlined into the file as base64, which adds about a third, so a bank of
+thousands of questions can reach 64 MB well before it looks large. There is no streaming
+import — the file is read whole — so a bigger bank has to be split across several imports. `.doc` (old binary Word), `.rtf` and `.odt` are **not** supported
 — save as `.docx`.
 
 ## Import: JSON reference

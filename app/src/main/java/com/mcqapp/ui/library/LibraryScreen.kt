@@ -878,7 +878,10 @@ private fun PaperCard(
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
-                IconButton(onClick = { expanded = !expanded }) {
+                IconButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.testTag("paper-manage-${paper.id}")
+                ) {
                     Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.manage))
                 }
             }

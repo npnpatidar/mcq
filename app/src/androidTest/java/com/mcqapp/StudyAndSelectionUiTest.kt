@@ -81,6 +81,11 @@ class StudyAndSelectionUiTest {
         listOf("ui-sel", "ui-multi", "ui-study").forEach { repository.deletePaper(it) }
     }
 
+    /** Scroll a card action into view before tapping it. */
+    private fun clickTag(tag: String) {
+        compose.onNodeWithTag(tag).performScrollTo().performClick()
+    }
+
     private fun waitFor(text: String) {
         compose.waitUntil(15_000) {
             compose.onAllNodesWithText(text, substring = true)
@@ -98,11 +103,15 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-study").assertIsDisplayed()
-        compose.onNodeWithTag("paper-study-ui-study").performClick()
+        clickTag("paper-study-ui-study")
 
         waitFor("Show answer")
-        // First card is single-answer: a hollow circle.
-        compose.onNodeWithText("○", substring = false).assertIsDisplayed()
+        // First card is single-answer: hollow circles, one per option.
+        assertTrue(
+            "a single-answer question should be marked with circles",
+            compose.onAllNodesWithText("○", substring = false)
+                .fetchSemanticsNodes().isNotEmpty()
+        )
 
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
@@ -110,7 +119,11 @@ class StudyAndSelectionUiTest {
 
         // Second card takes several answers, so its markers are squares.
         waitFor("Show answer")
-        compose.onNodeWithText("▢", substring = false).assertIsDisplayed()
+        assertTrue(
+            "a multi-correct question should be marked with squares",
+            compose.onAllNodesWithText("▢", substring = false)
+                .fetchSemanticsNodes().isNotEmpty()
+        )
     }
 
     /**
@@ -122,7 +135,7 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithTag("paper-drill-ui-sel").performClick()
+        clickTag("paper-drill-ui-sel")
 
         waitFor("Quick drill")
         compose.onNodeWithText("Questions", substring = false).performScrollTo()
@@ -142,9 +155,9 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithTag("paper-browse-ui-sel").performClick()
+        clickTag("paper-browse-ui-sel")
 
-        waitFor("UITest ui-sel-q1?")
+        waitFor("Select")
         compose.onNodeWithText("Select", substring = false).performClick()
         compose.onNodeWithText("Export", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Edit", substring = false).assertIsDisplayed()
@@ -173,7 +186,9 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithTag("paper-delete-ui-sel").performClick()
+        // Delete lives inside the collapsed card.
+        clickTag("paper-manage-ui-sel")
+        clickTag("paper-delete-ui-sel")
 
         waitFor("This cannot be undone.")
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()

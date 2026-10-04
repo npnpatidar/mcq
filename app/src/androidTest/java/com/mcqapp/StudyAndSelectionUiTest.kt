@@ -1,8 +1,6 @@
 package com.mcqapp
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasScrollAction
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -10,7 +8,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.domain.Question
@@ -18,8 +15,6 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.navigation.McqNavHost
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Before
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -28,11 +23,16 @@ import org.junit.runner.RunWith
 /**
  * Compose behaviour for the screens changed recently, on the CI emulator.
  *
- * Everything else in the app is covered by JVM unit tests, but these pieces
- * live in composables and so are only reachable here. Each one had already
- * broken once in a way no unit test could see: a badge that only refreshed
- * when it was tapped, a dialog that opened already refusing to start, an
- * option marker that lied about how many answers a question takes.
+ * Everything else is covered by JVM unit tests; these pieces live in
+ * composables and the glue around them, which no unit test can see. Each had
+ * already failed once in a way the suite stayed green through: a badge that
+ * only refreshed when it was tapped, a dialog that opened already refusing to
+ * start, an option marker that lied about how many answers a question takes, an
+ * unconfirmed delete.
+ *
+ * Each test seeds only the paper it needs. With one paper on screen its card is
+ * at the top and needs no scrolling, which is what makes a tap land — several
+ * earlier rounds failed on scroll semantics rather than on anything behavioural.
  */
 @RunWith(AndroidJUnit4::class)
 class StudyAndSelectionUiTest {
@@ -60,53 +60,22 @@ class StudyAndSelectionUiTest {
             QuestionOption("$id-b", "Beta"),
             QuestionOption("$id-c", "Gamma")
         ),
-        // More than one right answer is what makes the option marker a square.
+        // More than one right answer is what makes the marker a square.
         correctOptionIds = setOf("$id-a", "$id-c")
     )
 
-    @Before
-    fun seed() = runBlocking {
-        repository.ensurePaperAndCategory("ui-sel", "UISel Paper", "ui-sel-cat", "UISel Cat")
-        repository.saveQuestion(single("ui-sel-q1", "ui-sel-cat"))
-        repository.saveQuestion(single("ui-sel-q2", "ui-sel-cat"))
+    private val seeded = mutableListOf<String>()
 
-        repository.ensurePaperAndCategory("ui-multi", "UIMulti Paper", "ui-multi-cat", "UIMulti Cat")
-        repository.saveQuestion(multi("ui-multi-q1", "ui-multi-cat"))
-
-        // A study paper whose first card is single-answer and second is not.
-        repository.ensurePaperAndCategory("ui-study", "UIStudy Paper", "ui-study-cat", "UIStudy Cat")
-        repository.saveQuestion(single("ui-study-q1", "ui-study-cat"))
-        repository.saveQuestion(multi("ui-study-q2", "ui-study-cat"))
-    }
+    private fun seedPaper(id: String, title: String, categoryId: String, vararg questions: Question) =
+        runBlocking {
+            repository.ensurePaperAndCategory(id, title, categoryId, "$title Cat")
+            questions.forEach { repository.saveQuestion(it) }
+            seeded += id
+        }
 
     @After
     fun cleanup() = runBlocking {
-        listOf("ui-sel", "ui-multi", "ui-study").forEach { repository.deletePaper(it) }
-    }
-
-    /**
-     * Bring a card action into view and tap it.
-     *
-     * performScrollTo needs a scrollable ancestor it can address and failed
-     * here, so the list is scrolled to the node instead. The scroll is
-     * best-effort: when the node is already visible the plain click is enough,
-     * and an off-screen tap would otherwise land on nothing without failing.
-     */
-    private fun clickTag(tag: String) {
-        val target = hasTestTag(tag)
-        if (compose.onAllNodes(target).fetchSemanticsNodes().isEmpty()) {
-            val scrollers = compose.onAllNodes(hasScrollAction()).fetchSemanticsNodes()
-            if (scrollers.isNotEmpty()) {
-                runCatching { compose.onAllNodes(hasScrollAction())[0].performScrollToNode(target) }
-            }
-        }
-        compose.onNode(target).performClick()
-    }
-
-    private fun waitForTag(tag: String) {
-        compose.waitUntil(10_000) {
-            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
-        }
+        seeded.forEach { repository.deletePaper(it) }
     }
 
     private fun waitFor(text: String) {
@@ -117,16 +86,22 @@ class StudyAndSelectionUiTest {
     }
 
     /**
-     * A multi-correct question is marked with a square, a single-answer one
-     * with a circle — mirroring the checkbox and radio button the test screen
+     * A multi-correct question is marked with a square and a single-answer one
+     * with a circle, mirroring the checkbox and radio button the test screen
      * draws. Study genuinely allows several picks, so the marker has to say so.
      */
     @Test
     fun studyMarksMultiCorrectOptionsWithASquare() {
+        seedPaper(
+            "ui-study", "UIStudy Paper", "ui-study-cat",
+            single("ui-study-q1", "ui-study-cat"),
+            multi("ui-study-q2", "ui-study-cat")
+        )
         compose.setContent { McqNavHost(repository = repository) }
 
+        // Never-studied cards count as new rather than due.
         compose.onNodeWithTag("paper-title-ui-study").assertIsDisplayed()
-        clickTag("paper-study-ui-study")
+        compose.onNodeWithTag("paper-study-ui-study").performClick()
 
         waitFor("Show answer")
         // First card is single-answer: hollow circles, one per option.
@@ -140,7 +115,7 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Good", substring = false).performScrollTo().performClick()
 
-        // Second card takes several answers, so its markers are squares.
+        // The second card takes several answers, so its markers are squares.
         waitFor("Show answer")
         assertTrue(
             "a multi-correct question should be marked with squares",
@@ -155,17 +130,20 @@ class StudyAndSelectionUiTest {
      */
     @Test
     fun aDrillBiggerThanThePaperIsRefused() {
+        seedPaper(
+            "ui-sel", "UISel Paper", "ui-sel-cat",
+            single("ui-sel-q1", "ui-sel-cat"),
+            single("ui-sel-q2", "ui-sel-cat")
+        )
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        clickTag("paper-drill-ui-sel")
+        compose.onNodeWithTag("paper-drill-ui-sel").performClick()
 
         waitFor("Quick drill")
-        compose.onNodeWithText("Questions", substring = false).performScrollTo()
         // The default is 10 on a paper that holds 2.
         compose.onNodeWithText("This paper has only 2 questions. Enter 2 or fewer.", substring = false)
             .assertIsDisplayed()
-        // Start stays disabled while the count is impossible.
         compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()
         compose.onNodeWithText("Cancel", substring = false).performClick()
     }
@@ -175,10 +153,15 @@ class StudyAndSelectionUiTest {
      */
     @Test
     fun selectModeOffersExport() {
+        seedPaper(
+            "ui-sel", "UISel Paper", "ui-sel-cat",
+            single("ui-sel-q1", "ui-sel-cat"),
+            single("ui-sel-q2", "ui-sel-cat")
+        )
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        clickTag("paper-browse-ui-sel")
+        compose.onNodeWithTag("paper-browse-ui-sel").performClick()
 
         waitFor("Select")
         compose.onNodeWithText("Select", substring = false).performClick()
@@ -189,11 +172,12 @@ class StudyAndSelectionUiTest {
     }
 
     /**
-     * Deleting a paper asks first and says what else goes, instead of taking
-     * the history and bookmarks with a single tap.
+     * Deleting a paper asks first and says what else goes, instead of taking the
+     * history and bookmarks with a single tap.
      */
     @Test
     fun deletingAPaperConfirmsAndReportsTheLoss() {
+        seedPaper("ui-sel", "UISel Paper", "ui-sel-cat", single("ui-sel-q1", "ui-sel-cat"))
         runBlocking {
             repository.toggleBookmark("ui-sel-q1")
             repository.saveAttempt(
@@ -210,9 +194,12 @@ class StudyAndSelectionUiTest {
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
         // Delete lives inside the collapsed card, which expands by animation.
-        clickTag("paper-manage-ui-sel")
-        waitForTag("paper-delete-ui-sel")
-        compose.onNodeWithTag("paper-delete-ui-sel").performClick()
+        compose.onNodeWithTag("paper-manage-ui-sel").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("Delete paper", substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Delete paper", substring = true).performClick()
 
         waitFor("This cannot be undone.")
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()

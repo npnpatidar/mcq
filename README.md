@@ -149,7 +149,10 @@ UI.
 - **Per-question time** ticks once a second from its own flow, so the header updates
   without re-running the question body and its images. It works for untimed papers
   too, and the last question's time is banked before the attempt is saved.
-- **Search** matches text, tags, and option texts (case-insensitive), composed with the
+- **Search** matches a question's whole visible content, its tags and its options —
+  including text inside tables and formulas. Inline markup is not searchable, so
+  `strong` does not match a question that merely contains a `<strong>` tag. Pictures
+  have no text to match (case-insensitive), composed with the
   attribute chips.
 - **Uncategorized** chip shows top-level questions (kept in a category literally titled
   `Uncategorized`) plus any blank-`categoryId` rows (which imports never produce).

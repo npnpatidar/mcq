@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionSearch
@@ -132,5 +133,72 @@ class QuestionSearchTest {
         assertEquals("back\\\\slash", QuestionSearch.escapeLike("back\\slash"))
         // Backslash first: an existing escape must not itself become wild.
         assertEquals("\\\\\\%\\_", QuestionSearch.escapeLike("\\%_"))
+    }
+
+    /**
+     * Search used to match on textContent, which drops tables and formulas and
+     * keeps inline markup — so a question whose only mention of a name lived in
+     * a table cell was unfindable, while searching "strong" matched any
+     * question containing a <strong> tag.
+     */
+    @Test
+    fun contentInsideATableIsSearchable() {
+        val question = Question(
+            id = "q1", categoryId = "c",
+            elements = listOf(
+                ContentElement.TextElement("Use the table to answer."),
+                ContentElement.TableElement(listOf(listOf("Ruler", "Year"), listOf("Akbar", "1556")))
+            ),
+            options = listOf(QuestionOption("a", "Chloroform"), QuestionOption("b", "Sulphur")),
+            correctOptionIds = setOf("a")
+        )
+        assertEquals(1, QuestionSearch.filter(listOf(question), "Akbar").size)
+        assertEquals(1, QuestionSearch.filter(listOf(question), "1556").size)
+    }
+
+    @Test
+    fun aNameOnlyPresentInAnOptionTableIsSearchable() {
+        val question = Question(
+            id = "q1", categoryId = "c",
+            elements = listOf(ContentElement.TextElement("Which table is correct?")),
+            options = listOf(
+                QuestionOption(
+                    "a",
+                    listOf(ContentElement.TableElement(listOf(listOf("Dam", "River"), listOf("Hirakud", "Mahanadi"))))
+                ),
+                QuestionOption("b", "None")
+            ),
+            correctOptionIds = setOf("b")
+        )
+        assertEquals("option table content must be searchable", 1,
+            QuestionSearch.filter(listOf(question), "Mahanadi").size)
+    }
+
+    @Test
+    fun aFormulaIsSearchableByItsCharacters() {
+        val question = Question(
+            id = "q1", categoryId = "c",
+            elements = listOf(
+                ContentElement.TextElement("Solve for "),
+                ContentElement.MathElement("<math><mi>v</mi><mo>=</mo><mi>u</mi><mo>+</mo><mi>a</mi><mi>t</mi></math>")
+            ),
+            options = listOf(QuestionOption("a", "1"), QuestionOption("b", "2")),
+            correctOptionIds = setOf("a")
+        )
+        // The MathML markup is stripped, leaving the letters a reader sees.
+        assertEquals(1, QuestionSearch.filter(listOf(question), "v=u+at").size)
+    }
+
+    @Test
+    fun inlineMarkupIsNotItselfSearchable() {
+        val question = Question(
+            id = "q1", categoryId = "c",
+            elements = listOf(ContentElement.TextElement("A <strong>bold</strong> claim.")),
+            options = listOf(QuestionOption("a", "1"), QuestionOption("b", "2")),
+            correctOptionIds = setOf("a")
+        )
+        assertEquals(1, QuestionSearch.filter(listOf(question), "bold claim").size)
+        assertEquals("markup must not be findable", 0,
+            QuestionSearch.filter(listOf(question), "strong").size)
     }
 }

@@ -111,6 +111,43 @@ object ContentElementListJson : KSerializer<List<ContentElement>> {
 val List<ContentElement>.textContent: String
     get() = filterIsInstance<ContentElement.TextElement>().joinToString("") { it.text }
 
+/**
+ * Everything a reader can actually see, flattened for searching.
+ *
+ * [textContent] is the wrong basis for search: it drops tables and formulas
+ * entirely, so a question whose only mention of a name sits in a table cell or
+ * inside a formula could not be found at all. It also keeps inline markup, so
+ * searching "strong" used to match questions merely containing a `<strong>`
+ * tag. Deliberately separate from [textContent], which duplicate detection and
+ * the explanation comparison both rely on.
+ *
+ * A picture contributes nothing: there is no text to match.
+ */
+val List<ContentElement>.searchableText: String
+    get() = mapNotNull { element ->
+        when (element) {
+            is ContentElement.TextElement -> stripMarkup(element.text)
+            is ContentElement.TableElement ->
+                element.rows.flatten().joinToString(" ") { stripMarkup(it) }
+            // No space between tokens, so a formula reads the way it is typed:
+            // stripping tags with a space would give "v = u + a t", which a
+            // search for "v=u+at" would miss.
+            is ContentElement.MathElement -> element.mathml.replace(TAG_OR_ENTITY, "")
+            is ContentElement.ImageElement -> null
+        }
+    }.joinToString(" ").replace(WHITESPACE_RUNS, " ").trim()
+
+private val WHITESPACE_RUNS = Regex("\\s+")
+
+/** Drops tags and entities, leaving the text between them. */
+private fun stripMarkup(raw: String): String = if ('<' in raw || '&' in raw) {
+    TAG_OR_ENTITY.replace(raw, " ")
+} else {
+    raw
+}
+
+private val TAG_OR_ENTITY = Regex("<[^>]*>|&[a-zA-Z#0-9]+;")
+
 /** Serializes elements to the flat JSON stored in the text/explanation columns. */
 fun List<ContentElement>.toContentJson(json: Json): String =
     json.encodeToString(ContentElementListJson, this)

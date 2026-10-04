@@ -1,13 +1,16 @@
 package com.mcqapp
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.domain.Question
@@ -141,7 +144,13 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("paper-drill-ui-sel").performClick()
 
         waitFor("Quick drill")
-        // The default is 10 on a paper that holds 2.
+
+        // The default is what this paper can supply, so the dialog opens valid.
+        compose.onNodeWithText("2 random questions", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("Start drill", substring = false).assertIsEnabled()
+
+        // Ask for more than it holds and it refuses, naming the real figure.
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("99")
         compose.onNodeWithText("This paper has only 2 questions. Enter 2 or fewer.", substring = false)
             .assertIsDisplayed()
         compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()

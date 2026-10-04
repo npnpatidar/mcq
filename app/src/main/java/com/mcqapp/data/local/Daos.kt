@@ -152,16 +152,23 @@ interface QuestionDao {
     @Query("UPDATE questions SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
 
-    @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' ESCAPE '\\' OR tags LIKE '%' || :query || '%' ESCAPE '\\' ORDER BY rowid DESC")
-    suspend fun search(query: String): List<QuestionEntity>
+    /**
+     * `:fragment` is the longest single word of the query; `:query` is the whole
+     * thing. Either may match, so a phrase split by markup still reaches the
+     * in-memory filter that understands it.
+     */
+    @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' ESCAPE '\\' OR tags LIKE '%' || :query || '%' ESCAPE '\\' OR text LIKE '%' || :fragment || '%' ESCAPE '\\' OR tags LIKE '%' || :fragment || '%' ESCAPE '\\' ORDER BY rowid DESC")
+    suspend fun search(query: String, fragment: String): List<QuestionEntity>
 
     @Query(
         "SELECT DISTINCT questions.* FROM questions LEFT JOIN options " +
             "ON options.questionId = questions.id WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "ORDER BY questions.rowid DESC"
     )
-    suspend fun searchIncludingOptions(query: String): List<QuestionEntity>
+    suspend fun searchIncludingOptions(query: String, fragment: String): List<QuestionEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)

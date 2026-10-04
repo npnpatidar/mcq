@@ -259,9 +259,17 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // The prefilter is a SQL LIKE, so the user query is escaped first;
         // the in-memory post-filter below keeps matching the raw query.
         val like = com.mcqapp.domain.QuestionSearch.escapeLike(query)
+        // The SQL pass is a prefilter, not the answer: `questions.text` holds the
+        // elements JSON with markup in it, so a phrase straddling a tag or two
+        // table cells is not a literal substring of it. Or in the longest single
+        // word, which is contiguous within a tag, so the prefilter can no longer
+        // veto a row the real filter would have matched.
+        val fragment = com.mcqapp.domain.QuestionSearch.escapeLike(
+            com.mcqapp.domain.QuestionSearch.prefilterKey(query)
+        )
         val prefiltered = when (scope) {
-            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(like)
-            else -> db.questionDao().searchIncludingOptions(like)
+            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(like, fragment)
+            else -> db.questionDao().searchIncludingOptions(like, fragment)
         }
         val questions = prefiltered.toDomainBulk()
             .let { com.mcqapp.domain.QuestionSearch.filter(it, query, scope) }

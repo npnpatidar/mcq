@@ -18,6 +18,35 @@ object QuestionSearch {
      * prefilter matches literally instead of overfetching every row that
      * happens to satisfy a user-typed wildcard.
      */
+    /**
+     * The term to look for in the SQL prefilter.
+     *
+     * Cross-paper search prefilters with `LIKE` against `questions.text`, which
+     * stores the elements *JSON* — markup included. A phrase whose words sit
+     * either side of a tag ("net <em>external</em> force"), or either side of two
+     * table cells, or spread across MathML tags, is not present there as a
+     * literal, so the row was discarded before [filter] ever saw it. Browsing
+     * one paper found those questions and searching across papers did not.
+     *
+     * Words are contiguous *within* a tag, so the longest alphanumeric run of
+     * the query is always present verbatim when the query is present at all.
+     * Returning that makes the prefilter a superset instead of a veto. The
+     * caller still ORs in the whole query, and [filter] remains the authority.
+     */
+    fun prefilterKey(query: String): String {
+        val trimmed = query.trim()
+        val runs = ALPHANUMERIC_RUN.findAll(trimmed)
+            .map { it.value }
+            .filter { it.length >= MIN_PREFILTER_RUN }
+            .toList()
+        return runs.maxByOrNull { it.length } ?: trimmed
+    }
+
+    private val ALPHANUMERIC_RUN = Regex("[\\p{L}\\p{N}]+")
+
+    /** Below this a run matches almost everything, so fall back to the query. */
+    private const val MIN_PREFILTER_RUN = 2
+
     fun escapeLike(query: String): String = buildString(query.length) {
         query.forEach { ch ->
             if (ch == '%' || ch == '_' || ch == '\\') append('\\')

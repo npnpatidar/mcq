@@ -152,7 +152,10 @@ UI.
 - **Search** matches a question's whole visible content, its tags and its options —
   including text inside tables and formulas. Inline markup is not searchable, so
   `strong` does not match a question that merely contains a `<strong>` tag. Pictures
-  have no text to match (case-insensitive), composed with the
+  have no text to match. Cross-paper search prefilters in SQL against the stored
+  elements JSON, which contains the markup, so it widens that pass to the longest
+  single word of the query — otherwise a phrase like `external force` would be
+  discarded before the real filter ever saw it (case-insensitive), composed with the
   attribute chips.
 - **Uncategorized** chip shows top-level questions (kept in a category literally titled
   `Uncategorized`) plus any blank-`categoryId` rows (which imports never produce).

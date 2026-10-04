@@ -201,4 +201,24 @@ class QuestionSearchTest {
         assertEquals("markup must not be findable", 0,
             QuestionSearch.filter(listOf(question), "strong").size)
     }
+
+    /**
+     * The SQL prefilter searches the elements JSON, so it must look for a term
+     * that survives there: a whole phrase split by markup does not, but any one
+     * word of it does.
+     */
+    @Test
+    fun thePrefilterKeyIsTheLongestWordSoMarkupCannotSplitIt() {
+        assertEquals("external", QuestionSearch.prefilterKey("external force"))
+        assertEquals("Akbar", QuestionSearch.prefilterKey("Akbar 1556"))
+        // MathML separates every token with a tag, so no fragment is long.
+        assertEquals("at", QuestionSearch.prefilterKey("v=u+at"))
+        // A single word is unchanged.
+        assertEquals("photosynthesis", QuestionSearch.prefilterKey("photosynthesis"))
+    }
+
+    @Test
+    fun aQueryWithNoUsableWordFallsBackToItself() {
+        assertEquals(">>>", QuestionSearch.prefilterKey(" >>> "))
+    }
 }

@@ -51,6 +51,12 @@ class Importer(
         file: McqFileDto,
         scheduling: Map<String, CardScheduleDto> = emptyMap()
     ): ImportReport {
+        importedFile = file
+        // Per-import state: a reused Importer must not carry the previous
+        // file's collision candidates into this one.
+        storedCandidates = null
+        sameIdCache = null
+        writtenThisImport.clear()
         // A file this app exported carries its own review progress; an explicit
         // map (the Anki path) still wins.
         val restoreScheduling = scheduling.ifEmpty { file.scheduling }
@@ -227,13 +233,15 @@ class Importer(
                             // Same text and options under a different id: the
                             // file is probably a regenerated bank carrying a
                             // corrected key. Refresh the stored answers.
-                            val sameContentId = db.questionDao().getIdByContentHash(contentHash)
+                            // Resolved from the candidates fetched once for the
+                            // whole import rather than three lookups per question.
+                            val candidates = collisionCandidates()
+                            val candidate = candidates[contentHash]?.firstOrNull()
+                            val sameContentId = candidate?.entity?.id
                             if (sameContentId != null) {
-                                val stored = db.questionDao().getById(sameContentId)
-                                val storedCorrect = db.correctAnswerDao().getCorrectIds(sameContentId).toSet()
-                                if (stored != null &&
-                                    ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, questionDto)
-                                ) {
+                                val stored = candidate.entity
+                                val storedCorrect = candidate.correctIds
+                                if (ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, questionDto)) {
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                                     db.correctAnswerDao().upsertAll(
                                         questionDto.correctOptionIds.map { optionId ->
@@ -276,13 +284,15 @@ class Importer(
                             // answer key and metadata: the same question id with
                             // a fixed key (or explanation/marks/etc.) is an
                             // update, not a duplicate.
-                            val changedAnswer = db.questionDao().getById(questionDto.id)?.let { existing ->
+                            // Prefetched once for every id in the file: a missing
+                            // id means no stored row, exactly as a null lookup did.
+                            val sameId = sameIdRows()[questionDto.id]
+                            val changedAnswer = sameId != null &&
                                 ContentHash.nonHashedFieldsDiffer(
-                                    existing,
-                                    db.correctAnswerDao().getCorrectIds(questionDto.id).toSet(),
+                                    sameId.first,
+                                    sameId.second,
                                     questionDto
                                 )
-                            } == true
                             if (!changedAnswer) {
                                 duplicateQuestions++
                                 Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
@@ -324,6 +334,11 @@ class Importer(
                             )
                         )
                         existingHashes.add(contentHash)
+                        // A later question in this same file carrying the same
+                        // content must collapse onto this one, as it did when
+                        // each collision was resolved with its own query.
+                        writtenThisImport.getOrPut(contentHash) { mutableListOf() }
+                            .add(scaledQuestion)
 
                         // Review progress is applied only to a question this
                         // import accepted. A duplicate is skipped above, so
@@ -462,15 +477,114 @@ class Importer(
         contentHash: String,
         scaledQuestion: QuestionDto
     ): Boolean {
-        val candidateIds = db.questionDao().getIdsByContentHash(contentHash)
-        if (candidateIds.isEmpty()) return false
-        val storedById = db.questionDao().getByIds(candidateIds).associateBy { it.id }
-        val optionsByQuestion = db.optionDao().getForQuestions(candidateIds)
-            .groupBy { it.questionId }
-        return candidateIds.any { id ->
-            val stored = storedById[id] ?: return@any false
-            ContentHash.sameQuestionContent(stored, optionsByQuestion[id].orEmpty(), scaledQuestion)
+        // Questions written earlier in this same import count as candidates too:
+        // a file carrying the same question twice must still collapse to one.
+        if (writtenThisImport[contentHash].orEmpty()
+                .any { ContentHash.sameQuestionContent(it, scaledQuestion) }
+        ) {
+            return true
         }
+        return collisionCandidates()[contentHash].orEmpty().any { candidate ->
+            ContentHash.sameQuestionContent(candidate.entity, candidate.options, scaledQuestion)
+        }
+    }
+
+    private data class StoredCandidate(
+        val entity: com.mcqapp.data.local.QuestionEntity,
+        val options: List<com.mcqapp.data.local.OptionEntity>,
+        val correctIds: Set<String>
+    )
+
+    /**
+     * Every content hash this import could produce, from the parsed DTOs. The
+     * question loop keys on the unscaled DTO while the row written is the
+     * scaled one, so the hash is taken the same way here.
+     */
+    private fun importHashes(): Set<String> = importedFile?.papers.orEmpty()
+        .flatMap { paper ->
+            paper.categories.flatMap { it.questions } + paper.topLevelQuestions()
+        }
+        .mapTo(mutableSetOf()) { question ->
+            ContentHash.of(
+                question.text,
+                question.options.map { it.text },
+                question.options.map { it.image }
+            )
+        }
+
+    /** The file being imported, kept so collision candidates can be gathered. */
+    private var importedFile: McqFileDto? = null
+
+    /** Questions this import has already written, by content hash. */
+    private val writtenThisImport = mutableMapOf<String, MutableList<QuestionDto>>()
+
+    /** Collision candidates, fetched once per import and then reused. */
+    private var storedCandidates: Map<String, List<StoredCandidate>>? = null
+
+    /**
+     * One pass over the questions and options of everything whose hash is
+     * present before this import, keyed by hash.
+     *
+     * Every hash the file can produce is needed up front, which the parsed DTOs
+     * already give us. Nothing is fetched at all unless a collision actually
+     * happens, so a first import — where no hash can match — is unaffected.
+     */
+    private suspend fun loadCollisionCandidates(): Map<String, List<StoredCandidate>> {
+        val hashes = importHashes()
+        if (hashes.isEmpty()) return emptyMap()
+        val matches = db.questionDao().getMatchesByContentHashes(hashes)
+        if (matches.isEmpty()) return emptyMap()
+        val ids = matches.map { it.id }
+        val entities = db.questionDao().getByIds(ids).associateBy { it.id }
+        val optionsByQuestion = db.optionDao().getForQuestions(ids).groupBy { it.questionId }
+        val correctByQuestion = db.correctAnswerDao().getForQuestionsChunked(ids)
+            .groupBy({ it.questionId }, { it.optionId })
+        // `matches` arrives in row order, as `getIdByContentHash` did, so taking
+        // the first for a hash picks the same row that call would have.
+        return matches
+            .mapNotNull { match -> entities[match.id]?.let { it to match.contentHash } }
+            .groupBy({ it.second }, { pair ->
+                StoredCandidate(
+                    pair.first,
+                    optionsByQuestion[pair.first.id].orEmpty(),
+                    correctByQuestion[pair.first.id].orEmpty().toSet()
+                )
+            })
+    }
+
+    /** Stored question + answer key per incoming id, fetched once. */
+    private var sameIdCache: Map<String, Pair<com.mcqapp.data.local.QuestionEntity, Set<String>>>? = null
+
+    private suspend fun sameIdRows(): Map<String, Pair<com.mcqapp.data.local.QuestionEntity, Set<String>>> {
+        sameIdCache?.let { return it }
+        val ids = importQuestionIds()
+        if (ids.isEmpty()) {
+            val none = emptyMap<String, Pair<com.mcqapp.data.local.QuestionEntity, Set<String>>>()
+            sameIdCache = none
+            return none
+        }
+        val idList = ids.toList()
+        val entities = db.questionDao().getByIds(idList).associateBy { it.id }
+        val correct = db.correctAnswerDao().getForQuestionsChunked(idList)
+            .groupBy({ it.questionId }, { it.optionId })
+        val rows: Map<String, Pair<com.mcqapp.data.local.QuestionEntity, Set<String>>> =
+            buildMap {
+                for (entity in entities.values) {
+                    put(entity.id, entity to correct[entity.id].orEmpty().toSet())
+                }
+            }
+        sameIdCache = rows
+        return rows
+    }
+
+    private fun importQuestionIds(): Set<String> = importedFile?.papers.orEmpty()
+        .flatMap { paper -> paper.categories.flatMap { it.questions } + paper.topLevelQuestions() }
+        .mapTo(mutableSetOf()) { it.id }
+
+    /** Collision candidates, fetched on first need and then reused. */
+    private suspend fun collisionCandidates(): Map<String, List<StoredCandidate>> {
+        if (storedCandidates == null) storedCandidates = loadCollisionCandidates()
+        return storedCandidates.orEmpty()
     }
 
 /**

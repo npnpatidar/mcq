@@ -121,6 +121,14 @@ interface QuestionDao {
     @Query("SELECT id FROM questions WHERE contentHash = :contentHash")
     suspend fun getIdsByContentHash(contentHash: String): List<String>
 
+    /**
+     * The same, for a whole import's worth of hashes at once. Resolving
+     * collisions one question at a time cost three queries per colliding
+     * question; a re-import of a large bank paid that thousands of times.
+     */
+    @Query("SELECT id, contentHash FROM questions WHERE contentHash IN (:hashes)")
+    suspend fun getMatchesByContentHashes(hashes: Collection<String>): List<ContentHashMatch>
+
     /** Everything the content hash deliberately ignores. */
     @Query(
         "UPDATE questions SET explanation = :explanation, marks = :marks, " +
@@ -319,3 +327,6 @@ interface AttemptDao {
     @Query("SELECT COUNT(*) FROM attempts WHERE paperId = :paperId")
     suspend fun countByPaper(paperId: String): Int
 }
+
+/** One row of [QuestionDao.getMatchesByContentHashes]. */
+data class ContentHashMatch(val id: String, val contentHash: String)

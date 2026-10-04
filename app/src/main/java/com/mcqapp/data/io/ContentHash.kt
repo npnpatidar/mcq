@@ -59,6 +59,21 @@ object ContentHash {
     }
 
     /**
+     * The same comparison between two incoming questions, used for a question
+     * inserted earlier in the same import: its content is the DTO that was
+     * written, so there is no row to read back.
+     */
+    fun sameQuestionContent(a: QuestionDto, b: QuestionDto): Boolean {
+        if (a.elements.isNotEmpty() && b.elements.isNotEmpty() && a.elements != b.elements) return false
+        if (a.image != b.image) return false
+        if (a.options.size != b.options.size) return false
+        return a.options.zip(b.options).all { (first, second) ->
+            first.image == second.image &&
+                (first.elements.isEmpty() || second.elements.isEmpty() || first.elements == second.elements)
+        }
+    }
+
+    /**
      * Whether a re-imported question with a matching content hash still needs
      * an update: the hash deliberately ignores the answer key, question image,
      * explanation, marks, difficulty and tags, so a file that fixes only those

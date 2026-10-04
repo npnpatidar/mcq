@@ -80,4 +80,40 @@ class ImportWarningsTest {
         assertTrue(byId["q-e5"]!!.any { it.message.startsWith("Only one option") })
         assertTrue(byId["q-o3"].orEmpty().isEmpty())
     }
+
+    /**
+     * Parser warnings were all shown under "Skipped rows" in error red, beside a
+     * second red panel saying the import was fine. Most are advisory, so the
+     * heading claimed content had been dropped when it had not.
+     */
+    @Test
+    fun advisoryParserWarningsAreNotReportedAsSkippedRows() {
+        val advisory = listOf(
+            "File root is a scalar or null, not an object or array — no papers found",
+            "Could not read the answer key: nope — question imports ungraded",
+            "An equation uses unsupported constructs and was kept as plain text"
+        )
+        val dropped = listOf(
+            "Skipped malformed question 3: expected a list",
+            "A picture points at a missing file (media/x.png) and was skipped."
+        )
+        val groups = com.mcqapp.domain.splitImportWarnings(advisory + dropped)
+
+        assertEquals(dropped.toSet(), groups.skipped.toSet())
+        assertEquals(advisory.toSet(), groups.notes.toSet())
+        // Nothing may be lost by the split, whichever side it lands on.
+        assertEquals(
+            (advisory + dropped).toSet(),
+            (groups.skipped + groups.notes).toSet()
+        )
+        assertTrue(!groups.isEmpty)
+    }
+
+    @Test
+    fun noWarningsMeansNoGroups() {
+        val groups = com.mcqapp.domain.splitImportWarnings(emptyList())
+        assertTrue(groups.isEmpty)
+        assertTrue(groups.skipped.isEmpty())
+        assertTrue(groups.notes.isEmpty())
+    }
 }

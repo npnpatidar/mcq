@@ -50,3 +50,27 @@ object ImportWarnings {
         }
     }
 }
+
+/**
+ * Parser warnings split by whether anything was actually dropped.
+ *
+ * They used to share one panel headed "Skipped rows", in error red, right
+ * beside a second red panel saying the import was fine. Most of these are
+ * advisory — an unreadable answer key, a root that is not a paper file — so
+ * the heading told the user content had been lost when it had not.
+ *
+ * A message counts as a drop when it says so. Being wrong only moves a
+ * message between two panels; every message is still shown either way.
+ */
+data class ImportWarningGroups(
+    val skipped: List<String>,
+    val notes: List<String>
+) {
+    val isEmpty: Boolean get() = skipped.isEmpty() && notes.isEmpty()
+}
+
+fun splitImportWarnings(warnings: List<String>): ImportWarningGroups =
+    ImportWarningGroups(
+        skipped = warnings.filter { it.contains("skipped", ignoreCase = true) },
+        notes = warnings.filterNot { it.contains("skipped", ignoreCase = true) }
+    )

@@ -279,17 +279,24 @@ fun ImportScreen(
                     )
                     Spacer(Modifier.height(4.dp))
                 }
-                if (parseWarnings.isNotEmpty()) {
+                // These were all filed under "Skipped rows" in error red, next
+                // to a second red list saying the import is fine. Most are
+                // advisory and nothing was skipped, so the two are separated:
+                // a real drop in red, a note in neutral.
+                val warningGroups = com.mcqapp.domain.splitImportWarnings(parseWarnings)
+                val skippedNotes = warningGroups.skipped
+                val advisoryNotes = warningGroups.notes
+                if (skippedNotes.isNotEmpty()) {
                     item {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Skipped rows (${parseWarnings.size}) — imported without these",
+                            "Skipped (${skippedNotes.size}) — content dropped from the file",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.error
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    items(parseWarnings.take(20), key = { "parse|$it" }) { warning ->
+                    items(skippedNotes.take(20), key = { "skip|$it" }) { warning ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -303,10 +310,43 @@ fun ImportScreen(
                             )
                         }
                     }
-                    if (parseWarnings.size > 20) {
+                    if (skippedNotes.size > 20) {
                         item {
                             Text(
-                                "+${parseWarnings.size - 20} more skipped rows",
+                                "+${skippedNotes.size - 20} more skipped",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+                if (advisoryNotes.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Notes from the file (${advisoryNotes.size}) — nothing was dropped",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    items(advisoryNotes.take(20), key = { "note|$it" }) { note ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Text(
+                                note,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+                    if (advisoryNotes.size > 20) {
+                        item {
+                            Text(
+                                "+${advisoryNotes.size - 20} more notes",
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )

@@ -201,13 +201,34 @@ One question per block, built from literal marker text at the **start of a line*
 | Line | Marker | Notes |
 |---|---|---|
 | Question | `1.)` | 1–7 digits, a period, then **`)`** — the closing bracket is required |
-| Option A–D | `(a)` `(b)` `(c)` `(d)` | lowercase only; **exactly four**, always |
+| Options | `(a)` … `(j)` | lowercase only, at least four, up to ten per question |
 | Answer | `Ans.` | case-sensitive, trailing period included |
 | Explanation | `Exp:` | case-sensitive, trailing colon included |
 
-All seven fields are mandatory (stem, all four options, answer, explanation). A document
-missing any of them is **rejected in full** with the offending question number, rather than
-silently losing questions — so if one question is broken, nothing imports.
+All fields are mandatory (stem, every option, answer, explanation). A document missing any of
+them is **rejected in full** with the offending question number, rather than silently losing
+questions — so if one question is broken, nothing imports.
+
+**Several correct answers.** Write them together after one marker, separated by commas, `and`,
+or `&` — all of these are the same question:
+
+```
+Ans. b, d
+Ans. b and d
+Ans. b & d
+```
+
+Every letter must match an option that exists, otherwise the import is refused. This matters:
+before, `Ans. b, c` matched no single option, so the question imported **ungraded with no
+warning** — it looked fine and scored nothing.
+
+**More than four options.** `(e)` through `(j)` are read as real options, each keeping its own
+text. Labels must run `(a)`, `(b)`, `(c)`, `(d)` … with no gaps, so a skipped `(d)` is reported
+rather than silently renumbering everything after it. Before, only `(a)`–`(d)` were split off and
+a six-option question imported *successfully* with `(e)` and `(f)` folded into option (d).
+
+A missing option `(x)`, a repeated label, a label past `(j)`, and an answer naming an option the
+question does not have are all refused with the question number.
 
 A complete, valid document:
 
@@ -245,9 +266,9 @@ Rules that follow from how the file is read:
 - Options are split off from the end of the question, so a repeated `(b)` swallows the earlier
   one, and a continuation line beginning with `(a)`–`(d)` corrupts an option. Keep exactly one
   marker per line and one option per line.
-- `Ans.` takes a **single** option: `Ans. b` is correct, `Ans. b, c` is not (it resolves to
-  nothing and the question imports ungraded). `Ans. 1` means option **(b)** — numeric answers
-  are zero-based.
+- `Ans.` takes one or several options: `Ans. b`, or `Ans. b, d` for two right answers.
+  `Ans. 1` means option **(b)** — numeric answers are zero-based — and naming an option's
+  text (`Ans. Beta`) still works for a single answer.
 
 ### Formatting, images and equations
 

@@ -476,7 +476,7 @@ weight with refresh.
 ## Demo data
 
 `Load sample paper` imports `assets/sample_paper.json` — **Sample Bank — English + हिन्दी**,
-44 questions across 12 categories, covering everything the format can carry:
+47 questions across 13 categories, covering everything the format can carry:
 
 | Category | Shows off |
 |---|---|
@@ -488,6 +488,7 @@ weight with refresh.
 | Geography | a **dam table as options** deliberately left with **no answer key**, and the longest east-flowing river in Hindi |
 | Sports | uses the legacy `name` alias for the category title |
 | Multiple Correct Answers | three multi-correct questions, including one with **five options** and three right answers |
+| Text Formatting | every inline tag the renderer accepts — `<strong>`, `<em>`, `<u>`, `<del>`, `<mark>`, `<sub>`, `<sup>` — used where the markup carries meaning: a retracted unit, a gas-law subscript, the emphasised right answer |
 | Bilingual — English + हिन्दी | each question states itself in both languages |
 | Order Check and Marks | ordered steps with `marks` of 2, 1 and 3 for verifying shuffle and weighting |
 | Edge Cases | no answer key, no options, no explanation, only one option, and one question with no id that uses the older scalar `image` / `options[].image` / `explanationImage` fields |

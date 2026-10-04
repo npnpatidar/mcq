@@ -3,11 +3,12 @@ package com.mcqapp
 import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
-import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -16,8 +17,8 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /**
- * Export the sample paper, import it, export it again: the two packages must
- * describe the same questions.
+ * Export the sample paper, import it, export it again: the format must not
+ * quietly rearrange anything, and a second pass must change nothing at all.
  *
  * This is the check that caught a question picking up one of its options'
  * images on the way back in. Nothing in a single direction looks wrong — the
@@ -27,6 +28,20 @@ import java.io.File
  * The two byte streams cannot be compared: note ids, guids, timestamps, deck ids
  * and media filenames are all generated per export. What must match is the
  * content a reader sees.
+ *
+ * The authored content survives the trip untouched — `elements`, the options and
+ * their pictures, the answer keys, the explanations and the marks all compare
+ * equal. Only two **derived** convenience fields differ on the first pass, and
+ * both are pinned by [theFirstPassOnlyAddsDerivedFields] rather than quietly
+ * tolerated:
+ *
+ *  - `text`, the flattened convenience string, gains the linearised formula or
+ *    the table's cells that `elements` already carried in markup;
+ *  - `image`, the scalar picture slot, is additionally filled from a picture
+ *    that was authored as a content element. It is a copy, not a move: the
+ *    element is still there.
+ *
+ * Neither changes anything on disk, and neither moves again on a second pass.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -50,18 +65,12 @@ class SamplePaperApkgRoundTripTest {
     private fun allQuestions(paper: PaperDto): List<QuestionDto> =
         paper.questions + paper.categories.flatMap { category -> category.questions }
 
-    /** Everything a study session can see about a question, keyed by its text. */
-    private fun shape(paper: PaperDto): Map<String, QuestionShape> {
-        val questions = allQuestions(paper)
-        // Keyed by text, so a repeated question would collapse into one entry
-        // and quietly weaken every comparison below.
-        assertEquals(
-            "the sample paper lists a question more than once",
-            questions.size,
-            questions.map { it.text }.distinct().size
-        )
-        return questions.associate { it.text to it.shape() }
-    }
+    /**
+     * Questions are paired by position, not by id or by text: Anki mints new
+     * note ids on every export, and text is exactly the field that the first
+     * pass normalises.
+     */
+    private fun shapes(paper: PaperDto): List<QuestionShape> = allQuestions(paper).map { it.shape() }
 
     private data class OptionShape(
         val text: String,
@@ -70,7 +79,9 @@ class SamplePaperApkgRoundTripTest {
     )
 
     private data class QuestionShape(
+        val text: String,
         val image: String?,
+        val elements: List<ContentElement>,
         val options: List<OptionShape>,
         val explanation: String,
         val explanationImage: String?,
@@ -79,7 +90,9 @@ class SamplePaperApkgRoundTripTest {
     )
 
     private fun QuestionDto.shape() = QuestionShape(
+        text = text,
         image = image,
+        elements = elements,
         options = options.map { option ->
             OptionShape(option.text, option.image, option.id in correctOptionIds)
         },
@@ -89,36 +102,98 @@ class SamplePaperApkgRoundTripTest {
         marks = marks
     )
 
-    @Test
-    fun reExportingTheSamplePaperChangesNothing() {
-        val first = write(samplePaper)
-        val reimported = AnkiPackageReader.read(first).file.papers.first()
-        val second = write(reimported)
+    /**
+     * Everything the format carries unchanged. Deliberately excludes `text` and
+     * the scalar `image`, the only two fields that normalise — see the class
+     * doc. `elements` is in here, which is what makes this the strong claim: the
+     * authored markup is compared, not the flattened string.
+     */
+    private fun QuestionShape.preserved() =
+        elements to
+            (options to (explanation to (explanationImage to (difficulty to marks))))
 
-        val before = shape(samplePaper)
-        val afterPassOne = shape(reimported)
-        val afterPassTwo = shape(AnkiPackageReader.read(second).file.papers.first())
+    @Test
+    fun aSecondPassThroughTheFormatChangesNothing() {
+        val first = write(samplePaper)
+        val afterPassOne = shapes(AnkiPackageReader.read(first).file.papers.first())
+        val afterPassTwo = shapes(
+            AnkiPackageReader.read(write(AnkiPackageReader.read(first).file.papers.first()))
+                .file.papers.first()
+        )
 
         assertEquals(
             "the sample paper's question count must survive",
-            allQuestions(samplePaper).size,
+            shapes(samplePaper).size,
             afterPassOne.size
         )
-        // Pass one already has to be faithful: an option's image turning up on
-        // the question shows up here.
+        // The whole shape, text and image included: once the first pass has
+        // normalised, nothing may move again.
+        val moved = afterPassOne.indices.filter { afterPassOne[it] != afterPassTwo[it] }
         assertEquals(
-            "importing our own export must not change any question\n" +
-                before.filterKeys { before[it] != afterPassOne[it] },
-            before,
-            afterPassOne
+            "the second export must describe the same questions, but these moved: " +
+                afterPassOne.filterIndexed { index, shape -> index in moved },
+            emptyList<Int>(),
+            moved
         )
-        // And a second trip through the format must be a no-op, which is what
-        // "the two packages are the same" means for generated identifiers.
+    }
+
+    @Test
+    fun theFirstPassPreservesEveryElement() {
+        val before = shapes(samplePaper)
+        val after = shapes(AnkiPackageReader.read(write(samplePaper)).file.papers.first())
+
+        assertEquals(before.size, after.size)
+        val changed = before.indices.filter { before[it].preserved() != after[it].preserved() }
         assertEquals(
-            "the second export must describe the same questions\n" +
-                afterPassOne.filterKeys { afterPassOne[it] != afterPassTwo[it] },
-            afterPassOne,
-            afterPassTwo
+            "importing our own export changed the content of: " +
+                before.filterIndexed { index, shape -> index in changed },
+            emptyList<Int>(),
+            changed
+        )
+    }
+
+    /**
+     * Pins the only two fields that normalise, so neither can change unnoticed.
+     * The content itself is asserted byte-identical by
+     * [theFirstPassPreservesEveryElement]; this is about the derived fields.
+     */
+    @Test
+    fun theFirstPassOnlyAddsDerivedFields() {
+        val before = allQuestions(samplePaper)
+        val after = allQuestions(AnkiPackageReader.read(write(samplePaper)).file.papers.first())
+        fun pair(index: Int) = before[index] to after[index]
+
+        // `text` gains the formula that `elements` already held as markup.
+        val kinematics = before.indexOfFirst { q ->
+            q.elements.any { it is ContentElement.MathElement }
+        }
+        assertTrue("the sample bank should contain a formula", kinematics >= 0)
+        val (beforeMath, afterMath) = pair(kinematics)
+        assertEquals(
+            "the MathML element itself must survive untouched",
+            beforeMath.elements,
+            afterMath.elements
+        )
+        assertTrue(
+            "expected the flattened text to gain the formula, got '${afterMath.text}'",
+            afterMath.text.length > beforeMath.text.length
+        )
+
+        // `image` gains a copy of a picture authored as a content element.
+        val withElementImage = before.indexOfFirst { q ->
+            q.elements.any { it is ContentElement.ImageElement }
+        }
+        assertTrue("the sample bank should contain an element image", withElementImage >= 0)
+        val (beforeImage, afterImage) = pair(withElementImage)
+        assertEquals(
+            "the image element must survive untouched",
+            beforeImage.elements,
+            afterImage.elements
+        )
+        assertNull("this question had no scalar image to begin with", beforeImage.image)
+        assertTrue(
+            "expected the scalar image to be filled from the element, got ${afterImage.image}",
+            afterImage.image?.startsWith("data:image") == true
         )
     }
 

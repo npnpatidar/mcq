@@ -30,6 +30,8 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
+import com.mcqapp.data.io.ContentHash
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -888,7 +890,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val questions = getQuestionsForPaper(paperId)
         if (questions.isEmpty()) return emptyList()
         val config = schedulerConfigNow()
-        val states = resolveStudyStates(paperId, questions, config)
+        val states = resolveStudyStates(
+            paperId,
+            questions.map { StudyInput(it.id, contentHashOf(it)) },
+            config
+        )
         Logger.i(
             "REPO",
             "getStudyQueue($paperId): ${questions.size} questions, " +
@@ -910,9 +916,42 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * queue and the library badges go through here, so the badge can never
      * disagree with what the queue would actually offer.
      */
+    /**
+     * What scheduling actually needs about a question: its id and the hash of
+     * its content. Both are derived from the stored elements, so the counts on
+     * the library screen no longer have to load every option and every answer
+     * key just to count them.
+     */
+    private data class StudyInput(val id: String, val contentHash: String)
+
+    /**
+     * Ids and content hashes for a paper's questions, nested categories
+     * included, from the questions and options rows alone.
+     */
+    private suspend fun studyInputs(paperId: String): List<StudyInput> {
+        val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+        if (categoryIds.isEmpty()) return emptyList()
+        val questions = db.questionDao().getByCategoriesChunked(categoryIds)
+        if (questions.isEmpty()) return emptyList()
+        val optionsByQuestion = db.optionDao()
+            .getForQuestions(questions.map { it.id })
+            .groupBy { it.questionId }
+        return questions.map { entity ->
+            val options = optionsByQuestion[entity.id].orEmpty()
+            StudyInput(
+                id = entity.id,
+                contentHash = ContentHash.of(
+                    entity.text.parseContentElements(json).textContent,
+                    options.map { it.text.parseContentElements(json).textContent },
+                    options.map { it.image }
+                )
+            )
+        }
+    }
+
     private suspend fun resolveStudyStates(
         paperId: String,
-        questions: List<Question>,
+        questions: List<StudyInput>,
         config: com.mcqapp.domain.SchedulerConfig
     ): Map<String, com.mcqapp.domain.CardState> {
         val scheduler = com.mcqapp.domain.Sm2Scheduler(config)
@@ -925,12 +964,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             if (existing != null) {
                 // A question whose text or options changed is scheduled again
                 // from scratch: the old interval describes memory of other text.
-                if (existing.contentHash != contentHashOf(q)) {
+                if (existing.contentHash != q.contentHash) {
                     val reset = scheduler.initial(q.id)
                     states[q.id] = reset
                     // Persist the new hash, otherwise the edit looks stale again
                     // on the next load and the card is reset every time.
-                    seeded += reset.toEntity(paperId, contentHashOf(q))
+                    seeded += reset.toEntity(paperId, q.contentHash)
                 } else {
                     states[q.id] = existing.toDomain()
                 }
@@ -939,7 +978,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     com.mcqapp.domain.Study.rebuild(scheduler, q.id, it)
                 } ?: scheduler.initial(q.id)
                 states[q.id] = rebuilt
-                seeded += rebuilt.toEntity(paperId, contentHashOf(q))
+                seeded += rebuilt.toEntity(paperId, q.contentHash)
             }
         }
         if (seeded.isNotEmpty()) {
@@ -957,13 +996,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId: String,
         now: Long = System.currentTimeMillis()
     ): StudyCounts {
-        val questions = getQuestionsForPaper(paperId)
-        if (questions.isEmpty()) return StudyCounts()
-        val states = resolveStudyStates(paperId, questions, schedulerConfigNow())
+        // Counted from ids and content hashes only. The library re-reads these
+        // on every resume, and loading every question with its options and
+        // answer key just to add up three numbers made a large library crawl.
+        val inputs = studyInputs(paperId)
+        if (inputs.isEmpty()) return StudyCounts()
+        val states = resolveStudyStates(paperId, inputs, schedulerConfigNow())
         return StudyCounts(
             due = com.mcqapp.domain.Study.dueCount(states.values, now),
             leeches = com.mcqapp.domain.Study.leechCount(states.values),
-            fresh = com.mcqapp.domain.Study.newCount(questions.map { it.id }, states)
+            fresh = com.mcqapp.domain.Study.newCount(inputs.map { it.id }, states)
         )
     }
 

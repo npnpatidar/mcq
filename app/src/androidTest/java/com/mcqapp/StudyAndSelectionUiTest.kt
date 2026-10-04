@@ -146,7 +146,8 @@ class StudyAndSelectionUiTest {
         waitFor("Quick drill")
 
         // The default is what this paper can supply, so the dialog opens valid.
-        compose.onNodeWithText("2 random questions", substring = false).assertIsDisplayed()
+        // The whole line reads "2 random questions, 5:00 on the clock."
+        compose.onNodeWithText("2 random questions", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Start drill", substring = false).assertIsEnabled()
 
         // Ask for more than it holds and it refuses, naming the real figure.

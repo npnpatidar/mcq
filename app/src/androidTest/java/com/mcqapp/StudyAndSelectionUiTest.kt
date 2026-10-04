@@ -1,6 +1,8 @@
 package com.mcqapp
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -8,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.domain.Question
@@ -81,9 +84,29 @@ class StudyAndSelectionUiTest {
         listOf("ui-sel", "ui-multi", "ui-study").forEach { repository.deletePaper(it) }
     }
 
-    /** Scroll a card action into view before tapping it. */
+    /**
+     * Bring a card action into view and tap it.
+     *
+     * performScrollTo needs a scrollable ancestor it can address and failed
+     * here, so the list is scrolled to the node instead. The scroll is
+     * best-effort: when the node is already visible the plain click is enough,
+     * and an off-screen tap would otherwise land on nothing without failing.
+     */
     private fun clickTag(tag: String) {
-        compose.onNodeWithTag(tag).performScrollTo().performClick()
+        val target = hasTestTag(tag)
+        if (compose.onAllNodes(target).fetchSemanticsNodes().isEmpty()) {
+            val scrollers = compose.onAllNodes(hasScrollAction()).fetchSemanticsNodes()
+            if (scrollers.isNotEmpty()) {
+                runCatching { compose.onAllNodes(hasScrollAction())[0].performScrollToNode(target) }
+            }
+        }
+        compose.onNode(target).performClick()
+    }
+
+    private fun waitForTag(tag: String) {
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun waitFor(text: String) {
@@ -186,9 +209,10 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        // Delete lives inside the collapsed card.
+        // Delete lives inside the collapsed card, which expands by animation.
         clickTag("paper-manage-ui-sel")
-        clickTag("paper-delete-ui-sel")
+        waitForTag("paper-delete-ui-sel")
+        compose.onNodeWithTag("paper-delete-ui-sel").performClick()
 
         waitFor("This cannot be undone.")
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()

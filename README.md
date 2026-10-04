@@ -514,9 +514,15 @@ first session rebuilds schedules from attempt history; `MIGRATION_7_8` cascades
 `correct_answers` off their question and drops already-orphaned answer-key rows;
 existing installs migrate in place, and the 3→8 chain is covered by a migration
 test). Deleting a paper deletes its categories; deleting a category deletes its
-questions (FK cascades) — options and answer keys go with their question, and the
-repository removes that question's bookmarks alongside. Deleting attempts, bookmarks,
-or papers never orphans history snapshots (attempts embed their own copies).
+questions (FK cascades) — options and answer keys go with their question. Anything that
+reached the paper only by id is deleted explicitly in the same transaction, because no
+foreign key covers it: **bookmarks** for those questions, **history** (`attempts` for
+that `paperId`, whose `question_results` cascade from them), and **SM-2 cards** in
+`card_state` (already covered by a cascade, deleted anyway so the intent is visible and
+does not depend on the foreign-key pragma). A single in-progress **test snapshot** in
+DataStore is discarded too, but only when it belongs to the deleted paper, so another
+paper's resumable session survives. Deleting attempts, bookmarks, or papers never
+orphans history snapshots (attempts embed their own copies).
 
 Test progress snapshots live in DataStore (single `in_progress_test` key, cleared on
 submit); test display options (shuffle, practice, strict, auto-advance) and theme are

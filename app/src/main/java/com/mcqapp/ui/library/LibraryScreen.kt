@@ -895,7 +895,10 @@ private fun PaperCard(
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.start))
                 }
-                OutlinedButton(onClick = onStudy) {
+                OutlinedButton(
+                    onClick = onStudy,
+                    modifier = Modifier.testTag("paper-study-${paper.id}")
+                ) {
                     Text(
                         when {
                             dueCount > 0 && freshCount > 0 -> "Study ($dueCount due, $freshCount new)"
@@ -916,16 +919,23 @@ private fun PaperCard(
                 OutlinedButton(onClick = onExport) {
                     Text(stringResource(R.string.export))
                 }
-                OutlinedButton(onClick = onBrowse) {
+                OutlinedButton(
+                    onClick = onBrowse,
+                    modifier = Modifier.testTag("paper-browse-${paper.id}")
+                ) {
                     Text(stringResource(R.string.browse))
                 }
-                OutlinedButton(onClick = {
-                    // Default to something this paper can actually supply, so the
-                    // dialog does not open already refusing to start.
-                    drillCountText = com.mcqapp.domain.Drill.checkCount(10, paper.totalQuestions)
-                        .let { if (it is com.mcqapp.domain.Drill.CountCheck.Ok) "10" else "1" }
-                    showDrillDialog = true
-                }) {
+                OutlinedButton(
+                    onClick = {
+                        // Default to something this paper can actually supply, so
+                        // the dialog does not open already refusing to start.
+                        drillCountText =
+                            com.mcqapp.domain.Drill.checkCount(10, paper.totalQuestions)
+                                .let { if (it is com.mcqapp.domain.Drill.CountCheck.Ok) "10" else "1" }
+                        showDrillDialog = true
+                    },
+                    modifier = Modifier.testTag("paper-drill-${paper.id}")
+                ) {
                     Text(stringResource(R.string.drill))
                 }
                 if (mistakeCount > 0) {
@@ -1033,7 +1043,10 @@ private fun PaperCard(
                             Spacer(Modifier.width(4.dp))
                             Text(stringResource(R.string.duplicate))
                         }
-                        TextButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
+                        TextButton(
+                            onClick = onDelete,
+                            modifier = Modifier.weight(1f).testTag("paper-delete-${paper.id}")
+                        ) {
                             Icon(Icons.Default.Delete, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
                             Text(stringResource(R.string.delete_paper))

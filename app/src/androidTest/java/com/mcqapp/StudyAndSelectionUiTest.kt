@@ -98,7 +98,7 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-study").assertIsDisplayed()
-        compose.onNodeWithText("Study (2 new)", substring = false).performClick()
+        compose.onNodeWithTag("paper-study-ui-study").performClick()
 
         waitFor("Show answer")
         // First card is single-answer: a hollow circle.
@@ -122,7 +122,7 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithText("Drill", substring = false).performClick()
+        compose.onNodeWithTag("paper-drill-ui-sel").performClick()
 
         waitFor("Quick drill")
         compose.onNodeWithText("Questions", substring = false).performScrollTo()
@@ -142,7 +142,7 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithText("Browse", substring = false).performClick()
+        compose.onNodeWithTag("paper-browse-ui-sel").performClick()
 
         waitFor("UITest ui-sel-q1?")
         compose.onNodeWithText("Select", substring = false).performClick()
@@ -173,7 +173,7 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithText("Delete", substring = false).performClick()
+        compose.onNodeWithTag("paper-delete-ui-sel").performClick()
 
         waitFor("This cannot be undone.")
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()

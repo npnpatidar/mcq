@@ -104,6 +104,7 @@ fun LibraryScreen(
     val mistakeCounts by viewModel.mistakeCounts.collectAsStateWithLifecycle()
     val studyCounts by viewModel.studyCounts.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+    val pendingDelete by viewModel.pendingDelete.collectAsStateWithLifecycle()
     val importReport by viewModel.importReport.collectAsStateWithLifecycle()
     val importReportTitle by viewModel.importReportTitle.collectAsStateWithLifecycle()
     // Due counts have to be re-read when the library resumes, not when Study is
@@ -372,7 +373,7 @@ fun LibraryScreen(
                                     exportFormat = ExportFormat.JSON_INLINE
                                     showExportFormatDialog = true
                                 },
-                                onDelete = { viewModel.deletePaper(paper.id) },
+                                onDelete = { viewModel.requestDelete(paper.id, paper.title) },
                                 onDuplicate = { viewModel.duplicatePaper(paper.id) },
                                 onAddCategory = {
                                     categoryDialogPaperId = paper.id
@@ -427,6 +428,63 @@ fun LibraryScreen(
             onSave = { title, parent ->
                 viewModel.addCategory(categoryDialogPaperId, title, parent)
                 showCategoryDialog = false
+            }
+        )
+    }
+
+    pendingDelete?.let { pending ->
+        val impact = pending.impact
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelDelete() },
+            title = { Text("Delete \u201c${pending.title}\u201d?") },
+            text = {
+                Column {
+                    Text(
+                        if (impact.questions == 1) "1 question" else "${impact.questions} questions",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    // Deletion also takes history, bookmarks and schedules, so
+                    // say so rather than letting one tap destroy them.
+                    if (impact.hasMoreThanQuestions) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("This also deletes:", style = MaterialTheme.typography.bodySmall)
+                        buildList {
+                            if (impact.attempts > 0) add(
+                                if (impact.attempts == 1) "1 past attempt"
+                                else "${impact.attempts} past attempts"
+                            )
+                            if (impact.bookmarks > 0) add(
+                                if (impact.bookmarks == 1) "1 bookmark"
+                                else "${impact.bookmarks} bookmarks"
+                            )
+                            if (impact.schedules > 0) add(
+                                if (impact.schedules == 1) "1 review schedule"
+                                else "${impact.schedules} review schedules"
+                            )
+                        }.forEach {
+                            Text("\u2022 $it", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This cannot be undone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.cancelDelete()
+                    viewModel.deletePaper(pending.paperId)
+                }) {
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelDelete() }) {
+                    Text(stringResource(R.string.cancel))
+                }
             }
         )
     }

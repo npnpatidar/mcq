@@ -220,6 +220,9 @@ interface CardStateDao {
      */
     @Query("DELETE FROM card_state WHERE paperId = :paperId")
     suspend fun deleteByPaper(paperId: String)
+
+    @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId")
+    suspend fun countByPaper(paperId: String): Int
 }
 
 @Dao
@@ -238,6 +241,10 @@ interface BookmarkDao {
 
     @Query("DELETE FROM bookmarks WHERE questionId IN (:questionIds)")
     suspend fun removeAll(questionIds: Collection<String>)
+
+    /** How many of [questionIds] are bookmarked, for the delete confirmation. */
+    @Query("SELECT COUNT(*) FROM bookmarks WHERE questionId IN (:questionIds)")
+    suspend fun countForQuestions(questionIds: Collection<String>): Int
 
     @Query("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE questionId = :questionId)")
     suspend fun isBookmarked(questionId: String): Boolean

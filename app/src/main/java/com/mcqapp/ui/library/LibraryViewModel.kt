@@ -79,6 +79,36 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Paper awaiting delete confirmation, with what deleting it would cost. */
+    data class PendingDelete(
+        val paperId: String,
+        val title: String,
+        val impact: com.mcqapp.data.repository.McqRepository.DeleteImpact
+    )
+
+    private val _pendingDelete = MutableStateFlow<PendingDelete?>(null)
+    val pendingDelete: StateFlow<PendingDelete?> = _pendingDelete.asStateFlow()
+
+    /** Loads the impact and asks for confirmation. Deletion never happens here. */
+    fun requestDelete(paperId: String, title: String) {
+        viewModelScope.launch {
+            try {
+                _pendingDelete.value = PendingDelete(
+                    paperId = paperId,
+                    title = title,
+                    impact = repository.deleteImpact(paperId)
+                )
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "deleteImpact failed", e)
+                _exportError.value = "Delete failed: ${e.message}"
+            }
+        }
+    }
+
+    fun cancelDelete() {
+        _pendingDelete.value = null
+    }
+
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
 

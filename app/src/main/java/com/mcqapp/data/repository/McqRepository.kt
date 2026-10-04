@@ -732,6 +732,35 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         )
     }
 
+    /**
+     * What deleting [paperId] would take with it, so the confirmation can say so
+     * rather than just naming the paper. Deletion is thorough by design — it
+     * also drops history, bookmarks, schedules and any resume snapshot — which
+     * makes a single unconfirmed tap expensive.
+     */
+    suspend fun deleteImpact(paperId: String): DeleteImpact {
+        val questionIds = db.questionDao().getIdsByPaper(paperId)
+        return DeleteImpact(
+            questions = questionIds.size,
+            attempts = db.attemptDao().countByPaper(paperId),
+            bookmarks = if (questionIds.isEmpty()) 0
+            else db.bookmarkDao().countForQuestions(questionIds),
+            schedules = db.cardStateDao().countByPaper(paperId)
+        )
+    }
+
+    /** Counts shown in the delete confirmation. */
+    data class DeleteImpact(
+        val questions: Int = 0,
+        val attempts: Int = 0,
+        val bookmarks: Int = 0,
+        val schedules: Int = 0
+    ) {
+        /** True when anything beyond the questions themselves would be lost. */
+        val hasMoreThanQuestions: Boolean
+            get() = attempts > 0 || bookmarks > 0 || schedules > 0
+    }
+
     suspend fun deletePaper(paperId: String) {
         Logger.d("REPO", "deletePaper($paperId)")
         // One transaction: bookmark cleanup, history, schedules and the paper

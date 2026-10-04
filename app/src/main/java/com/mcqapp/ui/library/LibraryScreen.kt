@@ -930,11 +930,12 @@ private fun PaperCard(
                 }
                 OutlinedButton(
                     onClick = {
-                        // Default to something this paper can actually supply, so
-                        // the dialog does not open already refusing to start.
-                        drillCountText =
-                            com.mcqapp.domain.Drill.checkCount(10, paper.totalQuestions)
-                                .let { if (it is com.mcqapp.domain.Drill.CountCheck.Ok) "10" else "1" }
+                        // Default to something this paper can actually supply: ten
+                        // where there are ten or more, otherwise the whole paper.
+                        // Falling back to 1 for any shortfall made a 2-question
+                        // paper open on a single-question drill.
+                        drillCountText = minOf(10, paper.totalQuestions)
+                            .coerceAtLeast(1).toString()
                         showDrillDialog = true
                     },
                     modifier = Modifier.testTag("paper-drill-${paper.id}")

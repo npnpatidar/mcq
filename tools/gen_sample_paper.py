@@ -1582,6 +1582,109 @@ CATEGORIES = [
         ],
     },
     {
+        # Every inline tag the renderer understands, in one place. The tags are
+        # real content here rather than decoration: a retracted value is struck
+        # through, a subscripts a species, an emphasised word carries the point.
+        "id": "cat-formatting",
+        "title": "Text Formatting",
+        "questions": [
+            q(
+                "q-fmt-1",
+                [
+                    txt(
+                        "In <strong>Newton\u2019s second law</strong> the acceleration is "
+                        "proportional to the net <em>external</em> force and inversely "
+                        "proportional to the <u>total mass</u>. Which statement about "
+                        "acceleration follows?"
+                    )
+                ],
+                {
+                    "a": [
+                        txt(
+                            "It <mark>increases</mark> when the net force increases."
+                        )
+                    ],
+                    "b": [txt("It is independent of the net force.")],
+                    "c": [txt("It <del>decreases</del> when the net force increases.")],
+                    "d": [txt("It depends only on the mass, not on the force.")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "Writing the law as <strong>F = ma</strong> makes it plain: the "
+                        "acceleration is <em>directly proportional to F</em> and inversely "
+                        "proportional to m, so a bigger force means a bigger acceleration, "
+                        "and a bigger mass means a smaller one. That rules out (b) and (d), "
+                        "and (c) states the opposite of the direct relationship. Since force "
+                        "is measured in newtons (kg\u00b7m\u00b7s<sup>\u22122</sup>) and "
+                        "acceleration in metres per second squared "
+                        "(m\u00b7s<sup>\u22122</sup>), the mass that appears in each must "
+                        "cancel."
+                    )
+                ],
+                difficulty="easy",
+                tags=["formatting", "inline-tags", "newton"],
+            ),
+            q(
+                "q-fmt-2",
+                [
+                    txt(
+                        "At constant temperature, <strong>Boyle\u2019s law</strong> gives "
+                    ),
+                    txt(
+                        "P<sub>1</sub>V<sub>1</sub> = P<sub>2</sub>V<sub>2</sub>. If the "
+                        "absolute pressure on a fixed amount of gas is doubled, what happens "
+                        "to its volume?"
+                    ),
+                ],
+                {
+                    "a": [txt("It is <mark>halved</mark>.")],
+                    "b": [txt("It is doubled.")],
+                    "c": [txt("It is unchanged.")],
+                    "d": [txt("It is quadrupled.")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "P<sub>1</sub>V<sub>1</sub> is constant, so P and V trade places "
+                        "inversely: doubling the pressure halves the volume. The mass of the "
+                        "gas is fixed throughout, which is what rules out (d)."
+                    )
+                ],
+                difficulty="easy",
+                tags=["formatting", "inline-tags", "sub-superscript"],
+            ),
+            q(
+                "q-fmt-3",
+                [
+                    txt(
+                        "The SI unit of electric current is the "
+                        "<del>joule</del> <strong>ampere</strong>. The ampere is itself "
+                        "derived from two other base units. Which two?"
+                    )
+                ],
+                {
+                    "a": ["Length and mass"],
+                    "b": ["<em>Charge and time</em>"],
+                    "c": ["<u>Time and length</u>"],
+                    "d": ["Temperature and mass"],
+                },
+                ["b"],
+                [
+                    txt(
+                        "One ampere is one coulomb per second, so it is derived from "
+                        "<strong>charge and time</strong> \u2014 the <del>joule</del> struck "
+                        "through in the question is a unit of energy and has no place in an "
+                        "electrical current. None of the other pairs mixes a quantity of "
+                        "charge with a quantity of time."
+                    )
+                ],
+                difficulty="medium",
+                tags=["formatting", "inline-tags", "units"],
+            ),
+        ],
+    },
+    {
         "id": "cat-bilingual",
         "title": "Bilingual — English + हिन्दी",
         "questions": [

@@ -2173,6 +2173,169 @@
           ]
         },
         {
+          "id": "cat-formatting",
+          "title": "Text Formatting",
+          "questions": [
+            {
+              "id": "q-fmt-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "In <strong>Newton’s second law</strong> the acceleration is proportional to the net <em>external</em> force and inversely proportional to the <u>total mass</u>. Which statement about acceleration follows?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "It <mark>increases</mark> when the net force increases."
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "It is independent of the net force."
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "It <del>decreases</del> when the net force increases."
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "It depends only on the mass, not on the force."
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Writing the law as <strong>F = ma</strong> makes it plain: the acceleration is <em>directly proportional to F</em> and inversely proportional to m, so a bigger force means a bigger acceleration, and a bigger mass means a smaller one. That rules out (b) and (d), and (c) states the opposite of the direct relationship. Since force is measured in newtons (kg·m·s<sup>−2</sup>) and acceleration in metres per second squared (m·s<sup>−2</sup>), the mass that appears in each must cancel."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "formatting",
+                "inline-tags",
+                "newton"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-fmt-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "At constant temperature, <strong>Boyle’s law</strong> gives "
+                },
+                {
+                  "type": "text",
+                  "content": "P<sub>1</sub>V<sub>1</sub> = P<sub>2</sub>V<sub>2</sub>. If the absolute pressure on a fixed amount of gas is doubled, what happens to its volume?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "It is <mark>halved</mark>."
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "It is doubled."
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "It is unchanged."
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "It is quadrupled."
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "P<sub>1</sub>V<sub>1</sub> is constant, so P and V trade places inversely: doubling the pressure halves the volume. The mass of the gas is fixed throughout, which is what rules out (d)."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "formatting",
+                "inline-tags",
+                "sub-superscript"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-fmt-3",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The SI unit of electric current is the <del>joule</del> <strong>ampere</strong>. The ampere is itself derived from two other base units. Which two?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Length and mass"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "<em>Charge and time</em>"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "<u>Time and length</u>"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Temperature and mass"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "One ampere is one coulomb per second, so it is derived from <strong>charge and time</strong> — the <del>joule</del> struck through in the question is a unit of energy and has no place in an electrical current. None of the other pairs mixes a quantity of charge with a quantity of time."
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "formatting",
+                "inline-tags",
+                "units"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            }
+          ]
+        },
+        {
           "id": "cat-bilingual",
           "title": "Bilingual — English + हिन्दी",
           "questions": [

@@ -102,6 +102,10 @@ interface QuestionDao {
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
     fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
 
+    /** One-shot form of [observeCategoryCounts], for a single paper read. */
+    @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
+    suspend fun getCategoryCounts(): List<CategoryCountEntity>
+
     @Query("SELECT id FROM questions WHERE categoryId = :categoryId")
     suspend fun getIdsByCategory(categoryId: String): List<String>
 

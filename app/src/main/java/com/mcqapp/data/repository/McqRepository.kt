@@ -319,21 +319,30 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         return db.paperDao().getById(paperId)?.toDomain()
     }
 
-    private suspend fun PaperEntity.toDomain(countMap: Map<String, Int> = emptyMap()): Paper {
+    /**
+     * `countMap` lets the library pass the counts it already has; null means
+     * fetch them here. The previous default of an empty map produced a Paper
+     * whose every category reported zero questions — a silent trap for any
+     * caller that asked `totalQuestions`, which is exactly what the drill
+     * dialog and the Study screen do.
+     */
+    private suspend fun PaperEntity.toDomain(countMap: Map<String, Int>? = null): Paper {
         val categories = db.categoryDao().getByPaper(id)
+        val counts = countMap
+            ?: db.questionDao().getCategoryCounts().associate { it.categoryId to it.cnt }
         return Paper(
             id = id,
             title = title,
             description = description,
             durationMinutes = durationMinutes,
             negativeMarking = negativeMarking,
-            categories = buildTree(categories, countMap)
+            categories = buildTree(categories, counts)
         )
     }
 
     private suspend fun buildTree(
         categories: List<CategoryEntity>,
-        countMap: Map<String, Int> = emptyMap()
+        countMap: Map<String, Int>
     ): List<CategoryNode> {
         val byParent = categories.groupBy { it.parentId }
         suspend fun build(parentId: String?, counts: Map<String, Int>): List<CategoryNode> =

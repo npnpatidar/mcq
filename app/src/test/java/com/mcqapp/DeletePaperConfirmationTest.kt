@@ -123,4 +123,31 @@ class DeletePaperConfirmationTest {
         assertNull(viewModel.pendingDelete.value)
         assertEquals(1, runBlocking { repository.getQuestionsForPaper("p1").size })
     }
+
+    /**
+     * getPaper() used to map a paper with an empty count map, so every
+     * category reported zero questions and totalQuestions was always 0. Any
+     * caller trusting it — the drill dialog refuses counts above it — would
+     * silently misbehave.
+     */
+    @Test
+    fun getPaperReportsRealQuestionCountsIncludingNestedCategories() = runBlocking {
+        val childId = repository.addCategory("p1", "Child", parentId = "c1")
+        repository.saveQuestion(
+            Question(
+                id = "q2", categoryId = childId, text = "Q2",
+                options = listOf(QuestionOption("a", "A")),
+                correctOptionIds = setOf("a")
+            )
+        )
+
+        val paper = repository.getPaper("p1")!!
+        assertEquals("getPaper must not report zero questions", 2, paper.totalQuestions)
+        // totalQuestionCount is a subtree total, so c1 counts its own one plus
+        // the child's one.
+        val root = paper.categories.first { it.id == "c1" }
+        assertEquals(1, root.questionCount)
+        assertEquals(2, root.totalQuestionCount)
+        assertEquals(1, root.children.single().questionCount)
+    }
 }

@@ -699,7 +699,7 @@ CATEGORIES = [
                         "hydrogen atoms, so three atoms in total. One molecule is the smallest "
                         "unit that still has the formula "
                     ),
-                    math(M_H2O),
+                    math("<msub><mi>H</mi><mn>2</mn></msub><mi>O</mi>"),
                     txt("."),
                 ],
                 difficulty="easy",
@@ -1398,33 +1398,35 @@ CATEGORIES = [
         "questions": [
             q(
                 "q-geo-1",
-                [txt("The table lists four dams. Which two are on the same river?")],
+                [
+                    txt("The table lists four dams. Which two stand on the same river?"),
+                    table(
+                        [
+                            ["Dam", "River"],
+                            ["Bhakra", "Sutlej"],
+                            ["Nathpa-Jakhal", "Sutlej"],
+                            ["Hirakud", "Mahanadi"],
+                            ["Nagarjuna Sagar", "Krishna"],
+                        ]
+                    ),
+                ],
                 {
-                    "a": [
-                        table(
-                            [
-                                ["Dam", "River"],
-                                ["Bhakra", "Sutlej"],
-                                ["Hirakud", "Mahanadi"],
-                                ["Sardar Sarovar", "Narmada"],
-                                ["Nagarjuna Sagar", "Krishna"],
-                            ]
-                        )
-                    ],
+                    "a": [txt("Bhakra and Nathpa-Jakhal")],
                     "b": [txt("Bhakra and Hirakud")],
-                    "c": [txt("Hirakud and Sardar Sarovar")],
-                    "d": [txt("Sardar Sarovar and Nagarjuna Sagar")],
+                    "c": [txt("Hirakud and Nagarjuna Sagar")],
+                    "d": [txt("Nagarjuna Sagar and Nathpa-Jakhal")],
                 },
-                [],
+                ["a"],
                 [
                     txt(
-                        "Every dam in the table sits on a different river, so no pair shares "
-                        "one. Read the River column to check: Sutlej, Mahanadi, Narmada, "
-                        "Krishna. This question is deliberately left without an answer key."
+                        "Read the River column: Bhakra and Nathpa-Jakhal are both on the "
+                        "Sutlej near Bilaspur, the barrage sitting just downstream of the "
+                        "dam. Hirakud is on the Mahanadi and Nagarjuna Sagar on the Krishna, "
+                        "so no other pair matches."
                     )
                 ],
                 difficulty="medium",
-                tags=["dams", "table-question", "ungraded"],
+                tags=["dams", "table-question"],
             ),
             q(
                 "q-geo-2",
@@ -1497,7 +1499,7 @@ CATEGORIES = [
                 [
                     txt(
                         "A larger stroke volume from endurance training lowers resting heart "
-                        "rate, so the fastest resting rate in the table belongs to the trained "
+                        "rate, so the lowest resting rate in the table belongs to the trained "
                         "athlete."
                     )
                 ],

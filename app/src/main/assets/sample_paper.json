@@ -108,7 +108,7 @@
                 },
                 {
                   "type": "math",
-                  "content": "<math><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mo>+</mo><msub><mi>O</mi><mn>2</mn></msub><mo>&#x2192;</mo><mn>2</mn><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></math>"
+                  "content": "<math><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi></math>"
                 },
                 {
                   "type": "text",
@@ -1739,35 +1739,39 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "The table lists four dams. Which two are on the same river?"
+                  "content": "The table lists four dams. Which two stand on the same river?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Dam",
+                      "River"
+                    ],
+                    [
+                      "Bhakra",
+                      "Sutlej"
+                    ],
+                    [
+                      "Nathpa-Jakhal",
+                      "Sutlej"
+                    ],
+                    [
+                      "Hirakud",
+                      "Mahanadi"
+                    ],
+                    [
+                      "Nagarjuna Sagar",
+                      "Krishna"
+                    ]
+                  ]
                 }
               ],
               "options_elements": {
                 "a": [
                   {
-                    "type": "table",
-                    "content": [
-                      [
-                        "Dam",
-                        "River"
-                      ],
-                      [
-                        "Bhakra",
-                        "Sutlej"
-                      ],
-                      [
-                        "Hirakud",
-                        "Mahanadi"
-                      ],
-                      [
-                        "Sardar Sarovar",
-                        "Narmada"
-                      ],
-                      [
-                        "Nagarjuna Sagar",
-                        "Krishna"
-                      ]
-                    ]
+                    "type": "text",
+                    "content": "Bhakra and Nathpa-Jakhal"
                   }
                 ],
                 "b": [
@@ -1779,28 +1783,30 @@
                 "c": [
                   {
                     "type": "text",
-                    "content": "Hirakud and Sardar Sarovar"
+                    "content": "Hirakud and Nagarjuna Sagar"
                   }
                 ],
                 "d": [
                   {
                     "type": "text",
-                    "content": "Sardar Sarovar and Nagarjuna Sagar"
+                    "content": "Nagarjuna Sagar and Nathpa-Jakhal"
                   }
                 ]
               },
               "explanation_elements": [
                 {
                   "type": "text",
-                  "content": "Every dam in the table sits on a different river, so no pair shares one. Read the River column to check: Sutlej, Mahanadi, Narmada, Krishna. This question is deliberately left without an answer key."
+                  "content": "Read the River column: Bhakra and Nathpa-Jakhal are both on the Sutlej near Bilaspur, the barrage sitting just downstream of the dam. Hirakud is on the Mahanadi and Nagarjuna Sagar on the Krishna, so no other pair matches."
                 }
               ],
               "difficulty": "medium",
               "marks": 1,
               "tags": [
                 "dams",
-                "table-question",
-                "ungraded"
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "a"
               ]
             },
             {
@@ -1974,7 +1980,7 @@
               "explanation_elements": [
                 {
                   "type": "text",
-                  "content": "A larger stroke volume from endurance training lowers resting heart rate, so the fastest resting rate in the table belongs to the trained athlete."
+                  "content": "A larger stroke volume from endurance training lowers resting heart rate, so the lowest resting rate in the table belongs to the trained athlete."
                 }
               ],
               "difficulty": "medium",

@@ -79,10 +79,28 @@ internal data class RawQuestion(
     val stemHtml: String,
     val options: Map<String, String>,
     val answer: String,
-    val explanationHtml: String
+    val explanationHtml: String,
+    /**
+     * Option ids when the answer named letters directly, which is how several
+     * correct answers are expressed. Empty for the older forms that name the
+     * option's text or a zero-based index, and for the invalid forms that are
+     * refused outright.
+     */
+    val correctIds: List<String> = emptyList()
 )
 
 private val questionSplit = Regex("(?m)^(\\d{1,7}\\.\\))")
+
+/** Option labels, in order. Ten is plenty for a written paper and bounded on purpose. */
+private val OPTION_LABELS = ('a'..'j').map { it.toString() }
+
+/** `(a)` … at the start of a line. Any letter is matched so an out-of-range one is caught. */
+private val optionMarker = Regex("(?m)^\\(([a-z])\\)")
+
+/** Separators between several answers: a comma, an "and", an ampersand. */
+private val answerSeparator = Regex("\\s*(?:,|;|&|\\band\\b)\\s*", RegexOption.IGNORE_CASE)
+
+private fun isSingleLetter(token: String) = token.length == 1 && token[0] in 'a'..'z'
 
 private fun extractQuestions(cleaned: String): List<RawQuestion> {
     val matches = questionSplit.findAll(cleaned).toList()
@@ -108,46 +126,104 @@ private fun extractQuestions(cleaned: String): List<RawQuestion> {
 
 private fun extractQuestionData(num: String, block: String): RawQuestion {
     val label = "$num"
-    fun failMissing(missing: List<String>): Nothing {
-        throw IllegalArgumentException(
-            "Malformed question $label: missing ${missing.joinToString(", ")}. " +
-                "Expected format 'N.) question (a) .. (b) .. (c) .. (d) .. Ans. .. Exp: ..'."
-        )
-    }
+    fun fail(reason: String): Nothing =
+        throw IllegalArgumentException("Malformed question $label: $reason")
+
     val expParts = block.split("\nExp:", limit = 2)
     val explanation = if (expParts.size > 1) expParts[1].trim() else ""
     val preExp = expParts[0]
     val ansParts = preExp.split("\nAns.", limit = 2)
     val answer = if (ansParts.size > 1) ansParts[1].trim() else ""
-    var rest = ansParts[0]
-    // Options split from the end so earlier markers can't swallow later ones.
-    fun rsplit(marker: String): String {
-        val idx = rest.lastIndexOf(marker)
-        if (idx < 0) return ""
-        val value = rest.substring(idx + marker.length).trim()
-        rest = rest.substring(0, idx)
-        return value
+    val optionText = ansParts[0]
+
+    // Options are found by scanning for their markers rather than by splitting
+    // off four hard-coded ones, so a paper with more than four options keeps
+    // every option's text to itself instead of folding the tail into (d).
+    val markers = optionMarker.findAll(optionText).toList()
+    if (markers.isEmpty()) {
+        fail(
+            "missing option (a). Expected format 'N.) question (a) .. (b) .. (c) .. (d) " +
+                ".. Ans. .. Exp: ..'."
+        )
     }
-    val optionD = rsplit("\n(d)")
-    val optionC = rsplit("\n(c)")
-    val optionB = rsplit("\n(b)")
-    val optionA = rsplit("\n(a)")
-    val stem = rest.trim()
+    var stem = optionText.substring(0, markers.first().range.first).trim()
+    // A leading space before the stem was kept by the reader; markers had to
+    // start the line, so the stem never carries one.
+    stem = stem.trim()
+    val options = LinkedHashMap<String, String>()
+    for ((index, marker) in markers.withIndex()) {
+        val id = marker.groupValues[1]
+        val from = marker.range.last + 1
+        val to = if (index + 1 < markers.size) markers[index + 1].range.first else optionText.length
+        val content = optionText.substring(from, to).trim()
+        if (id in options) fail("option ($id) appears more than once.")
+        if (id !in OPTION_LABELS) {
+            fail(
+                "option ($id) is not supported; use (a) to (${OPTION_LABELS.last()})."
+            )
+        }
+        options[id] = content
+    }
+    // Letters must run a, b, c … with no gap, so a missing (d) is caught
+    // instead of silently renumbering everything after it.
+    val actual = options.keys.joinToString("")
+    val expected = OPTION_LABELS.take(options.size).joinToString("")
+    if (actual != expected) {
+        val absent = OPTION_LABELS.take(options.size).first { !options.containsKey(it) }
+        fail(
+            "option ($absent) is missing; labels must run (a), (b), (c), (d) … without " +
+                "gaps, but found ($actual)."
+        )
+    }
+
     val missing = mutableListOf<String>()
     if (stem.isBlank()) missing.add("question stem")
-    if (optionA.isBlank()) missing.add("option (a)")
-    if (optionB.isBlank()) missing.add("option (b)")
-    if (optionC.isBlank()) missing.add("option (c)")
-    if (optionD.isBlank()) missing.add("option (d)")
+    for (id in OPTION_LABELS.take(options.size)) {
+        if (options[id].orEmpty().isBlank()) missing.add("option ($id)")
+    }
     if (answer.isBlank()) missing.add("answer")
     if (explanation.isBlank()) missing.add("explanation")
-    if (missing.isNotEmpty()) failMissing(missing)
+    if (missing.isNotEmpty()) {
+        throw IllegalArgumentException(
+            "Malformed question $label: missing ${missing.joinToString(", ")}. " +
+                "Expected format 'N.) question (a) .. (b) .. (c) .. (d) .. Ans. .. Exp: ..'."
+        )
+    }
+
+    // "Ans. b" is one option; "Ans. b, d" or "Ans. b and d" is several. A letter
+    // that names no option is an authoring mistake, and is refused here rather
+    // than importing as a silently ungraded question.
+    val tokens = answer.split(answerSeparator).map { it.trim() }.filter { it.isNotEmpty() }
+    val letters = tokens.filter { isSingleLetter(it.lowercase()) }
+    val correctIds: List<String>
+    if (tokens.isNotEmpty() && letters.size == tokens.size) {
+        val ids = tokens.map { it.lowercase() }
+        val unknown = ids.firstOrNull { it !in options }
+        if (unknown != null) {
+            fail(
+                "answer names option ($unknown), which this question does not have. " +
+                    "It has (${options.keys.joinToString(") (")})."
+            )
+        }
+        correctIds = ids
+    } else if (tokens.size > 1) {
+        fail(
+            "answer '$answer' mixes letters with other text; write several answers as " +
+                "'Ans. b, d' so each one can be matched to an option."
+        )
+    } else {
+        // The older forms: the option's own text, or a zero-based index. Left for
+        // the importer to resolve exactly as before.
+        correctIds = emptyList()
+    }
+
     return RawQuestion(
         num = num,
         stemHtml = stem,
-        options = mapOf("a" to optionA, "b" to optionB, "c" to optionC, "d" to optionD),
+        options = options,
         answer = answer,
-        explanationHtml = explanation
+        explanationHtml = explanation,
+        correctIds = correctIds
     )
 }
 
@@ -232,7 +308,15 @@ private fun questionJson(q: RawQuestion): JsonObject = buildJsonObject {
             })
         }
     })
-    put("answer", JsonPrimitive(q.answer))
+    if (q.correctIds.isNotEmpty()) {
+        // Named letters, so the choice is made here and the importer is told
+        // exactly which options are right — that is what carries several
+        // answers. The single-answer case resolves to the same ids.
+        put("correctOptionIds", buildJsonArray { for (id in q.correctIds) add(JsonPrimitive(id)) })
+    } else {
+        // Option text or a zero-based index: left to the importer as before.
+        put("answer", JsonPrimitive(q.answer))
+    }
     put("explanation_elements", buildJsonArray {
         for (el in fieldElements(q.explanationHtml)) add(elementJson(el))
     })
@@ -250,5 +334,6 @@ internal fun rawQuestionForTest(
     stemHtml: String,
     options: Map<String, String>,
     answer: String,
-    explanationHtml: String
-) = RawQuestion(num, stemHtml, options, answer, explanationHtml)
+    explanationHtml: String,
+    correctIds: List<String> = emptyList()
+) = RawQuestion(num, stemHtml, options, answer, explanationHtml, correctIds)

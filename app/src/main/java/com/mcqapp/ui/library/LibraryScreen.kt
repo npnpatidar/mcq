@@ -781,6 +781,14 @@ private fun PaperCard(
     var drillMinutesText by remember { mutableStateOf("5") }
     val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
     val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
+    // Asking for more questions than the paper holds used to be accepted
+    // silently: Drill.sample returns the whole set, so the drill just came out
+    // smaller than the dialog promised. Refuse it here instead.
+    val available = paper.totalQuestions
+    val countCheck = drillCount?.let {
+        com.mcqapp.domain.Drill.checkCount(it, available)
+    }
+    val drillCountValid = countCheck is com.mcqapp.domain.Drill.CountCheck.Ok
     var expanded by remember { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -850,7 +858,13 @@ private fun PaperCard(
                 OutlinedButton(onClick = onBrowse) {
                     Text(stringResource(R.string.browse))
                 }
-                OutlinedButton(onClick = { showDrillDialog = true }) {
+                OutlinedButton(onClick = {
+                    // Default to something this paper can actually supply, so the
+                    // dialog does not open already refusing to start.
+                    drillCountText = com.mcqapp.domain.Drill.checkCount(10, paper.totalQuestions)
+                        .let { if (it is com.mcqapp.domain.Drill.CountCheck.Ok) "10" else "1" }
+                    showDrillDialog = true
+                }) {
                     Text(stringResource(R.string.drill))
                 }
                 if (mistakeCount > 0) {
@@ -890,13 +904,29 @@ private fun PaperCard(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Spacer(Modifier.height(4.dp))
+                            val tooMany = countCheck as?
+                                com.mcqapp.domain.Drill.CountCheck.TooManyForPaper
+                            val noQuestions =
+                                countCheck is com.mcqapp.domain.Drill.CountCheck.NoQuestionsAvailable
+                            val guidance = when {
+                                noQuestions ->
+                                    "This paper has no questions yet, so there is nothing to drill."
+                                tooMany != null ->
+                                    "This paper has only $available question${if (available == 1) "" else "s"}. " +
+                                        "Enter $available or fewer."
+                                drillCount != null && drillMinutes != null ->
+                                    "$drillCount random question${if (drillCount == 1) "" else "s"}, " +
+                                        "$drillMinutes:00 on the clock."
+                                else -> "Enter positive numbers for both."
+                            }
                             Text(
-                                if (drillCount != null && drillMinutes != null) {
-                                    "$drillCount random questions, $drillMinutes:00 on the clock."
+                                guidance,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (noQuestions || tooMany != null) {
+                                    MaterialTheme.colorScheme.error
                                 } else {
-                                    "Enter positive numbers for both."
-                                },
-                                style = MaterialTheme.typography.bodySmall
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                             )
                         }
                     },
@@ -907,7 +937,7 @@ private fun PaperCard(
                                 Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes")
                                 onDrill(drillCount!!, drillMinutes!!)
                             },
-                            enabled = drillCount != null && drillMinutes != null
+                            enabled = drillCount != null && drillMinutes != null && drillCountValid
                         ) { Text(stringResource(R.string.start_drill)) }
                     },
                     dismissButton = {

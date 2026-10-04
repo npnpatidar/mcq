@@ -204,6 +204,14 @@ interface CardStateDao {
 
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
+
+    /**
+     * Drops every SM-2 card for a paper. The foreign key already cascades, but
+     * deleting explicitly keeps the intent visible and does not depend on the
+     * foreign-key pragma being enabled.
+     */
+    @Query("DELETE FROM card_state WHERE paperId = :paperId")
+    suspend fun deleteByPaper(paperId: String)
 }
 
 @Dao
@@ -274,4 +282,14 @@ interface AttemptDao {
 
     @Query("DELETE FROM attempts WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /**
+     * Drops a paper's whole history. question_results cascade from attempts,
+     * so one statement clears both.
+     */
+    @Query("DELETE FROM attempts WHERE paperId = :paperId")
+    suspend fun deleteByPaper(paperId: String)
+
+    @Query("SELECT COUNT(*) FROM attempts WHERE paperId = :paperId")
+    suspend fun countByPaper(paperId: String): Int
 }

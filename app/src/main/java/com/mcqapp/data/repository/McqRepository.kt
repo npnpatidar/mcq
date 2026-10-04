@@ -734,13 +734,36 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     suspend fun deletePaper(paperId: String) {
         Logger.d("REPO", "deletePaper($paperId)")
-        // One transaction: bookmark cleanup and the paper delete (which
-        // cascades categories/questions) must land together.
+        // One transaction: bookmark cleanup, history, schedules and the paper
+        // delete (which cascades categories/questions/options/correct answers)
+        // must land together, or a crash midway leaves the database claiming a
+        // test was taken against questions that no longer exist.
         db.withTransaction {
             // Collect first: deleting the paper cascades its questions away.
             val questionIds = db.questionDao().getIdsByPaper(paperId)
             if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
+            // History and SM-2 cards have no path to the paper except this
+            // paperId column, so a plain cascade leaves them behind as orphans:
+            // attempts would still show up in History under a title that no
+            // longer exists, and question_results still reference dead questions.
+            db.attemptDao().deleteByPaper(paperId)
+            db.cardStateDao().deleteByPaper(paperId)
             db.paperDao().deleteById(paperId)
+        }
+        // A snapshot is one global slot, so it has to be dropped by hand — and
+        // only when it belongs to the paper that just went: resuming a test
+        // whose questions are gone would present an empty paper.
+        discardProgressFor(paperId)
+    }
+
+    /** Clears the resume snapshot if it is for [paperId]. */
+    private suspend fun discardProgressFor(paperId: String) {
+        val raw = loadTestProgress() ?: return
+        val snapshot = com.mcqapp.domain.TestSnapshot.fromJson(raw)
+        // Unparseable snapshots are dead weight either way.
+        if (snapshot == null || snapshot.paperId == paperId) {
+            Logger.i("REPO", "Discarding in-progress snapshot for $paperId")
+            clearTestProgress()
         }
     }
 

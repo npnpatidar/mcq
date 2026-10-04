@@ -62,7 +62,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -102,6 +106,20 @@ fun LibraryScreen(
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val importReport by viewModel.importReport.collectAsStateWithLifecycle()
     val importReportTitle by viewModel.importReportTitle.collectAsStateWithLifecycle()
+    // Due counts have to be re-read when the library resumes, not when Study is
+    // tapped. A study session rewrites the schedules while the library is off
+    // screen, so a refresh fired from the click ran *before* anything changed and
+    // left the badge one navigation stale — the number only caught up after the
+    // user tapped Study a second time and left again.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshStudyCounts()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -335,14 +353,12 @@ fun LibraryScreen(
                                 onStudy = {
                                     Logger.i("LIB", "Study: paperId=${paper.id}, due=$dueCountBadge")
                                     navController.navigate(com.mcqapp.ui.navigation.studyRoute(paper.id))
-                                    viewModel.refreshStudyCounts()
                                 },
                                 onStudyLeeches = {
                                     Logger.i("LIB", "Study leeches: paperId=${paper.id}, leeches=$leechCountBadge")
                                     navController.navigate(
                                         com.mcqapp.ui.navigation.studyRoute(paper.id, leechesOnly = true)
                                     )
-                                    viewModel.refreshStudyCounts()
                                 },
                                 dueCount = dueCountBadge,
                                 freshCount = studyCounts[paper.id]?.fresh ?: 0,

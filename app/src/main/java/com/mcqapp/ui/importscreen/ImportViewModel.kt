@@ -105,8 +105,22 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     val d = HashSet<String>()
                     val c = HashSet<String>()
+                    // Every candidate a hash matched, so a collision between two
+                    // genuinely different questions can be told apart here and
+                    // in the Importer, which must agree.
+                    val storedOptionsByQuestion = repository.db().optionDao()
+                        .getForQuestions(questions.map { it.id })
+                        .groupBy { it.questionId }
                     questions.forEach { q ->
-                        if (com.mcqapp.data.io.ContentHash.of(q) in hashes) {
+                        val hash = com.mcqapp.data.io.ContentHash.of(q)
+                        val sameContent = byId[q.id]?.let { stored ->
+                            com.mcqapp.data.io.ContentHash.sameQuestionContent(
+                                stored,
+                                storedOptionsByQuestion[q.id].orEmpty(),
+                                q
+                            )
+                        } == true
+                        if (hash in hashes && (sameContent || q.id in byId)) {
                             // The hash ignores the answer key and metadata: the
                             // same id with a fixed key reads as changed, exactly
                             // as the Importer will treat it.

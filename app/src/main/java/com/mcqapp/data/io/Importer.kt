@@ -264,7 +264,14 @@ class Importer(
                             }
                         }
 
-                        if (contentHash in existingHashes) {
+                        if (contentHash in existingHashes &&
+                            isSameContentAsAnyStored(contentHash, scaledQuestion)
+                        ) {
+                            // The hash only sees text, so two questions differing
+                            // solely in a table or a formula share one. Without
+                            // the content check the second is dropped as a
+                            // duplicate of the first, silently.
+                            //
                             // Same text and options, but the hash ignores the
                             // answer key and metadata: the same question id with
                             // a fixed key (or explanation/marks/etc.) is an
@@ -440,6 +447,30 @@ class Importer(
             restoredAttempts = restoredAttempts,
             restoredSchedules = restoredSchedules
         )
+    }
+
+    /**
+     * Whether any stored question carrying [contentHash] really is this
+     * question's content.
+     *
+     * The hash is built from text content and `textContent` counts only text
+     * elements, so a table or a formula in an option is invisible to it. A hash
+     * hit is therefore only a candidate; this decides, and false means the
+     * incoming question is new rather than a duplicate.
+     */
+    private suspend fun isSameContentAsAnyStored(
+        contentHash: String,
+        scaledQuestion: QuestionDto
+    ): Boolean {
+        val candidateIds = db.questionDao().getIdsByContentHash(contentHash)
+        if (candidateIds.isEmpty()) return false
+        val storedById = db.questionDao().getByIds(candidateIds).associateBy { it.id }
+        val optionsByQuestion = db.optionDao().getForQuestions(candidateIds)
+            .groupBy { it.questionId }
+        return candidateIds.any { id ->
+            val stored = storedById[id] ?: return@any false
+            ContentHash.sameQuestionContent(stored, optionsByQuestion[id].orEmpty(), scaledQuestion)
+        }
     }
 
 /**

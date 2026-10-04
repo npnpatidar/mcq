@@ -109,6 +109,14 @@ interface QuestionDao {
     @Query("SELECT id FROM questions WHERE contentHash = :contentHash LIMIT 1")
     suspend fun getIdByContentHash(contentHash: String): String?
 
+    /**
+     * Every question sharing a hash, not just the first. A hash is blind to
+     * tables and formulas, so two genuinely different questions can collide and
+     * only a full content comparison tells them apart.
+     */
+    @Query("SELECT id FROM questions WHERE contentHash = :contentHash")
+    suspend fun getIdsByContentHash(contentHash: String): List<String>
+
     /** Everything the content hash deliberately ignores. */
     @Query(
         "UPDATE questions SET explanation = :explanation, marks = :marks, " +

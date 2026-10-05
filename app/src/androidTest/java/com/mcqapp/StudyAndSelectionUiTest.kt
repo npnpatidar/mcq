@@ -171,7 +171,9 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("study-check").performScrollTo().performClick()
 
         compose.onNodeWithTag("study-result").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Correct", substring = false).assertIsDisplayed()
+        // The label carries a tick prefix ("✓ Correct"), so this is a substring
+        // match. It cannot collide with "Incorrect", which has a lowercase c.
+        compose.onNodeWithText("Correct", substring = true).assertIsDisplayed()
 
         // A single-question session finishes on Next.
         compose.onNodeWithTag("study-next").performScrollTo().performClick()

@@ -311,6 +311,33 @@ object Study {
     }
 
     /**
+     * The grade for a study card answered in Simplified mode, where nobody
+     * picks a grade and the answer itself decides.
+     *
+     * Correctness is exact match: for a multi-correct question any subset or
+     * superset of the key is wrong, which is how an exam with negative marking
+     * scores it. An empty selection is a skip. A declared guess that happens
+     * to be right is HARD rather than GOOD: the learner did not know it, so
+     * the interval must stay short — but reps still advance and no lapse is
+     * counted, because producing the right answer is not a failure.
+     *
+     * Deliberation time on a random pick carries no information, so a guess
+     * bypasses the dwell ladder entirely.
+     */
+    fun autoGrade(
+        correctOptionIds: Set<String>,
+        selection: Set<String>,
+        dwellSeconds: Long,
+        isGuess: Boolean,
+        config: SchedulerConfig = SchedulerConfig()
+    ): ReviewGrade {
+        if (selection.isEmpty()) return ReviewGrade.AGAIN
+        if (selection != correctOptionIds) return ReviewGrade.AGAIN
+        if (isGuess) return ReviewGrade.HARD
+        return inferGrade(isCorrect = true, dwellSeconds = dwellSeconds, config = config)
+    }
+
+    /**
      * Replays graded history in order to rebuild a card's schedule, so an
      * existing install starts warm instead of treating everything as new.
      */

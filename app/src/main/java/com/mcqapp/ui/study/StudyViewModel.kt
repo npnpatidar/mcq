@@ -13,10 +13,25 @@ import com.mcqapp.domain.StudyReason
 import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/**
+ * What an automatic check decided, for the result card.
+ *
+ * Everything the card needs to render honestly: whether the answer matched,
+ * which grade that produced, and the delay that grade schedules.
+ */
+data class StudyResult(
+    val correct: Boolean,
+    val grade: ReviewGrade,
+    val wasGuess: Boolean,
+    val dwellSeconds: Long,
+    val nextIn: String
+)
 
 data class StudyUiState(
     val loading: Boolean = true,
@@ -36,6 +51,23 @@ data class StudyUiState(
     val selections: Map<String, Set<String>> = emptyMap(),
     val revealed: Boolean = false,
     val grading: Boolean = false,
+    /**
+     * Simplified mode: the card is graded from the answer instead of asking for
+     * Again/Hard/Good/Easy. Read once per session; the scheduler underneath is
+     * the same either way.
+     */
+    val simplified: Boolean = true,
+    /**
+     * The learner declared this attempt a guess before answering. Locked at
+     * reveal and reset on every advance, so it can never be set retroactively.
+     */
+    val isGuess: Boolean = false,
+    /** When the on-screen question was first shown, for the dwell ladder. */
+    val questionStartedAt: Long = 0L,
+    /** The grade Check proposed; Next persists it. Null until checked. */
+    val pendingGrade: ReviewGrade? = null,
+    /** What the last check decided, for the result card. */
+    val lastResult: StudyResult? = null,
     val reviewed: Int = 0,
     val againCount: Int = 0,
     val goodCount: Int = 0,
@@ -90,13 +122,16 @@ class StudyViewModel(
                 val questions = cards.mapNotNull { byId[it.questionId] }
                 Logger.i("STUDY", "Study session: paper=$paperId, cards=${cards.size}, loaded=${questions.size}")
                 config = repository.schedulerConfigNow()
+                val simplified = repository.simplifiedStudy().first()
                 _state.update {
                     it.copy(
                         loading = false,
                         paperTitle = paper?.title ?: "Study",
                         queue = questions,
                         reasons = cards.associate { c -> c.questionId to c.reason },
-                        states = cards.associate { c -> c.questionId to c.state }
+                        states = cards.associate { c -> c.questionId to c.state },
+                        simplified = simplified,
+                        questionStartedAt = System.currentTimeMillis()
                     )
                 }
                 refreshPreviews()
@@ -134,6 +169,137 @@ class StudyViewModel(
         if (_state.value.revealed) return
         Logger.d("STUDY", "reveal question=${_state.value.currentQuestion?.id}")
         _state.update { it.copy(revealed = true) }
+    }
+
+    /**
+     * Marks the current attempt as a guess. Only before reveal: once the answer
+     * is visible a guess declaration would be retroactive, which defeats the
+     * pre-commit. Resets on every advance.
+     */
+    fun setGuess(guessing: Boolean) {
+        val current = _state.value
+        if (!current.simplified || current.revealed) return
+        _state.update { it.copy(isGuess = guessing) }
+    }
+
+    /**
+     * Grades the current card from its answer without persisting. Check proposes,
+     * Next disposes: the proposal sits in [StudyUiState.pendingGrade] so a
+     * change-grade affordance edits it rather than writing twice.
+     */
+    fun check() {
+        val current = _state.value
+        val question = current.currentQuestion ?: return
+        if (!current.simplified || current.revealed || current.grading) return
+        val now = System.currentTimeMillis()
+        val dwellSeconds = ((now - current.questionStartedAt).coerceAtLeast(0L)) / 1000L
+        val selection = current.selections[question.id].orEmpty()
+        val grade = com.mcqapp.domain.Study.autoGrade(
+            correctOptionIds = question.correctOptionIds,
+            selection = selection,
+            dwellSeconds = dwellSeconds,
+            isGuess = current.isGuess,
+            config = config ?: com.mcqapp.domain.SchedulerConfig()
+        )
+        _state.update {
+            it.copy(
+                revealed = true,
+                pendingGrade = grade,
+                lastResult = buildResult(
+                    question, selection, grade, current.isGuess, dwellSeconds, now
+                )
+            )
+        }
+        Logger.d("STUDY", "checked ${question.id} -> $grade (guess=${current.isGuess}, dwell=${dwellSeconds}s)")
+    }
+
+    private fun buildResult(
+        question: Question,
+        selection: Set<String>,
+        grade: ReviewGrade,
+        wasGuess: Boolean,
+        dwellSeconds: Long,
+        now: Long
+    ): StudyResult? {
+        val schedulerConfig = config ?: return null
+        val card = _state.value.states[question.id] ?: return null
+        val scheduler = com.mcqapp.domain.Sm2Scheduler(schedulerConfig)
+        val delay = com.mcqapp.domain.Study
+            .previewDelays(scheduler, card, now)[grade] ?: return null
+        return StudyResult(
+            correct = selection.isNotEmpty() && selection == question.correctOptionIds,
+            grade = grade,
+            wasGuess = wasGuess,
+            dwellSeconds = dwellSeconds,
+            nextIn = IntervalFormat.format(delay)
+        )
+    }
+
+    /** Replaces the proposed grade before it is persisted. */
+    fun changeGrade(grade: ReviewGrade) {
+        val current = _state.value
+        val question = current.currentQuestion ?: return
+        if (!current.simplified || !current.revealed || current.pendingGrade == null) return
+        val now = System.currentTimeMillis()
+        val dwellSeconds = ((now - current.questionStartedAt).coerceAtLeast(0L)) / 1000L
+        _state.update {
+            it.copy(
+                pendingGrade = grade,
+                lastResult = buildResult(
+                    question,
+                    it.selections[question.id].orEmpty(),
+                    grade,
+                    it.isGuess,
+                    dwellSeconds,
+                    now
+                )
+            )
+        }
+    }
+
+    /**
+     * Persists the proposed grade and advances. Guarded like [grade]: the write
+     * is async, so a second tap would persist two reviews for one question.
+     */
+    fun next() {
+        val current = _state.value
+        val question = current.currentQuestion ?: return
+        val proposed = current.pendingGrade ?: return
+        if (!current.simplified || !current.revealed) return
+        if (current.grading) return
+        _state.update { it.copy(grading = true) }
+        viewModelScope.launch {
+            try {
+                val next = repository.recordStudyReview(paperId, question.id, proposed)
+                Logger.i(
+                    "STUDY",
+                    "graded ${question.id} -> $proposed (auto), next in ${next.intervalDays}d, " +
+                        "leech=${next.leech}"
+                )
+                val reasons = current.reasons - question.id
+                _state.update {
+                    it.copy(
+                        reviewed = it.reviewed + 1,
+                        againCount = it.againCount + if (proposed == ReviewGrade.AGAIN) 1 else 0,
+                        goodCount = it.goodCount + if (proposed == ReviewGrade.AGAIN) 0 else 1,
+                        selections = it.selections - question.id,
+                        revealed = false,
+                        grading = false,
+                        index = it.index + 1,
+                        reasons = reasons,
+                        isGuess = false,
+                        questionStartedAt = System.currentTimeMillis(),
+                        pendingGrade = null,
+                        lastResult = null,
+                        finished = it.index + 1 >= it.queue.size
+                    )
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
+                _state.update { it.copy(grading = false) }
+            }
+            refreshPreviews()
+        }
     }
 
     /**
@@ -216,7 +382,11 @@ class StudyViewModel(
                 reviewed = 0,
                 againCount = 0,
                 goodCount = 0,
-                finished = false
+                finished = false,
+                isGuess = false,
+                questionStartedAt = System.currentTimeMillis(),
+                pendingGrade = null,
+                lastResult = null
             )
         }
         refreshPreviews()

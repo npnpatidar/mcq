@@ -35,12 +35,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _shuffleQuestions = MutableStateFlow(false)
     val shuffleQuestions: StateFlow<Boolean> = _shuffleQuestions.asStateFlow()
 
+    private val _simplifiedStudy = MutableStateFlow(true)
+    val simplifiedStudy: StateFlow<Boolean> = _simplifiedStudy.asStateFlow()
+
     private val _shuffleOptions = MutableStateFlow(false)
     val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
 
     init {
         viewModelScope.launch {
             repository.shuffleQuestions().collect { _shuffleQuestions.value = it }
+        }
+        viewModelScope.launch {
+            repository.simplifiedStudy().collect { _simplifiedStudy.value = it }
         }
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
@@ -60,6 +66,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setShuffleQuestions(enabled: Boolean) {
         viewModelScope.launch { repository.setShuffleQuestions(enabled) }
+    }
+
+    fun setSimplifiedStudy(enabled: Boolean) {
+        viewModelScope.launch { repository.setSimplifiedStudy(enabled) }
     }
 
     fun setShuffleOptions(enabled: Boolean) {

@@ -190,6 +190,8 @@
     <string name="show_correct_answers_and_explanations_instantly">Show correct answers and explanations instantly</string>
     <string name="sm_2_scheduling_for_study_these_match_anki_s_review_options_">SM-2 scheduling for Study. These match Anki\'s review options, so </string>
     <string name="spaced_repetition">Spaced repetition</string>
+    <string name="simplified_anki">Simplified Anki</string>
+    <string name="grade_study_cards_automatically_from_your_answers_instead_of_">Grade study cards automatically from your answers instead of picking Again, Hard, Good or Easy after each card.</string>
     <string name="starting_intervals">Starting intervals</string>
     <string name="study_day">Study day</string>
     <string name="storage">Storage</string>

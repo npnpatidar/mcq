@@ -77,12 +77,25 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     private val shuffleQuestionsKey = booleanPreferencesKey("shuffle_questions")
     private val shuffleOptionsKey = booleanPreferencesKey("shuffle_options")
+    private val simplifiedStudyKey = booleanPreferencesKey("simplified_study")
 
     fun shuffleQuestions(): Flow<Boolean> =
         context.dataStore.data.map { it[shuffleQuestionsKey] ?: false }
 
     suspend fun setShuffleQuestions(enabled: Boolean) {
         context.dataStore.edit { it[shuffleQuestionsKey] = enabled }
+    }
+
+    /**
+     * Simplified study: cards are graded automatically from the answer instead
+     * of asking for Again/Hard/Good/Easy. On by default; it only changes where
+     * a grade comes from, never the scheduler underneath it.
+     */
+    fun simplifiedStudy(): Flow<Boolean> =
+        context.dataStore.data.map { it[simplifiedStudyKey] ?: true }
+
+    suspend fun setSimplifiedStudy(enabled: Boolean) {
+        context.dataStore.edit { it[simplifiedStudyKey] = enabled }
     }
 
     fun shuffleOptions(): Flow<Boolean> =

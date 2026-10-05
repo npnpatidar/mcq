@@ -63,6 +63,7 @@ fun SettingsScreen(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
+    val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
     val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
     val practiceMode by viewModel.practiceMode.collectAsStateWithLifecycle()
@@ -290,7 +291,9 @@ fun SettingsScreen(
             AnkiSchedulerSection(
                 config = schedulerConfig,
                 onChange = { viewModel.updateSchedulerConfig(it) },
-                onReset = { viewModel.resetSchedulerConfig() }
+                onReset = { viewModel.resetSchedulerConfig() },
+                simplifiedStudy = simplifiedStudy,
+                onSimplifiedChange = { viewModel.setSimplifiedStudy(it) }
             )
 
             Spacer(Modifier.height(12.dp))
@@ -467,7 +470,9 @@ fun SettingsScreen(
 private fun AnkiSchedulerSection(
     config: com.mcqapp.domain.SchedulerConfig,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    simplifiedStudy: Boolean,
+    onSimplifiedChange: (Boolean) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -488,6 +493,23 @@ private fun AnkiSchedulerSection(
                     "review; cards already scheduled keep their current date.",
                 style = MaterialTheme.typography.bodySmall
             )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.simplified_anki))
+                    Text(
+                        stringResource(R.string.grade_study_cards_automatically_from_your_answers_instead_of_),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(
+                    checked = simplifiedStudy,
+                    onCheckedChange = onSimplifiedChange
+                )
+            }
             Spacer(Modifier.height(12.dp))
 
             AnkiNumberRow(

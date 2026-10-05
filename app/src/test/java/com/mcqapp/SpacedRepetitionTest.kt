@@ -477,7 +477,9 @@ class SpacedRepetitionTest {
 
     @Test
     fun `an empty paper selects nothing`() {
-        assertTrue(Study.selection(sched, emptyList(), emptyMap(), now).isEmpty())
+        val selection = Study.selection(sched, emptyList(), emptyMap(), now)
+        assertTrue(selection.queue.isEmpty())
+        assertEquals(0, selection.waiting)
     }
 
     // --- badge / queue agreement ---

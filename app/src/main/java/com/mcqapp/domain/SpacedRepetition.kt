@@ -352,8 +352,6 @@ object Study {
 
         /** Cards held back by the daily limits. */
         val waiting: Int get() = dueWaiting + freshWaiting
-
-        fun isEmpty(): Boolean = queue.isEmpty()
     }
 
     /**

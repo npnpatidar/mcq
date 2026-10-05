@@ -288,6 +288,59 @@ class AnkiSchedulingTest {
      * than local midnight. Both sides of the round trip have to agree on what a
      * "day" is or the comparison below would be testing the wrong thing.
      */
+    /**
+     * A card due at the next 04:00 boundary is one day out, even when the package
+     * is written at 23:00. The day count used to be measured from the creation
+     * instant and rounded, which called such a card "due today" and pushed it a
+     * day early in Anki.
+     */
+    @Test
+    fun aCardDueAtTheNextBoundaryExportsAsOneDayOut() {
+        val original = TimeZone.getDefault()
+        try {
+            // A half-hour offset zone, so the boundary does not land on a round hour.
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Kolkata"))
+            val zone = { millis: Long -> TimeZone.getDefault().getOffset(millis).toLong() }
+            // 23:00 local: inside the study day that began at 04:00.
+            val gradedAt = com.mcqapp.domain.DayBoundary
+                .startOfDay(0L, 4, zone(0L)) + 19 * 3_600_000L
+            val dueAt = com.mcqapp.domain.DayBoundary
+                .dueAfter(gradedAt, 1, 4, zone(gradedAt))
+            val crtSeconds = gradedAt / 1000L
+
+            val card = AnkiScheduling.toAnki(
+                CardScheduleDto(
+                    ease = 2.5,
+                    intervalDays = 1,
+                    dueAt = dueAt,
+                    reps = 1,
+                    lapses = 0,
+                    leech = false,
+                    lastReviewedAt = gradedAt
+                ),
+                crtSeconds,
+                gradedAt
+            )
+            assertEquals("a card due at the next boundary is one day out", 1, card.due)
+
+            // And the round trip lands back on the very instant it came from.
+            val back = AnkiScheduling.fromAnki(
+                type = card.type,
+                queue = card.queue,
+                due = card.due,
+                ivl = card.ivl,
+                factor = card.factor,
+                reps = card.reps,
+                lapses = card.lapses,
+                crtSeconds = crtSeconds,
+                lastReviewedAtMillis = gradedAt
+            )!!
+            assertEquals(dueAt, back.dueAt)
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
     private fun startOfStudyDay(millis: Long): Long = com.mcqapp.domain.DayBoundary.startOfDay(
         millis,
         com.mcqapp.domain.DayBoundary.DEFAULT_DAY_START_HOUR,

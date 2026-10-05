@@ -319,5 +319,7 @@ Update this table in the same commit as the work.
 | C4 export uses Anki's hour | `AnkiScheduling` defaults to 04:00 rather than reading the setting. Correct at the default; wrong if the boundary is moved. |
 | D3 clock injection | Accepted deviation, see D3. |
 | D5 Compose assertion | Fixed after CI caught a visibility assumption; re-verified by CI only. |
+| Dead `Selection.isEmpty()` | Removed in review — nothing read it. |
+| "Next day starts at" section | Moved out from under "Starting intervals" into its own "Study day" section in review. |
 | C1 full day-number model | Rejected in favour of boundary-aligned due, see C1. |
 | Track E | Deferred by decision (D5). |

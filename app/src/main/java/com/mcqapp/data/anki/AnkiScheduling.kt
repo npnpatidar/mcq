@@ -156,8 +156,13 @@ object AnkiScheduling {
             )
         }
 
-        val daysFromExport = ((state.dueAt - crtSeconds * 1000L).toDouble() / DAY_MS)
-            .roundToInt().coerceAtLeast(0)
+        // Counted from the start of the study day the collection was created in,
+        // not from the creation instant. Due dates are aligned to that boundary
+        // too, so a card due at 04:00 the next morning is one day out even when
+        // the package is written at 23:00; measuring from the creation instant
+        // and rounding would call it due today.
+        val daysFromExport = ((state.dueAt - startOfDay(crtSeconds * 1000L)).toDouble() / DAY_MS)
+            .toLong().coerceAtLeast(0L).toInt()
         return AnkiCardSchedule(
             type = TYPE_REVIEW,
             queue = QUEUE_REVIEW,

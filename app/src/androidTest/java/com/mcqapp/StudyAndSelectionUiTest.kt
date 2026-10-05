@@ -168,15 +168,16 @@ class StudyAndSelectionUiTest {
         // Alpha is the right answer, so Check must report Correct whatever the
         // dwell ladder says about the grade.
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
-        compose.onNodeWithTag("study-check").performScrollTo().performClick()
+        // Check lives in the fixed footer, so no scroll is needed or possible.
+        compose.onNodeWithTag("study-check").performClick()
 
         compose.onNodeWithTag("study-result").performScrollTo().assertIsDisplayed()
         // The label carries a tick prefix ("✓ Correct"), so this is a substring
         // match. It cannot collide with "Incorrect", which has a lowercase c.
         compose.onNodeWithText("Correct", substring = true).assertIsDisplayed()
 
-        // A single-question session finishes on Next.
-        compose.onNodeWithTag("study-next").performScrollTo().performClick()
+        // A single-question session finishes on Next, also in the footer.
+        compose.onNodeWithTag("study-next").performClick()
         waitFor("Session complete")
     }
 

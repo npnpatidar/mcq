@@ -129,110 +129,148 @@ fun StudyScreen(
 @Composable
 private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
     val question = state.currentQuestion ?: return
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
-    ) {
-        StudyHeader(state)
-        Spacer(Modifier.height(12.dp))
-        QuestionCard(
-            question = question,
-            selection = state.currentSelection,
-            revealed = state.revealed,
-            reason = state.reasons[question.id],
-            onToggleOption = { viewModel.toggleOption(it) }
-        )
-        Spacer(Modifier.height(12.dp))
-        if (state.simplified) {
-            SimplifiedStudyFlow(state = state, viewModel = viewModel)
-        } else if (!state.revealed) {
-            Button(
-                onClick = { viewModel.reveal() },
-                modifier = Modifier.fillMaxWidth()
+    if (state.simplified) {
+        // Like test mode: the question scrolls, but Check, Guess and Next live
+        // in a fixed footer so they are always tappable without scrolling.
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp)
             ) {
-                Text(stringResource(R.string.show_answer))
+                StudyHeader(state)
+                Spacer(Modifier.height(12.dp))
+                QuestionCard(
+                    question = question,
+                    selection = state.currentSelection,
+                    revealed = state.revealed,
+                    reason = state.reasons[question.id],
+                    onToggleOption = { viewModel.toggleOption(it) }
+                )
+                Spacer(Modifier.height(12.dp))
+                if (state.revealed) {
+                    SimplifiedResultBlock(state = state, viewModel = viewModel)
+                }
             }
-        } else {
-            GradeButtons(
-                enabled = !state.grading,
-                previews = state.previews,
-                onGrade = { viewModel.grade(it) }
-            )
+            SimplifiedFooter(state = state, viewModel = viewModel)
         }
-        Spacer(Modifier.height(24.dp))
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
+            StudyHeader(state)
+            Spacer(Modifier.height(12.dp))
+            QuestionCard(
+                question = question,
+                selection = state.currentSelection,
+                revealed = state.revealed,
+                reason = state.reasons[question.id],
+                onToggleOption = { viewModel.toggleOption(it) }
+            )
+            Spacer(Modifier.height(12.dp))
+            if (!state.revealed) {
+                Button(
+                    onClick = { viewModel.reveal() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.show_answer))
+                }
+            } else {
+                GradeButtons(
+                    enabled = !state.grading,
+                    previews = state.previews,
+                    onGrade = { viewModel.grade(it) }
+                )
+            }
+            Spacer(Modifier.height(24.dp))
+        }
     }
 }
 
 /**
- * The Simplified study flow: answer, check, see the result, move on. Nobody
- * picks a grade; the answer decides, with an explicit guess flag for honesty
- * and a change-grade affordance for misclicks.
+ * The result of a Simplified check, with the change-grade affordance. Lives in
+ * the scrollable content: it is read, not tapped to proceed.
  */
 @Composable
-private fun SimplifiedStudyFlow(state: StudyUiState, viewModel: StudyViewModel) {
+private fun SimplifiedResultBlock(state: StudyUiState, viewModel: StudyViewModel) {
     val question = state.currentQuestion ?: return
-    if (!state.revealed) {
-        // Pre-commit: once the answer is visible a guess declaration would be
-        // retroactive, so the toggle lives only on the unanswered card.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Filled.Casino,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.guessing))
-                Text(
-                    stringResource(R.string.guessing_this_is_a_guess),
-                    style = MaterialTheme.typography.bodySmall
+    val result = state.lastResult
+    if (result != null) {
+        SimplifiedResultCard(result = result)
+        Spacer(Modifier.height(8.dp))
+    }
+    var showPicker by remember(question.id) { mutableStateOf(false) }
+    if (showPicker) {
+        GradeButtons(
+            enabled = !state.grading,
+            previews = state.previews,
+            onGrade = {
+                viewModel.changeGrade(it)
+                showPicker = false
+            }
+        )
+    } else {
+        TextButton(onClick = { showPicker = true }) {
+            Text(stringResource(R.string.change_grade))
+        }
+    }
+}
+
+/**
+ * The always-visible Simplified actions, mirroring test mode's fixed footer:
+ * Guess + Check before reveal, Next after. None of these ever scrolls away.
+ */
+@Composable
+private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        if (!state.revealed) {
+            // Pre-commit: once the answer is visible a guess declaration would be
+            // retroactive, so the toggle lives only on the unanswered card.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.Casino,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.guessing))
+                    Text(
+                        stringResource(R.string.guessing_this_is_a_guess),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(
+                    checked = state.isGuess,
+                    onCheckedChange = { viewModel.setGuess(it) }
                 )
             }
-            Switch(
-                checked = state.isGuess,
-                onCheckedChange = { viewModel.setGuess(it) }
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = { viewModel.check() },
-            modifier = Modifier.fillMaxWidth().testTag("study-check")
-        ) {
-            Text(stringResource(R.string.check))
-        }
-    } else {
-        val result = state.lastResult
-        if (result != null) {
-            SimplifiedResultCard(result = result)
-            Spacer(Modifier.height(8.dp))
-        }
-        var showPicker by remember(question.id) { mutableStateOf(false) }
-        if (showPicker) {
-            GradeButtons(
-                enabled = !state.grading,
-                previews = state.previews,
-                onGrade = {
-                    viewModel.changeGrade(it)
-                    showPicker = false
-                }
-            )
-        } else {
-            TextButton(onClick = { showPicker = true }) {
-                Text(stringResource(R.string.change_grade))
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { viewModel.check() },
+                modifier = Modifier.fillMaxWidth().testTag("study-check")
+            ) {
+                Text(stringResource(R.string.check))
             }
-        }
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { viewModel.next() },
-            modifier = Modifier.fillMaxWidth().testTag("study-next"),
-            enabled = !state.grading
-        ) {
-            Text(stringResource(R.string.next))
+        } else {
+            Button(
+                onClick = { viewModel.next() },
+                modifier = Modifier.fillMaxWidth().testTag("study-next"),
+                enabled = !state.grading
+            ) {
+                Text(stringResource(R.string.next))
+            }
         }
     }
 }

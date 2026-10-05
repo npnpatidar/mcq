@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import com.mcqapp.domain.CardState
+import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.ReviewSignal
 import com.mcqapp.domain.SchedulerConfig
@@ -17,7 +18,9 @@ class SpacedRepetitionTest {
     private val now = 1_700_000_000_000L
     private val day = Sm2Scheduler.DAY_MS
     private val config = SchedulerConfig()
-    private val sched = Sm2Scheduler(config)
+    // The zone is pinned so the due instants asserted below are exact arithmetic
+    // rather than a function of where the suite happens to run.
+    private val sched = Sm2Scheduler(config, zoneOffset = { 0L })
 
     private fun graduate(
         grades: List<ReviewGrade>,
@@ -41,7 +44,9 @@ class SpacedRepetitionTest {
     fun `good on new card graduates to one day`() {
         val card = sched.next(sched.initial("q1"), ReviewGrade.GOOD, now)
         assertEquals(SchedulerConfig().firstIntervalDays, card.intervalDays)
-        assertEquals(now + day, card.dueAt)
+        // Whole days are counted from the start of the study day, so this is no
+        // longer exactly 24h after grading.
+        assertEquals(DayBoundary.dueAfter(now, 1, zoneOffsetMillis = 0), card.dueAt)
         assertEquals(1, card.reps)
     }
 
@@ -271,7 +276,7 @@ class SpacedRepetitionTest {
         assertEquals(expected.reps, card.reps)
         // The last review happened at now+3000, so the due date is measured
         // from that review, not from the first one.
-        assertEquals(now + 3000 + 15 * day, card.dueAt)
+        assertEquals(DayBoundary.dueAfter(now + 3000, 15, zoneOffsetMillis = 0), card.dueAt)
     }
 
     @Test

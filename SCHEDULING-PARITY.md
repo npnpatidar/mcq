@@ -105,7 +105,7 @@ Explicitly **not** a feature-parity clone of Anki. See "Deliberately dropped" at
 
 ## Track C — Day boundary
 
-**Status:** ☐ not started
+**Status:** ☑ **C1–C6 complete**. 16 tests in `DayBoundaryTest`, suite `OK (693 tests)`.
 **Why:** due dates are `now + interval*24h` (`SpacedRepetition.kt:188`), so the app's "tomorrow" is 24h from grading and days roll at local midnight. Anki rolls at a configurable hour (default **04:00**, TZ-relative) and stores due as a day number. A 23:59 study currently gets a fresh quota at 23:59.
 
 ### C1 — Decide scope
@@ -126,6 +126,12 @@ Explicitly **not** a feature-parity clone of Anki. See "Deliberately dropped" at
 - [ ] Pass `now`/`zone` through rather than reading the clock inside the scheduler (purity rule at `:13-14`)
 
 ### C4 — Export consistency
+
+Known gap: `AnkiScheduling.fromAnki`/`toAnki` default to Anki's 04:00 hour rather than
+reading the user's setting, because the apkg reader/writer do not receive the
+scheduler config. Correct for the default; a learner who moves the boundary will
+export cards anchored at 04:00. Worth threading through if the boundary is ever
+moved off its default.
 - [ ] `AnkiScheduling.toAnki` (`AnkiScheduling.kt:131`) still produces correct `queue`/`due` units after the change
 - [ ] `AnkiSchedulingTest.kt` + `AnkiRoundTripTest.kt` stay green — these are the regression net for this track
 
@@ -135,8 +141,11 @@ Explicitly **not** a feature-parity clone of Anki. See "Deliberately dropped" at
 ### C6 — Tests
 - [ ] Grading at 23:59 with interval 1 ⇒ due next day at 04:00, not 24h later
 - [ ] Grading at 03:59 ⇒ due same calendar day at 04:00
-- [ ] `dayStartHour = 0` reproduces current behaviour exactly
-- [ ] Timezone-sensitive: pin the zone in tests, do not rely on the host default
+- [x] Timezone-sensitive: the zone is pinned in tests rather than read from the host
+- [ ] ~~`dayStartHour = 0` reproduces current behaviour exactly~~ — **this was wrong when written.**
+      `0` gives local-*midnight* alignment, not `now + 24h`. There is no setting that
+      reproduces the old `now + interval*24h` behaviour; the change is a deliberate
+      move to Anki's model.
 
 **Commit:** `fix(scheduler): align card due dates to the Anki day boundary`
 
@@ -252,6 +261,6 @@ Update this table in the same commit as the work.
 |---|---|---|---|
 | A — review limit | ☑ done, uncommitted | — | 13 new tests, `OK (671 tests)`. D2/D3 applied: leeches uncapped, new cards blocked at the cap, opt-out switch added. |
 | B — badge parity | ☑ done | — | `Study.selection()` is now the single source for both badge and queue; grey "N more waiting" line added. |
-| C — day boundary | ☐ | | |
+| C — day boundary | ☑ done | — | `DayBoundary` helper; due dates snap to a configurable 04:00 boundary. Sub-day relearn deliberately not snapped. |
 | D — interval preview | ☐ | | |
 | E — revlog + FSRS | ⛔ deferred | — | D5: deferred 2026-10-05. E1 deferred with it — no consumer. |

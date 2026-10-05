@@ -149,6 +149,12 @@ data class SchedulerConfig(
      * always offering new cards.
      */
     val newCardsIgnoreReviewLimit: Boolean = false,
+    /**
+     * Hour of the day at which a new study day begins, on the device's clock.
+     * Anki: 4. A card answered at 23:00 is then due at the next 04:00 rather
+     * than 24 hours later.
+     */
+    val dayStartHour: Int = DayBoundary.DEFAULT_DAY_START_HOUR,
     /** Correct answer faster than this (seconds) infers Easy from history. */
     val fastSeconds: Long = 8L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
@@ -173,12 +179,20 @@ data class SchedulerConfig(
         leechThreshold = leechThreshold.coerceIn(1, 100),
         newLimit = newLimit.coerceIn(0, 9999),
         reviewLimit = reviewLimit.coerceIn(0, 9999),
+        dayStartHour = dayStartHour.coerceIn(0, 23),
         fastSeconds = fastSeconds.coerceIn(1, 3600),
         slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600)
     )
 }
 
-class Sm2Scheduler(private val config: SchedulerConfig = SchedulerConfig()) : Scheduler {
+class Sm2Scheduler(
+    private val config: SchedulerConfig = SchedulerConfig(),
+    /**
+     * The device's UTC offset, injected rather than read so the scheduler stays
+     * deterministic: a test can pin a zone and assert exact due instants.
+     */
+    private val zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
+) : Scheduler {
 
     override val leechThreshold: Int get() = config.leechThreshold
 
@@ -191,8 +205,13 @@ class Sm2Scheduler(private val config: SchedulerConfig = SchedulerConfig()) : Sc
         val lapses = if (grade == ReviewGrade.AGAIN && hadMemory) state.lapses + 1 else state.lapses
         val interval = nextInterval(state, grade, ease)
         val dueAt = when {
+            // A failed card comes back inside the same sitting, so its delay is
+            // a real elapsed time and must not be snapped to a day boundary.
             interval <= 0 -> now + config.relearnMs
-            else -> now + interval * DAY_MS
+            // Whole days are counted from the start of the study day, as in
+            // Anki, rather than from the instant of grading. A 23:00 answer to a
+            // 1-day card is due at 04:00, not 24 hours on.
+            else -> DayBoundary.dueAfter(now, interval, config.dayStartHour, zoneOffset(now))
         }
         val reps = if (grade == ReviewGrade.AGAIN) 0 else maxOf(1, state.reps + 1)
         return state.copy(

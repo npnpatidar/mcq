@@ -183,6 +183,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 newLimit = (prefs[schedKey("new_limit")] ?: d.newLimit.toDouble()).toInt(),
                 reviewLimit = (prefs[schedKey("review_limit")] ?: d.reviewLimit.toDouble()).toInt(),
                 newCardsIgnoreReviewLimit = prefs[schedBoolKey("new_ignore_review_limit")] ?: d.newCardsIgnoreReviewLimit,
+                dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
                 fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
                 slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
             ).sanitized()
@@ -212,6 +213,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             prefs[schedKey("new_limit")] = c.newLimit.toDouble()
             prefs[schedKey("review_limit")] = c.reviewLimit.toDouble()
             prefs[schedBoolKey("new_ignore_review_limit")] = c.newCardsIgnoreReviewLimit
+            prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
         }
@@ -240,6 +242,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                         "leech_threshold" to c.leechThreshold.toDouble(),
                         "new_limit" to c.newLimit.toDouble(),
                         "review_limit" to c.reviewLimit.toDouble(),
+                        "day_start_hour" to c.dayStartHour.toDouble(),
                         "fast_seconds" to c.fastSeconds.toDouble(),
                         "slow_seconds" to c.slowSeconds.toDouble()
                     ).forEach { (name, value) -> prefs[schedKey(name)] = value }

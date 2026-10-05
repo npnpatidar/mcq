@@ -152,7 +152,7 @@ class RepositoryTest {
         val next = repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
         assertEquals(1, next.reps)
         assertEquals(1, next.intervalDays)
-        assertEquals(1000L + com.mcqapp.domain.SchedulerConfig().let { 24*60*60*1000L }, next.dueAt)
+        assertEquals(com.mcqapp.domain.DayBoundary.dueAfter(1000L, 1, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(1000L)), next.dueAt)
         val stored = db.cardStateDao().get("p1", "q1")
         assertEquals(1, stored!!.reps)
         assertEquals(com.mcqapp.domain.SchedulerConfig().defaultEase, stored.ease, 0.0001)
@@ -262,9 +262,11 @@ class RepositoryTest {
         assertTrue(repository.getStudyQueue("p1", now = 6000L).isEmpty())
         val stored = db.cardStateDao().get("p1", "q1")!!
         assertEquals("history must seed a card, not leave it new", 1, stored.reps)
-        assertEquals(5000L + com.mcqapp.domain.SchedulerConfig().let { 24*60*60*1000L }, stored.dueAt)
+        // Aligned to the study-day boundary, so not a flat 24h after the attempt.
+        val due = com.mcqapp.domain.DayBoundary.dueAfter(5000L, 1, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(5000L))
+        assertEquals(due, stored.dueAt)
         // And it becomes due once that date passes.
-        val later = 5000L + com.mcqapp.domain.SchedulerConfig().let { 24*60*60*1000L }
+        val later = due
         val queue = repository.getStudyQueue("p1", now = later)
         assertEquals(1, queue.size)
         assertEquals(com.mcqapp.domain.StudyReason.DUE, queue.first().reason)

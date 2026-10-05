@@ -534,6 +534,15 @@ private fun AnkiSchedulerSection(
             Spacer(Modifier.height(12.dp))
             Text(stringResource(R.string.starting_intervals), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
+                label = "Next day starts at",
+                help = "Hour of the day a new study day begins, on this device's clock",
+                value = config.dayStartHour,
+                step = 1.0,
+                range = 0f..23f,
+                suffix = "h",
+                onChange = { onChange(config.copy(dayStartHour = it.toInt())) }
+            )
+            AnkiNumberRow(
                 label = "Easy interval",
                 help = "Days until a new card is reviewed after Easy",
                 value = config.easyFirstIntervalDays,

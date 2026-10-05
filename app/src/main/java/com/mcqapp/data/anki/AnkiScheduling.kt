@@ -39,6 +39,10 @@ object AnkiScheduling {
     const val TYPE_RELEARN = 3
 
     private const val DAY_MS = 86_400_000L
+
+    /** Anki's study-day boundary. See [com.mcqapp.domain.DayBoundary]. */
+    private const val DAY_START_HOUR =
+        com.mcqapp.domain.DayBoundary.DEFAULT_DAY_START_HOUR
     private const val MIN_EASE = 1.3
     private const val MAX_EASE = 3.0
 
@@ -180,13 +184,16 @@ object AnkiScheduling {
     const val LEECH_THRESHOLD = 8
 
     /**
-     * Truncates to local midnight so a due *day* means the start of that day.
-     * Anki rolls its day over at 04:00; that hour is not reproduced, because
-     * this app has no notion of a study-day boundary and shifting every due date
-     * by four hours would be a bigger lie than losing the rollover.
+     * Truncates to the start of the study day so a due *day* means the start of
+     * that day. Anki rolls its day over at 04:00, and this app now schedules to
+     * the same boundary ([com.mcqapp.domain.DayBoundary]), so the anchor has to
+     * match or every card would shift by four hours across an export.
+     *
+     * The boundary hour is a parameter rather than read from settings: this is
+     * the interchange format, and it defaults to Anki's own hour.
      */
-    private fun startOfDay(millis: Long): Long {
-        val local = millis + java.util.TimeZone.getDefault().getOffset(millis).toLong()
-        return millis - (local - Math.floorDiv(local, DAY_MS) * DAY_MS)
-    }
+    private fun startOfDay(millis: Long, dayStartHour: Int = DAY_START_HOUR): Long =
+        com.mcqapp.domain.DayBoundary.startOfDay(
+            millis, dayStartHour, com.mcqapp.domain.DayBoundary.zoneOffset(millis)
+        )
 }

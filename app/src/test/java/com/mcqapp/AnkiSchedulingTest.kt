@@ -268,7 +268,7 @@ class AnkiSchedulingTest {
                     crtSeconds = crt,
                     lastReviewedAtMillis = state.lastReviewedAt
                 )!!
-                val expectedDay = startOfLocalDay(now + remaining)
+                val expectedDay = startOfStudyDay(now + remaining)
                 assertEquals(
                     "remaining=${remaining / day}d",
                     expectedDay,
@@ -283,8 +283,14 @@ class AnkiSchedulingTest {
         }
     }
 
-    private fun startOfLocalDay(millis: Long): Long {
-        val local = millis + TimeZone.getDefault().getOffset(millis)
-        return millis - (local - Math.floorDiv(local, day) * day)
-    }
+    /**
+     * Mirrors the production anchoring, which is the study-day boundary rather
+     * than local midnight. Both sides of the round trip have to agree on what a
+     * "day" is or the comparison below would be testing the wrong thing.
+     */
+    private fun startOfStudyDay(millis: Long): Long = com.mcqapp.domain.DayBoundary.startOfDay(
+        millis,
+        com.mcqapp.domain.DayBoundary.DEFAULT_DAY_START_HOUR,
+        TimeZone.getDefault().getOffset(millis).toLong()
+    )
 }

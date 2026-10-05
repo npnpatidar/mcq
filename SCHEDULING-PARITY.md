@@ -277,8 +277,8 @@ the swap (`:12`) and costs nothing to leave ready.
 | E | `MigrationTest`, `BackupRestoreTest`, `BackupSchedulingTest` | — | check export round-trip |
 
 Baseline before starting: `sh /tmp/run-qemu-tests.sh` must report `OK (658 tests)`.
-Final state: `OK (708 tests)`, `:app:assembleDebug` green, CI `ui-test` is the only
-check on the Compose assertions.
+Final state: `OK (708 tests)` locally, `:app:assembleDebug` green, and CI run
+`37281268689` all three jobs green with all 6 emulator tests passing.
 
 ---
 

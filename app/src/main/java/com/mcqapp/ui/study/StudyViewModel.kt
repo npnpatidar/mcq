@@ -5,9 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.CardState
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
+import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.StudyReason
+import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +24,14 @@ data class StudyUiState(
     val paperTitle: String = "",
     val queue: List<Question> = emptyList(),
     val reasons: Map<String, StudyReason> = emptyMap(),
+    /**
+     * The schedule each card had when the session was built. Kept because the
+     * answer buttons show the delay each grade would produce, and that is a
+     * function of where this card currently sits.
+     */
+    val states: Map<String, CardState> = emptyMap(),
+    /** Formatted delay per grade for the card on screen, shown on the buttons. */
+    val previews: Map<ReviewGrade, String> = emptyMap(),
     val index: Int = 0,
     val selections: Map<String, Set<String>> = emptyMap(),
     val revealed: Boolean = false,
@@ -53,6 +64,9 @@ class StudyViewModel(
         load()
     }
 
+    /** Read once per session, alongside the queue, for the button previews. */
+    private var config: SchedulerConfig? = null
+
     private fun load() {
         viewModelScope.launch {
             try {
@@ -75,14 +89,17 @@ class StudyViewModel(
                 val byId = repository.getQuestionsForPaper(paperId).associateBy { it.id }
                 val questions = cards.mapNotNull { byId[it.questionId] }
                 Logger.i("STUDY", "Study session: paper=$paperId, cards=${cards.size}, loaded=${questions.size}")
+                config = repository.schedulerConfigNow()
                 _state.update {
                     it.copy(
                         loading = false,
                         paperTitle = paper?.title ?: "Study",
                         queue = questions,
-                        reasons = cards.associate { c -> c.questionId to c.reason }
+                        reasons = cards.associate { c -> c.questionId to c.reason },
+                        states = cards.associate { c -> c.questionId to c.state }
                     )
                 }
+                refreshPreviews()
             } catch (e: Exception) {
                 // `finished = true` with an empty reason rendered the success
                 // branch: "Session complete / 0 reviewed". A failure has to
@@ -157,6 +174,34 @@ class StudyViewModel(
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update { it.copy(grading = false) }
             }
+            // The next card has its own schedule, so its labels have to be
+            // recomputed rather than left showing the graded card's delays.
+            refreshPreviews()
+        }
+    }
+
+    /**
+     * The four button labels for whichever card is on screen.
+     *
+     * Read off the same pure [com.mcqapp.domain.Scheduler.next] the grading path
+     * uses, so a button cannot promise an interval the scheduler would not
+     * schedule. Nothing is persisted, and a card whose schedule is unknown gets
+     * no labels rather than a guess.
+     */
+    private fun refreshPreviews() {
+        val current = config ?: return
+        val scheduler = com.mcqapp.domain.Sm2Scheduler(current)
+        _state.update { state ->
+            val card = state.currentQuestion?.id?.let { state.states[it] }
+            state.copy(
+                previews = if (card == null) {
+                    emptyMap()
+                } else {
+                    com.mcqapp.domain.Study
+                        .previewDelays(scheduler, card, System.currentTimeMillis())
+                        .mapValues { (_, delay) -> IntervalFormat.format(delay) }
+                }
+            )
         }
     }
 
@@ -174,6 +219,7 @@ class StudyViewModel(
                 finished = false
             )
         }
+        refreshPreviews()
         Logger.i("STUDY", "restart study session: ${_state.value.queue.size} cards")
     }
 }

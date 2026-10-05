@@ -116,6 +116,14 @@ class StudyAndSelectionUiTest {
 
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
+
+        // Each grade advertises the delay it would produce, as in Anki. The
+        // value itself depends on the clock and the day boundary, so this checks
+        // that all four labels render rather than pinning a particular interval.
+        listOf("Again", "Hard", "Good", "Easy").forEach { grade ->
+            compose.onNodeWithTag("grade-preview-$grade").assertIsDisplayed()
+        }
+
         compose.onNodeWithText("Good", substring = false).performScrollTo().performClick()
 
         // The second card takes several answers, so its markers are squares.

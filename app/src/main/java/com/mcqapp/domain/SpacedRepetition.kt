@@ -421,6 +421,21 @@ object Study {
         )
     }
 
+    /**
+     * The delay each grade would actually produce for [state], keyed by grade.
+     *
+     * Read off [Scheduler.next] rather than recomputed, so a button can never
+     * promise an interval the scheduler would not schedule. Nothing is
+     * persisted: this is the same pure call the grading path makes.
+     */
+    fun previewDelays(
+        scheduler: Scheduler,
+        state: CardState,
+        now: Long
+    ): Map<ReviewGrade, Long> = ReviewGrade.entries.associateWith { grade ->
+        scheduler.next(state, grade, now).dueAt - now
+    }
+
     /** Today's queue, in study order. See [selection]. */
     fun queue(
         scheduler: Scheduler,

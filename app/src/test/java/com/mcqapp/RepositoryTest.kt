@@ -159,6 +159,35 @@ class RepositoryTest {
     }
 
     @Test
+    fun theButtonPreviewMatchesWhatGradingPersists() = runBlocking {
+        // The answer buttons advertise a delay per grade. If that came from any
+        // other arithmetic than the grading path it would be a lie the learner
+        // acts on, so every grade is checked against the persisted schedule.
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        val scheduler = com.mcqapp.domain.Sm2Scheduler(repository.schedulerConfigNow())
+        val gradedAt = 1_000_000L
+        val grades = listOf(
+            com.mcqapp.domain.ReviewGrade.AGAIN,
+            com.mcqapp.domain.ReviewGrade.HARD,
+            com.mcqapp.domain.ReviewGrade.GOOD,
+            com.mcqapp.domain.ReviewGrade.EASY
+        )
+        grades.forEachIndexed { index, grade ->
+            val id = "q$index"
+            repository.saveQuestion(question(id, setOf("$id-a")))
+            val before = com.mcqapp.domain.CardState(id)
+            val preview = com.mcqapp.domain.Study.previewDelays(scheduler, before, gradedAt)
+            val persisted = repository.recordStudyReview("p1", id, grade, now = gradedAt)
+            assertEquals(
+                "$grade preview must match the persisted schedule",
+                persisted.dueAt - gradedAt,
+                preview[grade]
+            )
+            assertTrue("$grade must have a preview", (preview[grade] ?: 0L) > 0L)
+        }
+    }
+
+    @Test
     fun aReviewedQuestionStopsBeingNew() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))

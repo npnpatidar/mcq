@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -146,7 +147,11 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                 Text(stringResource(R.string.show_answer))
             }
         } else {
-            GradeButtons(enabled = !state.grading, onGrade = { viewModel.grade(it) })
+            GradeButtons(
+                enabled = !state.grading,
+                previews = state.previews,
+                onGrade = { viewModel.grade(it) }
+            )
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -292,7 +297,11 @@ private fun LeeChip() {
 }
 
 @Composable
-private fun GradeButtons(enabled: Boolean, onGrade: (ReviewGrade) -> Unit) {
+private fun GradeButtons(
+    enabled: Boolean,
+    previews: Map<ReviewGrade, String>,
+    onGrade: (ReviewGrade) -> Unit
+) {
     Column {
         Text(
             stringResource(R.string.how_well_did_you_recall_it),
@@ -300,19 +309,19 @@ private fun GradeButtons(enabled: Boolean, onGrade: (ReviewGrade) -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GradeButton("Again", MaterialTheme.colorScheme.error, enabled, Modifier.weight(1f)) {
+            GradeButton("Again", MaterialTheme.colorScheme.error, enabled, previews[ReviewGrade.AGAIN], Modifier.weight(1f)) {
                 onGrade(ReviewGrade.AGAIN)
             }
-            GradeButton("Hard", MaterialTheme.colorScheme.tertiary, enabled, Modifier.weight(1f)) {
+            GradeButton("Hard", MaterialTheme.colorScheme.tertiary, enabled, previews[ReviewGrade.HARD], Modifier.weight(1f)) {
                 onGrade(ReviewGrade.HARD)
             }
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GradeButton("Good", MaterialTheme.colorScheme.primary, enabled, Modifier.weight(1f)) {
+            GradeButton("Good", MaterialTheme.colorScheme.primary, enabled, previews[ReviewGrade.GOOD], Modifier.weight(1f)) {
                 onGrade(ReviewGrade.GOOD)
             }
-            GradeButton("Easy", MaterialTheme.colorScheme.secondary, enabled, Modifier.weight(1f)) {
+            GradeButton("Easy", MaterialTheme.colorScheme.secondary, enabled, previews[ReviewGrade.EASY], Modifier.weight(1f)) {
                 onGrade(ReviewGrade.EASY)
             }
         }
@@ -324,6 +333,7 @@ private fun GradeButton(
     label: String,
     color: androidx.compose.ui.graphics.Color,
     enabled: Boolean,
+    preview: String?,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -333,7 +343,23 @@ private fun GradeButton(
         enabled = enabled,
         colors = ButtonDefaults.buttonColors(containerColor = color)
     ) {
-        Text(label, style = MaterialTheme.typography.labelLarge)
+        // The delay each grade would produce, as in Anki. Without it the learner
+        // cannot tell "Again" from "Hard" before committing, and after Track C
+        // the four intervals are no longer an obvious ordering of the labels.
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            if (preview != null) {
+                Text(
+                    preview,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    // Tagged rather than matched on text: the value depends on
+                    // the clock and the day boundary, so a text assertion would
+                    // only pass at some times of day.
+                    modifier = Modifier.testTag("grade-preview-$label")
+                )
+            }
+        }
     }
 }
 

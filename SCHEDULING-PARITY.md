@@ -153,7 +153,11 @@ moved off its default.
 
 ## Track D — Interval preview on the grade buttons
 
-**Status:** ☐ not started
+**Status:** ☑ **D1–D5 complete**. `IntervalFormatTest` + a repository test that pins
+every grade's preview to the schedule grading persists. Suite `OK (706 tests)`.
+
+No new `Scheduler` method was needed: the delay is `next(...).dueAt - now`, read off
+the same pure call the grading path makes.
 **Why:** Anki's most-used study-screen feature — each of Again/Hard/Good/Easy shows the resulting delay. Ours shows only the label.
 
 ### D1 — Confirm the state is available
@@ -179,9 +183,14 @@ moved off its default.
 - [ ] Add strings
 
 ### D5 — Tests
-- [ ] `IntervalFormatTest.kt`
-- [ ] `StudyViewModelTest`-style check: preview for grade G equals the interval later persisted by `recordStudyReview`
-- [ ] `StudyAndSelectionUiTest.kt` (androidTest, CI only): all four previews visible after reveal
+- [x] `IntervalFormatTest.kt` — the unit ladder, and that a delay never renders as `0m`
+- [x] `RepositoryTest`: all four grades, preview == the schedule `recordStudyReview` persists
+- [x] `StudyAndSelectionUiTest.kt`: all four preview labels render after reveal
+
+The Compose assertion is **CI-only** (`ui-test`), as this host cannot run an
+emulator. It asserts the four labels are displayed via a test tag rather than
+matching text: the value depends on the clock and the day boundary, so a text
+assertion would only pass at some times of day.
 
 **Commit:** `feat(study): preview the next interval on each grade button`
 
@@ -262,5 +271,5 @@ Update this table in the same commit as the work.
 | A — review limit | ☑ done, uncommitted | — | 13 new tests, `OK (671 tests)`. D2/D3 applied: leeches uncapped, new cards blocked at the cap, opt-out switch added. |
 | B — badge parity | ☑ done | — | `Study.selection()` is now the single source for both badge and queue; grey "N more waiting" line added. |
 | C — day boundary | ☑ done | — | `DayBoundary` helper; due dates snap to a configurable 04:00 boundary. Sub-day relearn deliberately not snapped. |
-| D — interval preview | ☐ | | |
+| D — interval preview | ☑ done | — | `IntervalFormat` + previews read off the same `next()` call as grading. |
 | E — revlog + FSRS | ⛔ deferred | — | D5: deferred 2026-10-05. E1 deferred with it — no consumer. |

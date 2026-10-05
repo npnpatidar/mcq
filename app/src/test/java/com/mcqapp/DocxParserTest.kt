@@ -129,6 +129,66 @@ class DocxParserTest {
         }
     }
 
+    /**
+     * Statements numbered (i)-(iv) inside the stem must not be read as options.
+     * `(i)` at the start of a line matches the option-marker shape, and `i` is
+     * even a valid option letter — but options always begin at (a), so a marker
+     * before the first (a) is stem content.
+     */
+    @Test
+    fun romanNumeralStatementsInTheStemAreNotOptions() {
+        val doc = "198.) Which chiefs fought for Rana Sanga at Khanwa?\n" +
+            "(i) Raja Bharmal of Idar\n" +
+            "(ii) Veermdev Medtiya\n" +
+            "(iii) Rao Bika\n" +
+            "(iv) Rao Lunkarn\n" +
+            "Choose the correct code:\n" +
+            "(a) (i) and (ii)\n" +
+            "(b) (ii), (iii) and (iv)\n" +
+            "(c) (i), (ii) and (iv)\n" +
+            "(d) (i), (ii), (iii) and (iv)\n" +
+            "Ans. a\n" +
+            "Exp: In 1527 Bharmal and Veermdev fought for Rana Sanga."
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(1, questions.size)
+        val q = questions[0]
+        // The four options are (a)-(d); the (i)-(iv) statements stay in the stem.
+        assertEquals(listOf("a", "b", "c", "d"), q.options.keys.toList())
+        assertTrue(q.stemHtml.contains("(i)"))
+        assertTrue(q.stemHtml.contains("(iv)"))
+        assertEquals("a", q.answer)
+        assertEquals(listOf("a"), q.correctIds)
+        assertTrue(q.explanationHtml.startsWith("In 1527"))
+    }
+
+    /**
+     * The same stem statements, but the options name them as bare numerals
+     * rather than parenthesised ones. Only the stem side matters to the parser;
+     * option content is never scanned for markers.
+     */
+    @Test
+    fun bareNumeralsInOptionContentAreNotMarkers() {
+        val doc = "205.) Which chiefs fought for Rana Pratap at Haldighati?\n" +
+            "(i) Ram Singh Tanwar\n" +
+            "(ii) Bida Jhala\n" +
+            "(iii) Rawat Krishnadas\n" +
+            "(iv) Ashok Parmar\n" +
+            "Choose the code:\n" +
+            "(a) i and iii\n" +
+            "(b) ii and iv\n" +
+            "(c) i, ii, iii and iv\n" +
+            "(d) i, ii and iii\n" +
+            "Ans. d\n" +
+            "Exp: In June 1576 Ram Singh, Bida Jhala and Krishnadas fought for Pratap."
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(1, questions.size)
+        val q = questions[0]
+        assertEquals(listOf("a", "b", "c", "d"), q.options.keys.toList())
+        assertEquals("i, ii and iii", q.options["d"])
+        assertEquals("d", q.answer)
+        assertEquals(listOf("d"), q.correctIds)
+    }
+
     @Test
     fun noMarkersFailsLoudly() {
         try {

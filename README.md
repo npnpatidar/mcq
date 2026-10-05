@@ -241,6 +241,11 @@ a six-option question imported *successfully* with `(e)` and `(f)` folded into o
 A missing option `(x)`, a repeated label, a label past `(j)`, and an answer naming an option the
 question does not have are all refused with the question number.
 
+**Statements like `(i)`–`(iv)` inside the question are not options.** Options always begin at
+`(a)`, so a single-letter marker before the first `(a)` stays part of the question text. This
+covers the common Hindi pattern where the stem lists statements `(i)`–`(iv)` and the options
+name them back, either parenthesised (`(a) (i) एवं (ii)`) or bare (`(a) i एवं iii`).
+
 A complete, valid document:
 
 ```

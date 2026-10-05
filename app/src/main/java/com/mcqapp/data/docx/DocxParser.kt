@@ -139,6 +139,12 @@ private fun extractQuestionData(num: String, block: String): RawQuestion {
     // Options are found by scanning for their markers rather than by splitting
     // off four hard-coded ones, so a paper with more than four options keeps
     // every option's text to itself instead of folding the tail into (d).
+    //
+    // Options always begin at (a). A single-letter parenthetical before the
+    // first (a) is stem content, not an option: statements numbered (i)-(iv)
+    // are common inside Hindi question stems, and (i) in particular matches
+    // the marker shape while `i` is even a valid option letter. Without this,
+    // such a question is refused as "option (e) is missing … but found (iabcd)".
     val markers = optionMarker.findAll(optionText).toList()
     if (markers.isEmpty()) {
         fail(
@@ -146,15 +152,24 @@ private fun extractQuestionData(num: String, block: String): RawQuestion {
                 ".. Ans. .. Exp: ..'."
         )
     }
-    var stem = optionText.substring(0, markers.first().range.first).trim()
+    val firstOption = markers.indexOfFirst { it.groupValues[1] == "a" }
+    if (firstOption < 0) {
+        fail(
+            "missing option (a). The first marker found was " +
+                "(${markers.first().groupValues[1]}), but options must start at (a). " +
+                "Expected format 'N.) question (a) .. (b) .. (c) .. (d) .. Ans. .. Exp: ..'."
+        )
+    }
+    val optionMarkers = markers.drop(firstOption)
+    var stem = optionText.substring(0, optionMarkers.first().range.first).trim()
     // A leading space before the stem was kept by the reader; markers had to
     // start the line, so the stem never carries one.
     stem = stem.trim()
     val options = LinkedHashMap<String, String>()
-    for ((index, marker) in markers.withIndex()) {
+    for ((index, marker) in optionMarkers.withIndex()) {
         val id = marker.groupValues[1]
         val from = marker.range.last + 1
-        val to = if (index + 1 < markers.size) markers[index + 1].range.first else optionText.length
+        val to = if (index + 1 < optionMarkers.size) optionMarkers[index + 1].range.first else optionText.length
         val content = optionText.substring(from, to).trim()
         if (id in options) fail("option ($id) appears more than once.")
         if (id !in OPTION_LABELS) {

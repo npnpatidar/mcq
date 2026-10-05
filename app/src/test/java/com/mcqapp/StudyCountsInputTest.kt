@@ -129,6 +129,30 @@ class StudyCountsInputTest {
         assertTrue(db.cardStateDao().getByPaper("p1").isEmpty())
     }
 
+    /**
+     * The badge has to describe the session the Study button opens, so the
+     * counts are pinned against the queue that the same limits produce.
+     */
+    @Test
+    fun theBadgeAgreesWithTheQueueItAdvertises() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.setSchedulerConfig(
+            com.mcqapp.domain.SchedulerConfig(newLimit = 2, reviewLimit = 3)
+        )
+        repeat(6) { repository.saveQuestion(question("q$it", "c1", "Q $it")) }
+
+        val counts = repository.getStudyCounts("p1", now = 1_000_000L)
+        val queue = repository.getStudyQueue("p1", now = 1_000_000L)
+        assertEquals(
+            "the badge must not promise more cards than the queue serves",
+            queue.size,
+            counts.due + counts.leeches + counts.fresh
+        )
+        assertEquals("the new limit must cap the badge", 2, counts.fresh)
+        assertEquals("the rest are reported as waiting", 4, counts.freshWaiting)
+        assertEquals(4, counts.waiting)
+    }
+
     @Test
     fun aPaperWithNoQuestionsCountsNothing() = runBlocking {
         repository.ensurePaperAndCategory("empty", "Empty", "c", "Cat")

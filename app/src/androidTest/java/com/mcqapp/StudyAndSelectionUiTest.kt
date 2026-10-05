@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -117,11 +118,17 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
 
-        // Each grade advertises the delay it would produce, as in Anki. The
-        // value itself depends on the clock and the day boundary, so this checks
-        // that all four labels render rather than pinning a particular interval.
+        // Each grade advertises the delay it would produce, as in Anki. The value
+        // depends on the clock and the day boundary, so this only checks that all
+        // four labels are rendered rather than pinning a particular interval.
+        // Existence rather than visibility: the two-line buttons made the grade
+        // block taller, so it can sit below the fold at some font scales.
         listOf("Again", "Hard", "Good", "Easy").forEach { grade ->
-            compose.onNodeWithTag("grade-preview-$grade").assertIsDisplayed()
+            assertTrue(
+                "the $grade button should show a next-interval preview",
+                compose.onAllNodesWithTag("grade-preview-$grade")
+                    .fetchSemanticsNodes().isNotEmpty()
+            )
         }
 
         compose.onNodeWithText("Good", substring = false).performScrollTo().performClick()

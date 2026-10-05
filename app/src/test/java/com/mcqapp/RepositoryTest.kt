@@ -188,6 +188,56 @@ class RepositoryTest {
     }
 
     @Test
+    fun theQueueAppliesTheDailyLimitsEndToEnd() = runBlocking {
+        // The limits are only useful if the path the study screen actually takes
+        // honours them, not just the pure queue function.
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.setSchedulerConfig(
+            com.mcqapp.domain.SchedulerConfig(newLimit = 2, reviewLimit = 3)
+        )
+        // Six questions plus one never studied, so there is a new card for the
+        // review limit to withhold.
+        repeat(7) { repository.saveQuestion(question("q$it", setOf("q$it-a"))) }
+
+        // Nothing studied yet, so the new limit is the only one that bites.
+        val fresh = repository.getStudyQueue("p1", now = 1_000_000L)
+        assertEquals(2, fresh.size)
+        assertTrue(fresh.all { it.reason == com.mcqapp.domain.StudyReason.NEW })
+
+        // Schedule the first six directly, so six are due at once and the review
+        // limit is the constraint rather than the new limit.
+        repeat(6) { index ->
+            repository.recordStudyReview(
+                "p1", "q$index", com.mcqapp.domain.ReviewGrade.GOOD, now = 1_000_000L
+            )
+        }
+        val later = 90L * 86_400_000L
+        val queue = repository.getStudyQueue("p1", now = later)
+        assertEquals(
+            "the review limit must cap the due cards",
+            3,
+            queue.count { it.reason == com.mcqapp.domain.StudyReason.DUE }
+        )
+        assertTrue(
+            "the unreached new limit alone would offer q6, but the reached " +
+                "review limit withholds it",
+            queue.none { it.reason == com.mcqapp.domain.StudyReason.NEW }
+        )
+
+        // Opting out of the coupling restores new cards even at the cap.
+        repository.setSchedulerConfig(
+            com.mcqapp.domain.SchedulerConfig(
+                newLimit = 2, reviewLimit = 3, newCardsIgnoreReviewLimit = true
+            )
+        )
+        assertEquals(
+            1,
+            repository.getStudyQueue("p1", now = later)
+                .count { it.reason == com.mcqapp.domain.StudyReason.NEW }
+        )
+    }
+
+    @Test
     fun aReviewedQuestionStopsBeingNew() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))

@@ -101,6 +101,9 @@ class StudyAndSelectionUiTest {
             single("ui-study-q1", "ui-study-cat"),
             multi("ui-study-q2", "ui-study-cat")
         )
+        // This test drives the manual four-button flow, so pin it: the default
+        // is now Simplified, whose button says Check, not Show answer.
+        runBlocking { repository.setSimplifiedStudy(false) }
         compose.setContent { McqNavHost(repository = repository) }
 
         // Never-studied cards count as new rather than due.
@@ -142,6 +145,37 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("▢", substring = false)
                 .fetchSemanticsNodes().isNotEmpty()
         )
+    }
+
+    /**
+     * Simplified mode (the default): answer, Check, see the result, Next — no
+     * grade buttons. Pins the flag on because the manual tests pin it off and
+     * DataStore persists across tests, so execution order must not matter.
+     */
+    @Test
+    fun simplifiedStudyGradesFromTheAnswer() {
+        seedPaper(
+            "ui-simple", "UISimple Paper", "ui-simple-cat",
+            single("ui-simple-q1", "ui-simple-cat")
+        )
+        runBlocking { repository.setSimplifiedStudy(true) }
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-title-ui-simple").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-simple").performClick()
+
+        waitFor("UITest ui-simple-q1?")
+        // Alpha is the right answer, so Check must report Correct whatever the
+        // dwell ladder says about the grade.
+        compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("study-check").performScrollTo().performClick()
+
+        compose.onNodeWithTag("study-result").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Correct", substring = false).assertIsDisplayed()
+
+        // A single-question session finishes on Next.
+        compose.onNodeWithTag("study-next").performScrollTo().performClick()
+        waitFor("Session complete")
     }
 
     /**

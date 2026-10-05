@@ -103,6 +103,9 @@ class CriticalPathTest {
             repository.ensurePaperAndCategory("uitest-sr", "UISR Paper", "uitest-sr-cat", "UISR Cat")
             repository.saveQuestion(question("uitest-sr-q1", "uitest-sr-cat"))
             repository.saveQuestion(question("uitest-sr-q2", "uitest-sr-cat"))
+            // This test drives the manual four-button flow, so pin it: the
+            // default is now Simplified, whose button says Check, not Show answer.
+            repository.setSimplifiedStudy(false)
         }
         compose.setContent { McqNavHost(repository = repository) }
 

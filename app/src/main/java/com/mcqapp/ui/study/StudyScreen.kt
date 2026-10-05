@@ -229,7 +229,7 @@ private fun SimplifiedStudyFlow(state: StudyUiState, viewModel: StudyViewModel) 
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { viewModel.next() },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("study-next"),
             enabled = !state.grading
         ) {
             Text(stringResource(R.string.next))
@@ -239,7 +239,7 @@ private fun SimplifiedStudyFlow(state: StudyUiState, viewModel: StudyViewModel) 
 
 @Composable
 private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().testTag("study-result")) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 (if (result.correct) "✓ " else "✗ ") +

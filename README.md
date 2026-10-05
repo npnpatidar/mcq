@@ -209,11 +209,16 @@ One question per block, built from literal marker text at the **start of a line*
 | Question | `1.)` | 1–7 digits, a period, then **`)`** — the closing bracket is required |
 | Options | `(a)` … `(j)` | lowercase only, at least four, up to ten per question |
 | Answer | `Ans.` | case-sensitive, trailing period included |
-| Explanation | `Exp:` | case-sensitive, trailing colon included |
+| Explanation | `Exp:` | case-sensitive, trailing colon included. **Optional** — see below |
 
-All fields are mandatory (stem, every option, answer, explanation). A document missing any of
-them is **rejected in full** with the offending question number, rather than silently losing
+The stem, every option and the answer are mandatory. A document missing any of them is
+**rejected in full** with the offending question number, rather than silently losing
 questions — so if one question is broken, nothing imports.
+
+The explanation is the one field allowed to be absent. A paper written without `Exp:` lines
+is still a usable paper, and refusing the whole document over it would lose every question in
+it. Such a question imports with an empty explanation: the study and browse screens simply
+show no explanation block, and a test session falls back to "No explanation provided."
 
 **Several correct answers.** Write them together after one marker, separated by commas, `and`,
 or `&` — all of these are the same question:
@@ -317,7 +322,7 @@ place instead of duplicating.
 |---|---|
 | `No questions found: the document is empty.` | nothing readable in the document body |
 | `No questions found: expected 'N.)' numbered questions with '(a)..(d)', 'Ans.' and 'Exp:' markers.` | no `N.)` line was found — check for auto-numbering, leading tabs, or `N.` written without the bracket |
-| `Malformed question 3.): missing answer, explanation.` … | that question is missing a required field; the number says which. The message ends by restating the expected layout. |
+| `Malformed question 3.): missing answer.` … | that question is missing a required field; the number says which. The message ends by restating the expected layout. An explanation is **not** required — a question with no `Exp:` line imports with an empty one. |
 | `That file is over the 64 MB import limit (at least N MB). …` | over the import cap. The message says how far over and notes that pictures, stored inline, add about a third |
 | `Not a Word document: w:body is missing.` | the file uses Strict OOXML (`purl.oclc.org`); re-save it from Word in the normal format |
 

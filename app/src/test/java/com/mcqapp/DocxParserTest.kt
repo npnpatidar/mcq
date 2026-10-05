@@ -92,6 +92,43 @@ class DocxParserTest {
         }
     }
 
+    /**
+     * A paper written without `Exp:` lines is still a usable paper. Refusing the
+     * whole document over a missing explanation would lose every question in it,
+     * so the explanation is the one field allowed to be absent.
+     */
+    @Test
+    fun aMissingExplanationImportsAsEmptyRatherThanFailing() {
+        val doc = "1.) Stem\n(a) A\n(b) B\n(c) C\n(d) D\nAns. b"
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(1, questions.size)
+        assertEquals("Stem", questions[0].stemHtml)
+        assertEquals("b", questions[0].answer)
+        assertEquals("", questions[0].explanationHtml)
+    }
+
+    /** An `Exp:` line with nothing after it is the same as no line at all. */
+    @Test
+    fun anEmptyExplanationLineImportsAsEmpty() {
+        val doc = "1.) Stem\n(a) A\n(b) B\n(c) C\n(d) D\nAns. b\nExp:"
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(1, questions.size)
+        assertEquals("", questions[0].explanationHtml)
+    }
+
+    /** The other fields are still mandatory, so this did not loosen everything. */
+    @Test
+    fun aMissingAnswerStillFailsLoudly() {
+        val bad = "1.) Stem\n(a) A\n(b) B\n(c) C\n(d) D\nExp: Why."
+        try {
+            splitDocxMarkersForTest(bad)
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("1.)"))
+            assertTrue(e.message!!.contains("answer"))
+        }
+    }
+
     @Test
     fun noMarkersFailsLoudly() {
         try {

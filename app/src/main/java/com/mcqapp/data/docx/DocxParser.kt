@@ -182,7 +182,11 @@ private fun extractQuestionData(num: String, block: String): RawQuestion {
         if (options[id].orEmpty().isBlank()) missing.add("option ($id)")
     }
     if (answer.isBlank()) missing.add("answer")
-    if (explanation.isBlank()) missing.add("explanation")
+    // The explanation is the one field allowed to be absent. A paper written
+    // without `Exp:` lines is still a usable paper, and refusing the whole
+    // document over it would lose every question in it. An empty explanation
+    // is already handled downstream: the study and browse screens skip the
+    // block, and a test session falls back to "No explanation provided."
     if (missing.isNotEmpty()) {
         throw IllegalArgumentException(
             "Malformed question $label: missing ${missing.joinToString(", ")}. " +

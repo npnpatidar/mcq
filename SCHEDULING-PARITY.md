@@ -70,7 +70,7 @@ Explicitly **not** a feature-parity clone of Anki. See "Deliberately dropped" at
 
 ## Track B — Bug: badge count disagrees with what a session serves
 
-**Status:** ☐ not started
+**Status:** ☑ **B1–B5 complete**. 6 tests added, suite `OK (677 tests)`.
 **Why:** `Study.newCount()` (`SpacedRepetition.kt:340`) is uncapped, so `LibraryScreen.kt:907-909` prints `Study (44 new)` while `Study.queue()` serves 20. After Track A the same divergence appears for `due`. Users read the badge as a promise.
 
 ### B1 — Decide the label format
@@ -251,7 +251,7 @@ Update this table in the same commit as the work.
 | Track | Status | Commit | Notes |
 |---|---|---|---|
 | A — review limit | ☑ done, uncommitted | — | 13 new tests, `OK (671 tests)`. D2/D3 applied: leeches uncapped, new cards blocked at the cap, opt-out switch added. |
-| B — badge parity | ☐ | | |
+| B — badge parity | ☑ done | — | `Study.selection()` is now the single source for both badge and queue; grey "N more waiting" line added. |
 | C — day boundary | ☐ | | |
 | D — interval preview | ☐ | | |
 | E — revlog + FSRS | ⛔ deferred | — | D5: deferred 2026-10-05. E1 deferred with it — no consumer. |

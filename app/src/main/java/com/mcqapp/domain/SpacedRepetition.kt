@@ -307,12 +307,43 @@ object Study {
     }
 
     /**
-     * Today's queue for a paper: due cards oldest-due first, then leeches, then
-     * new cards. Questions absent from [states] are new. Order is stable so a
-     * reload mid-session does not reshuffle the deck.
+     * What one session would actually serve today, plus how much is waiting
+     * behind the daily limits.
      *
-     * [reviewLimit] caps the due cards, matching the setting of the same name in
-     * Settings. It used to be ignored here even though it was persisted and
+     * The library badge and the study queue both read this, so a card can never
+     * be counted on the library screen yet be missing from the session that
+     * screen offers.
+     */
+    data class Selection(
+        /** Due cards served, oldest first. Capped by the review limit. */
+        val due: List<StudyCard>,
+        /** Tricky cards served. Deliberately uncapped; see [selection]. */
+        val leeches: List<StudyCard>,
+        /** New cards served. Capped by the new limit. */
+        val fresh: List<StudyCard>,
+        /** Due cards that did not fit under the review limit. */
+        val dueWaiting: Int,
+        /** New cards that did not fit under the new limit. */
+        val freshWaiting: Int,
+        /** New cards were withheld because the review limit was reached. */
+        val newBlockedByReviewLimit: Boolean
+    ) {
+        /** The queue itself, in study order. */
+        val queue: List<StudyCard> get() = due + leeches + fresh
+
+        /** Cards held back by the daily limits. */
+        val waiting: Int get() = dueWaiting + freshWaiting
+
+        fun isEmpty(): Boolean = queue.isEmpty()
+    }
+
+    /**
+     * Today's selection for a paper: due cards oldest-due first, then leeches,
+     * then new cards. Questions absent from [states] are new. Order is stable so
+     * a reload mid-session does not reshuffle the deck.
+     *
+     * The review limit caps the due cards, matching the setting of the same name
+     * in Settings. It used to be ignored here even though it was persisted and
      * editable, so a learner who set "50/day" was still served every due card.
      *
      * Two deliberate exceptions to Anki's rules:
@@ -323,7 +354,7 @@ object Study {
      *    against the review limit, as in Anki, but still bypass the *new*-card
      *    limit so one sitting can recover them.
      */
-    fun queue(
+    fun selection(
         scheduler: Scheduler,
         questionIds: List<String>,
         states: Map<String, CardState>,
@@ -331,7 +362,7 @@ object Study {
         newLimit: Int = DEFAULT_NEW_LIMIT,
         reviewLimit: Int = DEFAULT_REVIEW_LIMIT,
         newCardsIgnoreReviewLimit: Boolean = false
-    ): List<StudyCard> {
+    ): Selection {
         val due = mutableListOf<StudyCard>()
         val leeches = mutableListOf<StudyCard>()
         val newCandidates = mutableListOf<String>()
@@ -352,24 +383,37 @@ object Study {
 
         // Anki's v3 default is for the review limit to gate new cards too, so
         // clearing a backlog cannot make it worse.
-        val fresh = if (newCardsIgnoreReviewLimit || !reviewsCapped) {
-            newCandidates.take(newLimit.coerceAtLeast(0)).map {
-                StudyCard(it, StudyReason.NEW, states[it] ?: scheduler.initial(it))
-            }
+        val newAllowed = newCardsIgnoreReviewLimit || !reviewsCapped
+        val cappedNew = if (newAllowed) {
+            newCandidates.take(newLimit.coerceAtLeast(0))
         } else {
             emptyList()
         }
 
-        return cappedReviews + leeches.sortedBy { it.state.dueAt } + fresh
+        return Selection(
+            due = cappedReviews,
+            leeches = leeches.sortedBy { it.state.dueAt },
+            fresh = cappedNew.map {
+                StudyCard(it, StudyReason.NEW, states[it] ?: scheduler.initial(it))
+            },
+            dueWaiting = due.size - cappedReviews.size,
+            freshWaiting = newCandidates.size - cappedNew.size,
+            newBlockedByReviewLimit = !newAllowed
+        )
     }
 
-    fun dueCount(states: Collection<CardState>, now: Long): Int =
-        states.count { !it.isNew && it.dueAt <= now }
-
-    fun newCount(questionIds: List<String>, states: Map<String, CardState>): Int =
-        questionIds.count { states[it]?.isNew ?: true }
-
-    fun leechCount(states: Collection<CardState>): Int = states.count { it.leech }
+    /** Today's queue, in study order. See [selection]. */
+    fun queue(
+        scheduler: Scheduler,
+        questionIds: List<String>,
+        states: Map<String, CardState>,
+        now: Long,
+        newLimit: Int = DEFAULT_NEW_LIMIT,
+        reviewLimit: Int = DEFAULT_REVIEW_LIMIT,
+        newCardsIgnoreReviewLimit: Boolean = false
+    ): List<StudyCard> = selection(
+        scheduler, questionIds, states, now, newLimit, reviewLimit, newCardsIgnoreReviewLimit
+    ).queue
 
     /**
      * Only the cards flagged as leeches. The library's "N tricky" button

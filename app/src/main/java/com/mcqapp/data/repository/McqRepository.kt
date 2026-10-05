@@ -49,8 +49,14 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 data class StudyCounts(
     val due: Int = 0,
     val leeches: Int = 0,
-    val fresh: Int = 0
+    val fresh: Int = 0,
+    val dueWaiting: Int = 0,
+    val freshWaiting: Int = 0,
+    val newBlockedByReviewLimit: Boolean = false
 ) {
+    /** Cards the daily limits hold back from the next session. */
+    val waiting: Int get() = dueWaiting + freshWaiting
+
     val isEmpty: Boolean get() = due == 0 && leeches == 0 && fresh == 0
 }
 
@@ -901,12 +907,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             questions.map { StudyInput(it.id, contentHashOf(it)) },
             config
         )
-        Logger.i(
-            "REPO",
-            "getStudyQueue($paperId): ${questions.size} questions, " +
-                "due=${com.mcqapp.domain.Study.dueCount(states.values, now)}"
-        )
-        val queue = com.mcqapp.domain.Study.queue(
+        val selection = com.mcqapp.domain.Study.selection(
             com.mcqapp.domain.Sm2Scheduler(config),
             questions.map { it.id },
             states,
@@ -915,12 +916,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             config.reviewLimit,
             config.newCardsIgnoreReviewLimit
         )
-        if (com.mcqapp.domain.Study.dueCount(states.values, now) > config.reviewLimit) {
+        Logger.i(
+            "REPO",
+            "getStudyQueue($paperId): ${questions.size} questions, " +
+                "serving due=${selection.due.size} tricky=${selection.leeches.size} " +
+                "new=${selection.fresh.size}, waiting=${selection.waiting}"
+        )
+        val queue = selection.queue
+        if (selection.dueWaiting > 0 || selection.newBlockedByReviewLimit) {
             Logger.i(
                 "REPO",
-                "getStudyQueue($paperId): review limit ${config.reviewLimit} reached, " +
-                    "${com.mcqapp.domain.Study.dueCount(states.values, now)} due, " +
-                    "${queue.count { it.reason == com.mcqapp.domain.StudyReason.NEW }} new served"
+                "getStudyQueue($paperId): daily limits applied, " +
+                    "${selection.dueWaiting} due held back, ${selection.freshWaiting} new held back"
             )
         }
         return if (leechesOnly) com.mcqapp.domain.Study.onlyLeeches(queue) else queue
@@ -1017,11 +1024,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // answer key just to add up three numbers made a large library crawl.
         val inputs = studyInputs(paperId)
         if (inputs.isEmpty()) return StudyCounts()
-        val states = resolveStudyStates(paperId, inputs, schedulerConfigNow())
+        val config = schedulerConfigNow()
+        val states = resolveStudyStates(paperId, inputs, config)
+        // The same selection the study session is built from, so the badge can
+        // never advertise a card the session then refuses to serve.
+        val selection = com.mcqapp.domain.Study.selection(
+            com.mcqapp.domain.Sm2Scheduler(config),
+            inputs.map { it.id },
+            states,
+            now,
+            config.newLimit,
+            config.reviewLimit,
+            config.newCardsIgnoreReviewLimit
+        )
         return StudyCounts(
-            due = com.mcqapp.domain.Study.dueCount(states.values, now),
-            leeches = com.mcqapp.domain.Study.leechCount(states.values),
-            fresh = com.mcqapp.domain.Study.newCount(inputs.map { it.id }, states)
+            due = selection.due.size,
+            leeches = selection.leeches.size,
+            fresh = selection.fresh.size,
+            dueWaiting = selection.dueWaiting,
+            freshWaiting = selection.freshWaiting,
+            newBlockedByReviewLimit = selection.newBlockedByReviewLimit
         )
     }
 

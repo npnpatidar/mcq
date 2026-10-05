@@ -76,6 +76,7 @@
     <string name="move_block_up">Move block up</string>
     <string name="move_down">Move down</string>
     <string name="move_up">Move up</string>
+    <string name="n_more_waiting">%1$d more waiting</string>
     <string name="negative_marking">Negative marking</string>
     <string name="negative_marking_e_g_0_33">Negative marking (e.g. 0.33)</string>
     <string name="new_category">New category</string>

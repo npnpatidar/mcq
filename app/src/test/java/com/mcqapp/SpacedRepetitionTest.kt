@@ -397,34 +397,153 @@ class SpacedRepetitionTest {
         )
     }
 
-    // --- counts ---
+    // --- selection ---
 
     @Test
-    fun `due count ignores new and not-yet-due cards`() {
-        val states = listOf(
-            CardState(questionId = "new"),
-            CardState(questionId = "due", intervalDays = 2, dueAt = now - day, reps = 2),
-            CardState(questionId = "later", intervalDays = 2, dueAt = now + day, reps = 2)
+    fun `selection ignores new and not-yet-due cards when counting due`() {
+        val states = mapOf(
+            "new" to CardState(questionId = "new"),
+            "due" to CardState(questionId = "due", intervalDays = 2, dueAt = now - day, reps = 2),
+            "later" to CardState(questionId = "later", intervalDays = 2, dueAt = now + day, reps = 2)
         )
-        assertEquals(1, Study.dueCount(states, now))
+        val selection = Study.selection(sched, states.keys.toList(), states, now)
+        assertEquals(listOf("due"), selection.due.map { it.questionId })
+        assertEquals(0, selection.dueWaiting)
     }
 
     @Test
-    fun `new count counts missing and unreviewed cards`() {
+    fun `selection counts missing and unreviewed cards as new`() {
         val states = mapOf(
             "b" to CardState(questionId = "b", intervalDays = 1, dueAt = now, reps = 1)
         )
-        assertEquals(2, Study.newCount(listOf("a", "b", "c"), states))
+        val selection = Study.selection(sched, listOf("a", "b", "c"), states, now)
+        assertEquals(listOf("a", "c"), selection.fresh.map { it.questionId })
     }
 
     @Test
-    fun `leech count counts flagged cards`() {
-        val states = listOf(
-            CardState(questionId = "a", leech = true),
-            CardState(questionId = "b", leech = true),
-            CardState(questionId = "c")
+    fun `selection counts only due leeches as tricky`() {
+        // A leech that is not due today is not in the queue, so counting it in
+        // the badge would promise a card the session cannot serve.
+        val states = mapOf(
+            "a" to CardState(questionId = "a", leech = true, intervalDays = 2, dueAt = now - day, reps = 2),
+            "b" to CardState(questionId = "b", leech = true, intervalDays = 2, dueAt = now + day, reps = 2),
+            "c" to CardState(questionId = "c")
         )
-        assertEquals(2, Study.leechCount(states))
+        val selection = Study.selection(sched, states.keys.toList(), states, now)
+        assertEquals(listOf("a"), selection.leeches.map { it.questionId })
+    }
+
+    @Test
+    fun `selection reports what the daily limits hold back`() {
+        val ids = (1..10).map { "q$it" }
+        val states = ids.associateWith { CardState(questionId = it, intervalDays = 2, dueAt = now - day, reps = 2) }
+        val selection = Study.selection(
+            sched, ids, states, now, newLimit = 2, reviewLimit = 3
+        )
+        assertEquals(3, selection.due.size)
+        assertEquals(7, selection.dueWaiting)
+        // No new cards in this paper, so only the review cap holds anything back.
+        assertEquals(0, selection.freshWaiting)
+        assertEquals(7, selection.waiting)
+    }
+
+    @Test
+    fun `selection reports new cards held back by the new limit`() {
+        val ids = (1..10).map { "q$it" }
+        val selection = Study.selection(sched, ids, emptyMap(), now, newLimit = 4)
+        assertEquals(4, selection.fresh.size)
+        assertEquals(6, selection.freshWaiting)
+        assertFalse(selection.newBlockedByReviewLimit)
+    }
+
+    @Test
+    fun `selection flags new cards blocked by the review limit`() {
+        val dueIds = (1..10).map { "d$it" }
+        val due = dueIds.associateWith {
+            CardState(questionId = it, intervalDays = 2, dueAt = now - day, reps = 2)
+        }
+        val selection = Study.selection(
+            sched, dueIds + "n1", due, now, newLimit = 5, reviewLimit = 2
+        )
+        assertTrue(selection.newBlockedByReviewLimit)
+        assertEquals(0, selection.fresh.size)
+        assertEquals(1, selection.freshWaiting)
+    }
+
+    @Test
+    fun `an empty paper selects nothing`() {
+        assertTrue(Study.selection(sched, emptyList(), emptyMap(), now).isEmpty())
+    }
+
+    // --- badge / queue agreement ---
+    //
+    // The library badge counted every unseen card while the queue served only
+    // the daily limit, so "44 new" opened a session of 20. Both now read one
+    // selection, and these pin the two together.
+
+    private fun selectionCases(): List<Triple<List<String>, Map<String, CardState>, Int>> {
+        val due = (1..8).map { "d$it" }
+        val leeches = (1..3).map { "l$it" }
+        val states = mutableMapOf<String, CardState>()
+        due.forEachIndexed { i, id ->
+            states[id] = CardState(
+                questionId = id, intervalDays = 2, dueAt = now - day * (i + 1), reps = 2
+            )
+        }
+        leeches.forEach { id ->
+            states[id] = CardState(
+                questionId = id, intervalDays = 2, dueAt = now - day, reps = 2, leech = true
+            )
+        }
+        val fresh = (1..12).map { "n$it" }
+        return listOf(
+            Triple(due + leeches + fresh, states, 4),
+            Triple(due + leeches + fresh, states, 100),
+            Triple(due, states, 0),
+            Triple(fresh, emptyMap(), 3),
+            Triple(emptyList(), emptyMap(), 5)
+        )
+    }
+
+    @Test
+    fun `the served count always equals the queue length`() {
+        selectionCases().forEach { (ids, states, newLimit) ->
+            listOf(0, 3, 200).forEach { reviewLimit ->
+                listOf(false, true).forEach { ignore ->
+                    val selection = Study.selection(
+                        sched, ids, states, now,
+                        newLimit = newLimit,
+                        reviewLimit = reviewLimit,
+                        newCardsIgnoreReviewLimit = ignore
+                    )
+                    assertEquals(
+                        "badge/queue mismatch for newLimit=$newLimit " +
+                            "reviewLimit=$reviewLimit ignore=$ignore",
+                        selection.queue.size,
+                        selection.due.size + selection.leeches.size + selection.fresh.size
+                    )
+                    assertEquals(selection.queue.size, Study.queue(
+                        sched, ids, states, now,
+                        newLimit = newLimit,
+                        reviewLimit = reviewLimit,
+                        newCardsIgnoreReviewLimit = ignore
+                    ).size)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `nothing is dropped between the waiting counts and the totals`() {
+        selectionCases().forEach { (ids, states, newLimit) ->
+            val selection = Study.selection(sched, ids, states, now, newLimit = newLimit, reviewLimit = 3)
+            val served = selection.due.size + selection.leeches.size + selection.fresh.size
+            assertTrue(selection.waiting >= 0)
+            assertTrue(selection.newBlockedByReviewLimit || selection.freshWaiting >= 0)
+            // Every question is either served or accounted for as waiting or
+            // held behind the review cap.
+            assertEquals(ids.size, served + selection.waiting)
+        }
     }
 
     // --- retention ---

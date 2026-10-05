@@ -367,6 +367,7 @@ fun LibraryScreen(
                                 dueCount = dueCountBadge,
                                 freshCount = studyCounts[paper.id]?.fresh ?: 0,
                                 leechCount = leechCountBadge,
+                                waitingCount = studyCounts[paper.id]?.waiting ?: 0,
                                 mistakeCount = mistakeCounts[paper.id] ?: 0,
                                 onBrowse = {
                                     navController.navigate(com.mcqapp.ui.navigation.browseRoute(paper.id))
@@ -835,7 +836,8 @@ private fun PaperCard(
     mistakeCount: Int = 0,
     dueCount: Int = 0,
     freshCount: Int = 0,
-    leechCount: Int = 0
+    leechCount: Int = 0,
+    waitingCount: Int = 0
 ) {
     var showDrillDialog by remember { mutableStateOf(false) }
     var drillCountText by remember { mutableStateOf("10") }
@@ -918,6 +920,16 @@ private fun PaperCard(
                     TextButton(onClick = onStudyLeeches) {
                         Text("${leechCount} tricky")
                     }
+                }
+                if (waitingCount > 0) {
+                    // The button says what this session will serve; this says
+                    // what the daily limits are holding back. Without it a
+                    // capped count just looks like the whole backlog.
+                    Text(
+                        stringResource(R.string.n_more_waiting, waitingCount),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 OutlinedButton(onClick = onExport) {
                     Text(stringResource(R.string.export))

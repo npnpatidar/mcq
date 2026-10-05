@@ -81,6 +81,15 @@
     <string name="negative_marking_e_g_0_33">Negative marking (e.g. 0.33)</string>
     <string name="new_category">New category</string>
     <string name="new_paper">New paper</string>
+    <string name="change_grade">Change grade</string>
+    <string name="check">Check</string>
+    <string name="correct">Correct</string>
+    <string name="guessing">Guessing</string>
+    <string name="guessing_this_is_a_guess">I\'m guessing — grade a right answer as Hard.</string>
+    <string name="incorrect">Incorrect</string>
+    <string name="incorrect_answer_review_soon">Incorrect answer — back soon for another try.</string>
+    <string name="guessed_right_marked_hard">Guessed right — marked Hard, back soon.</string>
+    <string name="answered_in_xs">Answered in %1$d s</string>
     <string name="next">Next</string>
     <string name="no_attempts_yet">No attempts yet</string>
     <string name="no_bookmarked_questions">No bookmarked questions</string>

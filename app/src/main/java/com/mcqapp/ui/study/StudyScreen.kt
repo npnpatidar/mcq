@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -36,13 +37,18 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -139,7 +145,9 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
             onToggleOption = { viewModel.toggleOption(it) }
         )
         Spacer(Modifier.height(12.dp))
-        if (!state.revealed) {
+        if (state.simplified) {
+            SimplifiedStudyFlow(state = state, viewModel = viewModel)
+        } else if (!state.revealed) {
             Button(
                 onClick = { viewModel.reveal() },
                 modifier = Modifier.fillMaxWidth()
@@ -155,6 +163,113 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/**
+ * The Simplified study flow: answer, check, see the result, move on. Nobody
+ * picks a grade; the answer decides, with an explicit guess flag for honesty
+ * and a change-grade affordance for misclicks.
+ */
+@Composable
+private fun SimplifiedStudyFlow(state: StudyUiState, viewModel: StudyViewModel) {
+    val question = state.currentQuestion ?: return
+    if (!state.revealed) {
+        // Pre-commit: once the answer is visible a guess declaration would be
+        // retroactive, so the toggle lives only on the unanswered card.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.Casino,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.guessing))
+                Text(
+                    stringResource(R.string.guessing_this_is_a_guess),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Switch(
+                checked = state.isGuess,
+                onCheckedChange = { viewModel.setGuess(it) }
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = { viewModel.check() },
+            modifier = Modifier.fillMaxWidth().testTag("study-check")
+        ) {
+            Text(stringResource(R.string.check))
+        }
+    } else {
+        val result = state.lastResult
+        if (result != null) {
+            SimplifiedResultCard(result = result)
+            Spacer(Modifier.height(8.dp))
+        }
+        var showPicker by remember(question.id) { mutableStateOf(false) }
+        if (showPicker) {
+            GradeButtons(
+                enabled = !state.grading,
+                previews = state.previews,
+                onGrade = {
+                    viewModel.changeGrade(it)
+                    showPicker = false
+                }
+            )
+        } else {
+            TextButton(onClick = { showPicker = true }) {
+                Text(stringResource(R.string.change_grade))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { viewModel.next() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !state.grading
+        ) {
+            Text(stringResource(R.string.next))
+        }
+    }
+}
+
+@Composable
+private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                (if (result.correct) "✓ " else "✗ ") +
+                    stringResource(
+                        if (result.correct) R.string.correct else R.string.incorrect
+                    ),
+                style = MaterialTheme.typography.titleSmall,
+                color = if (result.correct) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                gradeReason(result),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                "Next in ${result.nextIn}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun gradeReason(result: com.mcqapp.ui.study.StudyResult): String {
+    if (!result.correct) return stringResource(R.string.incorrect_answer_review_soon)
+    if (result.wasGuess) return stringResource(R.string.guessed_right_marked_hard)
+    return stringResource(R.string.answered_in_xs, result.dwellSeconds) + " — " +
+        result.grade.name.lowercase().replaceFirstChar { it.uppercase() }
 }
 
 @Composable

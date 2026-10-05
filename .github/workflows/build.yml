@@ -71,9 +71,9 @@ jobs:
     # only surface at release time. This assembles it on every push.
     #
     # Note this does NOT yet exercise shrinking: isMinifyEnabled is still
-    # false (audit A44, deferred), so the artifact is ~15 MB rather than the
-    # ~3.6 MB measured with R8 on. Turning minify on is a one-line change and
-    # this job is what would catch it going wrong.
+    # false, so the artifact is ~15 MB rather than the ~3.6 MB measured with R8
+    # on. Turning minify on is a one-line change and this job is what would
+    # catch it going wrong.
     runs-on: ubuntu-latest
     steps:
       - name: Check out

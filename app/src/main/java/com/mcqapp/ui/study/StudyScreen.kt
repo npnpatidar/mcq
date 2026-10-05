@@ -251,10 +251,25 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
                 else MaterialTheme.colorScheme.error
             )
             Spacer(Modifier.height(4.dp))
-            Text(
-                gradeReason(result),
-                style = MaterialTheme.typography.bodySmall
-            )
+            // One Text per branch: the string-usage test requires each
+            // stringResource to render directly inside a Text.
+            if (!result.correct) {
+                Text(
+                    stringResource(R.string.incorrect_answer_review_soon),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else if (result.wasGuess) {
+                Text(
+                    stringResource(R.string.guessed_right_marked_hard),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text(
+                    stringResource(R.string.answered_in_xs, result.dwellSeconds) + " — " +
+                        result.grade.name.lowercase().replaceFirstChar { it.uppercase() },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             Text(
                 "Next in ${result.nextIn}",
                 style = MaterialTheme.typography.bodySmall,
@@ -262,14 +277,6 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
             )
         }
     }
-}
-
-@Composable
-private fun gradeReason(result: com.mcqapp.ui.study.StudyResult): String {
-    if (!result.correct) return stringResource(R.string.incorrect_answer_review_soon)
-    if (result.wasGuess) return stringResource(R.string.guessed_right_marked_hard)
-    return stringResource(R.string.answered_in_xs, result.dwellSeconds) + " — " +
-        result.grade.name.lowercase().replaceFirstChar { it.uppercase() }
 }
 
 @Composable

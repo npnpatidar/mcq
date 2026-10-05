@@ -73,10 +73,27 @@ writes an attempt: it only schedules *when you should see a question again*.
 - Each paper's Library card shows a **Study** button with counts, e.g. `Study (3 due,
   12 new)`, plus a "N tricky" hint for leeches. A paper with nothing left just says
   `Study`.
-- The screen shows **one question at a time**. Pick an answer, hit **Show answer** to see
-  the correct one and its explanation, then self-grade with **Again / Hard / Good / Easy**.
-  Grading is self-reported because you see the answer first — that is what makes the
-  four buttons meaningful.
+- The screen shows **one question at a time**. How it is graded depends on the
+  **Simplified Anki** switch (Settings → Study, on by default):
+  - **On:** pick an answer, hit **Check**, and the card is graded from the answer
+    itself — no buttons. Correct is exact match on the answer key; anything else,
+    including a blank skip or a partially right multi-correct answer, is wrong.
+    A fast correct answer reads as Easy, a slow one as Hard, the middle as Good.
+  - **Off:** pick an answer, hit **Show answer** to see the correct one and its
+    explanation, then self-grade with **Again / Hard / Good / Easy**. Grading is
+    self-reported because you see the answer first — that is what makes the four
+    buttons meaningful.
+- **Guessing (Simplified mode).** A "Guessing" toggle sits above the options. Turn it
+  on *before* answering when the pick is a guess; it locks once the answer is shown,
+  so it can never be claimed retroactively, and resets on every question. A guessed
+  answer that happens to be right is graded **Hard** — the interval stays short —
+  while reps still advance and no lapse is counted, because producing the right
+  answer is not a failure. Deliberation time on a random pick carries no
+  information, so the dwell ladder is bypassed for guesses.
+- **Changing a grade (Simplified mode).** Check proposes the grade and Next persists
+  it. Between the two, a "Change grade" affordance edits the proposal — for the
+  "knew it but misclicked" case — without writing twice. Leaving without Next loses
+  the review, exactly as leaving manual mode without grading does.
 - **Scheduling is SM-2.** Good graduates a card to 1 day, then 6 days, then ~3× the
   previous interval; Easy jumps to 4 days on the first review. Hard grows the interval by
   the smaller of +1 day and +20%. Again drops the card to zero reps and re-queues it in

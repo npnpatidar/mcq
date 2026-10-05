@@ -482,6 +482,128 @@ class SpacedRepetitionTest {
         assertEquals(0, selection.waiting)
     }
 
+    // --- automatic grading ---
+    //
+    // Simplified mode grades from the answer instead of asking. Correctness is
+    // exact match on the key; the dwell ladder supplies the difficulty axis;
+    // a declared guess bypasses the ladder because deliberation time on a
+    // random pick carries no information.
+
+    private val autoConfig = SchedulerConfig()
+
+    @Test
+    fun `a quick correct answer is Easy`() {
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(setOf("a"), setOf("a"), 3, isGuess = false, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `the fast boundary is inclusive below and exclusive at`() {
+        // fastSeconds = 8: dwell in 1 until 8 reads as effortless.
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(setOf("a"), setOf("a"), 1, isGuess = false, config = autoConfig)
+        )
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(setOf("a"), setOf("a"), 7, isGuess = false, config = autoConfig)
+        )
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.autoGrade(setOf("a"), setOf("a"), 8, isGuess = false, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `a medium correct answer is Good`() {
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.autoGrade(setOf("a"), setOf("a"), 15, isGuess = false, config = autoConfig)
+        )
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.autoGrade(setOf("a"), setOf("a"), 29, isGuess = false, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `a slow correct answer is Hard`() {
+        assertEquals(
+            ReviewGrade.HARD,
+            Study.autoGrade(setOf("a"), setOf("a"), 30, isGuess = false, config = autoConfig)
+        )
+        assertEquals(
+            ReviewGrade.HARD,
+            Study.autoGrade(setOf("a"), setOf("a"), 120, isGuess = false, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `a correct guess is Hard at any dwell`() {
+        listOf(0L, 1L, 7L, 15L, 120L).forEach { dwell ->
+            assertEquals(
+                "a guessed answer must not ride the dwell ladder (dwell=$dwell)",
+                ReviewGrade.HARD,
+                Study.autoGrade(setOf("a"), setOf("a"), dwell, isGuess = true, config = autoConfig)
+            )
+        }
+    }
+
+    @Test
+    fun `a wrong answer is Again whether guessed or not`() {
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), setOf("b"), 3, isGuess = false, config = autoConfig)
+        )
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), setOf("b"), 3, isGuess = true, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `an empty selection is a skip`() {
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), emptySet(), 10, isGuess = false, config = autoConfig)
+        )
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), emptySet(), 10, isGuess = true, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `a multi-correct answer needs the exact key`() {
+        val key = setOf("a", "c")
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.autoGrade(key, setOf("a", "c"), 15, isGuess = false, config = autoConfig)
+        )
+        // A subset is not "almost right" under exam marking; it is wrong.
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(key, setOf("a"), 15, isGuess = false, config = autoConfig)
+        )
+        // Nor is a superset that happens to contain the key.
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(key, setOf("a", "b", "c"), 15, isGuess = false, config = autoConfig)
+        )
+    }
+
+    @Test
+    fun `a correct guess on a multi-correct key is still Hard`() {
+        assertEquals(
+            ReviewGrade.HARD,
+            Study.autoGrade(
+                setOf("a", "c"), setOf("a", "c"), 2, isGuess = true, config = autoConfig
+            )
+        )
+    }
+
     // --- badge / queue agreement ---
     //
     // The library badge counted every unseen card while the queue served only

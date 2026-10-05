@@ -215,10 +215,16 @@ emulator. It asserts the four labels are rendered via a test tag rather than
 matching text: the value depends on the clock and the day boundary, so a text
 assertion would only pass at some times of day.
 
-It asserts **existence, not visibility**. The first attempt used
-`assertIsDisplayed()` and CI failed it: the two-line buttons made the grade block
-taller, so it sits below the fold on the emulator. Corrected in the follow-up
-commit.
+It asserts **existence, not visibility**, and queries the **unmerged** semantics
+tree. Two wrong attempts, both caught by CI:
+1. `assertIsDisplayed()` — I assumed the two-line buttons had pushed the grade
+   block below the fold. The logcat showed no such thing.
+2. `onAllNodesWithTag(...)` on the merged tree — `TestTag` merges by keeping the
+   *parent's* value, so a tag on a `Text` inside a `Button` is unresolvable: the
+   Button has no tag of its own and wins with null.
+
+Lesson: a tag placed inside a clickable container is only findable with
+`useUnmergedTree = true`. Worth remembering before the next test does this.
 
 **Commit:** `feat(study): preview the next interval on each grade button`
 

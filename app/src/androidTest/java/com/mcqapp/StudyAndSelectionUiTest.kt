@@ -121,12 +121,14 @@ class StudyAndSelectionUiTest {
         // Each grade advertises the delay it would produce, as in Anki. The value
         // depends on the clock and the day boundary, so this only checks that all
         // four labels are rendered rather than pinning a particular interval.
-        // Existence rather than visibility: the two-line buttons made the grade
-        // block taller, so it can sit below the fold at some font scales.
+        //
+        // The unmerged tree is required: TestTag merges by keeping the PARENT's
+        // value, so a tag on a Text inside a Button is invisible in the merged
+        // tree — the Button has no tag of its own and wins with null.
         listOf("Again", "Hard", "Good", "Easy").forEach { grade ->
             assertTrue(
                 "the $grade button should show a next-interval preview",
-                compose.onAllNodesWithTag("grade-preview-$grade")
+                compose.onAllNodesWithTag("grade-preview-$grade", useUnmergedTree = true)
                     .fetchSemanticsNodes().isNotEmpty()
             )
         }

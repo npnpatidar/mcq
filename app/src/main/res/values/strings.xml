@@ -195,6 +195,7 @@
     <string name="test">Test</string>
     <string name="text_size">Text size</string>
     <string name="the_response_time_thresholds_only_apply_when_rebuilding_a_sc">The response-time thresholds only apply when rebuilding a schedule </string>
+    <string name="the_review_limit_also_limits_new_cards_so_clearing_a_backlog">The review limit also limits new cards, so clearing a backlog cannot make it worse.</string>
     <string name="theme">Theme</string>
     <string name="tick_the_correct_answer_s">Tick the correct answer(s)</string>
     <string name="time_taken_02d_02d">Time taken: %02d:%02d</string>

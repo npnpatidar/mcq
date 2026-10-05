@@ -142,6 +142,13 @@ data class SchedulerConfig(
     val newLimit: Int = 20,
     /** Reviews offered per day. Anki: 200 */
     val reviewLimit: Int = 200,
+    /**
+     * Anki's "New Cards Ignore Review Limit". Off by default, as in Anki: once the
+     * review limit is reached no new cards are offered, so working through a
+     * backlog cannot add to it. Turning it on restores the old behaviour of
+     * always offering new cards.
+     */
+    val newCardsIgnoreReviewLimit: Boolean = false,
     /** Correct answer faster than this (seconds) infers Easy from history. */
     val fastSeconds: Long = 8L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
@@ -265,6 +272,8 @@ object Study {
 
     const val DEFAULT_NEW_LIMIT = 20
 
+    const val DEFAULT_REVIEW_LIMIT = 200
+
     /**
      * Infers a grade from an answered attempt. Untracked timing (0s) is a
      * normal Good rather than effortless. Takes the timing thresholds from
@@ -298,40 +307,60 @@ object Study {
     }
 
     /**
-     * Today's queue for a paper: due cards oldest-due first, then leeches,
-     * then new cards up to [newLimit]. Questions absent from [states] are new.
-     * Order is stable so a reload mid-session does not reshuffle the deck.
+     * Today's queue for a paper: due cards oldest-due first, then leeches, then
+     * new cards. Questions absent from [states] are new. Order is stable so a
+     * reload mid-session does not reshuffle the deck.
+     *
+     * [reviewLimit] caps the due cards, matching the setting of the same name in
+     * Settings. It used to be ignored here even though it was persisted and
+     * editable, so a learner who set "50/day" was still served every due card.
+     *
+     * Two deliberate exceptions to Anki's rules:
+     *  - A leech is an explicit drill the learner asked for rather than backlog,
+     *    so it is never capped. Counting it would make the "tricky" button
+     *    silently return fewer cards than its count promised.
+     *  - Learning cards (failed earlier today, due again in minutes) count
+     *    against the review limit, as in Anki, but still bypass the *new*-card
+     *    limit so one sitting can recover them.
      */
     fun queue(
         scheduler: Scheduler,
         questionIds: List<String>,
         states: Map<String, CardState>,
         now: Long,
-        newLimit: Int = DEFAULT_NEW_LIMIT
+        newLimit: Int = DEFAULT_NEW_LIMIT,
+        reviewLimit: Int = DEFAULT_REVIEW_LIMIT,
+        newCardsIgnoreReviewLimit: Boolean = false
     ): List<StudyCard> {
         val due = mutableListOf<StudyCard>()
         val leeches = mutableListOf<StudyCard>()
-        val fresh = mutableListOf<StudyCard>()
-        var newTaken = 0
+        val newCandidates = mutableListOf<String>()
 
         questionIds.forEach { id ->
             val state = states[id]
             when {
-                state == null || state.isNew -> {
-                    if (newTaken < newLimit) {
-                        fresh.add(StudyCard(id, StudyReason.NEW, state ?: scheduler.initial(id)))
-                        newTaken++
-                    }
-                }
-                // isLearning cards fall through here: they are due in minutes, not
-                // new, so the new-card limit must not hide them.
+                state == null || state.isNew -> newCandidates += id
                 state.leech && state.dueAt <= now -> leeches.add(StudyCard(id, StudyReason.LEECH, state))
                 state.dueAt <= now -> due.add(StudyCard(id, StudyReason.DUE, state))
             }
         }
-        return due.sortedBy { it.state.dueAt } +
-            leeches.sortedBy { it.state.dueAt } +
-            fresh
+
+        // Oldest first, then capped: an overdue card is the one most at risk of
+        // being lost, so it wins the slot when there are more than the limit.
+        val cappedReviews = due.sortedBy { it.state.dueAt }.take(reviewLimit.coerceAtLeast(0))
+        val reviewsCapped = cappedReviews.size < due.size
+
+        // Anki's v3 default is for the review limit to gate new cards too, so
+        // clearing a backlog cannot make it worse.
+        val fresh = if (newCardsIgnoreReviewLimit || !reviewsCapped) {
+            newCandidates.take(newLimit.coerceAtLeast(0)).map {
+                StudyCard(it, StudyReason.NEW, states[it] ?: scheduler.initial(it))
+            }
+        } else {
+            emptyList()
+        }
+
+        return cappedReviews + leeches.sortedBy { it.state.dueAt } + fresh
     }
 
     fun dueCount(states: Collection<CardState>, now: Long): Int =

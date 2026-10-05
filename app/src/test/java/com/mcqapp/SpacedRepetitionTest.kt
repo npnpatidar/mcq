@@ -627,4 +627,158 @@ class SpacedRepetitionTest {
     fun `default config is already sanitized`() {
         assertEquals(SchedulerConfig(), SchedulerConfig().sanitized())
     }
+
+    // --- review limit ---
+    //
+    // reviewLimit was persisted and editable in Settings but never applied to
+    // the queue, so a learner who set "50/day" was still served every due card.
+
+    private fun dueStates(ids: List<String>, dueAt: Long = now - day) =
+        ids.associateWith { CardState(questionId = it, intervalDays = 3, dueAt = dueAt, reps = 2) }
+
+    @Test
+    fun `queue caps due cards at the review limit`() {
+        val ids = (1..50).map { "q$it" }
+        val queue = Study.queue(sched, ids, dueStates(ids), now, reviewLimit = 5)
+        assertEquals(5, queue.size)
+        assertTrue(queue.all { it.reason == StudyReason.DUE })
+    }
+
+    @Test
+    fun `review limit keeps the oldest due cards`() {
+        val ids = (1..5).map { "q$it" }
+        // q5 is the most overdue, so it must be the one that survives the cap.
+        val states = ids.mapIndexed { index, id ->
+            id to CardState(
+                questionId = id,
+                intervalDays = 3,
+                dueAt = now - day * (index + 1).toLong(),
+                reps = 2
+            )
+        }.toMap()
+        val queue = Study.queue(sched, ids, states, now, reviewLimit = 2)
+        assertEquals(listOf("q5", "q4"), queue.map { it.questionId })
+    }
+
+    @Test
+    fun `review limit of zero serves nothing at all`() {
+        val ids = (1..10).map { "q$it" }
+        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
+        val queue = Study.queue(
+            sched, ids + "new1", states, now, newLimit = 20, reviewLimit = 0
+        )
+        assertTrue(queue.isEmpty())
+    }
+
+    @Test
+    fun `new cards are blocked once the review limit is reached`() {
+        val ids = (1..30).map { "q$it" }
+        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
+        val queue = Study.queue(
+            sched, ids + "new1", states, now, newLimit = 20, reviewLimit = 10
+        )
+        assertEquals(10, queue.size)
+        assertTrue(queue.none { it.reason == StudyReason.NEW })
+    }
+
+    @Test
+    fun `new cards are served when the review limit is not reached`() {
+        val ids = (1..5).map { "q$it" }
+        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
+        val queue = Study.queue(
+            sched, ids + "new1", states, now, newLimit = 20, reviewLimit = 10
+        )
+        assertEquals(6, queue.size)
+        assertEquals(1, queue.count { it.reason == StudyReason.NEW })
+    }
+
+    @Test
+    fun `new cards ignore review limit opt-out serves new cards past the cap`() {
+        val ids = (1..30).map { "q$it" }
+        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
+        val queue = Study.queue(
+            sched, ids + "new1", states, now,
+            newLimit = 20, reviewLimit = 10, newCardsIgnoreReviewLimit = true
+        )
+        assertEquals(10, queue.count { it.reason == StudyReason.DUE })
+        assertEquals(1, queue.count { it.reason == StudyReason.NEW })
+    }
+
+    @Test
+    fun `learning cards count against the review limit`() {
+        // A card failed earlier today: reps 0 but a due date set, so it is
+        // relearning rather than new. Anki counts these against the limit.
+        val states = (1..30).associate {
+            "q$it" to CardState(questionId = "q$it", intervalDays = 0, dueAt = now - 60_000L, reps = 0)
+        }
+        val queue = Study.queue(
+            sched, states.keys.toList(), states, now, newLimit = 0, reviewLimit = 4
+        )
+        assertEquals(4, queue.size)
+        assertTrue(queue.all { it.reason == StudyReason.DUE })
+    }
+
+    @Test
+    fun `learning cards still bypass the new card limit`() {
+        val learning = CardState(questionId = "l1", intervalDays = 0, dueAt = now - 60_000L, reps = 0)
+        val queue = Study.queue(
+            sched, listOf("l1"), mapOf("l1" to learning), now, newLimit = 0
+        )
+        assertEquals(1, queue.size)
+    }
+
+    @Test
+    fun `tricky cards are never capped by the review limit`() {
+        // A leech is an explicit drill, not backlog: counting it would make the
+        // "tricky" button return fewer cards than its badge promised.
+        val ids = (1..30).map { "q$it" }
+        val states = ids.associate { id ->
+            id to CardState(
+                questionId = id, intervalDays = 3, dueAt = now - day, reps = 2, leech = true
+            )
+        }
+        val queue = Study.queue(sched, ids, states, now, reviewLimit = 5)
+        assertEquals(30, queue.size)
+        assertTrue(queue.all { it.reason == StudyReason.LEECH })
+    }
+
+    @Test
+    fun `a due leech is counted once and not also treated as a due review`() {
+        val leech = CardState(
+            questionId = "l1", intervalDays = 3, dueAt = now - day, reps = 2, leech = true
+        )
+        val plain = CardState(questionId = "p1", intervalDays = 3, dueAt = now - day, reps = 2)
+        val queue = Study.queue(
+            sched, listOf("l1", "p1"), mapOf("l1" to leech, "p1" to plain),
+            now, reviewLimit = 1
+        )
+        // The leech must not consume the single review slot.
+        assertEquals(1, queue.count { it.reason == StudyReason.LEECH })
+        assertEquals(1, queue.count { it.reason == StudyReason.DUE })
+    }
+
+    @Test
+    fun `review limit of zero still serves tricky cards`() {
+        val leech = CardState(
+            questionId = "l1", intervalDays = 3, dueAt = now - day, reps = 2, leech = true
+        )
+        val queue = Study.queue(
+            sched, listOf("l1"), mapOf("l1" to leech), now, reviewLimit = 0
+        )
+        assertEquals(1, queue.size)
+    }
+
+    @Test
+    fun `negative review limit is clamped rather than throwing`() {
+        val ids = listOf("q1")
+        val queue = Study.queue(
+            sched, ids, dueStates(ids), now, newLimit = -1, reviewLimit = -1
+        )
+        assertTrue(queue.isEmpty())
+    }
+
+    @Test
+    fun `new cards ignore review limit defaults to off`() {
+        assertFalse(SchedulerConfig().newCardsIgnoreReviewLimit)
+    }
 }

@@ -153,6 +153,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     private fun schedKey(name: String) = doublePreferencesKey("anki_$name")
 
+    private fun schedBoolKey(name: String) = booleanPreferencesKey("anki_$name")
+
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
         context.dataStore.data.map { prefs ->
             val d = com.mcqapp.domain.SchedulerConfig()
@@ -174,6 +176,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
                 newLimit = (prefs[schedKey("new_limit")] ?: d.newLimit.toDouble()).toInt(),
                 reviewLimit = (prefs[schedKey("review_limit")] ?: d.reviewLimit.toDouble()).toInt(),
+                newCardsIgnoreReviewLimit = prefs[schedBoolKey("new_ignore_review_limit")] ?: d.newCardsIgnoreReviewLimit,
                 fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
                 slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
             ).sanitized()
@@ -202,6 +205,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             prefs[schedKey("leech_threshold")] = c.leechThreshold.toDouble()
             prefs[schedKey("new_limit")] = c.newLimit.toDouble()
             prefs[schedKey("review_limit")] = c.reviewLimit.toDouble()
+            prefs[schedBoolKey("new_ignore_review_limit")] = c.newCardsIgnoreReviewLimit
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
         }
@@ -233,6 +237,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                         "fast_seconds" to c.fastSeconds.toDouble(),
                         "slow_seconds" to c.slowSeconds.toDouble()
                     ).forEach { (name, value) -> prefs[schedKey(name)] = value }
+                    // Boolean, so it cannot ride along in the numeric list above.
+                    prefs[schedBoolKey("new_ignore_review_limit")] = c.newCardsIgnoreReviewLimit
                 }
         }
     }
@@ -905,8 +911,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             questions.map { it.id },
             states,
             now,
-            newLimit ?: config.newLimit
+            newLimit ?: config.newLimit,
+            config.reviewLimit,
+            config.newCardsIgnoreReviewLimit
         )
+        if (com.mcqapp.domain.Study.dueCount(states.values, now) > config.reviewLimit) {
+            Logger.i(
+                "REPO",
+                "getStudyQueue($paperId): review limit ${config.reviewLimit} reached, " +
+                    "${com.mcqapp.domain.Study.dueCount(states.values, now)} due, " +
+                    "${queue.count { it.reason == com.mcqapp.domain.StudyReason.NEW }} new served"
+            )
+        }
         return if (leechesOnly) com.mcqapp.domain.Study.onlyLeeches(queue) else queue
     }
 

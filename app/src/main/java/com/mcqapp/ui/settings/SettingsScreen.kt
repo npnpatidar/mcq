@@ -641,6 +641,25 @@ private fun AnkiSchedulerSection(
                 range = 0f..9999f,
                 onChange = { onChange(config.copy(reviewLimit = it.toInt())) }
             )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("New cards ignore review limit")
+                    Text(
+                        stringResource(R.string.the_review_limit_also_limits_new_cards_so_clearing_a_backlog) +
+                            "Turn this on to keep learning new material even once the review limit " +
+                            "is reached.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(
+                    checked = config.newCardsIgnoreReviewLimit,
+                    onCheckedChange = { onChange(config.copy(newCardsIgnoreReviewLimit = it)) }
+                )
+            }
             AnkiNumberRow(
                 label = "Easy answer threshold",
                 help = "Auto-graded Easy below this response time",

@@ -83,8 +83,9 @@ class MathHtmlTest {
 
     @Test
     fun bareTextInMathRunBecomesTokens() {
-        // Compact MathML from the DOCX converter: MathJax throws
-        // "Unexpected text node" (shown as "Math input error") on this.
+        // Compact MathML from the DOCX converter: MathJax rejects
+        // bare text nodes with "Unexpected text node" (shown as
+        // "Math input error").
         val stored = "<math><msup><mrow>x</mrow><mrow>2</mrow></msup>+2x+1=0</math>"
         assertEquals(
             "<math><msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>" +
@@ -100,6 +101,68 @@ class MathHtmlTest {
             "<math><mrow><msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup>" +
                 "<mo>+</mo><mn>2</mn><mi>x</mi><mo>+</mo><mn>1</mn><mo>=</mo><mn>0</mn></mrow></math>",
             stripMathAttributes(mathml)
+        )
+    }
+
+    /**
+     * F4: MathML from an imported bank must not carry event handlers into a
+     * JS-enabled WebView. Inner tags are reduced to bare, attribute-free,
+     * allow-listed tags; unknown tags are escaped as text.
+     */
+    @Test
+    fun mathmlEventHandlersAreStripped() {
+        val hostile = "<math><mi onclick=\"alert(1)\">x</mi><mo onerror=\"alert(2)\">+</mo></math>"
+        assertEquals(
+            "<math><mrow><mi>x</mi><mo>+</mo></mrow></math>",
+            stripMathAttributes(hostile)
+        )
+    }
+
+    @Test
+    fun mathmlUnknownTagsAreEscaped() {
+        val hostile = "<math><script>alert(1)</script><mi>x</mi></math>"
+        // Escaped attacker text is kept inert, without re-tokenization; the
+        // original <math> root survives since it is allow-listed.
+        assertEquals(
+            "<math>&lt;script&gt;alert(1)&lt;/script&gt;<mi>x</mi></math>",
+            stripMathAttributes(hostile)
+        )
+    }
+
+    @Test
+    fun mathmlAttributesAreStrippedFromEveryTag() {
+        val hostile = "<math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\">" +
+            "<mrow style=\"color:red\"><mi id=\"evil\">x</mi></mrow></math>"
+        assertEquals(
+            "<math><mrow><mi>x</mi></mrow></math>",
+            stripMathAttributes(hostile)
+        )
+    }
+
+    @Test
+    fun mathmlTextBetweenTagsIsEscaped() {
+        val hostile = "<math><mi>x</mi><mtext><b>bold</b></mtext></math>"
+        assertEquals(
+            "<math><mi>x</mi><mtext>&lt;b&gt;bold&lt;/b&gt;</mtext></math>",
+            stripMathAttributes(hostile)
+        )
+    }
+
+    @Test
+    fun mathmlWithoutTagsIsEscaped() {
+        // No <math> block: the raw input is emitted escaped as visible text,
+        // never wrapped as live markup — the fallback path used to return it
+        // unescaped.
+        assertEquals("&lt;script&gt;", stripMathAttributes("<script>"))
+    }
+
+    @Test
+    fun mathmlEntitiesSurviveSanitizing() {
+        // Character references are operator content in exported MathML; they
+        // must not be double-escaped into literal "&lt;" on screen.
+        assertEquals(
+            "<math><mrow><mi>a</mi><mo>&lt;</mo><mi>b</mi></mrow></math>",
+            stripMathAttributes("<math><mi>a</mi><mo>&lt;</mo><mi>b</mi></math>")
         )
     }
 

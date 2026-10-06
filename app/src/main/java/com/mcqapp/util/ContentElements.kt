@@ -189,20 +189,37 @@ internal fun stripMathAttributes(mathml: String): String {
     // turned into nested <math> that MathJax rejects.
     val block = Regex("<math[\\s>].*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         .find(mathml.trim())?.value
-        ?: return "<math><mrow>${mathml.trim()}</mrow></math>"
+        // No <math> block: the field is not MathML at all. Emit the content
+        // escaped as text — wrapping it in <math> would hand a hostile
+        // payload to the JS-enabled page as live markup.
+        ?: return com.mcqapp.data.sanitizeMathml(mathml.trim())
     var result = block
         .replace(Regex("<math\\s+[^>]*>", RegexOption.IGNORE_CASE)) { "<math>" }
         .replace(Regex("</math\\s*>", RegexOption.IGNORE_CASE)) { "</math>" }
         .replace(Regex("<semantics\\s*>", RegexOption.IGNORE_CASE)) { "" }
         .replace(Regex("</semantics\\s*>", RegexOption.IGNORE_CASE)) { "" }
         .replace(Regex("<annotation\\s+[^>]*>.*?</annotation\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))) { "" }
+    // Inner tags are reduced to bare, attribute-free, allow-listed tags: an
+    // imported bank could otherwise smuggle event handlers into a JS-enabled
+    // WebView. Unknown tags are escaped as text.
+    val (sanitized, escapedUnknownTag) = com.mcqapp.data.sanitizeMathmlReporting(result)
+    if (escapedUnknownTag) {
+        // Hostile or malformed markup: keep it inert and stop there.
+        // Tokenizing escaped attacker text would only re-typeset it.
+        return sanitized
+    }
+    // Well-formed MathML may still carry bare text (compact DOCX output),
+    // which MathJax rejects with "Unexpected text node". normalizeMathText
+    // tokenizes it; re-emitting tags verbatim is safe because the sanitizer
+    // has already stripped every attribute.
+    result = com.mcqapp.data.normalizeMathText(sanitized)
     val inner = result.removePrefix("<math>").removeSuffix("</math>").trim()
     val wrapped = if (inner.startsWith("<mrow", ignoreCase = true)) {
         "<math>$inner</math>"
     } else {
         "<math><mrow>$inner</mrow></math>"
     }
-    return normalizeMathText(wrapped)
+    return wrapped
 }
 
 /** Same escaping as the exporters: one escaper, not four copies. */

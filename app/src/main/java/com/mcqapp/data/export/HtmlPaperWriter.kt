@@ -4,18 +4,25 @@ import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.renderInlineHtml
-import com.mcqapp.domain.ContentElement
-
-/**
- * Renders a paper as a single self-contained HTML page. Data-URI images are
- * embedded as-is; remote URLs are referenced as-is.
- */
+import com.mcqapp.domain.ContentElement    /**
+     * Renders a paper as a single self-contained HTML page. Data-URI images
+     * are embedded as-is; remote URLs are referenced in the markup but the
+     * page's CSP blocks loading them, so a shared export never phones home.
+     */
 object HtmlPaperWriter {
 
     fun paperToHtml(paper: PaperDto): String {
         val sb = StringBuilder()
         sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
         sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        // A shared export opens in the recipient's browser, so it must never
+        // reach the network: data-URI images render, remote image URLs in the
+        // bank stay inert (same containment as the in-app math page). The
+        // static page runs no script; the quiz page's inline script is
+        // allowed explicitly in its own meta below.
+        sb.append("<meta http-equiv=\"Content-Security-Policy\" ")
+            .append("content=\"default-src 'none'; script-src 'none'; ")
+            .append("style-src 'unsafe-inline'; img-src data:;\">\n")
         sb.append("<title>").append(esc(paper.title)).append("</title>\n<style>\n")
         sb.append(CSS)
         sb.append("</style>\n</head>\n<body>\n")
@@ -50,6 +57,13 @@ object HtmlPaperWriter {
         val sb = StringBuilder()
         sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
         sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        // The quiz page runs inline script (the answer toggles), so
+        // script-src allows inline — and nothing else: a shared export must
+        // not load remote resources or exfiltrate. Same containment as the
+        // static page, which forbids script entirely.
+        sb.append("<meta http-equiv=\"Content-Security-Policy\" ")
+            .append("content=\"default-src 'none'; script-src 'unsafe-inline'; ")
+            .append("style-src 'unsafe-inline'; img-src data:;\">\n")
         sb.append("<title>").append(esc(paper.title)).append("</title>\n<style>\n")
         sb.append(CSS)
         sb.append("</style>\n</head>\n<body>\n")
@@ -156,9 +170,9 @@ object HtmlPaperWriter {
 
     /**
      * Renders content elements to HTML: text is escaped, MathML is
-     * embedded as-is, tables become `<table>` blocks, and images are
-     * embedded. Falls back to plain text for legacy questions with no
-     * elements.
+     * re-emitted attribute-free through the shared sanitizer, tables become
+     * `<table>` blocks, and images are embedded. Falls back to plain text
+     * for legacy questions with no elements.
      */
     private fun elementsToHtml(elements: List<ContentElement>, legacyImage: String? = null): String {
         if (elements.isEmpty()) return ""
@@ -176,7 +190,7 @@ object HtmlPaperWriter {
                     }
                     sb.append("</table>")
                 }
-                is ContentElement.MathElement -> sb.append(element.mathml)
+                is ContentElement.MathElement -> sb.append(com.mcqapp.data.sanitizeMathml(element.mathml))
             }
         }
         appendImage(sb, legacyImage)

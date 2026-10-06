@@ -46,6 +46,64 @@ private val inlineTags = mapOf(
     "p" to "p", "div" to "div", "li" to "li", "tr" to "tr"
 )
 
+/**
+ * MathML elements allowed inside a `<math>` block, mapped to the bare tag
+ * emitted. Anything else is escaped as text. Attributes are never copied:
+ * an imported bank could otherwise smuggle `onclick` into a JS-enabled
+ * WebView, and the exported quiz page runs inline script.
+ */
+private val mathmlTags = mapOf(
+    "math" to "math", "mrow" to "mrow", "mi" to "mi", "mn" to "mn", "mo" to "mo",
+    "mtext" to "mtext", "ms" to "ms", "mspace" to "mspace",
+    "mfrac" to "mfrac", "msqrt" to "msqrt", "mroot" to "mroot",
+    "msup" to "msup", "msub" to "msub", "msubsup" to "msubsup",
+    "munder" to "munder", "mover" to "mover", "munderover" to "munderover",
+    "mtable" to "mtable", "mtr" to "mtr", "mtd" to "mtd",
+    "mstyle" to "mstyle", "mpadded" to "mpadded", "mphantom" to "mphantom",
+    "mfenced" to "mfenced", "menclose" to "menclose",
+    "semantics" to "semantics", "annotation" to "annotation"
+)
+
+/**
+ * Re-emits a `<math>` block with every inner tag reduced to a bare,
+ * attribute-free, allow-listed tag; the flag reports whether any unknown
+ * tag had to be escaped. Text between tags escapes only `<` and `>`:
+ * exported MathML legitimately carries character references like `&lt;`
+ * as operator content, and escaping the ampersand would print the entity
+ * literally on screen. A bare `&` stays literal, which renders as text and
+ * cannot form markup once `<`/`>` are gone. The root `<math>` keeps no
+ * attributes either — MathJax reads none of them.
+ */
+private fun escapeMathTextKeepEntities(s: String): String = s
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+
+internal fun sanitizeMathmlReporting(mathml: String): Pair<String, Boolean> {
+    if (!mathml.contains('<')) return Pair(escapeMathTextKeepEntities(mathml), false)
+    val sb = StringBuilder()
+    var escapedUnknownTag = false
+    var pos = 0
+    val tagPattern = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
+    for (match in tagPattern.findAll(mathml)) {
+        sb.append(escapeMathTextKeepEntities(mathml.substring(pos, match.range.first)))
+        val closing = match.groupValues[1] == "/"
+        val canonical = mathmlTags[match.groupValues[2].lowercase()]
+        if (canonical == null) {
+            escapedUnknownTag = true
+            sb.append(escapeMathTextKeepEntities(match.value))
+        } else if (closing) {
+            sb.append("</").append(canonical).append(">")
+        } else {
+            sb.append("<").append(canonical).append(">")
+        }
+        pos = match.range.last + 1
+    }
+    sb.append(escapeMathTextKeepEntities(mathml.substring(pos)))
+    return Pair(sb.toString(), escapedUnknownTag)
+}
+
+internal fun sanitizeMathml(mathml: String): String = sanitizeMathmlReporting(mathml).first
+
 internal fun escapeHtmlText(s: String): String = s
     .replace("&", "&amp;")
     .replace("<", "&lt;")
@@ -63,7 +121,7 @@ private val mathTokenElements = setOf(
 )
 
 /**
- * Splits a bare math text run into strict token elements: ASCII
+ * Splits a bare math text run into token elements: ASCII
  * letter runs become `<mi>`, digit runs `<mn>`, anything else goes
  * operator-by-operator into `<mo>`. Bare text directly inside
  * `<mrow>`/`<math>` is invalid MathML — MathJax throws `Unexpected

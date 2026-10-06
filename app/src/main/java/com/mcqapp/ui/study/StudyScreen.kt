@@ -150,7 +150,7 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                 )
                 Spacer(Modifier.height(12.dp))
                 if (state.revealed) {
-                    SimplifiedResultBlock(state = state, viewModel = viewModel)
+                    SimplifiedResultBlock(state = state)
                 }
             }
             SimplifiedFooter(state = state, viewModel = viewModel)
@@ -200,32 +200,14 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
 }
 
 /**
- * The result of a Simplified check, with the change-grade affordance. Lives in
- * the scrollable content: it is read, not tapped to proceed.
+ * The result of a Simplified check. Lives in the scrollable content: it is
+ * read, not tapped to proceed. The change-grade control itself sticks to the
+ * footer beside Next, so correcting a misclick never requires scrolling.
  */
 @Composable
-private fun SimplifiedResultBlock(state: StudyUiState, viewModel: StudyViewModel) {
-    val question = state.currentQuestion ?: return
-    val result = state.lastResult
-    if (result != null) {
-        SimplifiedResultCard(result = result)
-        Spacer(Modifier.height(8.dp))
-    }
-    var showPicker by remember(question.id) { mutableStateOf(false) }
-    if (showPicker) {
-        GradeButtons(
-            enabled = !state.grading,
-            previews = state.previews,
-            onGrade = {
-                viewModel.changeGrade(it)
-                showPicker = false
-            }
-        )
-    } else {
-        TextButton(onClick = { showPicker = true }) {
-            Text(stringResource(R.string.change_grade))
-        }
-    }
+private fun SimplifiedResultBlock(state: StudyUiState) {
+    val result = state.lastResult ?: return
+    SimplifiedResultCard(result = result)
 }
 
 /**
@@ -272,12 +254,34 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Text(stringResource(R.string.check))
             }
         } else {
-            Button(
-                onClick = { viewModel.next() },
-                modifier = Modifier.fillMaxWidth().testTag("study-next"),
-                enabled = !state.grading
+            val question = state.currentQuestion
+            var showPicker by remember(question?.id) { mutableStateOf(false) }
+            if (showPicker) {
+                GradeButtons(
+                    enabled = !state.grading,
+                    previews = state.previews,
+                    onGrade = {
+                        viewModel.changeGrade(it)
+                        showPicker = false
+                    }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(stringResource(R.string.next))
+                TextButton(onClick = { showPicker = !showPicker }) {
+                    Text(stringResource(R.string.change_grade))
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = { viewModel.next() },
+                    modifier = Modifier.weight(1f).testTag("study-next"),
+                    enabled = !state.grading
+                ) {
+                    Text(stringResource(R.string.next))
+                }
             }
         }
     }

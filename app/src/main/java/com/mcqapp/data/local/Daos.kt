@@ -305,6 +305,26 @@ interface AttemptDao {
     @Query("SELECT * FROM attempts WHERE id = :id")
     suspend fun getById(id: Long): AttemptEntity?
 
+    /**
+     * Each question's most recent graded result across every attempt: the
+     * MAX(id) graded row per question wins, regardless of which attempt
+     * holds it. Rows with no selection or no answer key carry no evidence,
+     * so they are filtered in SQL — the mistake badges used to pull every
+     * attempt and every result row (full option JSON included) into memory
+     * instead of this single aggregate. Explicit `ORDER BY r.id` pins the
+     * scan order the mistake ordering relies on.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId, attempts.paperId AS paperId, " +
+            "r.isCorrect AS isCorrect, r.id AS rowId " +
+            "FROM question_results r " +
+            "INNER JOIN attempts ON r.attemptId = attempts.id " +
+            "WHERE r.id IN (SELECT MAX(id) FROM question_results " +
+            "WHERE selectedOptionIds != '' AND correctOptionIds != '' GROUP BY questionId) " +
+            "ORDER BY r.id"
+    )
+    suspend fun getLatestStandings(): List<LatestStanding>
+
     @Query("SELECT * FROM question_results WHERE attemptId = :attemptId ORDER BY rowid")
     suspend fun getResults(attemptId: Long): List<QuestionResultEntity>
 
@@ -330,3 +350,15 @@ interface AttemptDao {
 
 /** One row of [QuestionDao.getMatchesByContentHashes]. */
 data class ContentHashMatch(val id: String, val contentHash: String)
+
+/**
+ * One row of [AttemptDao.getLatestStandings]: a question's latest graded
+ * standing. [rowId] orders standings by recency, the same key the old
+ * rowid-ordered full scan used.
+ */
+data class LatestStanding(
+    val questionId: String,
+    val paperId: String,
+    val isCorrect: Boolean,
+    val rowId: Long
+)

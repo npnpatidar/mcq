@@ -1273,8 +1273,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Paper id -> count of distinct ever-missed questions (for badges). */
     suspend fun getMistakeCounts(): Map<String, Int> =
-        com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())
-            .mapValues { it.value.size }
+        // One aggregate in SQL instead of every attempt header and every
+        // result row (full option JSON included) in memory.
+        com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
+            db.attemptDao().getLatestStandings().map {
+                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+            }
+        ).mapValues { it.value.size }
 
     /** Export DTO of all bookmarked questions, grouped by source paper. */
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? {
@@ -1289,8 +1294,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Ever-missed questions of one paper, most-recently-missed first. */
     suspend fun getMistakenQuestions(paperId: String): List<Question> {
-        val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(getAttempts(), getAllQuestionResults())[paperId]
-            ?: return emptyList()
+        // Same single aggregate as the badge counts; the map lookup filters
+        // to this paper and preserves the most-recently-missed-first order.
+        val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
+            db.attemptDao().getLatestStandings().map {
+                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+            }
+        )[paperId] ?: return emptyList()
         if (ids.isEmpty()) return emptyList()
         val byId = db.questionDao().getByIdsChunked(ids).toDomainBulk().associateBy { it.id }
         return ids.mapNotNull { byId[it] }

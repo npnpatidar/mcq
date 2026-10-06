@@ -384,6 +384,20 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         refreshDuplicates()
     }
 
+    /**
+     * Process death on the Import screen: the static holder is empty and no
+     * text was passed, so nothing will ever flip loading off. Show an error
+     * instead of an infinite spinner.
+     */
+    fun setNoSourceError() {
+        _state.update {
+            it.copy(
+                loading = false,
+                error = "Could not read the file. Please pick it again."
+            )
+        }
+    }
+
     fun updatePaperTitle(value: String) = update { it.copy(paperTitle = value) }
     fun updatePaperDescription(value: String) = update { it.copy(paperDescription = value) }
     fun updateDuration(value: Int) = update { it.copy(durationMinutes = value) }

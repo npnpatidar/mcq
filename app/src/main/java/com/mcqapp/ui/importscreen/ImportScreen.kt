@@ -175,6 +175,11 @@ fun ImportScreen(
             if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText === importText) {
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = null
             }
+        } else {
+            // Process death: the static holder is empty and no text was passed,
+            // so nothing will ever flip loading off. Show an error instead of
+            // an infinite spinner.
+            viewModel.setNoSourceError()
         }
     }
 

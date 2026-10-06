@@ -360,7 +360,8 @@ private fun ResultCard(
                 Row(modifier = Modifier.padding(top = 4.dp)) {
                     Text(
                         if (isCorrect) "✓" else if (wasSelected && !ungraded) "✗"
-                        else if (wasSelected) "•" else "○",
+                        // Filled circle, matching study: a bullet renders smaller.
+                        else if (wasSelected) "●" else "○",
                         color = if (isCorrect)
                             MaterialTheme.colorScheme.primary
                         else if (wasSelected && !ungraded)

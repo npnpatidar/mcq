@@ -370,7 +370,9 @@ private fun QuestionCard(
                 )
                 Spacer(Modifier.height(6.dp))
             }
-            ContentElements(question.elements, textStyle = MaterialTheme.typography.titleMedium)
+            // Bumped a step: the stem is the primary reading text and was set
+            // small relative to the option markers around it.
+            ContentElements(question.elements, textStyle = MaterialTheme.typography.titleLarge)
             QuestionImage(
                 src = question.image,
                 contentDescription = stringResource(R.string.question_image),
@@ -392,7 +394,9 @@ private fun QuestionCard(
                     revealed && isCorrect -> "✓"
                     revealed && isSelected -> "✗"
                     isSelected && multi -> "▣"
-                    isSelected -> "•"
+                    // Filled circle, not a bullet: "•" renders visibly smaller
+                    // than "○" at the same size, so selecting shrank the mark.
+                    isSelected -> "●"
                     multi -> "▢"
                     else -> "○"
                 }
@@ -420,14 +424,14 @@ private fun QuestionCard(
                 ) {
                     Text(
                         mark,
-                        modifier = Modifier.width(28.dp),
-                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.width(32.dp),
+                        style = MaterialTheme.typography.titleLarge,
                         color = if (revealed && isCorrect) MaterialTheme.colorScheme.primary
                         else if (revealed && isSelected) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurface
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        ContentElements(option.elements, textStyle = MaterialTheme.typography.bodyMedium)
+                        ContentElements(option.elements, textStyle = MaterialTheme.typography.bodyLarge)
                         QuestionImage(src = option.image, contentDescription = stringResource(R.string.image_for_this_option))
                     }
                 }
@@ -435,7 +439,7 @@ private fun QuestionCard(
             if (revealed && question.explanation.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.explanation), style = MaterialTheme.typography.labelMedium)
-                ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodyMedium)
+                ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodyLarge)
                 QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
             }
         }

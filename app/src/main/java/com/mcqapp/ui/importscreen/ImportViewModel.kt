@@ -53,6 +53,123 @@ data class ImportUiState(
     val error: String? = null
 )
 
+internal fun buildPreviewPaperDto(
+    s: ImportUiState,
+    original: McqFileDto?
+): PaperDto {
+    if (original == null || original.papers.isEmpty()) {
+        // Preview-built paper: no stable id exists, so mint an ephemeral
+        // one that the Importer may match by title.
+        val paperId = LegacyParser.EPHEMERAL_PAPER_ID_PREFIX +
+            System.currentTimeMillis().toString(36)
+        return PaperDto(
+            id = paperId,
+            title = s.paperTitle.trim(),
+            description = s.paperDescription.trim(),
+            durationMinutes = s.durationMinutes,
+            negativeMarking = s.negativeMarking,
+            categories = listOf(
+                CategoryDto(
+                    id = paperId + "-cat",
+                    title = s.categoryName.trim().ifBlank { "Uncategorized" },
+                    questions = s.questions
+                )
+            )
+        )
+    }
+    val orig = original.papers.first()
+    val origTotal = orig.categories.sumOf { it.questions.size }
+    val origIds = orig.categories.flatMap { it.questions }.map { it.id }
+    val stateIds = s.questions.map { it.id }
+    // Counts + head only: a full 25k id list once blew up a log line.
+    Logger.d("IMPORTVM", "import(): orig cats=${orig.categories.size} " +
+        "origQs=$origTotal stateQs=${s.questions.size} " +
+        "origHead=${origIds.take(5)} stateHead=${stateIds.take(5)}")
+    // Index once: per-question find() was O(n^2) and froze Main on 25k rows.
+    val byId = s.questions.associateBy { it.id }
+    val matchedIds = HashSet<String>()
+    val mapped = orig.categories.map { cat ->
+        val matched = cat.questions.mapNotNull { origQ ->
+            byId[origQ.id]?.also { matchedIds.add(it.id) }
+        }
+        if (matched.size != cat.questions.size) {
+            Logger.w("IMPORTVM", "import(): category '${cat.title}': " +
+                "orig=${cat.questions.size} questions but only " +
+                "${matched.size} matched state by id; missing " +
+                (cat.questions.map { it.id } - matched.map { it.id }.toSet())
+                    .take(10))
+        }
+        cat.copy(
+            title = if (orig.categories.size == 1) {
+                s.categoryName.trim().ifBlank { cat.title }
+            } else {
+                cat.title
+            },
+            questions = matched
+        )
+    }
+    // Safety net: every preview question must reach the Importer.
+    // If IDs diverged, appending beats silently dropping; the
+    // DB content-hash dedup still decides what is actually new.
+    val unmatched = s.questions.filter { it.id !in matchedIds }
+    val categories = if (unmatched.isNotEmpty() && mapped.isNotEmpty()) {
+        Logger.w("IMPORTVM", "import(): appending ${unmatched.size} unmatched " +
+            "state questions to last category: ${unmatched.take(10).map { it.id }}")
+        mapped.dropLast(1) + mapped.last().copy(
+            questions = mapped.last().questions + unmatched
+        )
+    } else {
+        mapped
+    }
+    return orig.copy(
+        title = s.paperTitle.trim(),
+        description = s.paperDescription.trim(),
+        durationMinutes = s.durationMinutes,
+        negativeMarking = s.negativeMarking,
+        categories = categories
+    )
+}
+
+/**
+ * Whether a picked file is a backup restore rather than a single-paper import.
+ * Backups carry several papers and/or review progress; the single-paper
+ * preview can only show the first paper, so without special handling the rest
+ * would be silently dropped on import.
+ */
+internal fun isBackupFile(file: McqFileDto): Boolean =
+    file.papers.size > 1 || file.scheduling.isNotEmpty()
+
+/**
+ * The file the Importer actually writes, extracted so the backup decision is
+ * unit-testable without an Android harness: it is pure DTO shuffling.
+ *
+ * Single-paper files take the preview-edited paper exactly as before. Backups
+ * keep the edited first paper (preview deletions/renames still apply there)
+ * and append the remaining papers untouched, with review progress attached —
+ * so a restore can neither lose papers nor reset schedules.
+ */
+internal fun buildImportFile(
+    s: ImportUiState,
+    original: McqFileDto?
+): McqFileDto {
+    if (original == null || original.papers.isEmpty()) {
+        return McqFileDto(
+            version = 1,
+            papers = listOf(buildPreviewPaperDto(s, null)),
+            bookmarks = emptyList(),
+            attempts = emptyList()
+        )
+    }
+    val firstPaper = buildPreviewPaperDto(s, original)
+    return McqFileDto(
+        version = 1,
+        papers = listOf(firstPaper) + original.papers.drop(1),
+        bookmarks = original.bookmarks,
+        attempts = original.attempts,
+        scheduling = original.scheduling
+    )
+}
+
 class ImportViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -236,6 +353,22 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             paper.categories.firstOrNull { it.questions.isNotEmpty() }?.title ?: "Uncategorized"
         }
 
+        // Backups preview only the first paper for editing, but import
+        // everything: say so upfront or the preview understates the restore.
+        val backupNotice = if (isBackupFile(file)) {
+            val totalQs = file.papers.sumOf { p ->
+                p.categories.sumOf { it.questions.size }
+            }
+            listOf(
+                "Backup restore: ${file.papers.size} papers " +
+                    "(${totalQs} questions) will be restored, " +
+                    "including review schedules" +
+                    (if (file.attempts.isNotEmpty()) " and ${file.attempts.size} attempts" else "") +
+                    ". Only this first paper is previewed for editing."
+            )
+        } else {
+            emptyList()
+        }
         _state.value = ImportUiState(
             loading = false,
             paperTitle = paper.title,
@@ -244,7 +377,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarking = paper.negativeMarking,
             categoryName = effectiveCategory,
             questions = allQuestions,
-            parseWarnings = extraWarnings + file.warnings,
+            parseWarnings = extraWarnings + backupNotice + file.warnings,
             originalFile = file
         )
         Logger.i("IMPORTVM", "Loaded ${allQuestions.size} questions for import preview")
@@ -265,106 +398,29 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         _state.update(block)
     }
 
-    private fun buildPaperDto(
-        s: ImportUiState,
-        original: McqFileDto?
-    ): PaperDto {
-        if (original == null || original.papers.isEmpty()) {
-            // Preview-built paper: no stable id exists, so mint an ephemeral
-            // one that the Importer may match by title.
-            val paperId = LegacyParser.EPHEMERAL_PAPER_ID_PREFIX +
-                System.currentTimeMillis().toString(36)
-            return PaperDto(
-                id = paperId,
-                title = s.paperTitle.trim(),
-                description = s.paperDescription.trim(),
-                durationMinutes = s.durationMinutes,
-                negativeMarking = s.negativeMarking,
-                categories = listOf(
-                    CategoryDto(
-                        id = paperId + "-cat",
-                        title = s.categoryName.trim().ifBlank { "Uncategorized" },
-                        questions = s.questions
-                    )
-                )
-            )
-        }
-        val orig = original.papers.first()
-        val origTotal = orig.categories.sumOf { it.questions.size }
-        val origIds = orig.categories.flatMap { it.questions }.map { it.id }
-        val stateIds = s.questions.map { it.id }
-        // Counts + head only: a full 25k id list once blew up a log line.
-        Logger.d("IMPORTVM", "import(): orig cats=${orig.categories.size} " +
-            "origQs=$origTotal stateQs=${s.questions.size} " +
-            "origHead=${origIds.take(5)} stateHead=${stateIds.take(5)}")
-        // Index once: per-question find() was O(n^2) and froze Main on 25k rows.
-        val byId = s.questions.associateBy { it.id }
-        val matchedIds = HashSet<String>()
-        val mapped = orig.categories.map { cat ->
-            val matched = cat.questions.mapNotNull { origQ ->
-                byId[origQ.id]?.also { matchedIds.add(it.id) }
-            }
-            if (matched.size != cat.questions.size) {
-                Logger.w("IMPORTVM", "import(): category '${cat.title}': " +
-                    "orig=${cat.questions.size} questions but only " +
-                    "${matched.size} matched state by id; missing " +
-                    (cat.questions.map { it.id } - matched.map { it.id }.toSet())
-                        .take(10))
-            }
-            cat.copy(
-                title = if (orig.categories.size == 1) {
-                    s.categoryName.trim().ifBlank { cat.title }
-                } else {
-                    cat.title
-                },
-                questions = matched
-            )
-        }
-        // Safety net: every preview question must reach the Importer.
-        // If IDs diverged, appending beats silently dropping; the
-        // DB content-hash dedup still decides what is actually new.
-        val unmatched = s.questions.filter { it.id !in matchedIds }
-        val categories = if (unmatched.isNotEmpty() && mapped.isNotEmpty()) {
-            Logger.w("IMPORTVM", "import(): appending ${unmatched.size} unmatched " +
-                "state questions to last category: ${unmatched.take(10).map { it.id }}")
-            mapped.dropLast(1) + mapped.last().copy(
-                questions = mapped.last().questions + unmatched
-            )
-        } else {
-            mapped
-        }
-        return orig.copy(
-            title = s.paperTitle.trim(),
-            description = s.paperDescription.trim(),
-            durationMinutes = s.durationMinutes,
-            negativeMarking = s.negativeMarking,
-            categories = categories
-        )
-    }
-
     fun import() {
         val s = _state.value
-        if (s.paperTitle.isBlank() || s.questions.isEmpty()) return
+        val original = s.originalFile
+        val backup = original != null && isBackupFile(original)
+        // Single-paper imports need something to import; a backup still carries
+        // papers 2+ (and schedules) even if paper 1 was emptied in preview.
+        if (!backup && (s.paperTitle.isBlank() || s.questions.isEmpty())) return
         _state.update { it.copy(importing = true, importDone = false, importReport = null) }
 
         viewModelScope.launch {
             try {
-                val original = s.originalFile
-                // paperDto assembly is O(n) CPU work (25k rows froze Main as
+                // File assembly is O(n) CPU work (25k rows froze Main as
                 // O(n^2)); build it off-thread. Only the final state update
                 // below needs the main thread (and update() is thread-safe).
-                val paperDto: PaperDto = withContext(Dispatchers.Default) {
-                    buildPaperDto(s, original)
+                val file: McqFileDto = withContext(Dispatchers.Default) {
+                    buildImportFile(s, original)
                 }
-
-                val file = McqFileDto(
-                    version = 1,
-                    papers = listOf(paperDto),
-                    // Backup files carry history: restore it alongside content
-                    // (attempt restore dedupes, bookmarks are idempotent).
-                    bookmarks = original?.bookmarks ?: emptyList(),
-                    attempts = original?.attempts ?: emptyList()
-                )
+                if (backup) {
+                    Logger.i("IMPORTVM", "import(): backup restore, " +
+                        "${file.papers.size} papers, " +
+                        "${file.scheduling.size} scheduled cards, " +
+                        "${file.attempts.size} attempts")
+                }
                 Logger.d("IMPORTVM", "import(): using ${s.questions.size} edited state questions " +
                     "(correct set on ${s.questions.count { it.correctOptionIds.isNotEmpty() }})")
                 // The whole DB import (hashing + writes for every row) stays

@@ -156,37 +156,45 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
             SimplifiedFooter(state = state, viewModel = viewModel)
         }
     } else {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
-        ) {
-            StudyHeader(state)
-            Spacer(Modifier.height(12.dp))
-            QuestionCard(
-                question = question,
-                selection = state.currentSelection,
-                revealed = state.revealed,
-                reason = state.reasons[question.id],
-                onToggleOption = { viewModel.toggleOption(it) }
-            )
-            Spacer(Modifier.height(12.dp))
-            if (!state.revealed) {
-                Button(
-                    onClick = { viewModel.reveal() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.show_answer))
-                }
-            } else {
-                GradeButtons(
-                    enabled = !state.grading,
-                    previews = state.previews,
-                    onGrade = { viewModel.grade(it) }
+        // Same fixed-footer shape as Simplified: the answer and the four
+        // buttons never scroll away either.
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp)
+            ) {
+                StudyHeader(state)
+                Spacer(Modifier.height(12.dp))
+                QuestionCard(
+                    question = question,
+                    selection = state.currentSelection,
+                    revealed = state.revealed,
+                    reason = state.reasons[question.id],
+                    onToggleOption = { viewModel.toggleOption(it) }
                 )
             }
-            Spacer(Modifier.height(24.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                if (!state.revealed) {
+                    Button(
+                        onClick = { viewModel.reveal() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.show_answer))
+                    }
+                } else {
+                    GradeButtons(
+                        enabled = !state.grading,
+                        previews = state.previews,
+                        onGrade = { viewModel.grade(it) }
+                    )
+                }
+            }
         }
     }
 }

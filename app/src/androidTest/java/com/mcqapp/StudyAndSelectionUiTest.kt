@@ -119,7 +119,8 @@ class StudyAndSelectionUiTest {
         )
 
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
+        // Show answer lives in the fixed footer now.
+        compose.onNodeWithText("Show answer", substring = false).performClick()
 
         // Each grade advertises the delay it would produce, as in Anki. The value
         // depends on the clock and the day boundary, so this only checks that all
@@ -136,7 +137,8 @@ class StudyAndSelectionUiTest {
             )
         }
 
-        compose.onNodeWithText("Good", substring = false).performScrollTo().performClick()
+        // The grade buttons live in the fixed footer now.
+        compose.onNodeWithText("Good", substring = false).performClick()
 
         // The second card takes several answers, so its markers are squares.
         waitFor("Show answer")

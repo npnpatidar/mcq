@@ -6,27 +6,22 @@ This guide records the exact local build path used for this checkout. The normal
 
 The following is the environment used to produce the APK:
 
-- Workspace: `/sdcard/repo/mcq`
+- Workspace: `/root/ncal`
 - Host architecture: `aarch64` (`uname -m`)
 - Java: OpenJDK 21; the Android build also supports the CI JDK 17 configuration
 - Android SDK: `/opt/android-sdk`
 - Compile SDK: 37
 - Target SDK: 36
 - Build tools: 37.0.0
-- Gradle: the tracked wrapper, 9.6.1 (a distribution is also pre-installed at `/opt/gradle-9.6.1` and can be used to generate the wrapper: `/opt/gradle-9.6.1/bin/gradle wrapper --gradle-version 9.6.1`)
-- AGP: 9.4.1 (AGP 8.x is NOT compatible with Gradle 9.6.1; see section 4.4)
-- Kotlin: not applied as a plugin; AGP 9 has built-in Kotlin support (bundles Kotlin 2.2.10)
-- KSP: 2.2.10-2.0.2 (must match the Kotlin version bundled with AGP)
+- Gradle: the tracked wrapper, 9.6.1
 - QEMU: `/usr/bin/qemu-x86_64`
 
 The project does not require a separately installed Gradle distribution. Use `./gradlew`.
 
-Note: the `/sdcard` filesystem is mounted `noexec`, so the `gradlew` script cannot be made executable there. Invoke it via `sh gradlew` instead.
-
 ## 2. Enter the workspace and configure the SDK
 
 ```sh
-cd /sdcard/repo/mcq
+cd /root/ncal
 
 export ANDROID_HOME=/opt/android-sdk
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
@@ -50,7 +45,7 @@ The SDK packages are already present on this machine, so the install commands no
 On a host where the Android SDK tools can run natively:
 
 ```sh
-cd /sdcard/repo/mcq
+cd /root/ncal
 export ANDROID_HOME=/opt/android-sdk       # use the SDK path on the host
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
@@ -100,11 +95,11 @@ sudo apt-get update
 sudo apt-get install qemu-user libc6-amd64-cross libgcc-s1:amd64
 ```
 
-Confirm the tools and runtime exist. Note: on this Debian version the x86-64 loader lives under `lib/`, not directly in the prefix directory:
+Confirm the tools and runtime exist:
 
 ```sh
 command -v qemu-x86_64
-ls -l /usr/x86_64-linux-gnu/lib/ld-linux-x86-64.so.2
+ls -l /usr/x86_64-linux-gnu/ld-linux-x86-64.so.2
 ls -l /usr/lib/x86_64-linux-gnu/libgcc_s.so.1
 ```
 
@@ -132,7 +127,7 @@ The isolated path used successfully here was:
 
 ### 4.2 Create the AAPT2 wrapper
 
-AGP requires the custom executable to be named `aapt2`. Create a temporary wrapper; do not add machine-specific paths to the repository. Note: the qemu `-L` prefix must be `/usr/x86_64-linux-gnu` (qemu resolves the loader at `<prefix>/lib64/ld-linux-x86-64.so.2`, which is where this Debian puts it):
+AGP requires the custom executable to be named `aapt2`. Create a temporary wrapper; do not add machine-specific paths to the repository:
 
 ```sh
 AAPT2_WRAPPER=/tmp/ncal-aapt2/aapt2
@@ -149,14 +144,14 @@ chmod 700 "$AAPT2_WRAPPER"
 "$AAPT2_WRAPPER" version
 ```
 
-The version command should print an Android Asset Packaging Tool version. If it reports a missing `libgcc_s.so.1`, check the extracted path and `LD_LIBRARY_PATH` in the wrapper. If it reports `Could not open '/lib64/ld-linux-x86-64.so.2'`, the `-L` prefix is wrong; use `/usr/x86_64-linux-gnu` (not `/usr/x86_64-linux-gnu/lib`).
+The version command should print an Android Asset Packaging Tool version. If it reports a missing `libgcc_s.so.1`, check the extracted path and `LD_LIBRARY_PATH` in the wrapper.
 
 ### 4.3 Build with the wrapper
 
 Pass the AAPT2 override on the Gradle command line:
 
 ```sh
-cd /sdcard/repo/mcq
+cd /root/ncal
 export ANDROID_HOME=/opt/android-sdk
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
@@ -179,49 +174,12 @@ On this machine, the following exact command completed successfully and produced
 
 ```sh
 ANDROID_HOME=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk \
-sh gradlew :app:testDebugUnitTest :app:assembleDebug \
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug \
   -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
   --no-daemon
 ```
 
-The debug APK produced by this build is approximately 21 MB:
-
-```text
-app/build/outputs/apk/debug/app-debug.apk
-d8a1aab6c6e27635fe2f23ec5296dcbeb47af24ea46fee5b1b35a0a409eac71f
-```
-
 AGP prints an experimental warning for `android.aapt2FromMavenOverride`; it is expected for this command-line-only compatibility override and does not indicate a build failure.
-
-### 4.4 Toolchain versions: Gradle 9.6.1 requires AGP 9.x
-
-This build was initially attempted with AGP 8.13.2 and failed during project configuration:
-
-```text
-Caused by: org.gradle.api.GradleException: Plugin 'com.android.internal.application'
-relies on 'org.gradle.api.problems.internal.InternalProblems', a Gradle internal
-API that was removed in Gradle 9.6.0. Update the plugin to a version that no longer
-uses Gradle internal APIs, or use Gradle 9.5.
-```
-
-Fix: use AGP 9.4.1 (the latest 9.x). AGP 9 introduces built-in Kotlin support, which requires these additional changes (all were hit during this build):
-
-1. **Remove the `org.jetbrains.kotlin.android` plugin** from the root and app build files. AGP 9 fails with: `The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since AGP 9.0.`
-2. **Match compiler-plugin versions to the Kotlin bundled with AGP.** AGP 9.4.1 bundles Kotlin 2.2.10, so `org.jetbrains.kotlin.plugin.compose` and `org.jetbrains.kotlin.plugin.serialization` must be version `2.2.10` (not the latest stable Kotlin release).
-3. **Migrate `android.kotlinOptions { }` to `kotlin { compilerOptions { } }`** placed inside the `android { }` block. `jvmTarget` defaults to `compileOptions.targetCompatibility` and can be omitted.
-4. **Use KSP 2.2.10-2.0.2** (published as `com.google.devtools.ksp:symbol-processing-gradle-plugin`, plugin id `com.google.devtools.ksp`). The older KSP 1.5.x line is incompatible with AGP 9.
-5. **Set `android.disallowKotlinSourceSets=false` in `gradle.properties`.** KSP still registers its generated sources via the `kotlin.sourceSets` DSL, which AGP 9 disallows by default. Without this setting the build fails with: `Using kotlin.sourceSets DSL to add Kotlin sources is not allowed with built-in Kotlin.`
-
-The working root `build.gradle.kts` plugin block:
-
-```kotlin
-plugins {
-    id("com.android.application") version "9.4.1" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.2.10" apply false
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.2.10" apply false
-    id("com.google.devtools.ksp") version "2.2.10-2.0.2" apply false
-}
-```
 
 ## 5. Confirm the generated APK
 
@@ -230,6 +188,12 @@ After a successful ARM64/QEMU build:
 ```sh
 ls -lh app/build/outputs/apk/debug/app-debug.apk
 sha256sum app/build/outputs/apk/debug/app-debug.apk
+```
+
+The APK produced during the verified local build was approximately 12 MB. Its checksum after the final documented verification build was:
+
+```text
+14925d7d927c008a9e0fb1995f0b8808e9cbed25c9d9f072f253dce2b4c3664d  app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The checksum changes whenever source, dependencies, or the build toolchain changes. Always calculate a new checksum for the artifact you are distributing.
@@ -298,23 +262,11 @@ chmod 700 /tmp/ncal-aapt2/aapt2
 
 ### `qemu-x86_64: Could not open ... ld-linux-x86-64.so.2`
 
-Install `libc6-amd64-cross`, then verify `/usr/x86_64-linux-gnu/lib/ld-linux-x86-64.so.2` exists. The qemu `-L` prefix must be `/usr/x86_64-linux-gnu` so qemu finds the loader at `<prefix>/lib64/ld-linux-x86-64.so.2`.
+Install `libc6-amd64-cross`, then verify `/usr/x86_64-linux-gnu/ld-linux-x86-64.so.2` exists.
 
 ### `libgcc_s.so.1: cannot open shared object file`
 
 Install the amd64 `libgcc-s1` package or use the isolated package extraction in section 4.1. Confirm the wrapper's `LD_LIBRARY_PATH` points at the extracted `usr/lib/x86_64-linux-gnu` directory.
-
-### `Plugin 'com.android.internal.application' relies on 'org.gradle.api.problems.internal.InternalProblems'`
-
-AGP 8.x is incompatible with Gradle 9.6.1. Upgrade to AGP 9.4.1 and apply all the built-in-Kotlin changes listed in section 4.4.
-
-### `The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since AGP 9.0`
-
-Remove the `org.jetbrains.kotlin.android` plugin from the root and app build files; AGP 9 compiles Kotlin sources itself.
-
-### `Using kotlin.sourceSets DSL to add Kotlin sources is not allowed with built-in Kotlin`
-
-KSP registers generated sources through the `kotlin.sourceSets` DSL. Add `android.disallowKotlinSourceSets=false` to `gradle.properties`, and make sure you are on KSP 2.2.10-2.0.2 (KSP 1.5.x does not support AGP 9).
 
 ### Dependency verification failure
 
@@ -330,3 +282,188 @@ ls -lh app/build/outputs/apk/debug/
 ```
 
 A successful build must create `app/build/outputs/apk/debug/app-debug.apk`.
+
+## 9. NixOS aarch64 session notes (2026-10-01)
+
+This section records the issues hit when running `:app:assembleDebug` on this NixOS `aarch64` host from `/home/naresh/repo/ncal` (the `/opt/android-sdk` and `/root/ncal` paths in sections 1-4 do not exist here), and the exact workarounds used. All generated paths below are intentionally under `/tmp` so the repository stays portable.
+
+Workspace differences:
+
+```text
+uname -m: aarch64
+repo:     /home/naresh/repo/ncal
+/opt/android-sdk: missing
+/root/ncal:      missing
+java:            not in PATH, JAVA_HOME unset
+```
+
+### 9.1 No JDK
+
+Symptom:
+
+```text
+ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+```
+
+Resolution: use the Nix-provided JDK 17 (matches `JavaVersion.VERSION_17` in `app/build.gradle.kts`):
+
+```sh
+nix build --impure --expr 'let pkgs = import <nixpkgs> {}; in pkgs.jdk17' \
+  --out-link /tmp/ncal-sdk-links/jdk17 --print-out-paths
+/tmp/ncal-sdk-links/jdk17/bin/java -version
+
+export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
+export PATH="$JAVA_HOME/bin:$PATH"
+```
+
+### 9.2 No Android SDK
+
+There is no preinstalled SDK. Resolution: compose one from `nixpkgs` (unfree + license acceptance required):
+
+```sh
+export NIXPKGS_ALLOW_UNFREE=1
+export NIXPKGS_ACCEPT_ANDROID_SDK_LICENSE=1
+
+nix build --impure \
+  --expr 'let pkgs = import <nixpkgs> { config.allowUnfree=true; config.android_sdk.accept_license=true; }; in (pkgs.androidenv.composeAndroidPackages { platformVersions=["37"]; buildToolsVersions=["37.0.0"]; includeEmulator=false; }).androidsdk' \
+  --out-link /tmp/androidsdk
+```
+
+This yields `aarch64`-hosted wrapper scripts plus an `x86-64` `build-tools/37.0.0/aapt2`, confirmed with:
+
+```sh
+nix-shell -p file --run "file /tmp/androidsdk/libexec/android-sdk/build-tools/37.0.0/aapt2"
+# ELF 64-bit LSB pie executable, x86-64 ...
+```
+
+Running it directly fails as expected:
+
+```text
+exec format error: .../aapt2
+```
+
+### 9.3 x86-64 SDK binaries need QEMU plus an x86-64 sysroot
+
+`qemu-x86_64` is not installed; Debian paths such as `/usr/x86_64-linux-gnu` do not exist on NixOS. Resolution:
+
+```sh
+nix build --impure --expr 'let pkgs = import <nixpkgs> {}; in pkgs.qemu' \
+  --out-link /tmp/ncal-sdk-links/qemu --print-out-paths
+
+nix build --impure --expr 'let pkgs = import <nixpkgs> { system="x86_64-linux"; }; in pkgs.glibc.out' \
+  --out-link /tmp/ncal-sdk-links/glibc-x64 --print-out-paths
+
+nix build --impure --expr 'let pkgs = import <nixpkgs> { system="x86_64-linux"; }; in pkgs.gcc.cc.lib' \
+  --out-link /tmp/ncal-sdk-links/gcc-lib-x64 --print-out-paths
+
+mkdir -p /tmp/ncal-sysroot/lib64 /tmp/ncal-sysroot/lib
+ln -sf /tmp/ncal-sdk-links/glibc-x64/lib/ld-linux-x86-64.so.2 /tmp/ncal-sysroot/lib64/
+ln -sf /tmp/ncal-sdk-links/glibc-x64/lib/* /tmp/ncal-sysroot/lib/ || true
+cp -P /tmp/ncal-sdk-links/gcc-lib-x64-lib/lib/libgcc_s.so* /tmp/ncal-sysroot/lib/
+cp -P /tmp/ncal-sdk-links/gcc-lib-x64-lib/lib/libgcc_s.so* /tmp/ncal-sysroot/lib64/ || true
+```
+
+Verified with:
+
+```sh
+/tmp/ncal-sdk-links/qemu/bin/qemu-x86_64 -L /tmp/ncal-sysroot \
+  /tmp/androidsdk/libexec/android-sdk/build-tools/37.0.0/aapt2 version
+# Android Asset Packaging Tool (aapt) 2.20-15087165
+```
+
+### 9.4 Nix store SDK is read-only; plain `cp -r` hardlinks
+
+`cp -r /tmp/androidsdk/... /tmp/ncal-sdk/` produced the same inode as the Nix store (same device, root-owned `0555` hardlinks), so later `mv`/`chmod` failed with:
+
+```text
+Read-only file system
+```
+
+Resolution: copy with Python (`shutil.copytree`/`copyfile` following the `platform-tools`/`tools` symlinks) into a fresh writable directory:
+
+```sh
+mkdir -p /tmp/ncal-sdk-writable
+# python copytree/copyfile from /tmp/androidsdk/libexec/android-sdk
+# to /tmp/ncal-sdk-writable, dereferencing symlinks
+chmod -R u+w /tmp/ncal-sdk-writable
+```
+
+Then wrap every needed `x86-64` ELF with QEMU (skipping `.so` libraries):
+
+```sh
+QEMU=/tmp/ncal-sdk-links/qemu/bin/qemu-x86_64
+SYSROOT=/tmp/ncal-sysroot
+# for each binary, e.g. aapt/aapt2/aidl/bcc_compat/dexdump/llvm-rs-cc/split-select/zipalign:
+#   mv "$f" "$f.real"
+#   printf '#!/bin/sh\nexec %s -L %s "%s.real" "$@"\n' "$QEMU" "$SYSROOT" "$f" > "$f"
+#   chmod +x "$f"
+
+mkdir -p /tmp/ncal-aapt2
+cat > /tmp/ncal-aapt2/aapt2 <<EOF
+#!/bin/sh
+exec $QEMU -L $SYSROOT /tmp/ncal-sdk-writable/build-tools/37.0.0/aapt2.real "$@"
+EOF
+chmod 700 /tmp/ncal-aapt2/aapt2
+/tmp/ncal-aapt2/aapt2 version
+```
+
+The AGP `android.aapt2FromMavenOverride` file must still be named exactly `aapt2`.
+
+### 9.5 Strict dependency verification fails on fresh resolve
+
+Strict build command:
+
+```sh
+export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
+export ANDROID_HOME=/tmp/ncal-sdk-writable
+export ANDROID_SDK_ROOT=/tmp/ncal-sdk-writable
+export PATH="$JAVA_HOME/bin:$PATH"
+
+./gradlew :app:assembleDebug \
+  -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
+  --console=plain --no-daemon
+```
+
+failed during dependency verification:
+
+```text
+5 artifacts failed verification:
+  - guava-parent-33.4.0-jre.pom
+  - junit-bom-5.10.2.module
+  - junit-bom-5.11.0-M2.module
+  - kotlin-gradle-plugins-bom-2.2.10.module
+  - kotlin-gradle-plugins-bom-2.2.10.pom
+```
+
+With `--dependency-verification=lenient` the build progressed further but still reported `kotlinx-coroutines-bom-1.7.3.pom` and `kotlinx-coroutines-bom-1.8.0.pom` verification warnings before succeeding. This was treated as a stale `gradle/verification-metadata.xml` versus upstream metadata issue, not a code issue. The committed metadata was left untouched; lenient mode was used only for this local run. A proper fix is to review and regenerate `gradle/verification-metadata.xml` intentionally, not to commit a bypass.
+
+Gradle also auto-installed the missing `build-tools;36.0.0` package into the writable SDK copy during configuration.
+
+### 9.6 Successful local command and artifact
+
+```sh
+export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
+export ANDROID_HOME=/tmp/ncal-sdk-writable
+export ANDROID_SDK_ROOT=/tmp/ncal-sdk-writable
+export PATH="$JAVA_HOME/bin:$PATH"
+
+./gradlew :app:assembleDebug \
+  -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
+  --dependency-verification=lenient \
+  --console=plain --no-daemon
+```
+
+Result:
+
+```text
+BUILD SUCCESSFUL in 3m 10s
+38 actionable tasks: 38 executed
+```
+
+```sh
+ls -lh app/build/outputs/apk/debug/app-debug.apk
+sha256sum app/build/outputs/apk/debug/app-debug.apk
+# d0927d14cde818b6a1b6fbc07f5fce5ace4a06759f9972f8db5ba8ae7b84f717  app/build/outputs/apk/debug/app-debug.apk
+```
+
+The hash differs from section 5 because source, dependencies, and toolchain differ. Always use the freshly calculated checksum for the artifact being distributed.

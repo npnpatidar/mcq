@@ -7,7 +7,9 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
@@ -161,7 +163,7 @@ class Importer(
                     val incomingIds = effectiveCategories.flatMap { cat ->
                         cat.questions.map { it.id }
                     }
-                    val storedById = db.questionDao().getByIds(incomingIds).associateBy { it.id }
+                    val storedById = db.questionDao().getByIdsChunked(incomingIds).associateBy { it.id }
                     val storedCorrectById = db.correctAnswerDao().getForQuestionsChunked(incomingIds)
                         .groupBy({ it.questionId }, { it.optionId })
                     val hasAnswerOnlyChange = effectiveCategories.flatMap { it.questions }.any { q ->
@@ -532,11 +534,11 @@ class Importer(
     private suspend fun loadCollisionCandidates(): Map<String, List<StoredCandidate>> {
         val hashes = importHashes()
         if (hashes.isEmpty()) return emptyMap()
-        val matches = db.questionDao().getMatchesByContentHashes(hashes)
+        val matches = db.questionDao().getMatchesByContentHashesChunked(hashes)
         if (matches.isEmpty()) return emptyMap()
         val ids = matches.map { it.id }
-        val entities = db.questionDao().getByIds(ids).associateBy { it.id }
-        val optionsByQuestion = db.optionDao().getForQuestions(ids).groupBy { it.questionId }
+        val entities = db.questionDao().getByIdsChunked(ids).associateBy { it.id }
+        val optionsByQuestion = db.optionDao().getForQuestionsChunked(ids).groupBy { it.questionId }
         val correctByQuestion = db.correctAnswerDao().getForQuestionsChunked(ids)
             .groupBy({ it.questionId }, { it.optionId })
         // `matches` arrives in row order, as `getIdByContentHash` did, so taking

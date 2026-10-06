@@ -20,8 +20,10 @@ import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getGradedResultsForQuestionsChunked
+import com.mcqapp.data.local.countForQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
@@ -617,7 +619,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 db.questionDao().deleteById(it)
                 db.cardStateDao().deleteByQuestion(it)
             }
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds.toList())
+            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
         }
     }
 
@@ -791,7 +793,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             questions = questionIds.size,
             attempts = db.attemptDao().countByPaper(paperId),
             bookmarks = if (questionIds.isEmpty()) 0
-            else db.bookmarkDao().countForQuestions(questionIds),
+            else db.bookmarkDao().countForQuestionsChunked(questionIds),
             schedules = db.cardStateDao().countByPaper(paperId)
         )
     }
@@ -817,7 +819,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         db.withTransaction {
             // Collect first: deleting the paper cascades its questions away.
             val questionIds = db.questionDao().getIdsByPaper(paperId)
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
+            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
             // History and SM-2 cards have no path to the paper except this
             // paperId column, so a plain cascade leaves them behind as orphans:
             // attempts would still show up in History under a title that no
@@ -872,7 +874,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 toParentId = category.parentId
             )
             val questionIds = db.questionDao().getIdsByCategory(categoryId)
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAll(questionIds)
+            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
             db.categoryDao().deleteById(categoryId)
         }
     }
@@ -973,7 +975,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val questions = db.questionDao().getByCategoriesChunked(categoryIds)
         if (questions.isEmpty()) return emptyList()
         val optionsByQuestion = db.optionDao()
-            .getForQuestions(questions.map { it.id })
+            .getForQuestionsChunked(questions.map { it.id })
             .groupBy { it.questionId }
         return questions.map { entity ->
             val options = optionsByQuestion[entity.id].orEmpty()

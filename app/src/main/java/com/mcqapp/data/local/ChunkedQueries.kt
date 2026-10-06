@@ -32,3 +32,15 @@ suspend fun AttemptDao.getGradedResultsForQuestionsChunked(
     questionIds: List<String>
 ): List<QuestionResultEntity> =
     questionIds.chunks().flatMap { getGradedResultsForQuestions(paperId, it) }
+
+suspend fun QuestionDao.getMatchesByContentHashesChunked(
+    hashes: Collection<String>
+): List<ContentHashMatch> =
+    hashes.toList().chunks().flatMap { getMatchesByContentHashes(it) }
+
+suspend fun BookmarkDao.removeAllChunked(questionIds: Collection<String>) {
+    questionIds.toList().chunks().forEach { removeAll(it) }
+}
+
+suspend fun BookmarkDao.countForQuestionsChunked(questionIds: Collection<String>): Int =
+    questionIds.toList().chunks().sumOf { countForQuestions(it) }

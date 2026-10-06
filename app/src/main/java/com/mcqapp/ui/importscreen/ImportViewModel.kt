@@ -226,7 +226,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     // genuinely different questions can be told apart here and
                     // in the Importer, which must agree.
                     val storedOptionsByQuestion = repository.db().optionDao()
-                        .getForQuestions(questions.map { it.id })
+                        .getForQuestionsChunked(questions.map { it.id })
                         .groupBy { it.questionId }
                     questions.forEach { q ->
                         val hash = com.mcqapp.data.io.ContentHash.of(q)

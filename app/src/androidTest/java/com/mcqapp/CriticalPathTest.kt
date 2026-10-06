@@ -118,8 +118,9 @@ class CriticalPathTest {
 
         waitFor("Show answer")
         compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("Show answer", substring = false).performScrollTo().performClick()
-        compose.onNodeWithText("Good", substring = false).performScrollTo().performClick()
+        // Show answer and the grade buttons live in the fixed footer now.
+        compose.onNodeWithText("Show answer", substring = false).performClick()
+        compose.onNodeWithText("Good", substring = false).performClick()
 
         // Grading advances to the next card rather than ending the session.
         waitFor("Show answer")

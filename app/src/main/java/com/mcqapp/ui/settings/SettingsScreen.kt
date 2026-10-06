@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -19,6 +20,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -43,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -474,6 +478,10 @@ private fun AnkiSchedulerSection(
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit
 ) {
+    // Collapsed by default: the tuning knobs underneath are for Anki
+    // veterans, and an open wall of numbers is what made this screen feel
+    // complex. The everyday controls stay above the fold.
+    var advancedExpanded by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -512,6 +520,69 @@ private fun AnkiSchedulerSection(
             }
             Spacer(Modifier.height(12.dp))
 
+            Text(stringResource(R.string.daily_limits), style = MaterialTheme.typography.labelLarge)
+            AnkiNumberRow(
+                label = "New cards per day",
+                help = "Unseen cards offered each day",
+                value = config.newLimit,
+                step = 1.0,
+                range = 0f..9999f,
+                onChange = { onChange(config.copy(newLimit = it.toInt())) }
+            )
+            AnkiNumberRow(
+                label = "Reviews per day",
+                help = "Maximum due cards offered each day",
+                value = config.reviewLimit,
+                step = 1.0,
+                range = 0f..9999f,
+                onChange = { onChange(config.copy(reviewLimit = it.toInt())) }
+            )
+            Spacer(Modifier.height(8.dp))
+            AnkiNumberRow(
+                label = "Easy answer threshold",
+                help = "Auto-graded Easy below this response time",
+                value = config.fastSeconds,
+                step = 1.0,
+                range = 1f..600f,
+                suffix = "s",
+                onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
+            )
+            AnkiNumberRow(
+                label = "Hard answer threshold",
+                help = "Auto-graded Hard above this response time",
+                value = config.slowSeconds,
+                step = 1.0,
+                range = 1f..3600f,
+                suffix = "s",
+                onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.the_response_time_thresholds_only_apply_when_rebuilding_a_sc) +
+                    "from past test attempts. In Study you grade every card yourself.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { advancedExpanded = !advancedExpanded }
+                    .testTag("advanced-anki-settings"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    if (advancedExpanded) Icons.Default.KeyboardArrowDown
+                    else Icons.Default.KeyboardArrowRight,
+                    contentDescription = null
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(R.string.advanced_anki_settings),
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+            if (advancedExpanded) {
             AnkiNumberRow(
                 label = "Starting ease",
                 help = "Ease a new card begins at",
@@ -657,24 +728,6 @@ private fun AnkiSchedulerSection(
             )
 
             Spacer(Modifier.height(12.dp))
-            Text(stringResource(R.string.daily_limits), style = MaterialTheme.typography.labelLarge)
-            AnkiNumberRow(
-                label = "New cards per day",
-                help = "Unseen cards offered each day",
-                value = config.newLimit,
-                step = 1.0,
-                range = 0f..9999f,
-                onChange = { onChange(config.copy(newLimit = it.toInt())) }
-            )
-            AnkiNumberRow(
-                label = "Reviews per day",
-                help = "Maximum due cards offered each day",
-                value = config.reviewLimit,
-                step = 1.0,
-                range = 0f..9999f,
-                onChange = { onChange(config.copy(reviewLimit = it.toInt())) }
-            )
-            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -693,31 +746,8 @@ private fun AnkiSchedulerSection(
                     onCheckedChange = { onChange(config.copy(newCardsIgnoreReviewLimit = it)) }
                 )
             }
-            AnkiNumberRow(
-                label = "Easy answer threshold",
-                help = "Auto-graded Easy below this response time",
-                value = config.fastSeconds,
-                step = 1.0,
-                range = 1f..600f,
-                suffix = "s",
-                onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
-            )
-            AnkiNumberRow(
-                label = "Hard answer threshold",
-                help = "Auto-graded Hard above this response time",
-                value = config.slowSeconds,
-                step = 1.0,
-                range = 1f..3600f,
-                suffix = "s",
-                onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
-            )
+            }
 
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.the_response_time_thresholds_only_apply_when_rebuilding_a_sc) +
-                    "from past test attempts. In Study you grade every card yourself.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
     }
 }

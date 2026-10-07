@@ -1233,12 +1233,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun observeBookmarks(): Flow<List<String>> = db.bookmarkDao().observeAll()
 
     suspend fun toggleBookmark(questionId: String) {
-        val wasBookmarked = db.bookmarkDao().isBookmarked(questionId)
-        Logger.d("REPO", "toggleBookmark($questionId) wasBookmarked=$wasBookmarked")
-        if (wasBookmarked) {
-            db.bookmarkDao().remove(questionId)
-        } else {
-            db.bookmarkDao().add(BookmarkEntity(questionId))
+        // One transaction: the check and the flip must observe one state, or
+        // a double-tap racing within one dispatcher hop reads the same value
+        // twice and both calls flip the same way — REPLACE quietly absorbs
+        // the second write, so two taps end where one tap should.
+        db.withTransaction {
+            val wasBookmarked = db.bookmarkDao().isBookmarked(questionId)
+            Logger.d("REPO", "toggleBookmark($questionId) wasBookmarked=$wasBookmarked")
+            if (wasBookmarked) {
+                db.bookmarkDao().remove(questionId)
+            } else {
+                db.bookmarkDao().add(BookmarkEntity(questionId))
+            }
         }
     }
 

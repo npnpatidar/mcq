@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
+import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
@@ -47,8 +48,10 @@ class BulkOpsDbTest {
             .build()
         repository = McqRepository(db, context)
         repository.ensurePaperAndCategory("p1", "Paper 1", "c1", "Cat 1")
-        repository.ensurePaperAndCategory("p1", "Paper 1", "c1b", "Cat 1b")
         repository.ensurePaperAndCategory("p2", "Paper 2", "c2", "Cat 2")
+        // ensurePaperAndCategory REPLACE-upserts the paper row, which cascades
+        // away its categories; a second p1 category must be inserted directly.
+        db.categoryDao().upsert(CategoryEntity(id = "c1b", paperId = "p1", title = "Cat 1b"))
         repository.saveQuestion(question("q1"))
         repository.saveQuestion(question("q2"))
         // A question in another paper occupying q1's copy namespace.

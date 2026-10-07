@@ -150,11 +150,17 @@ internal fun mixedContentHtml(
             }
         }
     }
+    // The policy mirrors what this WebView can actually load: images are
+    // data URIs (the picker encodes them, imports downscale to them), so
+    // there is no file: image or stylesheet to allow — allowFileAccess=false
+    // rules out real files and this page never references an android_asset
+    // image or CSS. script-src keeps file: for the bundled MathJax asset,
+    // and everything else stays off the network, same as the exports.
     return """
         <html>
         <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; img-src data: file:; style-src 'unsafe-inline' file:">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; img-src data:; style-src 'unsafe-inline'">
         <script>
         MathJax = { tex: { inlineMath: [['$', '$']] } };
         </script>

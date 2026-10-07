@@ -101,5 +101,13 @@ class RichTextSanitizingTest {
         // reach the network or run inline event handlers.
         assertTrue(html.contains("Content-Security-Policy"))
         assertTrue(html.contains("default-src 'none'"))
+        // The policy mirrors what the WebView can load: data-URI images only
+        // (allowFileAccess=false rules out real files, and the page has no
+        // file: image or stylesheet), while script-src keeps file: for the
+        // bundled MathJax asset — the same containment the exports ship.
+        assertTrue(html.contains("img-src data:"))
+        assertFalse(html.contains("img-src data: file:"))
+        assertFalse(html.contains("style-src 'unsafe-inline' file:"))
+        assertTrue(html.contains("script-src 'unsafe-inline' file:"))
     }
 }

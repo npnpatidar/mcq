@@ -444,6 +444,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 options = options.map { QuestionOption(it.id, it.text.parseContentElements(json), it.image) },
                 correctOptionIds = correctIds,
                 explanationElements = entity.explanation.parseContentElements(json),
+                explanationImage = entity.explanationImage,
                 difficulty = Difficulty.fromLabel(entity.difficulty),
                 marks = entity.marks,
                 tags = entity.tags.split(",").filter { it.isNotBlank() }

@@ -64,6 +64,7 @@
     <string name="import_questions">Import questions</string>
     <string name="imported">Imported</string>
     <string name="keep">Keep</string>
+    <string name="load_remote_images">Load remote images</string>
     <string name="load_sample_paper">Load sample paper</string>
     <string name="loading">Loading…</string>
     <string name="manage">Manage</string>
@@ -103,6 +104,7 @@
     <string name="practice_mode">Practice mode</string>
     <string name="prev">Prev</string>
     <string name="previous">Previous</string>
+    <string name="privacy">Privacy</string>
     <string name="question_image">Question image</string>
     <string name="questions">Questions</string>
     <string name="questions_without_an_answer_key">Questions without an answer key</string>
@@ -193,6 +195,7 @@
     <string name="preview">Preview</string>
     <string name="preview_the_quick_brown_fox_jumps_over_13_lazy_dogs">Preview: the quick brown fox jumps over 13 lazy dogs.</string>
     <string name="question">Question</string>
+    <string name="remote_image_hidden_turn_on_load_remote_images_in_settin">Remote image hidden. Turn on Load remote images in Settings.</string>
     <string name="review_always_shows_the_order_you_were_given">Review always shows the order you were given. </string>
     <string name="searching">Searching…</string>
     <string name="session_complete">Session complete</string>
@@ -216,6 +219,7 @@
     <string name="trends">Trends</string>
     <string name="weakest_categories">Weakest categories</string>
     <string name="when_a_file_repeats_a_question_s_text_and_options_but_correc">When a file repeats a question\'s text and options but corrects </string>
+    <string name="when_off_pictures_from_the_web_stay_hidden_so_whoever_aut">When off, pictures from the web stay hidden so whoever authored the bank can\'t see when you open a question. Pictures saved inside the bank always show.</string>
     <string name="you_keep_missing_this_one">You keep missing this one</string>
     <string name="version">Version %1$s</string>
 </resources>

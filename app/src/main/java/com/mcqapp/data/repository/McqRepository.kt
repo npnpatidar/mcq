@@ -163,6 +163,21 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         context.dataStore.edit { it[autoAdvanceKey] = enabled }
     }
 
+    /**
+     * Whether http(s) question images may be fetched over the network. Off by
+     * default: a fetch hands whoever authored the bank the learner's IP and
+     * the moment they opened the question. Data-URI images live inside the
+     * bank and are always shown.
+     */
+    private val loadRemoteImagesKey = booleanPreferencesKey("load_remote_images")
+
+    fun loadRemoteImages(): Flow<Boolean> =
+        context.dataStore.data.map { it[loadRemoteImagesKey] ?: false }
+
+    suspend fun setLoadRemoteImages(enabled: Boolean) {
+        context.dataStore.edit { it[loadRemoteImagesKey] = enabled }
+    }
+
     private val fontScaleKey = floatPreferencesKey("font_scale")
 
     fun fontScale(): Flow<Float> =

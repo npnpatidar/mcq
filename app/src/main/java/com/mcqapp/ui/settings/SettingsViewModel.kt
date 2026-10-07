@@ -115,6 +115,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setAutoAdvance(enabled) }
     }
 
+    private val _loadRemoteImages = MutableStateFlow(false)
+    val loadRemoteImages: StateFlow<Boolean> = _loadRemoteImages.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.loadRemoteImages().collect { _loadRemoteImages.value = it }
+        }
+    }
+
+    fun setLoadRemoteImages(enabled: Boolean) {
+        viewModelScope.launch { repository.setLoadRemoteImages(enabled) }
+    }
+
     private val _fontScale = MutableStateFlow(com.mcqapp.util.FontScale.DEFAULT)
     val fontScale: StateFlow<Float> = _fontScale.asStateFlow()
 

@@ -73,6 +73,7 @@ fun SettingsScreen(
     val practiceMode by viewModel.practiceMode.collectAsStateWithLifecycle()
     val strictMode by viewModel.strictMode.collectAsStateWithLifecycle()
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
+    val loadRemoteImages by viewModel.loadRemoteImages.collectAsStateWithLifecycle()
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
@@ -171,6 +172,30 @@ fun SettingsScreen(
                         stringResource(R.string.preview_the_quick_brown_fox_jumps_over_13_lazy_dogs),
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(stringResource(R.string.privacy), style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.load_remote_images))
+                            Text(
+                                stringResource(R.string.when_off_pictures_from_the_web_stay_hidden_so_whoever_aut),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = loadRemoteImages,
+                            onCheckedChange = { viewModel.setLoadRemoteImages(it) }
+                        )
+                    }
                 }
             }
 

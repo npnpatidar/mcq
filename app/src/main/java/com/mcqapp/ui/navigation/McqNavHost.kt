@@ -31,10 +31,14 @@ fun McqNavHost(repository: McqRepository) {
     val fontScale by repository.fontScale().collectAsStateWithLifecycle(
         initialValue = com.mcqapp.util.FontScale.DEFAULT
     )
+    val loadRemoteImages by repository.loadRemoteImages().collectAsStateWithLifecycle(
+        initialValue = false
+    )
     val density = LocalDensity.current
     CompositionLocalProvider(
         LocalDensity provides Density(density.density, fontScale = fontScale),
-        com.mcqapp.util.FontScale.LocalScale provides fontScale
+        com.mcqapp.util.FontScale.LocalScale provides fontScale,
+        com.mcqapp.util.LocalLoadRemoteImages provides loadRemoteImages
     ) {
     NavHost(navController = navController, startDestination = "library") {
         composable("library") {

@@ -219,6 +219,10 @@ interface QuestionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)
 
+    /** Whole-selection insert; callers use it for minted-fresh copy ids. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(questions: List<QuestionEntity>)
+
     @Query("DELETE FROM questions WHERE id = :id")
     suspend fun deleteById(id: String)
 }

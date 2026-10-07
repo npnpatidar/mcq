@@ -27,7 +27,8 @@ private const val PNG = "data:image/png;base64,AAA"
  * The bulk question operations move, copy and edit whole selections inside a
  * single transaction. Their observable semantics — copy ids chain `-copy`
  * suffixes even when a same-named question lives in another paper, cloned
- * questions keep every field including the explanation image, cross-paper
+ * questions keep every field including the explanation image, copies append
+ * after the target's current tail, cross-paper
  * moves reset the schedule while same-paper moves keep it, bulk edits keep
  * null fields — are pinned here through the real repository, so the SQL under
  * them cannot drift. Robolectric needs a real SQLite driver, so this test
@@ -105,11 +106,63 @@ class BulkOpsDbTest {
         assertEquals("p1-copy-c1", clone!!.categoryId)
         assertEquals(PNG, clone.explanationImage)
         assertEquals(Difficulty.HARD, clone.difficulty)
+        // Clones start at 0 in the fresh category, in the source's order.
+        assertEquals(0, db.questionDao().getById("q1-copy-2")?.sortOrder)
+        assertEquals(1, db.questionDao().getById("q2-copy")?.sortOrder)
+        // Options and key land with the clone, not just the question row.
+        assertEquals(listOf("a", "b"), clone.options.map { it.id })
+        assertEquals(setOf("a"), clone.correctOptionIds)
+        assertEquals(listOf("tq1"), clone.tags)
+        assertEquals(2.0, clone.marks, 0.0)
+        assertEquals("why q1", clone.explanation)
         // q2 has no collision and takes the first suffix.
         assertEquals("q2-copy", repository.getQuestion("q2-copy")?.id)
         assertEquals("Paper 1 (copy)", db.paperDao().getById("p1-copy")?.title)
         // The originals are untouched.
         assertEquals("c1", repository.getQuestion("q1")?.categoryId)
+        assertEquals(0, db.questionDao().getById("q1")?.sortOrder)
+        assertEquals(1, db.questionDao().getById("q2")?.sortOrder)
+    }
+
+    @Test
+    fun copyAppendsAfterTheTargetTailAndKeepsChildren() = runBlocking {
+        // c2 already holds q1-copy at sortOrder 0.
+        repository.copyQuestionsToCategory(listOf("q2", "q1"), "c2")
+        // Clones append after the tail, in the order given.
+        assertEquals(1, db.questionDao().getById("q2-copy")?.sortOrder)
+        assertEquals(2, db.questionDao().getById("q1-copy-2")?.sortOrder)
+        // Every child lands with its clone, and the content hash still
+        // matches the source (scheduling keys off it).
+        val copy = repository.getQuestion("q1-copy-2")!!
+        assertEquals("c2", copy.categoryId)
+        assertEquals("Q q1", copy.text)
+        assertEquals(listOf("a", "b"), copy.options.map { it.id })
+        assertEquals(setOf("a"), copy.correctOptionIds)
+        assertEquals("why q1", copy.explanation)
+        assertEquals(PNG, copy.explanationImage)
+        assertEquals(Difficulty.HARD, copy.difficulty)
+        assertEquals(2.0, copy.marks, 0.0)
+        assertEquals(listOf("tq1"), copy.tags)
+        assertEquals(
+            db.questionDao().getById("q1")?.contentHash,
+            db.questionDao().getById("q1-copy-2")?.contentHash
+        )
+    }
+
+    @Test
+    fun aSecondDuplicateLeavesTheFirstClonesIntact() = runBlocking {
+        assertEquals("p1-copy", repository.duplicatePaper("p1"))
+        assertEquals("p1-copy-2", repository.duplicatePaper("p1"))
+        // The first run's clones keep their options and key: the second run
+        // chained onto the namespace instead of replacing them.
+        val first = repository.getQuestion("q1-copy-2")!!
+        assertEquals(listOf("a", "b"), first.options.map { it.id })
+        assertEquals(setOf("a"), first.correctOptionIds)
+        assertEquals(0, db.questionDao().getById("q1-copy-2")?.sortOrder)
+        val second = repository.getQuestion("q1-copy-3")!!
+        assertEquals("p1-copy-2-c1", second.categoryId)
+        assertEquals(listOf("a", "b"), second.options.map { it.id })
+        assertEquals(0, db.questionDao().getById("q1-copy-3")?.sortOrder)
     }
 
     @Test
@@ -121,6 +174,9 @@ class BulkOpsDbTest {
         assertEquals("c2", copy!!.categoryId)
         assertEquals(PNG, copy.explanationImage)
         assertNull(repository.getQuestion("missing-copy"))
+        // The unknown id wrote nothing and consumed no slot.
+        assertEquals(0, db.questionDao().getById("q1-copy")?.sortOrder)
+        assertEquals(1, db.questionDao().getById("q1-copy-2")?.sortOrder)
         assertEquals("c1", repository.getQuestion("q1")?.categoryId)
     }
 

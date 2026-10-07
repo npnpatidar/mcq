@@ -605,6 +605,62 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         }
     }
 
+    /**
+     * Writes freshly minted clones — question rows, options and keys — in one
+     * pass, for callers already inside a transaction. Every candidate id
+     * contains "-copy", so the caller's probe proves each one unused: no
+     * read-back, no delete-before-write, and one max-sortOrder read per target
+     * category instead of one per row (clones append after that category's
+     * current tail, in the order given). The bound: one insert per row plus
+     * one read per distinct category, all inside the caller's single
+     * transaction.
+     */
+    private suspend fun insertCopies(clones: List<Question>) {
+        if (clones.isEmpty()) return
+        // The map pass reads every base before a single row is written, so no
+        // base can include a row from this run; the counter then carries each
+        // category forward instead of re-reading its tail per clone.
+        val nextSortOrder = mutableMapOf<String, Int>()
+        val questions = clones.map { q ->
+            val sortOrder = nextSortOrder.getOrPut(q.categoryId) {
+                (db.questionDao().getMaxSortOrder(q.categoryId) ?: -1) + 1
+            }
+            nextSortOrder[q.categoryId] = sortOrder + 1
+            QuestionEntity(
+                id = q.id,
+                categoryId = q.categoryId,
+                text = q.elements.toContentJson(json),
+                image = q.image,
+                explanation = q.explanationElements.toContentJson(json),
+                explanationImage = q.explanationImage,
+                difficulty = q.difficulty.label,
+                marks = q.marks,
+                tags = q.tags.joinToString(","),
+                sortOrder = sortOrder,
+                contentHash = contentHashOf(q)
+            )
+        }
+        val options = clones.flatMap { q ->
+            q.options.mapIndexed { index, o ->
+                OptionEntity(
+                    questionId = q.id,
+                    id = o.id,
+                    text = o.elements.toContentJson(json),
+                    image = o.image,
+                    sortOrder = index
+                )
+            }
+        }
+        val answers = clones.flatMap { q ->
+            q.correctOptionIds.map { CorrectAnswerEntity(q.id, it) }
+        }
+        // Parents first: foreign keys are checked immediately, so options and
+        // keys cannot land before the rows they reference.
+        db.questionDao().upsertAll(questions)
+        db.optionDao().upsertAll(options)
+        db.correctAnswerDao().upsertAll(answers)
+    }
+
     suspend fun deleteQuestion(questionId: String) {
         Logger.d("REPO", "deleteQuestion($questionId)")
         // One transaction: the question row, its schedule and its bookmark
@@ -681,14 +737,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             // the ids a generated candidate can collide with, in place of all
             // question ids in the database; ids minted below join the same set.
             val existing = db.questionDao().getIdsLike(COPY_ID_PROBE).toMutableSet()
-            var count = 0
-            for (q in getQuestionsByIds(questionIds.toList())) {
+            val clones = getQuestionsByIds(questionIds.toList()).map { q ->
                 val newId = com.mcqapp.domain.BulkOps.copyId(existing, q.id)
                 existing.add(newId)
-                saveQuestion(q.copy(id = newId, categoryId = targetCategoryId))
-                count++
+                q.copy(id = newId, categoryId = targetCategoryId)
             }
-            Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
+            // Minting ids first and writing them in one pass replaces a
+            // getQuestion/saveQuestion round-trip per clone: the ids are known
+            // fresh, so nothing has to be read back or deleted before writing.
+            insertCopies(clones)
+            Logger.i("REPO", "copyQuestionsToCategory(${clones.size} ids -> $targetCategoryId)")
         }
     }
 
@@ -740,13 +798,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             val existingQ = db.questionDao().getIdsLike(COPY_ID_PROBE).toMutableSet()
             val questionsByCategory = getQuestionsForCategories(remapped.keys.toList())
                 .groupBy { it.categoryId }
+            val clones = mutableListOf<Question>()
             for ((oldCatId, newCat) in remapped) {
                 for (q in questionsByCategory[oldCatId].orEmpty()) {
                     val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
                     existingQ.add(newQId)
-                    saveQuestion(q.copy(id = newQId, categoryId = newCat.id))
+                    clones += q.copy(id = newQId, categoryId = newCat.id)
                 }
             }
+            // Ids are minted for the whole clone first, then written in one
+            // pass: the rows are known fresh, so no getQuestion/saveQuestion
+            // round-trip is needed to prove each one absent before writing.
+            insertCopies(clones)
             Logger.i("REPO", "duplicatePaper($paperId -> $newPaperId)")
             newPaperId
         }

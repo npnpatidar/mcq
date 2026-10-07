@@ -44,3 +44,42 @@ suspend fun BookmarkDao.removeAllChunked(questionIds: Collection<String>) {
 
 suspend fun BookmarkDao.countForQuestionsChunked(questionIds: Collection<String>): Int =
     questionIds.toList().chunks().sumOf { countForQuestions(it) }
+
+suspend fun CategoryDao.getByIdsChunked(ids: List<String>): List<CategoryEntity> =
+    ids.chunks().flatMap { getByIds(it) }
+
+suspend fun QuestionDao.getIdCategoriesByIdsChunked(ids: List<String>): List<QuestionCategoryRow> =
+    ids.chunks().flatMap { getIdCategoriesByIds(it) }
+
+suspend fun QuestionDao.updateCategoryChunked(ids: Collection<String>, categoryId: String): Int =
+    ids.toList().chunks().sumOf { updateCategory(it, categoryId) }
+
+suspend fun QuestionDao.updateBulkFieldsChunked(
+    ids: Collection<String>,
+    marks: Double?,
+    difficulty: String?,
+    tags: String?
+): Int =
+    ids.toList().chunks().sumOf { updateBulkFields(it, marks, difficulty, tags) }
+
+suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
+    questionIds.toList().chunks().forEach { deleteByQuestions(it) }
+}
+
+/**
+ * Escapes [prefix] for a `LIKE :pattern ESCAPE '\\'` query so `%`, `_` and the
+ * escape character itself match literally, then appends the wildcard: the
+ * query returns exactly the ids that start with [prefix].
+ */
+fun likePrefixPattern(prefix: String): String =
+    prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+/**
+ * Matches every id containing "-copy" — the substring all generated copy ids
+ * share (`q1-copy`, `q1-copy-2`, …, via BulkOps.copyId and
+ * PaperClone.copyPaperId), so these are the only existing ids a copy candidate
+ * can collide with. One scan with this pattern replaces materializing every id
+ * in the table; extra `-copy`-shaped ids it returns merely over-block, which
+ * the full-table id set it replaces did too.
+ */
+const val COPY_ID_PROBE = "%-copy%"

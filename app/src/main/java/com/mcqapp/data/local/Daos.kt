@@ -19,6 +19,10 @@ interface PaperDao {
     @Query("SELECT * FROM papers WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<PaperEntity>
 
+    /** Ids matching a LIKE pattern (see [likePrefixPattern] in ChunkedQueries). */
+    @Query("SELECT id FROM papers WHERE id LIKE :pattern ESCAPE '\\'")
+    suspend fun getIdsLike(pattern: String): List<String>
+
     @Query("SELECT * FROM papers WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
     suspend fun getByTitle(title: String): PaperEntity?
 
@@ -76,6 +80,12 @@ interface CategoryDao {
     @Query("DELETE FROM categories WHERE id = :id")
     suspend fun deleteById(id: String)
 }
+
+/** Slim id + category pair for bulk moves, without loading full question rows. */
+data class QuestionCategoryRow(
+    val id: String,
+    val categoryId: String
+)
 
 @Dao
 interface QuestionDao {
@@ -154,6 +164,34 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<QuestionEntity>
 
+    /** Ids matching a LIKE pattern (see [likePrefixPattern] in ChunkedQueries). */
+    @Query("SELECT id FROM questions WHERE id LIKE :pattern ESCAPE '\\'")
+    suspend fun getIdsLike(pattern: String): List<String>
+
+    /** Which of [ids] exist, and under which category — nothing else is loaded. */
+    @Query("SELECT id, categoryId FROM questions WHERE id IN (:ids)")
+    suspend fun getIdCategoriesByIds(ids: List<String>): List<QuestionCategoryRow>
+
+    @Query("UPDATE questions SET categoryId = :categoryId WHERE id IN (:ids)")
+    suspend fun updateCategory(ids: List<String>, categoryId: String): Int
+
+    /**
+     * Bulk edits marks/difficulty/tags in one statement; a null bind keeps the
+     * column's current value, matching the per-question coalescing the caller
+     * used to do in Kotlin over a full delete-and-reinsert per question.
+     */
+    @Query(
+        "UPDATE questions SET marks = COALESCE(:marks, marks), " +
+            "difficulty = COALESCE(:difficulty, difficulty), " +
+            "tags = COALESCE(:tags, tags) WHERE id IN (:ids)"
+    )
+    suspend fun updateBulkFields(
+        ids: List<String>,
+        marks: Double?,
+        difficulty: String?,
+        tags: String?
+    ): Int
+
     @Query("SELECT MAX(sortOrder) FROM questions WHERE categoryId = :categoryId")
     suspend fun getMaxSortOrder(categoryId: String): Int?
 
@@ -231,6 +269,9 @@ interface CardStateDao {
 
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
+
+    @Query("DELETE FROM card_state WHERE questionId IN (:questionIds)")
+    suspend fun deleteByQuestions(questionIds: List<String>)
 
     /**
      * Drops every SM-2 card for a paper. The foreign key already cascades, but

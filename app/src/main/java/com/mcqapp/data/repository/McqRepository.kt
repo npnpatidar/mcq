@@ -24,6 +24,12 @@ import com.mcqapp.data.local.countForQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.removeAllChunked
+import com.mcqapp.data.local.COPY_ID_PROBE
+import com.mcqapp.data.local.deleteByQuestionsChunked
+import com.mcqapp.data.local.getIdCategoriesByIdsChunked
+import com.mcqapp.data.local.likePrefixPattern
+import com.mcqapp.data.local.updateBulkFieldsChunked
+import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
@@ -627,8 +633,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** Deep-copies a question (options, key, explanation, marks) after siblings. */
     suspend fun duplicateQuestion(questionId: String): String? {
         val source = getQuestion(questionId) ?: return null
-        val existing = db.questionDao().getAll().map { it.id }.toHashSet()
-        val newId = com.mcqapp.domain.BulkOps.copyId(existing, questionId)
+        // A generated id is `${questionId}-copy(-n)`, so only ids in that
+        // namespace can collide; the scoped check replaces materializing every
+        // question id in the database.
+        val namespace = db.questionDao()
+            .getIdsLike(likePrefixPattern("$questionId-copy")).toSet()
+        val newId = com.mcqapp.domain.BulkOps.copyId(namespace, questionId)
         saveQuestion(source.copy(id = newId))
         Logger.i("REPO", "duplicateQuestion($questionId -> $newId)")
         return newId
@@ -641,16 +651,23 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // cross-paper schedule reset below belongs to the same move.
         db.withTransaction {
             val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
-            questionIds.forEach { id ->
-                getQuestion(id)?.let { question ->
-                    val sourcePaperId = db.categoryDao().getById(question.categoryId)?.paperId
-                    saveQuestion(question.copy(categoryId = targetCategoryId))
-                    // A schedule is keyed to a paper. Moving a question into another
-                    // paper makes the old row an orphan that would still inflate the
-                    // source paper's due count, so start the card over instead.
-                    if (targetPaperId != null && targetPaperId != sourcePaperId) {
-                        db.cardStateDao().deleteByQuestion(id)
-                    }
+            // A slim id+category read and one UPDATE per chunk replace a full
+            // getQuestion/saveQuestion round-trip (a delete-and-reinsert of
+            // options and keys with unchanged values) per question.
+            val rows = db.questionDao().getIdCategoriesByIdsChunked(questionIds.toList())
+            val paperIdByCategory = db.categoryDao().getByIdsChunked(
+                rows.map { it.categoryId }.distinct()
+            ).associate { it.id to it.paperId }
+            db.questionDao().updateCategoryChunked(rows.map { it.id }, targetCategoryId)
+            // A schedule is keyed to a paper. Moving a question into another
+            // paper makes the old row an orphan that would still inflate the
+            // source paper's due count, so start the card over instead.
+            if (targetPaperId != null) {
+                val crossPaperIds = rows
+                    .filter { paperIdByCategory[it.categoryId] != targetPaperId }
+                    .map { it.id }
+                if (crossPaperIds.isNotEmpty()) {
+                    db.cardStateDao().deleteByQuestionsChunked(crossPaperIds)
                 }
             }
         }
@@ -660,15 +677,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
         // One transaction: a partial copy must not leave half the selection behind.
         db.withTransaction {
-            val existing = db.questionDao().getAll().map { it.id }.toHashSet()
+            // Every copy id contains "-copy", so one probe scan returns exactly
+            // the ids a generated candidate can collide with, in place of all
+            // question ids in the database; ids minted below join the same set.
+            val existing = db.questionDao().getIdsLike(COPY_ID_PROBE).toMutableSet()
             var count = 0
-            questionIds.forEach { id ->
-                getQuestion(id)?.let { q ->
-                    val newId = com.mcqapp.domain.BulkOps.copyId(existing, id)
-                    existing.add(newId)
-                    saveQuestion(q.copy(id = newId, categoryId = targetCategoryId))
-                    count++
-                }
+            for (q in getQuestionsByIds(questionIds.toList())) {
+                val newId = com.mcqapp.domain.BulkOps.copyId(existing, q.id)
+                existing.add(newId)
+                saveQuestion(q.copy(id = newId, categoryId = targetCategoryId))
+                count++
             }
             Logger.i("REPO", "copyQuestionsToCategory($count ids -> $targetCategoryId)")
         }
@@ -701,7 +719,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // half its questions.
         return db.withTransaction {
             val paper = db.paperDao().getById(paperId) ?: return@withTransaction null
-            val existingPaperIds = db.paperDao().getAll().map { it.id }.toHashSet()
+            // Only the -copy namespace can collide with the generated paper id.
+            val existingPaperIds = db.paperDao()
+                .getIdsLike(likePrefixPattern("$paperId-copy")).toSet()
             val newPaperId = com.mcqapp.data.io.PaperClone.copyPaperId(existingPaperIds, paperId)
             db.paperDao().insertIgnore(
                 paper.copy(
@@ -715,9 +735,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 newPaperId
             )
             remapped.values.forEach { db.categoryDao().insertIgnore(it) }
-            val existingQ = db.questionDao().getAll().map { it.id }.toHashSet()
+            // The clone mints `-copy` ids, so the probe scan covers every id a
+            // candidate can collide with; ids minted below join the same set.
+            val existingQ = db.questionDao().getIdsLike(COPY_ID_PROBE).toMutableSet()
+            val questionsByCategory = getQuestionsForCategories(remapped.keys.toList())
+                .groupBy { it.categoryId }
             for ((oldCatId, newCat) in remapped) {
-                for (q in getQuestionsForCategories(listOf(oldCatId))) {
+                for (q in questionsByCategory[oldCatId].orEmpty()) {
                     val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
                     existingQ.add(newQId)
                     saveQuestion(q.copy(id = newQId, categoryId = newCat.id))
@@ -737,19 +761,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ) {
         // One transaction: a partial bulk edit must not apply to half the selection.
         db.withTransaction {
-            var count = 0
-            questionIds.forEach { id ->
-                getQuestion(id)?.let { q ->
-                    saveQuestion(
-                        q.copy(
-                            marks = marks ?: q.marks,
-                            difficulty = difficulty ?: q.difficulty,
-                            tags = tags ?: q.tags
-                        )
-                    )
-                    count++
-                }
-            }
+            // One COALESCE update per chunk replaces a getQuestion/saveQuestion
+            // round-trip per question; null binds keep the column, matching the
+            // null fields are kept contract.
+            val count = db.questionDao().updateBulkFieldsChunked(
+                questionIds,
+                marks,
+                difficulty?.label,
+                tags?.joinToString(",")
+            )
             Logger.i("REPO", "bulkUpdateQuestions($count ids)")
         }
     }

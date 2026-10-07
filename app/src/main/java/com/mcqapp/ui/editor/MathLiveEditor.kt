@@ -122,7 +122,23 @@ fun MathLiveEditor(
         factory = { ctx ->
             val view = WebView(ctx)
             view.settings.javaScriptEnabled = true
-            view.settings.allowFileAccess = true
+            // Same hardening as the preview WebView: assets and resources stay
+            // reachable without this (the page loads MathLive from
+            // file:///android_asset), it only stops the page reading arbitrary
+            // file:// paths — and this frame additionally holds a
+            // @JavascriptInterface, so nothing may load into it from outside.
+            view.settings.allowFileAccess = false
+            view.settings.allowContentAccess = false
+            // Refuse to navigate anywhere: the page never needs to, so no
+            // link or injected markup can take over the frame and reach the
+            // bridge. minSdk 26 reaches only this overload; the deprecated
+            // String variant is for API < 24.
+            view.webViewClient = object : android.webkit.WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest
+                ): Boolean = true
+            }
             view.setBackgroundColor(0x00000000)
             view.addJavascriptInterface(object {
                 @JavascriptInterface

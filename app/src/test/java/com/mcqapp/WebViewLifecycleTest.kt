@@ -5,13 +5,17 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Guards the WebView teardown in both `AndroidView` call sites.
+ * Guards the WebView call sites in the preview and the editor: teardown
+ * (a leaked renderer and JS heap for the life of the process) and the
+ * hardening every page WebView must share — no file or content access, no
+ * navigation — so the frame and its `@JavascriptInterface` stay contained.
  *
- * This is a structural check, not a runtime proof: proving a WebView is
- * actually destroyed needs a device or a Compose UI test harness, and the
- * project deliberately has neither in the JVM suite. What it does catch is
- * the realistic regression — someone adding or editing a WebView and dropping
- * the `onRelease` that releases its renderer and JS heap.
+ * This is a structural check, not a runtime proof: proving a WebView's
+ * settings or its destruction at runtime needs a device or a Compose UI test
+ * harness, and the project deliberately has neither in the JVM suite. What it
+ * does catch is the realistic regression — someone adding or editing a
+ * WebView and dropping the `onRelease`, or shipping one with default settings
+ * the way the MathLive editor did.
  *
  * Unit tests run with the app module as working directory.
  */
@@ -48,27 +52,60 @@ class WebViewLifecycleTest {
         return blocks
     }
 
-    @Test
-    fun everyAndroidViewReleasesItsWebView() {
+    /** (path, block) for every `AndroidView` block that builds a WebView. */
+    private fun webViewBlocks(): List<Pair<String, String>> {
         val files = listOf(
             "src/main/java/com/mcqapp/util/ContentElements.kt",
             "src/main/java/com/mcqapp/ui/editor/MathLiveEditor.kt",
             "src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt"
         )
-        var checked = 0
-        for (path in files) {
-            for (block in androidViewBlocks(path)) {
-                if (!block.contains("WebView(")) continue
-                checked++
-                assertTrue(
-                    "$path declares a WebView in AndroidView but no onRelease, so its " +
-                        "renderer and JS heap leak for the life of the process",
-                    block.contains("onRelease")
-                )
-                assertTrue("$path: onRelease must call destroy()", block.contains("destroy()"))
-            }
+        return files.flatMap { path ->
+            androidViewBlocks(path).filter { it.contains("WebView(") }.map { path to it }
         }
-        assertTrue("expected to inspect at least two WebView call sites, saw $checked", checked >= 2)
+    }
+
+    @Test
+    fun everyAndroidViewReleasesItsWebView() {
+        val sites = webViewBlocks()
+        for ((path, block) in sites) {
+            assertTrue(
+                "$path declares a WebView in AndroidView but no onRelease, so its " +
+                    "renderer and JS heap leak for the life of the process",
+                block.contains("onRelease")
+            )
+            assertTrue("$path: onRelease must call destroy()", block.contains("destroy()"))
+        }
+        assertTrue("expected to inspect at least two WebView call sites, saw ${sites.size}", sites.size >= 2)
+    }
+
+    @Test
+    fun everyPageWebViewRefusesFileAndContentAccess() {
+        val sites = webViewBlocks()
+        for ((path, block) in sites) {
+            assertTrue(
+                "$path: a page WebView must set allowFileAccess = false, or the " +
+                    "page can read arbitrary file:// paths",
+                block.contains("allowFileAccess = false")
+            )
+            assertTrue(
+                "$path: a page WebView must set allowContentAccess = false",
+                block.contains("allowContentAccess = false")
+            )
+        }
+        assertTrue("expected to inspect at least two WebView call sites, saw ${sites.size}", sites.size >= 2)
+    }
+
+    @Test
+    fun everyPageWebViewRefusesNavigation() {
+        val sites = webViewBlocks()
+        for ((path, block) in sites) {
+            assertTrue(
+                "$path: a page WebView must veto navigation, so no link or " +
+                    "injected markup can take over the frame",
+                block.contains("shouldOverrideUrlLoading")
+            )
+        }
+        assertTrue("expected to inspect at least two WebView call sites, saw ${sites.size}", sites.size >= 2)
     }
 
     @Test

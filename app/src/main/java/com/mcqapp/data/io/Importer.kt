@@ -79,7 +79,7 @@ class Importer(
         // transaction: it is pure CPU work that must not hold the database
         // write lock. The scaled twins mirror the originals 1:1 — hashes and
         // identity still read the original DTOs, only stored bytes shrink.
-        val scaledPapers = file.papers.map { it.withDownscaledImages() }
+        val scaledPapers = file.withDownscaledImages().papers
 
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
@@ -618,8 +618,10 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
 }
 
 /**
- * Deep-copies the file with every question image downscaled. Pure DTO
- * work: no database calls, safe to run before the import transaction.
+ * Deep-copies the file with every question image downscaled — the single
+ * scaler, also what the import path calls (it takes the papers back out and
+ * zips them against the originals). Pure DTO work: no database calls, safe to
+ * run before the import transaction.
  */
 internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
     papers = papers.map { paper ->
@@ -629,13 +631,6 @@ internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
                 category.copy(questions = category.questions.map { it.withDownscaledImages() })
             }
         )
-    }
-)
-
-private fun PaperDto.withDownscaledImages(): PaperDto = copy(
-    questions = questions.map { it.withDownscaledImages() },
-    categories = categories.map { category ->
-        category.copy(questions = category.questions.map { it.withDownscaledImages() })
     }
 )
 

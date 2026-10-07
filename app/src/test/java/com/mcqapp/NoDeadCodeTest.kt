@@ -43,6 +43,22 @@ class NoDeadCodeTest {
     }
 
     @Test
+    fun imageScalingHasOneImplementation() {
+        // The file-level scaler is the single copy of the mapping and the
+        // import path calls it; the paper-level twin of it is the dead code
+        // the audit found.
+        val importer = sourceOf("Importer.kt")
+        assertTrue(
+            "the import path scales the whole file",
+            importer.contains("file.withDownscaledImages().papers")
+        )
+        assertFalse(
+            "Importer.kt still declares the paper-level duplicate",
+            importer.contains("fun PaperDto.withDownscaledImages(")
+        )
+    }
+
+    @Test
     fun allRenderersShareOneHtmlEscaper() {
         // escapeHtmlText is the single implementation; the Anki variant keeps
         // its own because it also maps ' and newlines for Anki's renderer.

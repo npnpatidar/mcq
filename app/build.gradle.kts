@@ -41,8 +41,19 @@ tasks.matching { it.name.contains("GenerateBuildConfig", ignoreCase = true) }
 val tagVersion: String? = releaseTag()
 val versionCodeFromTag: Int? = tagVersion?.let { v ->
     SEMVER_PARTS.find(v)?.groupValues?.let { (_, major, minor, patch) ->
-        (major.toLong() * 1_000_000L + minor.toLong() * 1_000L + patch.toLong())
-            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        // Mixed radix (major*1e6 + minor*1e3 + patch) is unique only while
+        // minor and patch stay under 1000: 0.0.1000 would otherwise encode
+        // to the same versionCode as 0.1.0, and Android rejects codes over
+        // 2_100_000_000. Refuse the tag loudly instead of publishing a
+        // colliding or silently-clamped code.
+        require(minor.toLong() < 1_000L && patch.toLong() < 1_000L) {
+            "release tag '$v': minor and patch must each be under 1000"
+        }
+        val code = major.toLong() * 1_000_000L + minor.toLong() * 1_000L + patch.toLong()
+        require(code <= 2_100_000_000L) {
+            "release tag '$v': versionCode $code exceeds Android's 2_100_000_000 limit"
+        }
+        code.toInt()
     }
 }
 

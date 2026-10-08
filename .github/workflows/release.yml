@@ -14,7 +14,20 @@ permissions:
   contents: write
 
 jobs:
+  wrapper-validation:
+    # The wrapper jar runs with full privileges in the publish job below;
+    # check it against Gradle's published checksums first (supply-chain: a
+    # tampered gradle-wrapper.jar is game over).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
   publish:
+    needs: wrapper-validation
     runs-on: ubuntu-latest
     steps:
       - name: Check out

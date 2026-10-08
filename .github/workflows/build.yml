@@ -6,7 +6,20 @@ on:
   pull_request:
 
 jobs:
+  wrapper-validation:
+    # The wrapper jar runs with full privileges on every runner below;
+    # check it against Gradle's published checksums before any job can
+    # execute it (supply-chain: a tampered gradle-wrapper.jar is game over).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
   build:
+    needs: wrapper-validation
     # x86_64 runners: Robolectric's native runtime and the Conscrypt JNI
     # only ship x86_64 Linux binaries, so the DB-backed unit tests run
     # here (they cannot run on ARM64 Linux hosts).
@@ -74,6 +87,7 @@ jobs:
     # false, so the artifact is ~15 MB rather than the ~3.6 MB measured with R8
     # on. Turning minify on is a one-line change and this job is what would
     # catch it going wrong.
+    needs: wrapper-validation
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -149,6 +163,7 @@ jobs:
     # Emulator UI test: boots an x86_64 emulator and runs the critical
     # path (library -> test -> submit -> results). Separate job so JVM
     # unit-test results never depend on emulator boot time.
+    needs: wrapper-validation
     runs-on: ubuntu-latest
     steps:
       - name: Check out

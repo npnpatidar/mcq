@@ -30,6 +30,16 @@ data class ImportReport(
     val restoredSchedules: Int = 0
 )
 
+/**
+ * Imports an [McqFileDto] into the database.
+ *
+ * Single-use by design: an instance carries per-import mutable state
+ * (`importedFile`, `writtenThisImport`, `storedCandidates`, `sameIdCache`)
+ * that must not leak between files, so a fresh [Importer] is constructed for
+ * every import — reusing one across imports would collide questions against
+ * the previous file's written hashes and cached candidates. It is also not
+ * safe to run two imports concurrently on one instance.
+ */
 class Importer(
     private val db: AppDatabase,
     /**

@@ -51,7 +51,9 @@ class RemoteImageGateTest {
 
     @Test
     fun remoteImagesAreOffByDefault() {
-        val repository = source("src/main/java/com/mcqapp/data/repository/McqRepository.kt")
+        // The setting lives in RepositorySettings.kt, which McqRepository
+        // delegates to; the guard follows the implementation.
+        val repository = source("src/main/java/com/mcqapp/data/repository/RepositorySettings.kt")
         val flow = repository
             .substringAfter("fun loadRemoteImages()")
             .substringBefore("suspend fun setLoadRemoteImages")

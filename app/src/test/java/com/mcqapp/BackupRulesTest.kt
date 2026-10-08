@@ -60,6 +60,12 @@ class BackupRulesTest {
         val offenders = listOf(
             "src/main/java/com/mcqapp/data/io/Importer.kt",
             "src/main/java/com/mcqapp/data/repository/McqRepository.kt",
+            "src/main/java/com/mcqapp/data/repository/RepositorySettings.kt",
+            "src/main/java/com/mcqapp/data/repository/QuestionStore.kt",
+            "src/main/java/com/mcqapp/data/repository/PaperStore.kt",
+            "src/main/java/com/mcqapp/data/repository/StudyStore.kt",
+            "src/main/java/com/mcqapp/data/repository/HistoryStore.kt",
+            "src/main/java/com/mcqapp/data/repository/QuestionContentMapper.kt",
             "src/main/java/com/mcqapp/ui/editor/EditorViewModel.kt",
             "src/main/java/com/mcqapp/ui/importscreen/ImportScreen.kt",
             "src/main/java/com/mcqapp/ui/importscreen/ImportViewModel.kt"

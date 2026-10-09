@@ -3,7 +3,7 @@
 Goal: make this app's **spaced-repetition layer** correct and Anki-consistent.
 Explicitly **not** a feature-parity clone of Anki. See "Deliberately dropped" at the end.
 
-- Baseline: `master` @ `794edeb`, v0.0.6, 658 JVM tests green
+- Baseline: `main` (then named `master`) @ `794edeb`, v0.0.6, 658 JVM tests green
 - Anki reference: desktop **26.09.3**, scheduler v3
 - Rules: **one fix per commit**; no commit mixes tracks; CI must stay green
 - Verify JVM with `sh /tmp/run-qemu-tests.sh`; `androidTest` only via CI `ui-test`

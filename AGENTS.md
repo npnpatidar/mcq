@@ -1,6 +1,6 @@
 # Project notes for agents
 
-Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar/mcq.git`, branch `master`.
+Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar/mcq.git`, branch `main`.
 
 ## Build and test
 

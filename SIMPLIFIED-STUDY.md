@@ -3,7 +3,7 @@
 Goal: a study mode where the learner just answers questions and the app grades.
 No Again/Hard/Good/Easy decision per card. On by default.
 
-- Baseline: `master` past `0.0.9`, suite `OK (714 tests)`
+- Baseline: `main` (then named `master`) past `0.0.9`, suite `OK (714 tests)`
 - Rules: **one commit per track**; CI must stay green
 - Verify JVM with `sh /tmp/run-qemu-tests.sh`; `androidTest` only via CI `ui-test`
 

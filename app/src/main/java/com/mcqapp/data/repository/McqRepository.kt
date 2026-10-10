@@ -5,6 +5,8 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.searchableText
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -27,6 +29,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val settings = SettingsStore(context)
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
+    private val passageStore = PassageStore(db, mapper)
     private val paperStore = PaperStore(db, questionStore, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
@@ -105,8 +108,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(like, fragment)
             else -> db.questionDao().searchIncludingOptions(like, fragment)
         }
+        // Passage context rides into the post-filter so the DAO's passage
+        // union survives it: a member found through its passage's text or
+        // title must not be vetoed because that text is not on the question.
+        val passageBodies = db.passageDao().getByIds(
+            prefiltered.mapNotNull { it.passageId }.distinct()
+        ).associate { passage ->
+            passage.id to (passage.title + "\n" + passage.text.parseContentElements(mapper.json).searchableText)
+        }
         val questions = mapper.toDomainBulk(prefiltered)
-            .let { com.mcqapp.domain.QuestionSearch.filter(it, query, scope) }
+            .let {
+                com.mcqapp.domain.QuestionSearch.filter(it, query, scope, passageBodies)
+            }
         if (questions.isEmpty()) return emptyList()
         val papersById = db.paperDao().getAll().associateBy({ it.id }, { it.title })
         val paperByCategory = db.categoryDao().getAll().associate { cat ->
@@ -145,6 +158,32 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             perPaper = perPaper
         )
     }
+
+    // --- passages ---
+
+    fun observePassages(): Flow<List<com.mcqapp.domain.Passage>> = passageStore.observePassages()
+    suspend fun getPassage(passageId: String): com.mcqapp.domain.Passage? =
+        passageStore.getPassage(passageId)
+    suspend fun getPassagesByIds(ids: List<String>): List<com.mcqapp.domain.Passage> =
+        passageStore.getPassagesByIds(ids)
+    suspend fun getPassagesForPaper(paperId: String): List<com.mcqapp.domain.Passage> =
+        passageStore.getPassagesForPaper(paperId)
+    suspend fun savePassage(passage: com.mcqapp.domain.Passage): String =
+        passageStore.savePassage(passage)
+    suspend fun passageMemberCount(passageId: String): Int =
+        passageStore.memberCount(passageId)
+    suspend fun deletePassage(passageId: String): Boolean =
+        passageStore.deletePassage(passageId)
+    suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) =
+        passageStore.assignQuestions(questionIds, passageId)
+    suspend fun unassignQuestionsFromPassage(questionIds: Collection<String>) =
+        passageStore.unassignQuestions(questionIds)
+    suspend fun unassignAllFromPassage(passageId: String) =
+        passageStore.unassignAll(passageId)
+    suspend fun movePassage(passageId: String, delta: Int): Boolean =
+        passageStore.movePassage(passageId, delta)
+    suspend fun buildPassageBlocks(questions: List<Question>): List<PassageBlock> =
+        passageStore.buildBlocks(questions)
 
     // --- papers & categories ---
 

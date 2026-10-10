@@ -111,13 +111,15 @@ internal class QuestionStore(
             Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
                 "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
             val contentHash = mapper.computeContentHash(
-                question.text, question.options.map { it.text }, question.options.map { it.image }
+                question.text, question.options.map { it.text }, question.options.map { it.image },
+                question.passageId
             )
             Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
             db.questionDao().upsert(
                 QuestionEntity(
                     id = question.id,
                     categoryId = question.categoryId,
+                    passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
@@ -177,6 +179,7 @@ internal class QuestionStore(
             QuestionEntity(
                 id = q.id,
                 categoryId = q.categoryId,
+                passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),

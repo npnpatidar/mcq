@@ -55,6 +55,14 @@ data class CategoryEntity(
 data class QuestionEntity(
     @PrimaryKey val id: String,
     val categoryId: String,
+    /**
+     * The passage this question belongs to, when it shares context with
+     * others. A plain nullable column without a foreign key (like
+     * `bookmarks.questionId`): a passage's members may outlive a
+     * still-resolving reorder, and passage deletion itself is refused
+     * while members exist, so no cascade is wanted here.
+     */
+    val passageId: String? = null,
     val text: String,
     val image: String? = null,
     val explanation: String = "",

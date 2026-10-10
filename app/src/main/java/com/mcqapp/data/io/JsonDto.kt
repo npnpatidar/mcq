@@ -46,7 +46,9 @@ data class QuestionDto(
     val explanationImage: String? = null,
     val difficulty: String = "medium",
     val marks: Double = 1.0,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    /** The passage (shared reading context) this question belongs to, if any. */
+    val passageId: String? = null
 )
 
 /**
@@ -104,10 +106,28 @@ data class PaperDto(
     val durationMinutes: Int = 0,
     val negativeMarking: Double = 0.0,
     val categories: List<CategoryDto> = emptyList(),
-    val questions: List<QuestionDto> = emptyList()
+    val questions: List<QuestionDto> = emptyList(),
+    /** Reading passages referenced by this paper's questions' passageId. */
+    val passages: List<PassageDto> = emptyList()
 ) {
     fun topLevelQuestions(): List<QuestionDto> = questions
 }
+
+
+/**
+ * A reading passage on the wire. Lives alongside a paper's questions; members
+ * point at it by [QuestionDto.passageId].
+ */
+@Serializable
+data class PassageDto(
+    val id: String,
+    val title: String,
+    @Serializable(with = ContentElementListJson::class)
+    val elements: List<ContentElement> = emptyList(),
+    val image: String? = null,
+    /** Which category the passage sits in ("Uncategorized" fallback on import). */
+    val categoryId: String? = null
+)
 
 @Serializable
 data class AttemptResultDto(
@@ -156,7 +176,13 @@ data class McqFileDto(
      * exported, so a backup restores schedules rather than silently
      * resetting them. Foreign files omit it and import exactly as before.
      */
-    val scheduling: Map<String, CardScheduleDto> = emptyMap()
+    val scheduling: Map<String, CardScheduleDto> = emptyMap(),
+    /**
+     * Reading passages referenced by `QuestionDto.passageId` across all
+     * papers. Written by this app's exports; foreign files have none and
+     * import exactly as before.
+     */
+    val passages: List<PassageDto> = emptyList()
 )
 
 /**

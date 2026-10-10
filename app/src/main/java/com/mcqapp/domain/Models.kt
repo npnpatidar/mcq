@@ -204,7 +204,9 @@ data class Question(
     val explanationImage: String? = null,
     val difficulty: Difficulty = Difficulty.MEDIUM,
     val marks: Double = 1.0,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    /** The passage (shared reading context) this question belongs to, if any. */
+    val passageId: String? = null
 ) {
     val isMultiCorrect: Boolean get() = correctOptionIds.size > 1
 
@@ -238,8 +240,33 @@ data class Question(
         explanationImage,
         difficulty,
         marks,
-        tags
+        tags,
+        passageId = null
     )
+}
+
+/**
+ * A reading passage: shared context for a group of questions.
+ *
+ * Members live as ordinary [Question]s pointing at this id through
+ * `passageId`; the passage itself only carries the context (title, body,
+ * image) and its category, which gives it a home in the paper structure.
+ *
+ * Scheduling, bookmarks, attempts and stats stay per question — the passage
+ * is not schedulable content, only what surrounds the question on screen.
+ */
+data class Passage(
+    val id: String,
+    val categoryId: String,
+    val title: String,
+    val elements: List<ContentElement> = emptyList(),
+    val image: String? = null,
+    val sortOrder: Int = 0,
+    /** member count filled in by the repository read, 0 when not requested. */
+    val memberCount: Int = 0
+) {
+    /** Backward-compat concatenated body text. */
+    val text: String get() = elements.textContent
 }
 
 data class CategoryNode(

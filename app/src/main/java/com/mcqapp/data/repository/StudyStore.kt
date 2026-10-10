@@ -136,7 +136,8 @@ internal class StudyStore(
                 contentHash = ContentHash.of(
                     entity.text.parseContentElements(mapper.json).textContent,
                     options.map { it.text.parseContentElements(mapper.json).textContent },
-                    options.map { it.image }
+                    options.map { it.image },
+                    entity.passageId
                 )
             )
         }

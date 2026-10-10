@@ -106,3 +106,23 @@ be grouped together and occur together.
   (dedupe by question id; a question matching both ways appears once).
 - **`exportSchema = false`** (audit F15) — no schema JSON to keep in sync;
   the migration test is the only guard.
+
+## Progress log
+
+2026-10-10 — all ten steps implemented in one WIP on `exp/passage-questions`
+(schema v9 + `MIGRATION_8_9` + migration test, `PassageStore` CRUD/assign/
+reorder, JSON round-trip incl. legacy aliases and the import preview's file
+assembly, block build/shuffle/drill with overshoot UI, study context card,
+browse grouping, DOCX `Passage:` marker + README format section, APKG front
+prepend + payload fields, passage picker in the question editor, and passage
+headers in the PDF/HTML/ZIP writers). Bugs found and fixed while reviewing:
+`LegacyParser` never read a root-level `questions` array, so the DOCX
+wrapper reported "No papers found"; `buildImportFile` dropped
+`original.passages`, so the preview path imported members with dangling ids;
+the in-memory `QuestionSearch.filter` vetoed the DAO's passage-union hits
+(passages now flow into it as `passageBodies`); the DOCX passage split
+dropped the newline after the marker line, so the first member's `N.)`
+stopped being a line-start marker and was lost. Local verification: 807 unit
+tests compile and run; every passage test passes; the remaining local
+failures are the pre-existing Robolectric/aarch64 environmental ones (CI is
+authoritative for those).

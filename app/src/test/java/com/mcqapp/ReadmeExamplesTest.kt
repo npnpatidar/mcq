@@ -43,6 +43,12 @@ class ReadmeExamplesTest {
         return readme.substring(body + 1, end).trim()
     }
 
+    /** XML text escaping for sample lines embedded in a generated document. */
+    private fun xmlEscape(s: String): String = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+
     /**
      * The Word example in the README must parse, and the `)` of `1.)` must not
      * leak into the question text.
@@ -88,6 +94,36 @@ class ReadmeExamplesTest {
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message.orEmpty().contains("No questions found"))
         }
+    }
+
+    /** The documented `Passage:` example: one standalone question, two members. */
+    @Test
+    fun docxPassageExampleGroupsMembers() {
+        val body = blockAfter("### The `Passage:` marker")
+        val paragraphs = body.lines().filter { it.isNotBlank() }.joinToString("") { line ->
+            "<w:p><w:r><w:t>${xmlEscape(line)}</w:t></w:r></w:p>"
+        }
+        val documentXml = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+            "<w:body>$paragraphs</w:body></w:document>"
+        val baos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(baos).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("[Content_Types].xml"))
+            zip.write("<Types/>".toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("word/document.xml"))
+            zip.write(documentXml.toByteArray())
+            zip.closeEntry()
+        }
+        val file = LegacyParser.parse(com.mcqapp.data.docx.parseDocx(baos.toByteArray()).json)
+        assertEquals(1, file.passages.size)
+        assertEquals("The water cycle", file.passages.single().title)
+        val questions = file.papers.single().categories.single().questions
+        assertEquals(3, questions.size)
+        // The pre-marker question stays standalone; the two after it are members.
+        assertEquals(null, questions[0].passageId)
+        assertEquals("passage-1", questions[1].passageId)
+        assertEquals("passage-1", questions[2].passageId)
+        assertTrue(file.warnings.isEmpty())
     }
 
     /** A bare array is wrapped into one paper and one category, with a..d option ids. */

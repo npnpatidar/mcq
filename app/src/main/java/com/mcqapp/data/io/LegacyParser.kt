@@ -139,19 +139,7 @@ object LegacyParser {
             val questions = uniqueIds(element.mapIndexedNotNull { index, el ->
                 safeQuestion(el, "question ${index + 1}", warnings)
             })
-            val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
-            val paper = PaperDto(
-                id = paperId,
-                title = "Imported Questions",
-                categories = listOf(
-                    CategoryDto(
-                        id = "$paperId-uncat",
-                        title = "Uncategorized",
-                        questions = questions
-                    )
-                ),
-                questions = questions
-            )
+            val paper = ephemeralPaper(questions)
             localImageWarning(listOf(paper))?.let { warnings.add(it) }
             return McqFileDto(version = 1, papers = listOf(paper), warnings = warnings)
         }
@@ -169,6 +157,30 @@ object LegacyParser {
         val bookmarks = (root["bookmarks"] as? JsonArray)
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.filter { it.isNotBlank() }
             ?: emptyList()
+        // A root-level `questions` array with no `papers` is the DOCX pipeline's
+        // wrapper shape (`{"questions": [...], "passages": [...]}`). It wraps the
+        // questions in the same ephemeral paper the bare-array path builds, so
+        // the passage block beside it is not stranded without a home.
+        val effectivePapers = if (papers.isEmpty() && root["questions"] is JsonArray) {
+            val topLevel = uniqueIds(
+                (root["questions"] as JsonArray).mapIndexedNotNull { index, el ->
+                    safeQuestion(el, "question ${index + 1}", warnings)
+                }
+            )
+            if (topLevel.isEmpty()) papers else listOf(ephemeralPaper(topLevel))
+        } else {
+            papers
+        }
+        val passages = (root["passages"] as? JsonArray)
+            ?.mapIndexedNotNull { index, passageEl ->
+                try {
+                    parsePassage(passageEl.jsonObject)
+                } catch (e: Exception) {
+                    warnings.add("Skipped malformed passage ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                    null
+                }
+            }
+            ?: emptyList()
         val attemptsJson = arrayField(root, "attempts", "File", warnings)
         val attempts = attemptsJson.mapIndexedNotNull { index, attemptEl ->
             try {
@@ -180,11 +192,12 @@ object LegacyParser {
         }
         return McqFileDto(
             version = version,
-            papers = papers,
+            papers = effectivePapers,
             bookmarks = bookmarks,
             attempts = attempts,
+            passages = passages,
             warnings = warnings
-                .plus(localImageWarning(papers)?.let { listOf(it) } ?: emptyList()),
+                .plus(localImageWarning(effectivePapers)?.let { listOf(it) } ?: emptyList()),
             // Review progress this app exported. Absent from foreign files,
             // which then import exactly as before.
             scheduling = parseScheduling(root["scheduling"])
@@ -232,6 +245,22 @@ object LegacyParser {
         return scheme == "http" || scheme == "https" || scheme == "content"
     }
 
+    /**
+     * One `passages[]` entry. Elements round-trip as content elements; a text
+     * string fallback wraps as one TextElement, like a question's body.
+     */
+    private fun parsePassage(obj: JsonObject): PassageDto {
+        val elements = parseElements(obj["elements"], obj["text"], obj["content"])
+        return PassageDto(
+            id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("missing id"),
+            title = obj["title"]?.jsonPrimitive?.contentOrNull ?: "Passage",
+            elements = elements,
+            image = obj["image"]?.jsonPrimitive?.contentOrNull,
+            categoryId = obj["categoryId"]?.jsonPrimitive?.contentOrNull
+        )
+    }
+
     private fun parseAttempt(obj: JsonObject): AttemptDto {
         fun str(key: String) = obj[key]?.jsonPrimitive?.contentOrNull ?: ""
         fun int(key: String) = obj[key]?.jsonPrimitive?.intOrNull ?: 0
@@ -263,6 +292,28 @@ object LegacyParser {
                     dwellSeconds = r["dwellSeconds"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
                 )
             }
+        )
+    }
+
+    /**
+     * The throwaway paper the bare-questions shapes (root array, DOCX wrapper)
+     * are wrapped in: one paper "Imported Questions" holding one category
+     * "Uncategorized". The importer's own-id path keeps re-imports merging
+     * into it.
+     */
+    private fun ephemeralPaper(questions: List<QuestionDto>): PaperDto {
+        val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
+        return PaperDto(
+            id = paperId,
+            title = "Imported Questions",
+            categories = listOf(
+                CategoryDto(
+                    id = "$paperId-uncat",
+                    title = "Uncategorized",
+                    questions = questions
+                )
+            ),
+            questions = questions
         )
     }
 
@@ -436,7 +487,9 @@ object LegacyParser {
             explanationImage = explanationImage,
             difficulty = difficulty,
             marks = marks,
-            tags = tags
+            tags = tags,
+            passageId = obj["passageId"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
         )
     }
 

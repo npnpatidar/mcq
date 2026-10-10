@@ -5,6 +5,7 @@ import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
+import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.textContent
@@ -157,6 +158,27 @@ object AnkiPackageReader {
         }
         if (noteById.isEmpty()) throw AnkiPackageException("The Anki collection has no notes")
 
+        // Rebuild the passages our own export carried in the payload: every
+        // member note repeats the full text, so first-seen wins and the rest
+        // are identical by construction.
+        val passages = LinkedHashMap<String, PassageDto>()
+        notes.forEach { note ->
+            val payload = payloadFromField(note.fields.getOrNull(2)) ?: return@forEach
+            val pid = payload.passageId ?: return@forEach
+            passages.getOrPut(pid) {
+                PassageDto(
+                    id = pid,
+                    title = payload.passageTitle.orEmpty().ifBlank { "Passage" },
+                    elements = if (payload.passageText.isNotBlank()) {
+                        listOf(com.mcqapp.domain.ContentElement.TextElement(payload.passageText))
+                    } else {
+                        emptyList()
+                    },
+                    image = payload.passageImage
+                )
+            }
+        }
+
         val papers = buildPapers(decks, questionsByDeck)
         val noteCount = questionsByDeck.values.sumOf { it.size }
         Logger.i(
@@ -165,7 +187,7 @@ object AnkiPackageReader {
                 "${scheduling.size} scheduled, $unscheduled new or not due"
         )
         return AnkiReadResult(
-            file = McqFileDto(version = 1, papers = papers),
+            file = McqFileDto(version = 1, papers = papers, passages = passages.values.toList()),
             noteCount = noteCount,
             recallCount = recallCount,
             deckCount = decks.size,
@@ -386,7 +408,8 @@ object AnkiPackageReader {
                 explanationImage = media.rewrite(payload.explanationImage),
                 difficulty = payload.difficulty,
                 marks = payload.marks,
-                tags = (payload.tags + note.tags).distinct()
+                tags = (payload.tags + note.tags).distinct(),
+                passageId = payload.passageId
             ),
             // Nothing to choose between, so this counts as a recall question.
             isRecall = payload.options.isEmpty())

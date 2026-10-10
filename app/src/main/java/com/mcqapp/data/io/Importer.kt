@@ -3,6 +3,7 @@ package com.mcqapp.data.io
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.CardStateEntity
+import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
@@ -69,6 +70,7 @@ class Importer(
         storedCandidates = null
         sameIdCache = null
         writtenThisImport.clear()
+        seenPassageIds.clear()
         // A file this app exported carries its own review progress; an explicit
         // map (the Anki path) still wins.
         val restoreScheduling = scheduling.ifEmpty { file.scheduling }
@@ -161,7 +163,7 @@ class Importer(
                 // skip creating the shell so the library doesn't fill with stubs.
                 val incomingHashes = effectiveCategories.flatMap { cat ->
                     cat.questions.map { q ->
-                        ContentHash.of(q.text, q.options.map { it.text }, q.options.map { it.image })
+                        ContentHash.of(q.text, q.options.map { it.text }, q.options.map { it.image }, q.passageId)
                     }
                 }
                 if (isNewPaper && incomingHashes.isNotEmpty() &&
@@ -234,9 +236,36 @@ class Importer(
                         )
                     }
 
+                    // Passages referenced by this category's questions are written
+                    // right here, inside the same transaction and AFTER the owning
+                    // category row exists: a passage's categoryId FK needs it. The
+                    // file's `passages` array is global, so this runs once per
+                    // passage (first member wins) via seenPassageIds.
+                    val categoryPassageIds = categoryDto.questions
+                        .mapNotNull { it.passageId }
+                        .filter { it !in seenPassageIds }
+                    for (passageId in categoryPassageIds) {
+                        val passageDto = file.passages.firstOrNull { it.id == passageId }
+                            ?: continue
+                        seenPassageIds.add(passageId)
+                        val existing = db.passageDao().getById(passageId)
+                        db.passageDao().upsert(
+                            PassageEntity(
+                                id = passageDto.id,
+                                categoryId = effectiveCatId,
+                                title = passageDto.title,
+                                text = passageDto.elements
+                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement("")) }
+                                    .toContentJson(json),
+                                image = ImageDownscale.downscaleDataUri(passageDto.image),
+                                sortOrder = existing?.sortOrder ?: 0
+                            )
+                        )
+                    }
+
                     categoryDto.questions.forEachIndexed { questionIndex, questionDto ->
                         val scaledQuestion = scaledCategory.questions[questionIndex]
-                        val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image })
+                        val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image }, questionDto.passageId)
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
                             "textLength=${questionDto.text.length}")
@@ -326,10 +355,14 @@ class Importer(
                         Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
                             "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
 
+                        // NOTE: the question row below carries passageId from the
+                        // file; the passage rows themselves were already written
+                        // above, so the id always resolves inside this transaction.
                         db.questionDao().upsert(
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
+                                passageId = questionDto.passageId,
                                 text = questionDto.elements
                                     .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
                                     .toContentJson(json),
@@ -375,7 +408,8 @@ class Importer(
                                     contentHash = ContentHash.of(
                                         scaledQuestion.text,
                                         scaledQuestion.options.map { it.text },
-                                        scaledQuestion.options.map { it.image }
+                                        scaledQuestion.options.map { it.image },
+                                        scaledQuestion.passageId
                                     )
                                 )
                             )
@@ -520,7 +554,8 @@ class Importer(
             ContentHash.of(
                 question.text,
                 question.options.map { it.text },
-                question.options.map { it.image }
+                question.options.map { it.image },
+                question.passageId
             )
         }
 
@@ -529,6 +564,13 @@ class Importer(
 
     /** Questions this import has already written, by content hash. */
     private val writtenThisImport = mutableMapOf<String, MutableList<QuestionDto>>()
+
+    /**
+     * Passage ids whose rows this import has already written, so a passage
+     * referenced by questions in several categories lands in the database
+     * exactly once — under the first member's category.
+     */
+    private val seenPassageIds = mutableSetOf<String>()
 
     /** Collision candidates, fetched once per import and then reused. */
     private var storedCandidates: Map<String, List<StoredCandidate>>? = null
@@ -634,6 +676,7 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
  * run before the import transaction.
  */
 internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
+    passages = passages.map { passage -> passage.copy(image = ImageDownscale.downscaleDataUri(passage.image)) },
     papers = papers.map { paper ->
         paper.copy(
             questions = paper.questions.map { it.withDownscaledImages() },

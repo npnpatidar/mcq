@@ -46,7 +46,19 @@ data class AnkiMcqPayload(
     val elements: List<ContentElement> = emptyList(),
     @SerialName("explanation_elements")
     @Serializable(with = ContentElementListJson::class)
-    val explanationElements: List<ContentElement> = emptyList()
+    val explanationElements: List<ContentElement> = emptyList(),
+    /**
+     * The passage this question shares, with the text inline so a deck read
+     * by any Anki client (and re-imported here) restores the grouping without
+     * a lookup. Null for standalone questions.
+     */
+    val passageId: String? = null,
+    @SerialName("passage_title")
+    val passageTitle: String? = null,
+    @SerialName("passage_text")
+    val passageText: String = "",
+    @SerialName("passage_image")
+    val passageImage: String? = null
 )
 
 @Serializable
@@ -80,16 +92,22 @@ internal fun payloadFromField(field: String?): AnkiMcqPayload? {
     }
 }
 
-internal fun payloadOf(question: com.mcqapp.domain.Question): AnkiMcqPayload =
-    AnkiMcqPayload(
-        image = question.image,
-        options = question.options.map { AnkiMcqOption(it.id, it.text, it.elements, it.image) },
-        correct = question.correctOptionIds.toList(),
-        explanation = question.explanation,
-        explanationElements = question.explanationElements,
-        explanationImage = question.explanationImage,
-        difficulty = question.difficulty.label.lowercase(),
-        marks = question.marks,
-        tags = question.tags,
-        elements = question.elements
-    )
+internal fun payloadOf(
+    question: com.mcqapp.domain.Question,
+    passage: com.mcqapp.domain.Passage? = null
+): AnkiMcqPayload = AnkiMcqPayload(
+    image = question.image,
+    options = question.options.map { AnkiMcqOption(it.id, it.text, it.elements, it.image) },
+    correct = question.correctOptionIds.toList(),
+    explanation = question.explanation,
+    explanationElements = question.explanationElements,
+    explanationImage = question.explanationImage,
+    difficulty = question.difficulty.label.lowercase(),
+    marks = question.marks,
+    tags = question.tags,
+    elements = question.elements,
+    passageId = passage?.id,
+    passageTitle = passage?.title,
+    passageText = passage?.text.orEmpty(),
+    passageImage = passage?.image
+)

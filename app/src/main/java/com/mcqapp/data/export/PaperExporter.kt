@@ -25,13 +25,18 @@ class PaperExporter(private val db: AppDatabase) {
         val dto = Exporter(db).getPaperDto(paperId)
             ?: throw IllegalStateException("Paper not found")
         Logger.i("EXPORT", "Exporting paper '${dto.title}' as ${format.name}")
-        return render(dto, dto.title, format, scheduling = loadScheduling(paperId), twoColumnPdf = twoColumnPdf)
+        return render(
+            withPassageDtos(dto), dto.title, format,
+            scheduling = loadScheduling(paperId),
+            passages = loadPassages(dto),
+            twoColumnPdf = twoColumnPdf
+        )
     }
 
     /** Any assembled DTO (e.g. bookmarks) through the same format writers. */
-    fun exportDto(dto: PaperDto, title: String, format: ExportFormat, twoColumnPdf: Boolean = false): ExportResult {
+    suspend fun exportDto(dto: PaperDto, title: String, format: ExportFormat, twoColumnPdf: Boolean = false): ExportResult {
         Logger.i("EXPORT", "Exporting '$title' as ${format.name}")
-        return render(dto, title, format, twoColumnPdf = twoColumnPdf)
+        return render(withPassageDtos(dto), title, format, twoColumnPdf = twoColumnPdf)
     }
 
     /** Single category (with descendants) through the same format writers. */
@@ -46,7 +51,12 @@ class PaperExporter(private val db: AppDatabase) {
             ?: throw IllegalStateException("Category not found or empty")
         val title = dto.categories.firstOrNull()?.title ?: dto.title
         Logger.i("EXPORT", "Exporting category '$title' as ${format.name}")
-        return render(dto, title, format, scheduling = loadScheduling(paperId), twoColumnPdf = twoColumnPdf)
+        return render(
+            withPassageDtos(dto), title, format,
+            scheduling = loadScheduling(paperId),
+            passages = loadPassages(dto),
+            twoColumnPdf = twoColumnPdf
+        )
     }
 
     /**
@@ -69,11 +79,46 @@ class PaperExporter(private val db: AppDatabase) {
                 )
             }
 
+    /** Passages referenced by [dto]'s questions, keyed by id, for the apkg writer. */
+    private suspend fun loadPassages(dto: PaperDto): Map<String, com.mcqapp.domain.Passage> {
+        val ids = dto.categories
+            .flatMap { it.questions }
+            .mapNotNull { it.passageId }
+            .distinct()
+        if (ids.isEmpty()) return emptyMap()
+        return Exporter(db).getPassagesByIds(ids).associateBy { it.id }
+    }
+
+    /**
+     * Attaches the passages [dto]'s questions reference as wire DTOs, so every
+     * format path (JSON, ZIP, HTML) writes the grouping without each caller
+     * repeating the lookup. A dto that already carries them is untouched.
+     */
+    private suspend fun withPassageDtos(dto: PaperDto): PaperDto {
+        if (dto.passages.isNotEmpty()) return dto
+        val ids = dto.categories
+            .flatMap { it.questions }
+            .mapNotNull { it.passageId }
+            .distinct()
+        if (ids.isEmpty()) return dto
+        return dto.copy(
+            passages = Exporter(db).getPassagesByIds(ids).map { p ->
+                com.mcqapp.data.io.PassageDto(
+                    id = p.id,
+                    title = p.title,
+                    elements = p.elements,
+                    image = p.image
+                )
+            }
+        )
+    }
+
     private fun render(
         dto: PaperDto,
         title: String,
         format: ExportFormat,
         scheduling: Map<String, CardScheduleDto> = emptyMap(),
+        passages: Map<String, com.mcqapp.domain.Passage> = emptyMap(),
         twoColumnPdf: Boolean = false
     ): ExportResult {
         val base = baseName(title)
@@ -83,7 +128,7 @@ class PaperExporter(private val db: AppDatabase) {
                 format.mimeType,
                 json.encodeToString(
                     McqFileDto.serializer(),
-                    McqFileDto(version = 1, papers = listOf(dto))
+                    McqFileDto(version = 1, papers = listOf(dto), passages = dto.passages)
                 ).toByteArray(Charsets.UTF_8)
             )
             ExportFormat.ZIP -> ExportResult(
@@ -94,12 +139,12 @@ class PaperExporter(private val db: AppDatabase) {
             ExportFormat.HTML -> ExportResult(
                 "$base.html",
                 format.mimeType,
-                HtmlPaperWriter.paperToHtml(dto).toByteArray(Charsets.UTF_8)
+                HtmlPaperWriter.paperToHtml(dto, dto.passages).toByteArray(Charsets.UTF_8)
             )
             ExportFormat.HTML_QUIZ -> ExportResult(
                 "$base-quiz.html",
                 format.mimeType,
-                HtmlPaperWriter.paperToQuizHtml(dto).toByteArray(Charsets.UTF_8)
+                HtmlPaperWriter.paperToQuizHtml(dto, dto.passages).toByteArray(Charsets.UTF_8)
             )
             ExportFormat.PDF -> ExportResult(
                 "$base.pdf",
@@ -114,7 +159,7 @@ class PaperExporter(private val db: AppDatabase) {
             ExportFormat.APKG -> ExportResult(
                 "$base.apkg",
                 format.mimeType,
-                AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto), scheduling)
+                AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto), scheduling, passages)
             )
         }
     }

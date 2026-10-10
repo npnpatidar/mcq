@@ -31,5 +31,6 @@ internal fun Question.toQuestionDto() = QuestionDto(
     explanationImage = explanationImage,
     difficulty = difficulty.label,
     marks = marks,
-    tags = tags
+    tags = tags,
+    passageId = passageId
 )

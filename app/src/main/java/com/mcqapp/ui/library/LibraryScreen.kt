@@ -236,6 +236,10 @@ fun LibraryScreen(
                         scope.launch { drawerState.close() }
                         navController.navigate("search")
                     },
+                    onOpenPassages = {
+                        scope.launch { drawerState.close() }
+                        navController.navigate("passages")
+                    },
                     onOpenSettings = {
                         scope.launch { drawerState.close() }
                         navController.navigate("settings")

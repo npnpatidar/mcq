@@ -67,12 +67,43 @@ fun parseDocx(bytes: ByteArray): DocxParseResult {
     // Collapse blank lines like the pipeline's cleanup: markers must
     // start lines, stray empties are noise.
     val cleaned = text.toString().replace(Regex("\n{2,}"), "\n")
-    val questions = extractQuestions(cleaned)
+    val (passages, cleanedQuestions) = extractPassages(cleaned)
+    val questions = extractQuestions(cleanedQuestions)
     val array = buildJsonArray {
         for (q in questions) add(questionJson(q))
     }
-    return DocxParseResult(array.toString(), read.warnings)
+    val passageArray = buildJsonArray {
+        for (p in passages) {
+            add(buildJsonObject {
+                put("id", JsonPrimitive(p.id))
+                put("title", JsonPrimitive(passageTitle(p)))
+                put("elements", buildJsonArray {
+                    for (el in fieldElements(p.bodyHtml)) add(elementJson(el))
+                })
+            })
+        }
+    }
+    // Passages ride top-level; the questions JSON stays the array the
+    // importer already parses.
+    val wrapper = if (passages.isEmpty()) {
+        array.toString()
+    } else {
+        buildJsonObject {
+            put("questions", array)
+            put("passages", passageArray)
+        }.toString()
+    }
+    return DocxParseResult(wrapper, read.warnings)
 }
+
+/** The one-line title after `Passage:`; blank falls back to a numbered default. */
+private fun passageTitle(p: RawPassage): String {
+    val plain = stripTags(p.titleHtml).trim()
+    return plain.ifBlank { "Passage" }
+}
+
+private fun stripTags(html: String): String =
+    Regex("<[^>]*>").replace(html, "")
 
 internal data class RawQuestion(
     val num: String,
@@ -86,10 +117,34 @@ internal data class RawQuestion(
      * option's text or a zero-based index, and for the invalid forms that are
      * refused outright.
      */
-    val correctIds: List<String> = emptyList()
+    val correctIds: List<String> = emptyList(),
+    /**
+     * Id of the `Passage:` block this question follows, when one does. Empty
+     * for standalone questions, which keeps every pre-marker question exactly
+     * as it was.
+     */
+    val passageId: String = ""
+)
+
+/**
+ * One `Passage:` block from the document: the context text shared by the
+ * questions that follow it, until the next marker or the end.
+ */
+internal data class RawPassage(
+    val id: String,
+    val titleHtml: String,
+    val bodyHtml: String
 )
 
 private val questionSplit = Regex("(?m)^(\\d{1,7}\\.\\))")
+
+/**
+ * Line-start `Passage:` marker (D4). Fits the existing `(?m)^` marker style;
+ * question stems always start with `N.)`, so the two cannot collide. A case-
+ * insensitive match spares authors remembering the exact casing, but a line
+ * that merely *contains* "Passage:" mid-sentence is not a marker.
+ */
+internal val passageSplit = Regex("(?im)^(Passage:)\\s*(.*)$")
 
 /** Option labels, in order. Ten is plenty for a written paper and bounded on purpose. */
 private val OPTION_LABELS = ('a'..'j').map { it.toString() }
@@ -102,6 +157,49 @@ private val answerSeparator = Regex("\\s*(?:,|;|&|\\band\\b)\\s*", RegexOption.I
 
 private fun isSingleLetter(token: String) = token.length == 1 && token[0] in 'a'..'z'
 
+/**
+ * Splits the cleaned document on `Passage:` markers and returns the passages
+ * found plus the text still to question-split. Each question keeps its
+ * membership through the passage id, minted `passage-N` in document order.
+ */
+internal fun extractPassages(cleaned: String): Pair<List<RawPassage>, String> {
+    val matches = passageSplit.findAll(cleaned).toList()
+    if (matches.isEmpty()) return emptyList<RawPassage>() to cleaned
+    val passages = mutableListOf<RawPassage>()
+    val rebuilt = StringBuilder()
+    var cursor = 0
+    matches.forEachIndexed { index, match ->
+        val titleHtml = match.groupValues[2].trim()
+        // The match ends at the line's last character, so `range.last + 1` is
+        // the newline itself. Skip it: leaving it out would merge the marker
+        // line with the first question stem, whose `N.)` then stops being a
+        // line-start marker and the first member is lost.
+        var bodyStart = match.range.last + 1
+        if (bodyStart < cleaned.length && cleaned[bodyStart] == '\n') bodyStart++
+        // The body ends where the questions begin: the first `N.)` marker
+        // after the `Passage:` line, or the next marker — whichever comes
+        // first. Stopping at the next marker alone would swallow the member
+        // questions into the body and drop them from the question stream.
+        val firstQuestion = questionSplit.find(cleaned.substring(bodyStart))
+        val questionBodyEnd = firstQuestion?.let { bodyStart + it.range.first }
+        val bodyEnd = if (index + 1 < matches.size) {
+            val nextPassage = matches[index + 1].range.first
+            if (questionBodyEnd != null && questionBodyEnd < nextPassage) questionBodyEnd else nextPassage
+        } else {
+            questionBodyEnd ?: cleaned.length
+        }
+        val body = cleaned.substring(bodyStart, bodyEnd).trim()
+        val id = "passage-${index + 1}"
+        passages.add(RawPassage(id = id, titleHtml = titleHtml, bodyHtml = body))
+        // Rebuild the question stream without the passage bodies; the marker
+        // lines stay so extractQuestions finds them and tags the members.
+        rebuilt.append(cleaned.substring(cursor, bodyStart))
+        cursor = bodyEnd
+    }
+    rebuilt.append(cleaned.substring(cursor))
+    return passages to rebuilt.toString()
+}
+
 private fun extractQuestions(cleaned: String): List<RawQuestion> {
     val matches = questionSplit.findAll(cleaned).toList()
     if (matches.isEmpty()) {
@@ -111,6 +209,19 @@ private fun extractQuestions(cleaned: String): List<RawQuestion> {
                 "'(a)..(d)', 'Ans.' and 'Exp:' markers."
         )
     }
+    // Which passage each question belongs to: the last `Passage:` marker at or
+    // before the question's own position. Questions before any marker are
+    // standalone (passageId "").
+    val passageMarks = passageSplit.findAll(cleaned).toList()
+    fun passageIdAt(position: Int): String {
+        var active = ""
+        for (mark in passageMarks) {
+            if (mark.range.first <= position) {
+                active = "passage-${passageMarks.indexOf(mark) + 1}"
+            } else break
+        }
+        return active
+    }
     val out = mutableListOf<RawQuestion>()
     for (i in matches.indices) {
         val num = matches[i].groupValues[1].trim()
@@ -119,12 +230,12 @@ private fun extractQuestions(cleaned: String): List<RawQuestion> {
         var body = cleaned.substring(start, end).trim()
         // The number may hug the stem on one line ("1.) What…").
         if (body.startsWith(num)) body = body.substring(num.length).trim()
-        out.add(extractQuestionData(num, body))
+        out.add(extractQuestionData(num, body, passageIdAt(start - num.length - 1)))
     }
     return out
 }
 
-private fun extractQuestionData(num: String, block: String): RawQuestion {
+private fun extractQuestionData(num: String, block: String, passageId: String = ""): RawQuestion {
     val label = "$num"
     fun fail(reason: String): Nothing =
         throw IllegalArgumentException("Malformed question $label: $reason")
@@ -242,7 +353,8 @@ private fun extractQuestionData(num: String, block: String): RawQuestion {
         options = options,
         answer = answer,
         explanationHtml = explanation,
-        correctIds = correctIds
+        correctIds = correctIds,
+        passageId = passageId
     )
 }
 
@@ -339,10 +451,37 @@ private fun questionJson(q: RawQuestion): JsonObject = buildJsonObject {
     put("explanation_elements", buildJsonArray {
         for (el in fieldElements(q.explanationHtml)) add(elementJson(el))
     })
+    if (q.passageId.isNotEmpty()) {
+        put("passageId", JsonPrimitive(q.passageId))
+    }
 }
 
 /** Visible for tests: the marker splitter without zip/DOM. */
 internal fun splitDocxMarkersForTest(coded: String): List<RawQuestion> = extractQuestions(coded)
+
+/** Visible for tests: the cleaned text the marker pass runs on. */
+internal fun docxTextForTest(bytes: ByteArray): String {
+    val read = readDocx(bytes)
+    val text = StringBuilder()
+    for (block in read.blocks) {
+        when (block) {
+            is DocxBlock.Para -> text.append(block.html).append('\n')
+            is DocxBlock.Table -> {
+                text.append("<table border=\"1\">")
+                for (row in block.rows) {
+                    text.append("<tr>")
+                    for (cell in row) text.append("<td>").append(cell).append("</td>")
+                    text.append("</tr>")
+                }
+                text.append("</table>").append('\n')
+            }
+        }
+    }
+    return text.toString().replace(Regex("\n{2,}"), "\n")
+}
+
+/** Visible for tests: the passage split without zip/DOM. */
+internal fun extractPassagesForTest(coded: String): Pair<List<RawPassage>, String> = extractPassages(coded)
 
 /** Visible for tests: the raw JSON object for one parsed question. */
 internal fun questionJsonForTest(q: RawQuestion): JsonObject = questionJson(q)

@@ -73,6 +73,16 @@ object PdfPaperWriter {
                 for (question in category.questions) {
                     number++
                     w.ensureSpace(120f)
+                    // Each member repeats the passage (D8): every question stays
+                    // self-contained, like options-on-front.
+                    paper.passages.firstOrNull { it.id == question.passageId }
+                        ?.let { passage ->
+                            w.paragraph(
+                                stripInlineHtml(passage.title.ifBlank { "Passage" }),
+                                11f, Typeface.BOLD, Color.rgb(70, 70, 70), spaceBefore = 6f
+                            )
+                            w.elements(passage.elements, passage.image, indent = 0f)
+                        }
                     // The number prefixes the body flow itself ("Q1. text…"
                     // in one paragraph) instead of a title line, so the
                     // question never prints twice nor starts below its

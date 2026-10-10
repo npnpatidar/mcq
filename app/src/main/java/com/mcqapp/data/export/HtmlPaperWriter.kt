@@ -2,6 +2,7 @@ package com.mcqapp.data.export
 
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
+import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.renderInlineHtml
 import com.mcqapp.domain.ContentElement    /**
@@ -11,7 +12,7 @@ import com.mcqapp.domain.ContentElement    /**
      */
 object HtmlPaperWriter {
 
-    fun paperToHtml(paper: PaperDto): String {
+    fun paperToHtml(paper: PaperDto, passages: List<PassageDto> = emptyList()): String {
         val sb = StringBuilder()
         sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
         sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
@@ -42,7 +43,7 @@ object HtmlPaperWriter {
             sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
             for (question in category.questions) {
                 number++
-                appendQuestion(sb, number, question)
+                appendQuestion(sb, number, question, passages)
             }
         }
         sb.append("</body>\n</html>\n")
@@ -53,7 +54,7 @@ object HtmlPaperWriter {
      * Quiz mode: correct answers and explanations are hidden until the reader
      * taps "Show answer". Fully self-contained (inline CSS + JS, no network).
      */
-    fun paperToQuizHtml(paper: PaperDto): String {
+    fun paperToQuizHtml(paper: PaperDto, passages: List<PassageDto> = emptyList()): String {
         val sb = StringBuilder()
         sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
         sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
@@ -79,15 +80,21 @@ object HtmlPaperWriter {
             sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
             for (question in category.questions) {
                 number++
-                appendQuizQuestion(sb, number, question)
+                appendQuizQuestion(sb, number, question, passages)
             }
         }
         sb.append("</body>\n</html>\n")
         return sb.toString()
     }
 
-    private fun appendQuizQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
+    private fun appendQuizQuestion(
+        sb: StringBuilder,
+        number: Int,
+        question: QuestionDto,
+        passages: List<PassageDto>
+    ) {
         sb.append("<div class=\"q\">\n")
+        appendPassageBlock(sb, question, passages)
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
@@ -117,8 +124,9 @@ object HtmlPaperWriter {
         sb.append("</div>\n</div>\n")
     }
 
-    private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
+    private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto, passages: List<PassageDto>) {
         sb.append("<div class=\"q\">\n")
+        appendPassageBlock(sb, question, passages)
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
@@ -141,6 +149,20 @@ object HtmlPaperWriter {
                         elementsToHtml(question.explanationElements, question.explanationImage)
                     else renderInlineHtml(question.explanation) + imageTag(question.explanationImage)
                 ).append("</p>\n")
+        }
+        sb.append("</div>\n")
+    }
+
+    /**
+     * The shared context above a passage member (D8): every member repeats it,
+     * so each question reads self-contained in the exported page.
+     */
+    private fun appendPassageBlock(sb: StringBuilder, question: QuestionDto, passages: List<PassageDto>) {
+        val passage = passages.firstOrNull { it.id == question.passageId } ?: return
+        sb.append("<div class=\"passage\">\n")
+        sb.append("<p class=\"passage-title\">").append(esc(passage.title.ifBlank { "Passage" })).append("</p>\n")
+        if (passage.elements.isNotEmpty()) {
+            sb.append(elementsToHtml(passage.elements, passage.image))
         }
         sb.append("</div>\n")
     }
@@ -236,6 +258,9 @@ ul.opts li.correct { color: #2E7D32; font-weight: bold; }
 ul.opts li.optimg { padding-left: 18px; }
 img { max-width: 100%; height: auto; border-radius: 4px; margin: 4px 0; }
 .answer { color: #2E7D32; }
+.passage { background: #f5f5f5; border-left: 3px solid #1976D2; padding: 8px 12px;
+  margin: 0 0 8px 0; border-radius: 4px; }
+.passage-title { font-weight: bold; color: #1976D2; margin: 0 0 4px 0; }
 .expl { color: #666; font-size: 0.9em; }
 button.toggle { background: #1976D2; color: #fff; border: none; border-radius: 6px;
   padding: 6px 12px; margin: 4px 4px 4px 0; font-size: 0.9em; cursor: pointer; }

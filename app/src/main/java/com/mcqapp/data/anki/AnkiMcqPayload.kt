@@ -46,7 +46,22 @@ data class AnkiMcqPayload(
     val elements: List<ContentElement> = emptyList(),
     @SerialName("explanation_elements")
     @Serializable(with = ContentElementListJson::class)
-    val explanationElements: List<ContentElement> = emptyList()
+    val explanationElements: List<ContentElement> = emptyList(),
+    /**
+     * The passage this question shares, inlined so a deck read by any Anki
+     * client (and re-imported here) restores the grouping without a lookup.
+     * The elements travel whole — the readable front renders them, and a
+     * flattened string could not carry a table or a formula back. Null
+     * passageId for standalone questions.
+     */
+    val passageId: String? = null,
+    @SerialName("passage_title")
+    val passageTitle: String? = null,
+    @SerialName("passage_elements")
+    @Serializable(with = ContentElementListJson::class)
+    val passageElements: List<ContentElement> = emptyList(),
+    @SerialName("passage_image")
+    val passageImage: String? = null
 )
 
 @Serializable
@@ -80,16 +95,22 @@ internal fun payloadFromField(field: String?): AnkiMcqPayload? {
     }
 }
 
-internal fun payloadOf(question: com.mcqapp.domain.Question): AnkiMcqPayload =
-    AnkiMcqPayload(
-        image = question.image,
-        options = question.options.map { AnkiMcqOption(it.id, it.text, it.elements, it.image) },
-        correct = question.correctOptionIds.toList(),
-        explanation = question.explanation,
-        explanationElements = question.explanationElements,
-        explanationImage = question.explanationImage,
-        difficulty = question.difficulty.label.lowercase(),
-        marks = question.marks,
-        tags = question.tags,
-        elements = question.elements
-    )
+internal fun payloadOf(
+    question: com.mcqapp.domain.Question,
+    passage: com.mcqapp.domain.Passage? = null
+): AnkiMcqPayload = AnkiMcqPayload(
+    image = question.image,
+    options = question.options.map { AnkiMcqOption(it.id, it.text, it.elements, it.image) },
+    correct = question.correctOptionIds.toList(),
+    explanation = question.explanation,
+    explanationElements = question.explanationElements,
+    explanationImage = question.explanationImage,
+    difficulty = question.difficulty.label.lowercase(),
+    marks = question.marks,
+    tags = question.tags,
+    elements = question.elements,
+    passageId = passage?.id,
+    passageTitle = passage?.title,
+    passageElements = passage?.elements.orEmpty(),
+    passageImage = passage?.image
+)

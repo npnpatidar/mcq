@@ -60,11 +60,32 @@ data class EditorUiState(
     val tags: String = "",
     val options: List<OptionEditorState> = emptyList(),
     val categories: List<CategoryNode> = emptyList(),
-    val isNew: Boolean = true
+    /** Passages of this paper for the assign picker; empty when none exist. */
+    val passages: List<com.mcqapp.domain.Passage> = emptyList(),
+    val isNew: Boolean = true,
+    /** The passage this question belongs to, editable in the picker. */
+    val passageId: String? = null
 ) {
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
     val explanation: String get() = explanationElements.textContent
+
+    /**
+     * A question saves when it holds at least one significant block of any
+     * kind and every one of at least two options holds content. Plain text
+     * is no longer required: an image-only or formula-only question is
+     * valid.
+     *
+     * This is a property of the state object so screens derive it from the
+     * *collected* state. Reading it through the ViewModel instead
+     * (`viewModel.canProceed()`) left the calling composable with no state
+     * read of its own, so the value was computed once while the form was
+     * still loading and never again — the Save button never enabled.
+     */
+    val canSave: Boolean
+        get() = elements.any { it.isSignificant() } &&
+            options.size >= 2 &&
+            options.all { o -> o.elements.any { it.isSignificant() } }
 }
 
 data class OptionEditorState(
@@ -125,7 +146,7 @@ class EditorViewModel(
         return listOf(
             normElements(s.elements), normImage(s.image), normElements(s.explanationElements),
             normImage(s.explanationImage), s.difficulty.label,
-            s.marks.trim(), tags, s.categoryId
+            s.marks.trim(), tags, s.categoryId, s.passageId.orEmpty()
         ).joinToString("\n") + "\n" + opts.joinToString("\n")
     }
 
@@ -193,7 +214,9 @@ class EditorViewModel(
                             )
                         },
                         categories = categories,
-                        categoryId = question.categoryId
+                        categoryId = question.categoryId,
+                        passages = repository.getPassagesForPaper(paperId),
+                        passageId = question.passageId
                     )
                     snapshotClean()
                     return@launch
@@ -202,6 +225,7 @@ class EditorViewModel(
             _state.value = _state.value.copy(
                 loading = false,
                 categories = categories,
+                passages = if (paperId.isNotBlank()) repository.getPassagesForPaper(paperId) else emptyList(),
                 elements = listOf(ContentElement.TextElement("")),
                 options = listOf(
                     OptionEditorState(id = "a", elements = listOf(ContentElement.TextElement("")), isCorrect = true),
@@ -218,18 +242,8 @@ class EditorViewModel(
         }
     }
 
-    /**
-     * A question saves when it holds at least one significant block of any
-     * kind and every one of at least two options holds content. Plain text
-     * is no longer required: an image-only or formula-only question is
-     * valid.
-     */
-    fun canProceed(): Boolean {
-        val s = _state.value
-        return s.elements.any { it.isSignificant() } &&
-            s.options.size >= 2 &&
-            s.options.all { o -> o.elements.any { it.isSignificant() } }
-    }
+    /** The form's save/readiness rule; see [EditorUiState.canSave]. */
+    fun canProceed(): Boolean = _state.value.canSave
 
     fun updateImage(value: String) = updateState { it.copy(image = value) }
     fun updateExplanationImage(value: String) = updateState { it.copy(explanationImage = value) }
@@ -237,6 +251,9 @@ class EditorViewModel(
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
     fun updateMarks(value: String) = updateState { it.copy(marks = value) }
     fun updateCategory(value: String) = updateState { it.copy(categoryId = value) }
+
+    /** Assigns this question to a passage (null clears membership). */
+    fun updatePassage(value: String?) = updateState { it.copy(passageId = value) }
 
     // ---- question-body blocks ----
 
@@ -481,7 +498,8 @@ class EditorViewModel(
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,
-            tags = dto.tags
+            tags = dto.tags,
+            passageId = _state.value.passageId?.takeIf { it.isNotBlank() }
         )
     }
 

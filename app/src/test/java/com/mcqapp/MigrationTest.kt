@@ -173,7 +173,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_4_5,
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
-                AppDatabase.MIGRATION_7_8
+                AppDatabase.MIGRATION_7_8,
+                AppDatabase.MIGRATION_8_9
             )
             .allowMainThreadQueries()
             .build()
@@ -322,6 +323,35 @@ class MigrationTest {
     }
 
     @Test
+    fun `migration 8 to 9 adds passages table and nullable passageId`() {
+        runBlocking {
+            createV6(
+                insertPaper(),
+                "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                    "VALUES ('c1','p1','Cat',NULL,0)",
+                "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage," +
+                    "difficulty,marks,tags,sortOrder,contentHash) VALUES " +
+                    "('q1','c1','Q one',NULL,'because',NULL,'medium',2.0,'tag',0,'hash1')"
+            )
+            val db = openMigrated()
+            // Opening ran 6->7->8->9; Room validated the final schema (including
+            // the new passages table and the questions.passageId column). An
+            // additive migration leaves every existing row verbatim.
+            assertEquals(0, db.questionDao().getById("q1")!!.sortOrder)
+            assertTrue(db.questionDao().getById("q1")!!.passageId == null)
+            assertTrue(db.passageDao().getAll().isEmpty())
+            // A passage round-trips through the migrated schema.
+            db.passageDao().upsert(
+                com.mcqapp.data.local.PassageEntity(
+                    id = "p1", categoryId = "c1", title = "T", text = "[]", image = null
+                )
+            )
+            assertEquals("T", db.passageDao().getById("p1")!!.title)
+            db.close()
+        }
+    }
+
+    @Test
     fun `full chain 3 to 8 migrates cleanly and keeps data`() {
         runBlocking {
             context.deleteDatabase("chain-test.db")
@@ -351,7 +381,8 @@ class MigrationTest {
                     AppDatabase.MIGRATION_4_5,
                     AppDatabase.MIGRATION_5_6,
                     AppDatabase.MIGRATION_6_7,
-                    AppDatabase.MIGRATION_7_8
+                    AppDatabase.MIGRATION_7_8,
+                    AppDatabase.MIGRATION_8_9
                 )
                 .allowMainThreadQueries()
                 .build()

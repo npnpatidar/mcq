@@ -104,7 +104,11 @@ fun QuestionEditorScreen(
         pickBlockImageLauncher.launch("image/*")
     }
 
-    val canProceed = viewModel.canProceed()
+    // Derived from the COLLECTED state: this read is what makes the outer
+    // composable re-run when the form changes. Reading it via the ViewModel
+    // instead computed the value once during the loading state and never
+    // again, so Save/Prev/Next stayed disabled however much was typed.
+    val canProceed = state.canSave
     val queueIndex = EditorSession.index
     val queueSize = EditorSession.ids.size
     val prevId = EditorSession.prevId
@@ -186,6 +190,14 @@ fun QuestionEditorScreen(
                     categories = state.categories,
                     selectedId = state.categoryId,
                     onSelect = { viewModel.updateCategory(it) }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            if (state.passages.isNotEmpty()) {
+                PassageDropdown(
+                    passages = state.passages,
+                    selectedId = state.passageId,
+                    onSelect = { viewModel.updatePassage(it) }
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -448,6 +460,56 @@ private fun CategoryDropdown(
                     text = { Text(stringResource(R.string.label).repeat(node.depth) + node.title) },
                     onClick = {
                         onSelect(node.id)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Assign/unassign the question to a passage. "None" clears membership; the
+ * resulting hash change resets that question's study card (D6), which the
+ * label states plainly.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PassageDropdown(
+    passages: List<com.mcqapp.domain.Passage>,
+    selectedId: String?,
+    onSelect: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedTitle = when (selectedId) {
+        null, "" -> stringResource(R.string.no_passage)
+        else -> passages.firstOrNull { it.id == selectedId }?.title
+            ?: stringResource(R.string.no_passage)
+    }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = selectedTitle,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.assign_to_passage)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor()
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.remove_from_passage)) },
+                onClick = {
+                    onSelect(null)
+                    expanded = false
+                }
+            )
+            passages.forEach { passage ->
+                DropdownMenuItem(
+                    text = { Text(passage.title.ifBlank { stringResource(R.string.passage) }) },
+                    onClick = {
+                        onSelect(passage.id)
                         expanded = false
                     }
                 )

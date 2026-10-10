@@ -156,6 +156,10 @@ internal fun buildImportFile(
         return McqFileDto(
             version = 1,
             papers = listOf(buildPreviewPaperDto(s, null)),
+            // Passages are not previewed, but member questions keep their
+            // passageId, so the parsed block must ride along or the import
+            // would write members whose context never resolves.
+            passages = original?.passages ?: emptyList(),
             bookmarks = emptyList(),
             attempts = emptyList()
         )
@@ -164,6 +168,7 @@ internal fun buildImportFile(
     return McqFileDto(
         version = 1,
         papers = listOf(firstPaper) + original.papers.drop(1),
+        passages = original.passages,
         bookmarks = original.bookmarks,
         attempts = original.attempts,
         scheduling = original.scheduling

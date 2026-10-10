@@ -12,6 +12,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
@@ -278,5 +279,91 @@ class ExportWritersTest {
             "x2+2",
             com.mcqapp.data.export.mathToLinear("<math><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>2</mn></math>")
         )
+    }
+
+    // ---- passage headers (D8: every member repeats its passage) ----
+
+    private fun passagePaper(): PaperDto {
+        val passage = com.mcqapp.data.io.PassageDto(
+            id = "passage-1",
+            title = "The water cycle",
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Rain fills rivers."))
+        )
+        val members = listOf("q1", "q2").map { id ->
+            QuestionDto(
+                id = id,
+                text = "Question $id?",
+                options = listOf(OptionDto(id = "a", text = "A"), OptionDto(id = "b", text = "B")),
+                correctOptionIds = listOf("a"),
+                passageId = "passage-1"
+            )
+        }
+        val standalone = QuestionDto(
+            id = "q3",
+            text = "Standalone?",
+            options = listOf(OptionDto(id = "a", text = "A"), OptionDto(id = "b", text = "B")),
+            correctOptionIds = listOf("a")
+        )
+        return PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = members + standalone)),
+            passages = listOf(passage)
+        )
+    }
+
+    @Test
+    fun htmlRepeatsThePassageAboveEveryMemberButNotStandalone() {
+        val paper = passagePaper()
+        val html = HtmlPaperWriter.paperToHtml(paper, paper.passages)
+        // Two members, two headers; the standalone question gets none.
+        assertEquals(2, html.split("class=\"passage\"").size - 1)
+        assertEquals(2, html.split("The water cycle").size - 1)
+        assertTrue(html.contains("Rain fills rivers."))
+        val standaloneAt = html.indexOf("Standalone?")
+        val lastPassageAt = html.lastIndexOf("class=\"passage\"")
+        assertTrue("no passage block after the standalone question", lastPassageAt < standaloneAt)
+    }
+
+    @Test
+    fun htmlWithoutPassageDataRendersNoPassageBlock() {
+        // A caller that did not load passages (or a legacy paper) is unaffected.
+        val html = HtmlPaperWriter.paperToHtml(passagePaper())
+        assertFalse(html.contains("class=\"passage\""))
+    }
+
+    @Test
+    fun quizHtmlRepeatsThePassageAboveEveryMember() {
+        val paper = passagePaper()
+        val html = HtmlPaperWriter.paperToQuizHtml(paper, paper.passages)
+        assertEquals(2, html.split("class=\"passage\"").size - 1)
+    }
+
+    @Test
+    fun zipCarriesThePassageBlockInPaperJson() {
+        val bytes = ZipPaperWriter.paperToZipBytes(passagePaper())
+        var json = ""
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (entry.name == "paper.json") json = zip.readBytes().toString(Charsets.UTF_8)
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        assertTrue(json.contains("\"passages\""))
+        assertTrue(json.contains("The water cycle"))
+        assertTrue(json.contains("\"passageId\":\"passage-1\"") || json.contains("\"passageId\": \"passage-1\""))
+    }
+
+    @Ignore(
+        "android.graphics.pdf.PdfDocument is not mockable in the plain JVM suite (see " +
+            "PdfPaperWriterTest); this stays structural-only on a host where PdfDocument works."
+    )
+    @Test
+    fun pdfWithPassagesStaysAValidPdf() {
+        val bytes = com.mcqapp.data.export.PdfPaperWriter.paperToPdfBytes(passagePaper())
+        assertTrue(bytes.size > 400)
+        assertTrue(String(bytes, Charsets.ISO_8859_1).contains("%%EOF"))
     }
 }

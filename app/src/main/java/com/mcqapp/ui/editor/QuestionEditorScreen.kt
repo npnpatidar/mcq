@@ -104,7 +104,11 @@ fun QuestionEditorScreen(
         pickBlockImageLauncher.launch("image/*")
     }
 
-    val canProceed = viewModel.canProceed()
+    // Derived from the COLLECTED state: this read is what makes the outer
+    // composable re-run when the form changes. Reading it via the ViewModel
+    // instead computed the value once during the loading state and never
+    // again, so Save/Prev/Next stayed disabled however much was typed.
+    val canProceed = state.canSave
     val queueIndex = EditorSession.index
     val queueSize = EditorSession.ids.size
     val prevId = EditorSession.prevId

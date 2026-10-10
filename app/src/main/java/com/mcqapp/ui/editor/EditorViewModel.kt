@@ -69,6 +69,23 @@ data class EditorUiState(
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
     val explanation: String get() = explanationElements.textContent
+
+    /**
+     * A question saves when it holds at least one significant block of any
+     * kind and every one of at least two options holds content. Plain text
+     * is no longer required: an image-only or formula-only question is
+     * valid.
+     *
+     * This is a property of the state object so screens derive it from the
+     * *collected* state. Reading it through the ViewModel instead
+     * (`viewModel.canProceed()`) left the calling composable with no state
+     * read of its own, so the value was computed once while the form was
+     * still loading and never again — the Save button never enabled.
+     */
+    val canSave: Boolean
+        get() = elements.any { it.isSignificant() } &&
+            options.size >= 2 &&
+            options.all { o -> o.elements.any { it.isSignificant() } }
 }
 
 data class OptionEditorState(
@@ -225,18 +242,8 @@ class EditorViewModel(
         }
     }
 
-    /**
-     * A question saves when it holds at least one significant block of any
-     * kind and every one of at least two options holds content. Plain text
-     * is no longer required: an image-only or formula-only question is
-     * valid.
-     */
-    fun canProceed(): Boolean {
-        val s = _state.value
-        return s.elements.any { it.isSignificant() } &&
-            s.options.size >= 2 &&
-            s.options.all { o -> o.elements.any { it.isSignificant() } }
-    }
+    /** The form's save/readiness rule; see [EditorUiState.canSave]. */
+    fun canProceed(): Boolean = _state.value.canSave
 
     fun updateImage(value: String) = updateState { it.copy(image = value) }
     fun updateExplanationImage(value: String) = updateState { it.copy(explanationImage = value) }

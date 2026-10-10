@@ -159,7 +159,7 @@ object AnkiPackageReader {
         if (noteById.isEmpty()) throw AnkiPackageException("The Anki collection has no notes")
 
         // Rebuild the passages our own export carried in the payload: every
-        // member note repeats the full text, so first-seen wins and the rest
+        // member note repeats the whole block, so first-seen wins and the rest
         // are identical by construction.
         val passages = LinkedHashMap<String, PassageDto>()
         notes.forEach { note ->
@@ -169,11 +169,7 @@ object AnkiPackageReader {
                 PassageDto(
                     id = pid,
                     title = payload.passageTitle.orEmpty().ifBlank { "Passage" },
-                    elements = if (payload.passageText.isNotBlank()) {
-                        listOf(com.mcqapp.domain.ContentElement.TextElement(payload.passageText))
-                    } else {
-                        emptyList()
-                    },
+                    elements = payload.passageElements,
                     image = payload.passageImage
                 )
             }

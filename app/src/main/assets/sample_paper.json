@@ -4,7 +4,7 @@
     {
       "id": "paper-demo",
       "title": "Sample Bank — English + हिन्दी",
-      "description": "A showcase bank: MathML formulas and chemical equations, tables and pictures in the question, the options and the explanation, single and multiple correct answers, English and Hindi, plus deliberate edge cases.",
+      "description": "A showcase bank: MathML formulas and chemical equations, tables and pictures in the question, the options and the explanation, single and multiple correct answers, English and Hindi, reading passages shared by a group of questions, plus deliberate edge cases.",
       "durationMinutes": 20,
       "negativeMarking": 0.25,
       "categories": [
@@ -1528,6 +1528,325 @@
           ]
         },
         {
+          "id": "cat-passage",
+          "title": "Reading Passages",
+          "questions": [
+            {
+              "id": "q-psg-6",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "This question shares the Reading Passages category but belongs to no passage. In the app, what does belonging to a passage change for a question?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "A shared context is shown above it, and tests keep the group together"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "It gains extra marks automatically"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Its own bookmark and schedule are replaced by the passage's"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Nothing at all — a passage is decoration"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Membership adds the shared context and the group behaviour and nothing else: scheduling, bookmarks, attempts and stats stay per question, which is exactly what this category demonstrates by mixing one standalone question with two passage groups."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "passage",
+                "standalone"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-psg-1",
+              "passageId": "passage-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "According to the passage, what keeps the water cycle running?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Energy from the Sun"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "The Moon's gravity"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Wind alone"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Heat from Earth's core"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The passage opens with the Sun heating water in oceans and rivers; that energy input drives every later step of the cycle."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "passage",
+                "water-cycle"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-psg-2",
+              "passageId": "passage-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Using the passage's table, which two steps of the cycle take place up in the sky?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Evaporation and Condensation"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Condensation and Precipitation"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Precipitation and Collection"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Collection and Evaporation"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Condensation builds clouds and precipitation drops their water, so both happen aloft. Evaporation starts at the surface and collection ends there, which is why the other pairings are wrong."
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 2,
+              "tags": [
+                "passage",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-psg-3",
+              "passageId": "passage-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "In the passage's table, dew on morning grass is listed as an everyday example of which step?"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Condensation"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Evaporation"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Precipitation"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Collection"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The table's Condensation row names dew on morning grass: water vapour cooling into droplets where the ground is cold. Rain, a drying puddle and a river reaching the sea belong to the other three rows."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "passage",
+                "table-question"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-psg-4",
+              "passageId": "passage-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "गद्यांश के अनुसार इस शृंखला में उत्पादक कौन है?"
+                },
+                {
+                  "type": "text",
+                  "content": "(According to the passage, who is the producer in this chain?)"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "हरे पौधे"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "शाकाहारी"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "मांसाहारी"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "सूक्ष्म जीव"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "गद्यांश कहता है कि हरे पौधे सूर्य के प्रकाश से अपना भोजन स्वयं बनाते हैं, इसीलिए शृंखला के आरंभ में वे ही उत्पादक हैं। शेष तीनों पौधों पर या एक-दूसरे पर निर्भर रहते हैं।"
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "passage",
+                "hindi"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-psg-5",
+              "passageId": "passage-2",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "ऊर्जा इस शृंखला में कहाँ से प्रवेश करती है?"
+                },
+                {
+                  "type": "text",
+                  "content": "(Where does the energy enter this chain from?)"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "सूर्य से"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "मिट्टी से"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "जल से"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "वायु से"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "पौधे सूर्य के प्रकाश को भोजन में बदलते हैं, इसलिए ऊर्जा शृंखला में सूर्य से ही प्रवेश करती है और फिर क्रम से जीवों तक पहुँचती है।"
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "passage",
+                "hindi"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            }
+          ]
+        },
+        {
           "id": "cat-history",
           "title": "History",
           "questions": [
@@ -2969,6 +3288,64 @@
             "uncategorized",
             "hindi"
           ]
+        }
+      ]
+    }
+  ],
+  "passages": [
+    {
+      "id": "passage-1",
+      "title": "The Water Cycle",
+      "categoryId": "cat-passage",
+      "elements": [
+        {
+          "type": "text",
+          "content": "The Sun heats water in oceans and rivers. The warm surface turns to vapour and rises; high above, the vapour cools and condenses into droplets that gather as clouds. When the droplets grow heavy they fall back as rain or snow, and the collected water finds its way to the sea. Nothing leaves the system — the same water has circulated for billions of years."
+        },
+        {
+          "type": "table",
+          "content": [
+            [
+              "Step",
+              "What happens",
+              "Everyday example"
+            ],
+            [
+              "Evaporation",
+              "Liquid becomes vapour",
+              "A puddle drying on a road"
+            ],
+            [
+              "Condensation",
+              "Vapour becomes droplets",
+              "Dew on morning grass"
+            ],
+            [
+              "Precipitation",
+              "Droplets fall",
+              "A monsoon shower"
+            ],
+            [
+              "Collection",
+              "Water gathers again",
+              "A river reaching the sea"
+            ]
+          ]
+        },
+        {
+          "type": "text",
+          "content": "Read the passage and the table before answering; the three questions that share this passage all draw on them, and in a test they arrive together with the passage shown above each one."
+        }
+      ]
+    },
+    {
+      "id": "passage-2",
+      "title": "खाद्य शृंखला",
+      "categoryId": "cat-passage",
+      "elements": [
+        {
+          "type": "text",
+          "content": "हरे पौधे सूर्य के प्रकाश से अपना भोजन स्वयं बनाते हैं, इसलिए उन्हें इस शृंखला का उत्पादक कहा जाता है। जो जीव पौधों को खाते हैं वे शाकाहारी कहलाते हैं, और जो शाकाहारियों को खाते हैं वे मांसाहारी। इस प्रकार ऊर्जा सूर्य से पौधों तक और फिर जीवों तक क्रम से पहुँचती है। मृत जीवों को खाने वाले सूक्ष्म जीव मिट्टी को पोषित करते हैं, जिससे यह चक्र फिर आरंभ होता है।"
         }
       ]
     }

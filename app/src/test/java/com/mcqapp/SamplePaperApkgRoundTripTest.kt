@@ -47,7 +47,8 @@ import java.io.File
 @Config(sdk = [34])
 class SamplePaperApkgRoundTripTest {
 
-    private val samplePaper: PaperDto by lazy { LegacyParser.parse(sampleJson()).papers.first() }
+    private val sampleFile by lazy { LegacyParser.parse(sampleJson()) }
+    private val samplePaper: PaperDto by lazy { sampleFile.papers.first() }
 
     /**
      * The sample paper is read from the source tree: a unit test's assets are not
@@ -59,8 +60,22 @@ class SamplePaperApkgRoundTripTest {
             ?.readText()
             ?: error("sample_paper.json not found from ${File(".").absolutePath}")
 
-    private fun write(paper: PaperDto) =
-        AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+    /** Wire passages as domain objects, the way PaperExporter hands them over. */
+    private fun domainPassages(file: com.mcqapp.data.io.McqFileDto): Map<String, com.mcqapp.domain.Passage> =
+        file.passages.associate {
+            it.id to com.mcqapp.domain.Passage(
+                id = it.id,
+                categoryId = it.categoryId.orEmpty(),
+                title = it.title,
+                elements = it.elements,
+                image = it.image
+            )
+        }
+
+    private fun write(
+        paper: PaperDto,
+        passages: Map<String, com.mcqapp.domain.Passage> = domainPassages(sampleFile)
+    ) = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper), passages = passages)
 
     private fun allQuestions(paper: PaperDto): List<QuestionDto> =
         paper.questions + paper.categories.flatMap { category -> category.questions }
@@ -234,5 +249,51 @@ class SamplePaperApkgRoundTripTest {
         // And the deck names Anki itself shows keep the nesting.
         val deckNames = AnkiPackageReader.read(write(samplePaper))
         assertEquals(1, deckNames.file.papers.size)
+    }
+
+    /**
+     * The demo's two passage groups must come back whole: the block rides in
+     * the payload blob (elements included, so the table survives — a flat
+     * string could not carry it), and every member keeps its passageId while
+     * the standalone category-mate keeps its null.
+     */
+    @Test
+    fun passageGroupsSurviveBothDirections() {
+        val first = AnkiPackageReader.read(write(samplePaper))
+        assertEquals(
+            "the passage ids must survive",
+            listOf("passage-1", "passage-2"),
+            first.file.passages.map { it.id }
+        )
+        val waterCycle = first.file.passages.first { it.id == "passage-1" }
+        assertEquals("The Water Cycle", waterCycle.title)
+        assertTrue(
+            "the passage's table element was flattened on the way back",
+            waterCycle.elements.any { it is ContentElement.TableElement }
+        )
+        val before = allQuestions(samplePaper)
+        val after = allQuestions(first.file.papers.first())
+        assertEquals(
+            "membership must match question for question",
+            before.map { it.passageId },
+            after.map { it.passageId }
+        )
+        assertEquals(5, after.count { !it.passageId.isNullOrBlank() })
+        assertNull("the standalone question must stay standalone",
+            after.single { it.id == "q-psg-6" }.passageId)
+
+        // And a second pass through the format keeps all of it.
+        val second = AnkiPackageReader.read(
+            write(first.file.papers.first(), domainPassages(first.file))
+        )
+        assertEquals(
+            "the passage elements must not move on a second pass",
+            first.file.passages,
+            second.file.passages
+        )
+        assertEquals(
+            before.map { it.passageId },
+            allQuestions(second.file.papers.first()).map { it.passageId }
+        )
     }
 }

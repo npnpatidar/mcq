@@ -48,15 +48,18 @@ data class AnkiMcqPayload(
     @Serializable(with = ContentElementListJson::class)
     val explanationElements: List<ContentElement> = emptyList(),
     /**
-     * The passage this question shares, with the text inline so a deck read
-     * by any Anki client (and re-imported here) restores the grouping without
-     * a lookup. Null for standalone questions.
+     * The passage this question shares, inlined so a deck read by any Anki
+     * client (and re-imported here) restores the grouping without a lookup.
+     * The elements travel whole — the readable front renders them, and a
+     * flattened string could not carry a table or a formula back. Null
+     * passageId for standalone questions.
      */
     val passageId: String? = null,
     @SerialName("passage_title")
     val passageTitle: String? = null,
-    @SerialName("passage_text")
-    val passageText: String = "",
+    @SerialName("passage_elements")
+    @Serializable(with = ContentElementListJson::class)
+    val passageElements: List<ContentElement> = emptyList(),
     @SerialName("passage_image")
     val passageImage: String? = null
 )
@@ -108,6 +111,6 @@ internal fun payloadOf(
     elements = question.elements,
     passageId = passage?.id,
     passageTitle = passage?.title,
-    passageText = passage?.text.orEmpty(),
+    passageElements = passage?.elements.orEmpty(),
     passageImage = passage?.image
 )

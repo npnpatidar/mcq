@@ -335,8 +335,10 @@ class MigrationTest {
             )
             val db = openMigrated()
             // Opening ran 6->7->8->9; Room validated the final schema (including
-            // the new passages table and the questions.passageId column).
-            assertEquals(1, db.questionDao().getById("q1")!!.sortOrder)
+            // the new passages table and the questions.passageId column). An
+            // additive migration leaves every existing row verbatim.
+            assertEquals(0, db.questionDao().getById("q1")!!.sortOrder)
+            assertTrue(db.questionDao().getById("q1")!!.passageId == null)
             assertTrue(db.passageDao().getAll().isEmpty())
             // A passage round-trips through the migrated schema.
             db.passageDao().upsert(

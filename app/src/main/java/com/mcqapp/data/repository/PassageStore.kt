@@ -91,6 +91,7 @@ internal class PassageStore(
         if (questionIds.isEmpty()) return
         db.withTransaction {
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
+            questionIds.forEach { refreshContentHash(it) }
         }
         Logger.i("REPO", "assignQuestions(${questionIds.size} ids -> $passageId)")
     }
@@ -100,8 +101,22 @@ internal class PassageStore(
         if (questionIds.isEmpty()) return
         db.withTransaction {
             questionIds.forEach { db.passageDao().assignToMember(it, null) }
+            questionIds.forEach { refreshContentHash(it) }
         }
         Logger.i("REPO", "unassignQuestions(${questionIds.size} ids)")
+    }
+
+    /**
+     * Recomputes a question's stored contentHash after its passageId changed.
+     * The importer's dedup and `isSameContentAsAnyStored` read this column,
+     * so a stale hash would make a re-import of the same question look
+     * changed (or the reverse). Same formula the study layer seeds from, so
+     * the reset decision stays in sync (D6).
+     */
+    private suspend fun refreshContentHash(questionId: String) {
+        val entity = db.questionDao().getById(questionId) ?: return
+        val domain = mapper.toDomain(entity)
+        db.questionDao().updateContentHash(questionId, mapper.contentHashOf(domain))
     }
 
     /** Detaches every member of a passage (used before a guarded delete). */

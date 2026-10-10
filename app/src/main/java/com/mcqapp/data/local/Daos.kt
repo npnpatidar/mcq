@@ -278,6 +278,9 @@ interface QuestionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)
 
+    @Query("UPDATE questions SET contentHash = :contentHash WHERE id = :questionId")
+    suspend fun updateContentHash(questionId: String, contentHash: String)
+
     /** Whole-selection insert; callers use it for minted-fresh copy ids. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(questions: List<QuestionEntity>)

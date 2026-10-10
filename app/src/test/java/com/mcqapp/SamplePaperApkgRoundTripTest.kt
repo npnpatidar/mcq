@@ -279,8 +279,11 @@ class SamplePaperApkgRoundTripTest {
             after.map { it.passageId }
         )
         assertEquals(5, after.count { !it.passageId.isNullOrBlank() })
+        // The reader re-keys questions as anki-<guid>, so the standalone mate
+        // is located by position, not by id.
+        val standaloneIndex = before.indexOfFirst { it.id == "q-psg-6" }
         assertNull("the standalone question must stay standalone",
-            after.single { it.id == "q-psg-6" }.passageId)
+            after[standaloneIndex].passageId)
 
         // And a second pass through the format keeps all of it.
         val second = AnkiPackageReader.read(

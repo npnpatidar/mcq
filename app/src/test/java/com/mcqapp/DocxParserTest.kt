@@ -162,6 +162,67 @@ class DocxParserTest {
     }
 
     /**
+     * Assertion questions that letter their statements (a)-(d) and then their
+     * code options (a)-(d) too — the "सही कूट चुनिए" style real banks use.
+     * Both runs start with (a), so the option run is the one starting at the
+     * LAST (a): the statements stay in the stem and the answer keys the
+     * options. Three real Rajasthan-history banks were rejected whole before
+     * this rule existed ("option (a) appears more than once").
+     */
+    @Test
+    fun letteredStatementsBeforeCodeOptionsStayInTheStem() {
+        val doc = "271.) Who was associated with the Hurda conference against the Marathas?\n" +
+            "(a) Maharana Jagat Singh II\n" +
+            "(b) Sawai Jai Singh\n" +
+            "(c) Maharaja Jaswant Singh II\n" +
+            "(d) Maharaja Abhay Singh\n" +
+            "सही उत्तर चुने-\n" +
+            "(a) a, b, c, d\n" +
+            "(b) a, b, c\n" +
+            "(c) a, b, d\n" +
+            "(d) b, c, d\n" +
+            "Ans. c\n" +
+            "Exp: The 1734 conference was convened by Sawai Jai Singh."
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(1, questions.size)
+        val q = questions[0]
+        assertEquals(listOf("a", "b", "c", "d"), q.options.keys.toList())
+        // The code options, not the statements: the options carry the combos.
+        assertEquals("a, b, d", q.options["c"])
+        // The lettered statements stay in the stem, where they read naturally.
+        assertTrue(q.stemHtml.contains("(a) Maharana Jagat Singh II"))
+        assertTrue(q.stemHtml.contains("(d) Maharaja Abhay Singh"))
+        assertEquals("c", q.answer)
+        assertEquals(listOf("c"), q.correctIds)
+    }
+
+    /**
+     * The same pattern with fewer statements than options (two statements,
+     * four code options) — the last (a) still wins, which is what the
+     * क्रांतिकारी bank needed.
+     */
+    @Test
+    fun twoStatementsBeforeFourCodeOptionsParse() {
+        val doc = "95.) Read the statements about Shyamji Krishna Varma\n" +
+            "(a) He was the first elected Indian chairman of the Ajmer municipal committee.\n" +
+            "(b) He served as secretary to the Maharana of Mewar.\n" +
+            "सही कूट चुनिए -\n" +
+            "(a) Only A is true\n" +
+            "(b) Only B is true\n" +
+            "(c) Both A and B are false\n" +
+            "(d) Both A and B are true\n" +
+            "Ans. d\n" +
+            "Exp:"
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(1, questions.size)
+        val q = questions[0]
+        assertEquals(listOf("a", "b", "c", "d"), q.options.keys.toList())
+        assertEquals("Only A is true", q.options["a"])
+        assertTrue(q.stemHtml.contains("(b) He served as secretary"))
+        assertEquals(listOf("d"), q.correctIds)
+    }
+
+    /**
      * The same stem statements, but the options name them as bare numerals
      * rather than parenthesised ones. Only the stem side matters to the parser;
      * option content is never scanned for markers.

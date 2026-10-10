@@ -256,6 +256,14 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
     // are common inside Hindi question stems, and (i) in particular matches
     // the marker shape while `i` is even a valid option letter. Without this,
     // such a question is refused as "option (e) is missing … but found (iabcd)".
+    //
+    // The option run is the one starting at the LAST (a): assertion questions
+    // letter their statements (a)-(d) and then their code options (a)-(d)
+    // too ("सही कूट चुनिए"), and the answer keys the options, not the
+    // statements. Taking the first (a) here would read the statements as
+    // options and die on the duplicate. Documents parse identically either
+    // way — any question with two (a) markers was refused before — and the
+    // statements stay in the stem, where they read naturally.
     val markers = optionMarker.findAll(optionText).toList()
     if (markers.isEmpty()) {
         fail(
@@ -263,7 +271,7 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
                 ".. Ans. .. Exp: ..'."
         )
     }
-    val firstOption = markers.indexOfFirst { it.groupValues[1] == "a" }
+    val firstOption = markers.indexOfLast { it.groupValues[1] == "a" }
     if (firstOption < 0) {
         fail(
             "missing option (a). The first marker found was " +

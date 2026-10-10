@@ -408,6 +408,19 @@ fun TestSessionScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
+                    if (state.drillRequested > 0 && state.questions.size > state.drillRequested) {
+                        // A passage block crossed the requested cut (D1):
+                        // whole blocks are shown rather than splitting one.
+                        Text(
+                            stringResource(
+                                R.string.drill_overshoot_shown,
+                                state.drillRequested,
+                                state.questions.size
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
                 }
                 if (question.isMultiCorrect) {
                     Text(
@@ -424,6 +437,14 @@ fun TestSessionScreen(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
+                // The passage the question reads from. Repeated on every member
+                // rather than sticky: the question column scrolls as one, so the
+                // context is always above the stem (D8 philosophy — each question
+                // stays self-contained).
+                state.currentPassage?.let { passage ->
+                    PassageCard(passage = passage)
+                    Spacer(Modifier.height(8.dp))
+                }
                 ContentElements(question.elements, textStyle = MaterialTheme.typography.titleMedium)
                 QuestionImage(
                     src = question.image,
@@ -852,6 +873,40 @@ private fun QuestionPalette(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The shared reading context above a passage member's stem. Carded and
+ * distinctly styled so the learner can tell "what I read" from "what is
+ * being asked" at a glance.
+ */
+@Composable
+private fun PassageCard(passage: com.mcqapp.domain.Passage) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                passage.title.ifBlank { stringResource(R.string.passage) },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            ContentElements(
+                passage.elements,
+                textStyle = MaterialTheme.typography.bodyMedium
+            )
+            QuestionImage(
+                src = passage.image,
+                contentDescription = stringResource(R.string.passage_image),
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }

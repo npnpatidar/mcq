@@ -65,6 +65,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.searchableText
 import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
@@ -248,8 +249,24 @@ fun BrowseScreen(
                 searchQuery = searchInput
             }
         }
-        val searched = remember(questions, searchQuery) {
-            com.mcqapp.domain.QuestionSearch.filter(questions, searchQuery)
+        // Passage bodies feed the in-memory filter (D7): a member is found
+        // through its shared context, which is not part of the question row.
+        val paperPassages = remember { mutableStateOf<Map<String, com.mcqapp.domain.Passage>>(emptyMap()) }
+        val paperIdForPassages = state.paper?.id
+        LaunchedEffect(paperIdForPassages) {
+            paperPassages.value = if (paperIdForPassages.isNullOrBlank()) {
+                emptyMap()
+            } else {
+                repository.getPassagesForPaper(paperIdForPassages).associateBy { it.id }
+            }
+        }
+        val searched = remember(questions, searchQuery, paperPassages.value) {
+            com.mcqapp.domain.QuestionSearch.filter(
+                questions, searchQuery,
+                passageBodies = paperPassages.value.mapValues { (_, passage) ->
+                    passage.title + "\n" + passage.elements.searchableText
+                }
+            )
         }
         val filtered = remember(searched, filterValue, state.paper) {
             val titles = flattenCategories(state.paper?.categories ?: emptyList())
@@ -263,6 +280,28 @@ fun BrowseScreen(
             }
         }
         val filteredIds = remember(filtered) { filtered.map { it.id } }
+        // Passage grouping: a member that is the first of its passage in the
+        // filtered list gets a header row above it (D8 — the group renders as
+        // one block). Search hits on passage text surface the group because
+        // the DAO prefilter unions the passages table.
+        val passageTitlesByFirstMember = remember(filtered) {
+            buildMap {
+                val seen = mutableSetOf<String>()
+                filtered.forEach { q ->
+                    val pid = q.passageId ?: return@forEach
+                    if (seen.add(pid)) put(q.id, pid)
+                }
+            }
+        }
+        val passagesById = remember(passageTitlesByFirstMember.keys) {
+            mutableStateOf<Map<String, com.mcqapp.domain.Passage>>(emptyMap())
+        }
+        LaunchedEffect(passageTitlesByFirstMember) {
+            val ids = passageTitlesByFirstMember.values.toList()
+            passagesById.value = if (ids.isEmpty()) emptyMap() else {
+                repository.getPassagesByIds(ids).associateBy { it.id }
+            }
+        }
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         // Deep link from global search: highlight persists on screen.
         var highlightId by remember(focusQuestionId) { mutableStateOf(focusQuestionId) }
@@ -322,6 +361,15 @@ fun BrowseScreen(
             }
             val reorderEnabled = filterValue == "All" && searchQuery.isBlank()
             itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
+                // Header inline above the first member of each passage group
+                // (same list item, because LazyListScope.item cannot be
+                // called from inside another item's content lambda).
+                passageTitlesByFirstMember[question.id]?.let { pid ->
+                    passagesById.value[pid]?.let { passage ->
+                        PassageHeaderCard(passage)
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
                 BrowseQuestionCard(
                     index = index + 1,
                     question = question,
@@ -706,6 +754,33 @@ private fun BrowseQuestionCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/** The shared-context card above a passage group in the browse list. */
+@Composable
+private fun PassageHeaderCard(passage: com.mcqapp.domain.Passage) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                passage.title.ifBlank { stringResource(R.string.passage) },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            ContentElements(passage.elements, textStyle = MaterialTheme.typography.bodyMedium)
+            QuestionImage(
+                src = passage.image,
+                contentDescription = stringResource(R.string.passage_image),
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }

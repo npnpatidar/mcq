@@ -60,7 +60,11 @@ data class EditorUiState(
     val tags: String = "",
     val options: List<OptionEditorState> = emptyList(),
     val categories: List<CategoryNode> = emptyList(),
-    val isNew: Boolean = true
+    /** Passages of this paper for the assign picker; empty when none exist. */
+    val passages: List<com.mcqapp.domain.Passage> = emptyList(),
+    val isNew: Boolean = true,
+    /** The passage this question belongs to, editable in the picker. */
+    val passageId: String? = null
 ) {
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
@@ -125,7 +129,7 @@ class EditorViewModel(
         return listOf(
             normElements(s.elements), normImage(s.image), normElements(s.explanationElements),
             normImage(s.explanationImage), s.difficulty.label,
-            s.marks.trim(), tags, s.categoryId
+            s.marks.trim(), tags, s.categoryId, s.passageId.orEmpty()
         ).joinToString("\n") + "\n" + opts.joinToString("\n")
     }
 
@@ -193,7 +197,9 @@ class EditorViewModel(
                             )
                         },
                         categories = categories,
-                        categoryId = question.categoryId
+                        categoryId = question.categoryId,
+                        passages = repository.getPassagesForPaper(paperId),
+                        passageId = question.passageId
                     )
                     snapshotClean()
                     return@launch
@@ -202,6 +208,7 @@ class EditorViewModel(
             _state.value = _state.value.copy(
                 loading = false,
                 categories = categories,
+                passages = if (paperId.isNotBlank()) repository.getPassagesForPaper(paperId) else emptyList(),
                 elements = listOf(ContentElement.TextElement("")),
                 options = listOf(
                     OptionEditorState(id = "a", elements = listOf(ContentElement.TextElement("")), isCorrect = true),
@@ -237,6 +244,9 @@ class EditorViewModel(
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
     fun updateMarks(value: String) = updateState { it.copy(marks = value) }
     fun updateCategory(value: String) = updateState { it.copy(categoryId = value) }
+
+    /** Assigns this question to a passage (null clears membership). */
+    fun updatePassage(value: String?) = updateState { it.copy(passageId = value) }
 
     // ---- question-body blocks ----
 
@@ -481,7 +491,8 @@ class EditorViewModel(
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,
-            tags = dto.tags
+            tags = dto.tags,
+            passageId = _state.value.passageId?.takeIf { it.isNotBlank() }
         )
     }
 

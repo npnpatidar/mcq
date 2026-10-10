@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -301,7 +302,11 @@ fun ImportScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    items(skippedNotes.take(20), key = { "skip|$it" }) { warning ->
+                    // Keyed by position, not message: a real bank can carry the
+                    // same advisory text many times (eight identical equation
+                    // notes crashed the preview with a duplicate-key
+                    // IllegalArgumentException), and these lists never reorder.
+                    itemsIndexed(skippedNotes.take(20), key = { i, _ -> "skip|$i" }) { _, warning ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -334,7 +339,7 @@ fun ImportScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    items(advisoryNotes.take(20), key = { "note|$it" }) { note ->
+                    itemsIndexed(advisoryNotes.take(20), key = { i, _ -> "note|$i" }) { _, note ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -368,7 +373,7 @@ fun ImportScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    items(warnings.take(20), key = { it.questionId + "|" + it.message }) { warning ->
+                    itemsIndexed(warnings.take(20), key = { i, w -> "warn|${w.questionId}|$i" }) { _, warning ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(

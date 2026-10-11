@@ -130,6 +130,9 @@ fun QuestionEditorScreen(
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
+                        // Navigation is never gated on the form's validity:
+                        // moveToQuestion only blocks dirty-and-invalid edits,
+                        // so a loaded edge-case question can always be left.
                         TextButton(
                             onClick = {
                                 prevId?.let {
@@ -138,7 +141,7 @@ fun QuestionEditorScreen(
                                     }
                                 }
                             },
-                            enabled = canProceed && prevId != null
+                            enabled = prevId != null
                         ) {
                             Text(stringResource(R.string.prev))
                         }
@@ -150,7 +153,7 @@ fun QuestionEditorScreen(
                                     }
                                 }
                             },
-                            enabled = canProceed && nextId != null
+                            enabled = nextId != null
                         ) {
                             Text(stringResource(R.string.next))
                         }

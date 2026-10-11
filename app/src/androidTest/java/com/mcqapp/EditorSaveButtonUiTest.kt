@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
@@ -109,5 +110,57 @@ class EditorSaveButtonUiTest {
         textBlocks[1].performTextInput("3")
         textBlocks[2].performTextInput("4")
         compose.onNodeWithText("Save").assertIsEnabled()
+    }
+
+    /**
+     * Prev/Next are navigation, not save gating: after moving to another
+     * question, Save reflects the loaded question and Prev/Next stay
+     * usable. They used to be gated on the form's validity, so one click on
+     * Prev into any question that wasn't savable left every button disabled.
+     */
+    @Test
+    fun prevMovesToTheQuestionAndKeepsButtonsUsable() {
+        runBlocking {
+            repository.saveQuestion(
+                com.mcqapp.domain.Question(
+                    id = "uitest-editor-q2",
+                    categoryId = "uitest-editor-cat",
+                    text = "Second editor question?",
+                    options = listOf(
+                        com.mcqapp.domain.QuestionOption("a2", "Gamma"),
+                        com.mcqapp.domain.QuestionOption("b2", "Delta")
+                    ),
+                    correctOptionIds = setOf("a2")
+                )
+            )
+        }
+        com.mcqapp.ui.editor.EditorSession.start(
+            listOf("uitest-editor-q1", "uitest-editor-q2"), index = 1
+        )
+        try {
+            compose.setContent {
+                QuestionEditorScreen(
+                    repository = repository,
+                    questionId = "uitest-editor-q2",
+                    paperId = "uitest-editor-paper",
+                    categoryId = "uitest-editor-cat",
+                    navController = rememberNavController()
+                )
+            }
+            waitFor("Second editor question?")
+            compose.onNodeWithText("Prev").performClick()
+
+            // The first question loaded; nothing is disabled that should not be.
+            waitFor("UITest editor question?")
+            compose.onNodeWithText("Save").assertIsEnabled()
+            // q1 is first in the queue: Prev is rightly disabled, Next works.
+            compose.onNodeWithText("Prev").assertIsNotEnabled()
+            compose.onNodeWithText("Next").assertIsEnabled()
+            compose.onNodeWithText("Next").performClick()
+            waitFor("Second editor question?")
+            compose.onNodeWithText("Save").assertIsEnabled()
+        } finally {
+            com.mcqapp.ui.editor.EditorSession.clear()
+        }
     }
 }

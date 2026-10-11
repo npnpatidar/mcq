@@ -546,24 +546,33 @@ class EditorViewModel(
      * [EditorSession] queue. Stays on this screen: no navigation, so Back
      * still returns to the originating list. [onMoved] reports whether a
      * write happened (for user feedback).
+     *
+     * A *clean* form moves freely even when it is not savable (a demo edge
+     * question, say): there is nothing to lose, and gating Prev/Next on
+     * validity trapped the reader on such a question with every button
+     * disabled. Only dirty-and-invalid edits block the move.
      */
     fun moveToQuestion(targetId: String, onMoved: (saved: Boolean) -> Unit = {}) {
-        val dto = buildDto()
-        if (dto == null) {
-            Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: current edits invalid")
-            return
-        }
         val targetIndex = EditorSession.ids.indexOf(targetId)
         if (targetIndex < 0) {
             Logger.w("EDITORVM", "moveToQuestion($targetId): not in session queue")
             return
         }
         val dirty = signatureOf(_state.value) != cleanSignature
+        // A clean form moves freely even when it is not savable (an edge-case
+        // demo question, say): nothing is lost, and gating Prev/Next on
+        // validity trapped the reader on such a question with every button
+        // disabled. Only dirty-and-invalid edits block the move.
+        if (dirty && !canProceed()) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: unsaved edits are invalid")
+            return
+        }
+        val dto = if (dirty) buildDto() else null
         val savedSig = signatureOf(_state.value)
         Logger.i("EDITORVM", "moveToQuestion: ${if (dirty) "saving" else "no changes, skipping save for"} " +
-            "${dto.id}, loading $targetId (fromImportSession=$fromImportSession)")
+            "${_state.value.questionId}, loading $targetId (fromImportSession=$fromImportSession)")
         if (fromImportSession) {
-            if (dirty) {
+            if (dirty && dto != null) {
                 val writer = EditorSession.importWriter
                 if (writer != null) {
                     writer(dto)
@@ -596,6 +605,9 @@ class EditorViewModel(
                             isCorrect = o.id in next.correctOptionIds
                         )
                     },
+                    // The membership belongs to the loaded question; keeping
+                    // the previous one silently reassigned on save.
+                    passageId = next.passageId,
                     categoryId = ""
                 )
             }
@@ -605,7 +617,7 @@ class EditorViewModel(
         } else {
             viewModelScope.launch {
                 try {
-                    if (dirty) {
+                    if (dirty && dto != null) {
                         val categoryId = _state.value.categoryId
                         repository.saveQuestion(domainFrom(dto, categoryId))
                         cleanSignature = savedSig
@@ -634,6 +646,11 @@ class EditorViewModel(
                                     isCorrect = o.id in next.correctOptionIds
                                 )
                             },
+                            // Same two fields as the import branch: an
+                            // existing question is never "new", and its
+                            // passage membership is its own.
+                            isNew = false,
+                            passageId = next.passageId,
                             categoryId = next.categoryId
                         )
                     }

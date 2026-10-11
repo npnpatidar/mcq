@@ -58,6 +58,58 @@ class DocxParserTest {
         })
     }
 
+    /**
+     * Word nests its own run properties (`w:rPr` — font, bold, italic, size)
+     * inside every styled math run. Those carry no math, so they must be
+     * skipped like `m:rPr`; rejecting them degraded whole real-bank equations
+     * to plain text with an "unsupported constructs" warning even though the
+     * math itself was a supported text run.
+     */
+    @Test
+    fun styledMathRunsStillConvertToMathMl() {
+        val W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        val M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+        val math = "<m:oMath xmlns:m=\"$M_NS\">" +
+            "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr>" +
+            "<w:rPr xmlns:w=\"$W_NS\"><w:i/><w:sz w:val=\"24\"/></w:rPr>" +
+            "<m:t>E</m:t></m:r>" +
+            "<m:r><w:rPr xmlns:w=\"$W_NS\"><w:b/></w:rPr><m:t>=</m:t></m:r>" +
+            "<m:r><m:t>mc</m:t></m:r>" +
+            "<m:sSup><m:e><m:r><m:t>2</m:t></m:r></m:e>" +
+            "<m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>" +
+            "</m:oMath>"
+        val documentXml = "<w:document xmlns:w=\"$W_NS\"><w:body>" +
+            "<w:p><w:r><w:t>1.) Relativity?</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(a) one</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(b) two</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(c) three</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(d) four</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>Ans. a</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>Exp: because</w:t></w:r></w:p>" +
+            "<w:p>$math</w:p>" +
+            "</w:body></w:document>"
+        val baos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(baos).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("[Content_Types].xml"))
+            zip.write("<Types/>".toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("word/document.xml"))
+            zip.write(documentXml.toByteArray())
+            zip.closeEntry()
+        }
+        val parsed = parseDocx(baos.toByteArray())
+        assertTrue("styled runs must not warn: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val file = LegacyParser.parse(parsed.json)
+        val elements = file.papers[0].categories[0].questions[0].explanationElements
+        assertTrue(
+            "the styled equation must arrive as MathML, not plain text",
+            elements.any {
+                it is com.mcqapp.domain.ContentElement.MathElement &&
+                    it.mathml.contains("<msup>")
+            }
+        )
+    }
+
     @Test
     fun tableAndImageElements() {
         val parsed = parseDocx(fixtureBytes())

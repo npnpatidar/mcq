@@ -21,7 +21,8 @@ import kotlinx.coroutines.flow.map
  */
 internal class PassageStore(
     private val db: AppDatabase,
-    private val mapper: QuestionContentMapper
+    private val mapper: QuestionContentMapper,
+    private val questionStore: QuestionStore
 ) {
 
     fun observePassages(): Flow<List<Passage>> =
@@ -93,6 +94,12 @@ internal class PassageStore(
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
             questionIds.forEach { refreshContentHash(it) }
         }
+        // After the membership write: each new member moves next to the
+        // group, so Browse, tests and every export keep the block whole.
+        // Sequential placement keeps a multi-question batch in order too —
+        // each one anchors after the last member, including those just
+        // placed.
+        questionIds.forEach { questionStore.placeWithGroup(it) }
         Logger.i("REPO", "assignQuestions(${questionIds.size} ids -> $passageId)")
     }
 

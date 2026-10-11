@@ -74,6 +74,55 @@ class PassageRepositoryTest {
         assertEquals(listOf("q1", "q2"), blocks.single().questions.map { it.id })
     }
 
+    // ---- contiguity: members occur together (Browse, tests, exports) ----
+
+    private fun orderOf(vararg ids: String): List<String> = runBlocking {
+        repository.getQuestionsForPaper("p1").filter { it.id in ids }.map { it.id }
+    }
+
+    @Test
+    fun assigningALateQuestionMovesItNextToTheGroup() = runBlocking {
+        val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
+        // q1 and q3 form the group (q3 moves up next to q1); q2 sits after
+        // it. Assigning q2 must place it with its group, not leave it behind.
+        repository.assignQuestionsToPassage(listOf("q1", "q3"), pid)
+        repository.assignQuestionsToPassage(listOf("q2"), pid)
+        assertEquals(listOf("q1", "q3", "q2"), orderOf("q1", "q2", "q3"))
+        // And the block built for test sessions is one whole group.
+        val blocks = repository.buildPassageBlocks(repository.getQuestionsForPaper("p1"))
+        assertEquals(1, blocks.size)
+    }
+
+    @Test
+    fun savingANewMemberPlacesItAfterTheLastMember() = runBlocking {
+        val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
+        repository.assignQuestionsToPassage(listOf("q2"), pid)
+        // A brand-new question saved with a passage (the editor flow) would
+        // otherwise land at the end of the category, far from its group.
+        repository.saveQuestion(question("q9").copy(passageId = pid))
+        assertEquals(listOf("q1", "q2", "q9", "q3"), orderOf("q1", "q2", "q3", "q9"))
+        val blocks = repository.buildPassageBlocks(repository.getQuestionsForPaper("p1"))
+        assertEquals(listOf("q2", "q9"), blocks[0].questions.map { it.id })
+    }
+
+    @Test
+    fun renumberQuestionsRewritesTheCategoryOrder() = runBlocking {
+        assertTrue(repository.renumberQuestions("c1", listOf("q3", "q1", "q2")))
+        assertEquals(listOf("q3", "q1", "q2"), orderOf("q1", "q2", "q3"))
+        // A mismatched id set is refused rather than half-applied.
+        assertFalse(repository.renumberQuestions("c1", listOf("q1", "q2", "nope")))
+        assertEquals(listOf("q3", "q1", "q2"), orderOf("q1", "q2", "q3"))
+    }
+
+    @Test
+    fun passageMembersListFollowsCategoryOrder() = runBlocking {
+        val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
+        // q3 joins the group first, q1 is placed after it: the members list
+        // mirrors the category order the placement produced.
+        repository.assignQuestionsToPassage(listOf("q3", "q1"), pid)
+        assertEquals(listOf("q3", "q1"), repository.getPassageMembers(pid).map { it.id })
+    }
+
     @Test
     fun deletingAPassageWithMembersIsRefused() = runBlocking {
         val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))

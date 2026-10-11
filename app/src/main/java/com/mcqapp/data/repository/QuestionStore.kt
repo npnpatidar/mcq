@@ -152,6 +152,13 @@ internal class QuestionStore(
                 }
             )
             Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.correctOptionIds.size} correct answers written - done")
+            // A newly assigned (or newly created) member moves next to its
+            // group's last member, so "questions of a passage occur
+            // together" holds in Browse, tests and exports without the user
+            // hand-placing it. Contiguous imports are no-ops.
+            if (question.passageId != null && existing?.passageId != question.passageId) {
+                placeWithGroup(question.id)
+            }
         }
     }
 
@@ -335,6 +342,71 @@ internal class QuestionStore(
             db.questionDao().updateSortOrder(b.id, a.sortOrder)
             Logger.i("REPO", "swapQuestionOrder(${a.id} <-> ${b.id})")
             true
+        }
+    }
+
+    /**
+     * Rewrites one category's question order to [orderedIds], position by
+     * position. The Browse block moves hand over the full new order computed
+     * by [com.mcqapp.domain.PassageReorder]; plain two-row swaps keep using
+     * [swapQuestionOrder], which never touches the other rows.
+     */
+    suspend fun renumberQuestions(categoryId: String, orderedIds: List<String>): Boolean {
+        if (orderedIds.isEmpty()) return false
+        return db.withTransaction {
+            val rows = db.questionDao().getByCategory(categoryId).associateBy { it.id }
+            if (orderedIds.any { it !in rows } || rows.size != orderedIds.size) {
+                Logger.w("REPO", "renumberQuestions($categoryId): id set mismatch, refusing")
+                return@withTransaction false
+            }
+            orderedIds.forEachIndexed { index, id ->
+                if (rows.getValue(id).sortOrder != index) {
+                    db.questionDao().updateSortOrder(id, index)
+                }
+            }
+            Logger.i("REPO", "renumberQuestions($categoryId): ${orderedIds.size} positions")
+            true
+        }
+    }
+
+    /**
+     * Moves [questionId] to sit immediately after [anchorId] in their shared
+     * category, renumbering the category so the order stays dense. The
+     * category-wide rewrite is a few hundred rows at most — question banks —
+     * and keeps every other position meaningful.
+     */
+    internal suspend fun moveAfterAnchor(questionId: String, anchorId: String): Boolean {
+        return db.withTransaction {
+            val moved = db.questionDao().getById(questionId) ?: return@withTransaction false
+            val anchor = db.questionDao().getById(anchorId) ?: return@withTransaction false
+            if (moved.categoryId != anchor.categoryId) return@withTransaction false
+            val ordered = mutableListOf<QuestionEntity>()
+            for (row in db.questionDao().getByCategory(anchor.categoryId)) {
+                if (row.id == questionId) continue
+                ordered += row
+                if (row.id == anchorId) ordered += moved
+            }
+            if (ordered.none { it.id == questionId }) return@withTransaction false
+            ordered.forEachIndexed { index, row ->
+                if (row.sortOrder != index) db.questionDao().updateSortOrder(row.id, index)
+            }
+            true
+        }
+    }
+
+    /**
+     * Keeps a passage group contiguous when it grows: the member is placed
+     * right after the last member of its passage **in the same category**.
+     * A passage's first member, or one whose category holds no others,
+     * stays where it is. No-op for already-contiguous imports.
+     */
+    suspend fun placeWithGroup(questionId: String) {
+        val member = db.questionDao().getById(questionId) ?: return
+        val passageId = member.passageId ?: return
+        val anchor = db.questionDao().lastMemberInCategory(passageId, member.categoryId, member.id)
+            ?: return
+        if (moveAfterAnchor(member.id, anchor.id)) {
+            Logger.i("REPO", "placeWithGroup(${member.id} after ${anchor.id})")
         }
     }
 }

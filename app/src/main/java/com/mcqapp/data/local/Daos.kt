@@ -215,6 +215,29 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?
 
+    /**
+     * The passage member with the highest position in [categoryId] other than
+     * [excludeId] — the anchor a newly assigned member is placed after, so a
+     * group stays contiguous when it grows.
+     */
+    @Query(
+        "SELECT * FROM questions WHERE passageId = :passageId " +
+            "AND categoryId = :categoryId AND id != :excludeId " +
+            "ORDER BY sortOrder DESC, rowid DESC LIMIT 1"
+    )
+    suspend fun lastMemberInCategory(
+        passageId: String,
+        categoryId: String,
+        excludeId: String
+    ): QuestionEntity?
+
+    /** All members of a passage, grouped by their own category order. */
+    @Query(
+        "SELECT * FROM questions WHERE passageId = :passageId " +
+            "ORDER BY categoryId, sortOrder, rowid"
+    )
+    suspend fun getMembersByPassage(passageId: String): List<QuestionEntity>
+
     @Query("SELECT * FROM questions WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<QuestionEntity>
 

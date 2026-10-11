@@ -29,7 +29,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val settings = SettingsStore(context)
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
-    private val passageStore = PassageStore(db, mapper)
+    private val passageStore = PassageStore(db, mapper, questionStore)
     private val paperStore = PaperStore(db, questionStore, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
@@ -174,6 +174,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         passageStore.memberCount(passageId)
     suspend fun deletePassage(passageId: String): Boolean =
         passageStore.deletePassage(passageId)
+    suspend fun renumberQuestions(categoryId: String, orderedIds: List<String>): Boolean =
+        questionStore.renumberQuestions(categoryId, orderedIds)
+
+    /** The passage's members in their own category order, for its detail list. */
+    suspend fun getPassageMembers(passageId: String): List<Question> =
+        mapper.toDomainBulk(db.questionDao().getMembersByPassage(passageId))
+
     suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) =
         passageStore.assignQuestions(questionIds, passageId)
     suspend fun unassignQuestionsFromPassage(questionIds: Collection<String>) =

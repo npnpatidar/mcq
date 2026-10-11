@@ -100,6 +100,20 @@ class BrowseViewModel(
         }
     }
 
+    /**
+     * Applies a computed category order (a block-aware move from
+     * PassageReorder: a row jump over a passage group, or a whole group
+     * swapping with its neighbour). The id list is the category's complete
+     * new order; the store refuses a mismatched set.
+     */
+    fun renumberCategory(categoryId: String, orderedIds: List<String>) {
+        viewModelScope.launch {
+            if (!repository.renumberQuestions(categoryId, orderedIds)) {
+                Logger.w("BROWSEVM", "renumberCategory($categoryId) refused: stale order?")
+            }
+        }
+    }
+
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

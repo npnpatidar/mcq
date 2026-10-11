@@ -64,6 +64,8 @@ data class PassagesUiState(
     val loading: Boolean = true,
     /** memberCount per passage id, refreshed with the list. */
     val memberCounts: Map<String, Int> = emptyMap(),
+    /** Fetched on expand: the member questions of the expanded passages. */
+    val members: Map<String, List<com.mcqapp.domain.Question>> = emptyMap(),
     val papers: List<com.mcqapp.domain.Paper> = emptyList()
 )
 
@@ -94,6 +96,18 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
 
     fun save(passage: Passage) {
         viewModelScope.launch { repository.savePassage(passage) }
+    }
+
+    /**
+     * Fetches the passage's member questions for its detail list. Re-fetched
+     * on every expand (and whenever the member count moved while expanded),
+     * so a membership changed elsewhere in the app is picked up.
+     */
+    fun refreshMembers(passageId: String) {
+        viewModelScope.launch {
+            val members = repository.getPassageMembers(passageId)
+            _state.update { it.copy(members = it.members + (passageId to members)) }
+        }
     }
 
     fun delete(passageId: String, onRefused: (Int) -> Unit) {
@@ -130,6 +144,8 @@ fun PassagesScreen(
     var editing by remember { mutableStateOf<Passage?>(null) }
     var creating by remember { mutableStateOf(false) }
     var deleteRefusal by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    // Passages whose member questions are listed under the row.
+    var expandedIds by remember { mutableStateOf(emptySet<String>()) }
 
     Scaffold(
         topBar = {
@@ -165,7 +181,9 @@ fun PassagesScreen(
                 items(passages, key = { it.id }) { passage ->
                     val paperTitle = state.papers
                         .firstOrNull { paper -> paper.categories.any { it.id == passage.categoryId } }
-                        ?.title.orEmpty()
+                    val paperId = paperTitle?.id.orEmpty()
+                    val expanded = passage.id in expandedIds
+                    val memberCount = state.memberCounts[passage.id] ?: 0
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -175,17 +193,14 @@ fun PassagesScreen(
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
-                                    if (paperTitle.isNotBlank()) {
+                                    if (paperTitle != null && paperTitle.title.isNotBlank()) {
                                         Text(
-                                            paperTitle,
+                                            paperTitle.title,
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                     }
                                     Text(
-                                        stringResource(
-                                            R.string.passage_member_count,
-                                            state.memberCounts[passage.id] ?: 0
-                                        ),
+                                        stringResource(R.string.passage_member_count, memberCount),
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 }
@@ -228,6 +243,60 @@ fun PassagesScreen(
                                 textStyle = MaterialTheme.typography.bodySmall,
                                 maxLines = 4
                             )
+                            // The member questions, on demand: the row below a
+                            // passage is the natural place to see what it
+                            // holds and jump into one to edit.
+                            TextButton(onClick = {
+                                expandedIds =
+                                    if (expanded) expandedIds - passage.id else expandedIds + passage.id
+                            }) {
+                                Text(
+                                    stringResource(
+                                        if (expanded) R.string.hide_passage_questions
+                                        else R.string.show_passage_questions,
+                                        memberCount
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                            if (expanded) {
+                                androidx.compose.runtime.LaunchedEffect(memberCount) {
+                                    viewModel.refreshMembers(passage.id)
+                                }
+                                val members = state.members[passage.id].orEmpty()
+                                members.forEachIndexed { memberIndex, member ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                EditorSession.start(
+                                                    members.map { it.id },
+                                                    memberIndex
+                                                )
+                                                navController.navigate(
+                                                    com.mcqapp.ui.navigation.editorRoute(
+                                                        member.id, paperId, member.categoryId
+                                                    )
+                                                )
+                                            }
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "${memberIndex + 1}.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        )
+                                        Text(
+                                            member.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 2,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

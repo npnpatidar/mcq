@@ -114,6 +114,11 @@
     <string name="passage_text">Passage text</string>
     <string name="passage_has_members_warning">This passage still has %1$d question(s). Remove them from the passage first.</string>
     <string name="passage_member_count">%1$d question(s)</string>
+    <string name="in_passage_label">In passage: %1$s</string>
+    <string name="show_passage_questions">Show questions (%1$d)</string>
+    <string name="hide_passage_questions">Hide questions (%1$d)</string>
+    <string name="move_passage_up">Move the passage and its questions up</string>
+    <string name="move_passage_down">Move the passage and its questions down</string>
     <string name="passages_empty">No passages yet</string>
     <string name="no_passage">No passage</string>
     <string name="drill_overshoot_shown">%1$d asked, %2$d shown — a passage is kept whole</string>

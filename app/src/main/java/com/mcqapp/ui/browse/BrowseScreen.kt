@@ -268,6 +268,12 @@ fun BrowseScreen(
                 }
             )
         }
+        // Row and block moves are computed on the question's own category
+        // list — the only order a reorder can rewrite — not on the
+        // paper-wide filtered list.
+        val categoryQuestions = remember(questions) {
+            questions.groupBy { it.categoryId }
+        }
         val filtered = remember(searched, filterValue, state.paper) {
             val titles = flattenCategories(state.paper?.categories ?: emptyList())
                 .associate { it.first.id to it.first.title }
@@ -361,13 +367,48 @@ fun BrowseScreen(
             }
             val reorderEnabled = filterValue == "All" && searchQuery.isBlank()
             itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
+                val categoryList = categoryQuestions[question.categoryId].orEmpty()
+                val moveOrder: (Boolean) -> Unit = { up ->
+                    com.mcqapp.domain.PassageReorder.moveQuestion(categoryList, question.id, up)
+                        ?.let { viewModel.renumberCategory(question.categoryId, it) }
+                }
                 // Header inline above the first member of each passage group
                 // (same list item, because LazyListScope.item cannot be
                 // called from inside another item's content lambda).
                 passageTitlesByFirstMember[question.id]?.let { pid ->
                     passagesById.value[pid]?.let { passage ->
-                        PassageHeaderCard(passage)
+                        PassageHeaderCard(
+                            passage = passage,
+                            canMoveUp = reorderEnabled &&
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = true) != null,
+                            canMoveDown = reorderEnabled &&
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = false) != null,
+                            onMoveUp = {
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = true)
+                                    ?.let { viewModel.renumberCategory(question.categoryId, it) }
+                            },
+                            onMoveDown = {
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = false)
+                                    ?.let { viewModel.renumberCategory(question.categoryId, it) }
+                            }
+                        )
                         Spacer(Modifier.height(6.dp))
+                    }
+                }
+                // Later members carry a small label so the membership is
+                // visible mid-group, not only on the header above the first.
+                if (question.passageId != null && passageTitlesByFirstMember[question.id] == null) {
+                    passagesById.value[question.passageId]?.let { passage ->
+                        Text(
+                            stringResource(
+                                R.string.in_passage_label,
+                                passage.title.takeIf { it.isNotBlank() }
+                                    ?: stringResource(R.string.passage)
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(Modifier.height(2.dp))
                     }
                 }
                 BrowseQuestionCard(
@@ -376,16 +417,14 @@ fun BrowseScreen(
                     selectionMode = selectionMode,
                     selected = question.id in selectedIds,
                     highlighted = question.id == highlightId,
-                    canMoveUp = reorderEnabled &&
-                        com.mcqapp.domain.Reorder.canMove(filtered, index, -1),
-                    canMoveDown = reorderEnabled &&
-                        com.mcqapp.domain.Reorder.canMove(filtered, index, +1),
-                    onMoveUp = {
-                        viewModel.swapQuestions(question.id, filtered[index - 1].id)
-                    },
-                    onMoveDown = {
-                        viewModel.swapQuestions(question.id, filtered[index + 1].id)
-                    },
+                    canMoveUp = reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                        categoryList, categoryList.indexOfFirst { it.id == question.id }, up = true
+                    ),
+                    canMoveDown = reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                        categoryList, categoryList.indexOfFirst { it.id == question.id }, up = false
+                    ),
+                    onMoveUp = { moveOrder(true) },
+                    onMoveDown = { moveOrder(false) },
                     onToggleSelect = {
                         selectedIds = selectedIds.toMutableSet().apply {
                             if (!add(question.id)) remove(question.id)
@@ -760,7 +799,13 @@ private fun BrowseQuestionCard(
 
 /** The shared-context card above a passage group in the browse list. */
 @Composable
-private fun PassageHeaderCard(passage: com.mcqapp.domain.Passage) {
+private fun PassageHeaderCard(
+    passage: com.mcqapp.domain.Passage,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {}
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -768,12 +813,26 @@ private fun PassageHeaderCard(passage: com.mcqapp.domain.Passage) {
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                passage.title.ifBlank { stringResource(R.string.passage) },
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    passage.title.ifBlank { stringResource(R.string.passage) },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                // The whole group — passage plus its questions — moves as a
+                // block; a member's own up/down stay inside the group.
+                IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_passage_up))
+                }
+                IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_passage_down))
+                }
+            }
             Spacer(Modifier.height(4.dp))
             ContentElements(passage.elements, textStyle = MaterialTheme.typography.bodyMedium)
             QuestionImage(

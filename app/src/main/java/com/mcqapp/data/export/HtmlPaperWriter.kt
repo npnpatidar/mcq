@@ -41,9 +41,18 @@ object HtmlPaperWriter {
         var number = 0
         for (category in paper.categories) {
             sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
+            // The passage prints once above its group, not above every
+            // member: contiguity is the invariant, and a document is read
+            // linearly. A new run (or a group resumed in another category)
+            // prints its header again.
+            var openPassageId: String? = null
             for (question in category.questions) {
                 number++
-                appendQuestion(sb, number, question, passages)
+                if (question.passageId != openPassageId) {
+                    openPassageId = question.passageId
+                    appendPassageBlock(sb, question, passages)
+                }
+                appendQuestion(sb, number, question)
             }
         }
         sb.append("</body>\n</html>\n")
@@ -78,9 +87,15 @@ object HtmlPaperWriter {
         var number = 0
         for (category in paper.categories) {
             sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
+            // Same run-detection as the answers-shown page.
+            var openPassageId: String? = null
             for (question in category.questions) {
                 number++
-                appendQuizQuestion(sb, number, question, passages)
+                if (question.passageId != openPassageId) {
+                    openPassageId = question.passageId
+                    appendPassageBlock(sb, question, passages)
+                }
+                appendQuizQuestion(sb, number, question)
             }
         }
         sb.append("</body>\n</html>\n")
@@ -90,11 +105,9 @@ object HtmlPaperWriter {
     private fun appendQuizQuestion(
         sb: StringBuilder,
         number: Int,
-        question: QuestionDto,
-        passages: List<PassageDto>
+        question: QuestionDto
     ) {
         sb.append("<div class=\"q\">\n")
-        appendPassageBlock(sb, question, passages)
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
@@ -124,9 +137,8 @@ object HtmlPaperWriter {
         sb.append("</div>\n</div>\n")
     }
 
-    private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto, passages: List<PassageDto>) {
+    private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
         sb.append("<div class=\"q\">\n")
-        appendPassageBlock(sb, question, passages)
         sb.append("<p class=\"qt\">Q").append(number).append(". ")
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
@@ -154,8 +166,9 @@ object HtmlPaperWriter {
     }
 
     /**
-     * The shared context above a passage member (D8): every member repeats it,
-     * so each question reads self-contained in the exported page.
+     * The shared context printed once above a passage group's first member
+     * (the caller's run-detection decides when); the members follow it
+     * contiguously, so a document reads like the app's Browse.
      */
     private fun appendPassageBlock(sb: StringBuilder, question: QuestionDto, passages: List<PassageDto>) {
         val passage = passages.firstOrNull { it.id == question.passageId } ?: return

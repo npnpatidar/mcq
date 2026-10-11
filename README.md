@@ -315,8 +315,8 @@ together. Everything from the `Passage:` line to the next question belongs to th
 The text after `Passage:` on the same line becomes the passage title (a blank title falls
 back to "Passage"). In the app the passage is shown above each member everywhere the question
 appears — tests keep the whole group as one unbreakable block through shuffling and drills,
-study shows it whenever a member comes due, and every export repeats it above each member so
-each question stays self-contained.
+study shows it whenever a member comes due, and every document export prints it once above
+its group, where the members sit together.
 
 A complete, valid document:
 
@@ -583,9 +583,9 @@ screen — asks for one of seven formats (Settings keeps a JSON full backup):
 |---|---|
 | JSON (images inline) | Canonical schema, data-URI images in place. **Re-importable.** |
 | ZIP (JSON + images) | `paper.json` (same schema) + `images/img001.jpg…` referenced by relative path; identical bytes deduped; remote URLs left as-is. Re-imports as questions, but the image files won't resolve back. |
-| Web page (answers shown) | Self-contained `.html`: inline CSS, embedded images, correct options highlighted, answers + explanations visible. Non-default marks shown per question. Passage members repeat their passage above the stem, so each question reads self-contained. |
+| Web page (answers shown) | Self-contained `.html`: inline CSS, embedded images, correct options highlighted, answers + explanations visible. Non-default marks shown per question. A passage group prints its passage once, above the members. |
 | Web page (quiz mode) | Same page with answers hidden: per-question **Show answer** toggles plus Show/Hide-all, inline JS, no network needed (`file://` works). Suggested filename `*-quiz.html`. |
-| PDF (answers inline) | A4 via framework `PdfDocument`: questions, ✓/○ options, answers under each question, embedded images scaled to page width, page numbers. Passage members repeat their passage above the stem. |
+| PDF (answers inline) | A4 via framework `PdfDocument`: questions, ✓/○ options, answers under each question, embedded images scaled to page width, page numbers. A passage group prints its passage once, above the members. |
 | PDF (answer key at end) | Questions print unmarked; all answers + explanations move to an **Answer Key** section for self-testing. Suggested filename `*-answer-key.pdf`. |
 | Anki (.apkg) | Schema-11 package for Anki import; the passage is prepended to the front of each member card and travels in the structured payload, so re-importing the deck here restores the grouping. |
 

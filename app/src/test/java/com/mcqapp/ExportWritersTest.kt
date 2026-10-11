@@ -313,16 +313,42 @@ class ExportWritersTest {
     }
 
     @Test
-    fun htmlRepeatsThePassageAboveEveryMemberButNotStandalone() {
+    fun htmlPrintsThePassageOnceAboveItsGroup() {
         val paper = passagePaper()
         val html = HtmlPaperWriter.paperToHtml(paper, paper.passages)
-        // Two members, two headers; the standalone question gets none.
-        assertEquals(2, html.split("class=\"passage\"").size - 1)
-        assertEquals(2, html.split("The water cycle").size - 1)
+        // Two members share ONE header; the standalone question gets none.
+        assertEquals(1, html.split("class=\"passage\"").size - 1)
+        assertEquals(1, html.split("The water cycle").size - 1)
         assertTrue(html.contains("Rain fills rivers."))
+        // The header sits above the first member and below nothing: the
+        // standalone follows the group.
+        val passageAt = html.indexOf("class=\"passage\"")
+        val firstMemberAt = html.indexOf("Question q1?")
+        val secondMemberAt = html.indexOf("Question q2?")
         val standaloneAt = html.indexOf("Standalone?")
-        val lastPassageAt = html.lastIndexOf("class=\"passage\"")
-        assertTrue("no passage block after the standalone question", lastPassageAt < standaloneAt)
+        assertTrue("header must sit above the first member", passageAt < firstMemberAt)
+        assertTrue("members stay together", firstMemberAt < secondMemberAt)
+        assertTrue("standalone follows the group", secondMemberAt < standaloneAt)
+    }
+
+    @Test
+    fun aSplitRunPrintsItsHeaderAgain() {
+        // The same passage resuming after a standalone prints again — the
+        // run-detection is per contiguous group, not per passage id.
+        val paper = passagePaper()
+        val split = paper.copy(
+            categories = paper.categories.map { cat ->
+                cat.copy(
+                    questions = listOf(
+                        cat.questions[0],           // member
+                        cat.questions[2],           // standalone
+                        cat.questions[1]            // member again
+                    )
+                )
+            }
+        )
+        val html = HtmlPaperWriter.paperToHtml(split, split.passages)
+        assertEquals(2, html.split("class=\"passage\"").size - 1)
     }
 
     @Test
@@ -333,10 +359,10 @@ class ExportWritersTest {
     }
 
     @Test
-    fun quizHtmlRepeatsThePassageAboveEveryMember() {
+    fun quizHtmlPrintsThePassageOnceAboveItsGroup() {
         val paper = passagePaper()
         val html = HtmlPaperWriter.paperToQuizHtml(paper, paper.passages)
-        assertEquals(2, html.split("class=\"passage\"").size - 1)
+        assertEquals(1, html.split("class=\"passage\"").size - 1)
     }
 
     @Test

@@ -126,3 +126,19 @@ stopped being a line-start marker and was lost. Local verification: 807 unit
 tests compile and run; every passage test passes; the remaining local
 failures are the pre-existing Robolectric/aarch64 environmental ones (CI is
 authoritative for those).
+
+2026-10-11 — on-device testing round. UX gaps closed: assigning a member
+(or saving a new question into a passage) now places it right after the
+group's last member, so groups stay contiguous in Browse, tests and exports
+without hand-placing; Browse reordering is block-aware (`PassageReorder`):
+a standalone jumping toward a group clears the whole group, members can
+only swap inside their run, and the passage header's own up/down moves the
+group as a block; later members carry an "In passage: …" label mid-group;
+the Passages screen lists a group's questions on demand with tap-to-edit;
+the editor's Prev/Next no longer gate on form validity (a clean but
+unsavable question could trap the reader with every button disabled), and
+`moveToQuestion` no longer leaks the previous question's passage membership
+or new-flag into the loaded one. D8 is overridden by the owner's call:
+HTML and PDF now print a passage once above its group, not above every
+member (the apkg keeps the passage on each card — an Anki card is read
+alone). Editor export semantics documented in the README.

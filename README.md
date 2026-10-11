@@ -258,10 +258,13 @@ a six-option question imported *successfully* with `(e)` and `(f)` folded into o
 A missing option `(x)`, a repeated label, a label past `(j)`, and an answer naming an option the
 question does not have are all refused with the question number.
 
-**Statements like `(i)`–`(iv)` inside the question are not options.** Options always begin at
-`(a)`, so a single-letter marker before the first `(a)` stays part of the question text. This
-covers the common Hindi pattern where the stem lists statements `(i)`–`(iv)` and the options
-name them back, either parenthesised (`(a) (i) एवं (ii)`) or bare (`(a) i एवं iii`).
+**Statements inside the question are not options.** The option list is the run of
+markers that starts at the **last** `(a)`; anything before it stays part of the question
+text. This covers the common Hindi patterns where the stem lists statements and the
+options name them back — statements numbered `(i)`–`(iv)` (options parenthesised or
+bare), and assertion questions that letter their statements `(a)`–`(d)` and then their
+code options `(a)`–`(d)` too (`सही कूट चुनिए`). The answer keys the options, never
+the statements.
 
 A complete, valid document:
 

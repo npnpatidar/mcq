@@ -32,6 +32,16 @@ internal fun Element.childElements(): List<Element> {
 
 private fun isMath(el: Element) = el.namespaceURI == MATH_NS
 
+/**
+ * A property container from either namespace: `m:rPr`/`m:ctrlPr` from the
+ * math namespace, and `w:rPr` — the font/bold/italic/colour/size Word nests
+ * inside every styled math run. Both carry no content, and rejecting the
+ * Word ones degraded whole equations to plain text even though their math
+ * was a supported plain text run.
+ */
+private fun isPropertyContainer(el: Element): Boolean =
+    el.localName.endsWith("Pr") && (isMath(el) || el.namespaceURI == WORD_NS)
+
 private fun ommlContent(parent: Element, warnings: MutableList<String>, label: String): String? {
     val sb = StringBuilder()
     val nodes = parent.childNodes
@@ -45,7 +55,7 @@ private fun ommlContent(parent: Element, warnings: MutableList<String>, label: S
             org.w3c.dom.Node.ELEMENT_NODE -> {
                 val el = node as Element
                 // Property containers (rPr, oMathPr, …) carry no content.
-                if (isMath(el) && el.localName.endsWith("Pr")) continue
+                if (isPropertyContainer(el)) continue
                 sb.append(ommlElement(el, warnings, label) ?: return null)
             }
         }
@@ -61,6 +71,7 @@ private fun ommlElement(el: Element, warnings: MutableList<String>, label: Strin
         "r" -> {
             val sb = StringBuilder()
             for (child in el.childElements()) {
+                if (isPropertyContainer(child)) continue
                 if (!isMath(child)) return null
                 when (child.localName) {
                     "t" -> sb.append(tokenizeMathRun(child.textContent))

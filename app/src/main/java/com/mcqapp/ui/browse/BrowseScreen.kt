@@ -34,6 +34,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
@@ -240,6 +241,10 @@ fun BrowseScreen(
         val questions = state.questions
         val filterValue = filter.value
         var searchQuery by remember { mutableStateOf("") }
+        // Single-category filter: show only one category's questions. An id
+        // that no longer belongs to this paper reads as "all" below.
+        var categoryFilterId by remember { mutableStateOf<String?>(null) }
+        var categoryMenuOpen by remember { mutableStateOf(false) }
         // Debounced like the global search: filtering lowercases every
         // question's text, tags and option texts, and this list is already
         // in memory with base64 images, so it ran a full linear scan per
@@ -282,6 +287,10 @@ fun BrowseScreen(
             flattenCategories(state.paper?.categories ?: emptyList())
                 .associate { it.first.id to it.first.title }
         }
+        // Flat list (with depth) for the category filter dropdown.
+        val flatCategories = remember(state.paper) {
+            flattenCategories(state.paper?.categories ?: emptyList())
+        }
         val categoryBounds = remember(questions) {
             val first = mutableMapOf<String, Int>()
             val last = mutableMapOf<String, Int>()
@@ -305,16 +314,17 @@ fun BrowseScreen(
             }
             ::canMove
         }
-        val filtered = remember(searched, filterValue, state.paper) {
+        val filtered = remember(searched, filterValue, state.paper, categoryFilterId) {
             val titles = flattenCategories(state.paper?.categories ?: emptyList())
                 .associate { it.first.id to it.first.title }
-            when (filterValue) {
+            val base = when (filterValue) {
                 "No answer" -> searched.filter { it.correctOptionIds.isEmpty() }
                 "No explanation" -> searched.filter { it.explanation.isBlank() }
                 "Uncategorized" -> com.mcqapp.domain.QuestionSearch
                     .filterUncategorized(searched, titles)
                 else -> searched
             }
+            applyCategoryFilter(base, categoryFilterId?.takeIf { it in titles })
         }
         val filteredIds = remember(filtered) { filtered.map { it.id } }
         // Passage grouping: a member that is the first of its passage in the
@@ -385,6 +395,55 @@ fun BrowseScreen(
                             onClick = { filter.value = label },
                             label = { Text(label, style = MaterialTheme.typography.labelSmall) }
                         )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                // One category at a time: a paper with dozens of categories
+                // otherwise needs endless scrolling to reach a single one.
+                val selectedCategoryTitle = categoryFilterId
+                    ?.let { id -> flatCategories.firstOrNull { it.first.id == id }?.first?.title }
+                ExposedDropdownMenuBox(
+                    expanded = categoryMenuOpen,
+                    onExpandedChange = { categoryMenuOpen = it }
+                ) {
+                    OutlinedTextField(
+                        value = selectedCategoryTitle
+                            ?: stringResource(R.string.all_categories),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(stringResource(R.string.category)) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenuOpen)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = categoryMenuOpen,
+                        onDismissRequest = { categoryMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.all_categories)) },
+                            onClick = {
+                                categoryFilterId = null
+                                categoryMenuOpen = false
+                            }
+                        )
+                        flatCategories.forEach { (node, depth) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(R.string.label).repeat(depth) + node.title,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                },
+                                onClick = {
+                                    categoryFilterId = node.id
+                                    categoryMenuOpen = false
+                                }
+                            )
+                        }
                     }
                 }
                 if (filtered.isEmpty()) {
@@ -938,3 +997,13 @@ private fun flattenCategories(
         addAll(flattenCategories(node.children, depth + 1))
     }
 }
+
+/**
+ * The browse screen's single-category filter: with an id, only that
+ * category's questions remain; null keeps the list whole.
+ */
+internal fun applyCategoryFilter(
+    questions: List<com.mcqapp.domain.Question>,
+    categoryId: String?
+): List<com.mcqapp.domain.Question> =
+    if (categoryId == null) questions else questions.filter { it.categoryId == categoryId }

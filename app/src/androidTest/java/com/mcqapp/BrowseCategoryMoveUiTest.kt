@@ -1,10 +1,10 @@
 package com.mcqapp
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
@@ -83,22 +83,21 @@ class BrowseCategoryMoveUiTest {
 
         // Both rows carry the section edges (each category here has exactly
         // one question, so each card is both first and last of its section):
-        // the up move exists twice — disabled on the first section, enabled
-        // on the second — so address the enabled one by position.
+        // each category move exists twice, exactly one of them enabled. The
+        // matcher selects that one and fails loudly if the enablement is
+        // wrong — a positional index would click a disabled button silently.
         val orderBefore = runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } }
         assertEquals(listOf("ub-q1", "ub-q2"), orderBefore)
-        val categoryUp = compose.onAllNodesWithContentDescription("Move the whole category up")
-        categoryUp[0].assertIsNotEnabled()
-        categoryUp[1].performClick()
+        compose.onNode(hasContentDescription("Move the whole category up") and isEnabled())
+            .performClick()
         compose.waitUntil(15_000) {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
                 listOf("ub-q2", "ub-q1")
         }
-        // And back down for symmetry: after the swap the second category is
-        // the first section, so its (enabled) down move sits at index 0.
-        val categoryDown = compose.onAllNodesWithContentDescription("Move the whole category down")
-        categoryDown[1].assertIsNotEnabled()
-        categoryDown[0].performClick()
+        // And back down for symmetry: after the swap the enabled down move
+        // belongs to the section that is now first.
+        compose.onNode(hasContentDescription("Move the whole category down") and isEnabled())
+            .performClick()
         compose.waitUntil(15_000) {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
                 listOf("ub-q1", "ub-q2")

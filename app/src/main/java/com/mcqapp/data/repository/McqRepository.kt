@@ -202,6 +202,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun addCategory(paperId: String, title: String, parentId: String?): String =
         paperStore.addCategory(paperId, title, parentId)
     suspend fun deleteCategory(categoryId: String) = paperStore.deleteCategory(categoryId)
+    suspend fun nestCategoryIntoSibling(categoryId: String): Boolean =
+        paperStore.nestCategoryIntoSibling(categoryId)
+    suspend fun promoteCategoryOutOfParent(categoryId: String): Boolean =
+        paperStore.promoteCategoryOutOfParent(categoryId)
+    suspend fun reparentCategory(categoryId: String, newParentId: String?): Boolean =
+        paperStore.reparentCategory(categoryId, newParentId)
+    suspend fun renameCategory(categoryId: String, title: String): Boolean =
+        paperStore.renameCategory(categoryId, title)
     suspend fun moveCategory(categoryId: String, delta: Int): Boolean =
         paperStore.moveCategory(categoryId, delta)
     suspend fun duplicatePaper(paperId: String): String? = paperStore.duplicatePaper(paperId)

@@ -247,6 +247,43 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Nests a category into the sibling above it (the outline -> gesture). */
+    fun nestCategory(categoryId: String) {
+        viewModelScope.launch {
+            try {
+                repository.nestCategoryIntoSibling(categoryId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Nest category failed", e)
+                _exportError.value = "Nest failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Promotes a category out of its parent (the outline <- gesture). */
+    fun promoteCategory(categoryId: String) {
+        viewModelScope.launch {
+            try {
+                repository.promoteCategoryOutOfParent(categoryId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Promote category failed", e)
+                _exportError.value = "Promote failed: ${e.message}"
+            }
+        }
+    }
+
+    /** The edit dialog's save: rename, and re-parent when it changed. */
+    fun editCategory(categoryId: String, title: String, parentId: String?) {
+        viewModelScope.launch {
+            try {
+                repository.renameCategory(categoryId, title)
+                repository.reparentCategory(categoryId, parentId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Edit category failed", e)
+                _exportError.value = "Edit failed: ${e.message}"
+            }
+        }
+    }
+
     fun moveCategory(categoryId: String, delta: Int) {
         viewModelScope.launch {
             try {

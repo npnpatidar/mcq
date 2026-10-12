@@ -99,6 +99,7 @@ fun LibraryScreen(
     var showCategoryDialog by remember { mutableStateOf(false) }
     var categoryDialogPaperId by remember { mutableStateOf("") }
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
+    var editingCategory by remember { mutableStateOf<com.mcqapp.domain.CategoryNode?>(null) }
     var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
     var pendingExportCategory by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
@@ -252,6 +253,10 @@ fun LibraryScreen(
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
                     onDeleteCategory = { id -> viewModel.deleteCategory(id) }
+                    onMoveCategory = { id, delta -> viewModel.moveCategory(id, delta) }
+                    onNestCategory = { id -> viewModel.nestCategory(id) }
+                    onPromoteCategory = { id -> viewModel.promoteCategory(id) }
+                    onEditCategory = { node -> editingCategory = node }
                 )
             }
         }
@@ -406,6 +411,18 @@ fun LibraryScreen(
             onSave = { title, parent ->
                 viewModel.addCategory(categoryDialogPaperId, title, parent)
                 showCategoryDialog = false
+            }
+        )
+    }
+
+    editingCategory?.let { category ->
+        EditCategoryDialog(
+            category = category,
+            papers = papers,
+            onDismiss = { editingCategory = null },
+            onSave = { title, parent ->
+                viewModel.editCategory(category.id, title, parent)
+                editingCategory = null
             }
         )
     }

@@ -181,42 +181,162 @@ internal class PaperStore(
         // One transaction: the reorder rewrites the paper's whole category
         // sequence, so a crash must not leave two of them sharing a slot.
         return db.withTransaction {
-            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
-            val paperCategories = db.categoryDao().getByPaper(category.paperId)
-            val byParent = paperCategories.groupBy { it.parentId }
-            fun childrenOf(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
-                byParent[parent].orEmpty().sortedBy { it.sortOrder }
-
-            // The move is among the category's own siblings (its parent's
-            // children); everything else keeps its tree position.
-            val siblings = childrenOf(category.parentId)
-            val fromIndex = siblings.indexOfFirst { it.id == categoryId }
-            if (fromIndex < 0) return@withTransaction false
-            val target = (fromIndex + delta).coerceIn(siblings.indices)
-            if (target == fromIndex) return@withTransaction false
-
-            // Category sortOrder is ONE global sequence per paper, laid out in
-            // tree pre-order — parents immediately followed by their children —
-            // so question order (which sorts by it) matches the drawer's tree.
-            // Renumbering only the swapped siblings (indices 0..n over the
-            // root level) used to collide with the children's slots: moving
-            // Mathematics up in the demo paper left Chemistry and Physics
-            // sharing sortOrders with the roots, and the (sortOrder, title)
-            // tiebreak surfaced as "maths, chemistry, science, physics".
-            // Rewriting the full traversal keeps every slot unique.
-            val moved = siblings.toMutableList().apply {
-                val item = removeAt(fromIndex)
-                add(target, item)
-            }
-            fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
-                (if (parent == category.parentId) moved else childrenOf(parent))
-                    .flatMap { listOf(it) + preorder(it.id) }
-            preorder(null).forEachIndexed { index, node ->
-                db.categoryDao().updateSortOrder(node.id, index)
+            val plan = planSiblingMove(categoryId, delta)
+                ?: return@withTransaction false
+            renumberPaperPreorder(plan.paperId) { parent, children ->
+                if (parent == plan.movedParentId) plan.children else children
             }
             Logger.i("REPO", "moveCategory($categoryId by $delta)")
             true
         }
+    }
+
+    /** Internal fact of a planned move: what changed and where. */
+    private class TreePlan(
+        val paperId: String,
+        val movedParentId: String?,
+        val children: List<com.mcqapp.data.local.CategoryEntity>
+    )
+
+    /**
+     * Computes the moved category's parent's new children order, shared by
+     * every tree-shaping operation. Null when the move is a no-op, unknown
+     * category, or out of bounds.
+     */
+    private suspend fun planSiblingMove(categoryId: String, delta: Int): TreePlan? {
+        val category = db.categoryDao().getById(categoryId) ?: return null
+        val siblings = childrenOf(category.paperId, category.parentId)
+        val fromIndex = siblings.indexOfFirst { it.id == categoryId }
+        if (fromIndex < 0) return null
+        val target = (fromIndex + delta).coerceIn(siblings.indices)
+        if (target == fromIndex) return null
+        val children = siblings.toMutableList().apply {
+            val item = removeAt(fromIndex)
+            add(target, item)
+        }
+        return TreePlan(category.paperId, category.parentId, children)
+    }
+
+    private suspend fun childrenOf(
+        paperId: String,
+        parent: String?
+    ): List<com.mcqapp.data.local.CategoryEntity> =
+        db.categoryDao().getByPaper(paperId)
+            .filter { it.parentId == parent }
+            .sortedBy { it.sortOrder }
+
+    /**
+     * Rewrites the paper's category sortOrder as one dense pre-order
+     * traversal of the tree, with [override] substituting one parent's
+     * children (the shape a move changed).
+     *
+     * Category sortOrder is ONE global sequence per paper — parents
+     * immediately followed by their children — so question order (which
+     * sorts by it) always matches the drawer's tree. Renumbering only the
+     * touched siblings (indices 0..n of their level) used to collide with
+     * the untouched children's slots: moving Mathematics up in the demo
+     * paper left Chemistry and Physics sharing sortOrders with the roots,
+     * and the (sortOrder, title) tiebreak surfaced as
+     * "maths, chemistry, science, physics".
+     */
+    private suspend fun renumberPaperPreorder(
+        paperId: String,
+        override: (parent: String?, children: List<com.mcqapp.data.local.CategoryEntity>) -> List<com.mcqapp.data.local.CategoryEntity> = { _, c -> c }
+    ) {
+        fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
+            override(parent, childrenOf(paperId, parent))
+                .flatMap { listOf(it) + preorder(it.id) }
+        preorder(null).forEachIndexed { index, node ->
+            db.categoryDao().updateSortOrder(node.id, index)
+        }
+    }
+
+    /**
+     * Nests a category into the sibling above it, becoming that sibling's
+     * LAST child — so the flat question order does not move at all; only
+     * the hierarchy changes (the outline → gesture). Refused when the
+     * category is its parent's first child: there is no sibling to nest into.
+     */
+    suspend fun nestCategoryIntoSibling(categoryId: String): Boolean {
+        return db.withTransaction {
+            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
+            val siblings = childrenOf(category.paperId, category.parentId)
+            val index = siblings.indexOfFirst { it.id == categoryId }
+            if (index <= 0) return@withTransaction false
+            val newParent = siblings[index - 1]
+            db.categoryDao().updateParent(categoryId, newParent.id)
+            renumberPaperPreorder(category.paperId)
+            Logger.i("REPO", "nestCategory($categoryId into ${newParent.id})")
+            true
+        }
+    }
+
+    /**
+     * Promotes a category out of its parent, becoming the parent's next
+     * sibling — the outline ← gesture. The flat question order does not
+     * move: pre-order places the promoted node right after its former
+     * parent's subtree. Refused for roots (nothing to promote out of).
+     */
+    suspend fun promoteCategoryOutOfParent(categoryId: String): Boolean {
+        return db.withTransaction {
+            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
+            val parent = category.parentId ?: return@withTransaction false
+            val parentEntity = db.categoryDao().getById(parent) ?: return@withTransaction false
+            db.categoryDao().updateParent(categoryId, parentEntity.parentId)
+            // Keep the promoted node directly after its former parent in the
+            // new bucket: the old pre-order slot lies between the parent and
+            // its next sibling, so sorting by it lands it exactly there.
+            renumberPaperPreorder(category.paperId)
+            Logger.i("REPO", "promoteCategory($categoryId)")
+            true
+        }
+    }
+
+    /**
+     * The edit dialog's general reparent: any category under any other
+     * category of the same paper (or back to the top level), appended as
+     * the new parent's last child. Cycle-guarded — a category cannot become
+     * its own descendant's child — and the old parent keeps its remaining
+     * children.
+     */
+    suspend fun reparentCategory(categoryId: String, newParentId: String?): Boolean {
+        return db.withTransaction {
+            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
+            if (newParentId == category.parentId) return@withTransaction false
+            if (newParentId != null) {
+                val newParent = db.categoryDao().getById(newParentId)
+                    ?: return@withTransaction false
+                if (newParent.paperId != category.paperId) return@withTransaction false
+                // No cycles: the new parent must not live in this category's
+                // own subtree (which includes the category itself).
+                fun subtree(id: String?): Boolean =
+                    id == newParentId || childrenOf(category.paperId, id).any { subtree(it.id) }
+                if (subtree(categoryId)) return@withTransaction false
+                db.categoryDao().updateParent(categoryId, newParentId)
+                // Append as the last child, deterministically.
+                val last = childrenOf(category.paperId, newParentId)
+                    .maxOfOrNull { it.sortOrder } ?: -1
+                db.categoryDao().updateSortOrder(categoryId, last + 1)
+            } else {
+                db.categoryDao().updateParent(categoryId, null)
+                val last = childrenOf(category.paperId, null)
+                    .maxOfOrNull { it.sortOrder } ?: -1
+                db.categoryDao().updateSortOrder(categoryId, last + 1)
+            }
+            renumberPaperPreorder(category.paperId)
+            Logger.i("REPO", "reparentCategory($categoryId -> $newParentId)")
+            true
+        }
+    }
+
+    /** Renames a category; blank titles are refused. */
+    suspend fun renameCategory(categoryId: String, title: String): Boolean {
+        val trimmed = title.trim()
+        if (trimmed.isBlank()) return false
+        val category = db.categoryDao().getById(categoryId) ?: return false
+        db.categoryDao().upsert(category.copy(title = trimmed))
+        Logger.i("REPO", "renameCategory($categoryId -> '$trimmed')")
+        return true
     }
 
     /** Deep-clones a paper (categories, questions, options, keys, marks). */

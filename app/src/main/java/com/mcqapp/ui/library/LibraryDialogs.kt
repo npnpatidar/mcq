@@ -91,6 +91,68 @@ internal fun PaperDialog(
     )
 }
 
+
+@Composable
+internal fun EditCategoryDialog(
+    category: CategoryNode,
+    papers: List<Paper>,
+    onDismiss: () -> Unit,
+    onSave: (title: String, parentId: String?) -> Unit
+) {
+    var title by remember { mutableStateOf(category.title) }
+    val paper = papers.firstOrNull { it.id == category.paperId }
+    val categories = paper?.categories ?: emptyList()
+    var selectedParent by remember { mutableStateOf(category.parentId) }
+    var dropdownOpen by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.edit_category)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(stringResource(R.string.title)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.parent_category), style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = selectedParent == null,
+                            onClick = { selectedParent = null }
+                        )
+                        Text(stringResource(R.string.none_top_level))
+                    }
+                    // The category's own subtree cannot be its parent (cycles);
+                    // those nodes are hidden from the picker.
+                    categories.forEach { node ->
+                        ParentOptions(
+                            node = node,
+                            depth = 0,
+                            selectedParent = selectedParent,
+                            onSelect = { selectedParent = it },
+                            excludeSubtreeOf = category.id
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(title.trim(), selectedParent) },
+                enabled = title.isNotBlank()
+            ) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
 @Composable
 internal fun CategoryDialog(
     papers: List<Paper>,
@@ -155,8 +217,11 @@ private fun ParentOptions(
     node: CategoryNode,
     depth: Int,
     selectedParent: String?,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    excludeSubtreeOf: String? = null
 ) {
+    // A category's own subtree is hidden from its parent picker (cycles).
+    if (node.id == excludeSubtreeOf) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -170,6 +235,6 @@ private fun ParentOptions(
         Text(node.title)
     }
     node.children.forEach { child ->
-        ParentOptions(child, depth + 1, selectedParent, onSelect)
+        ParentOptions(child, depth + 1, selectedParent, onSelect, excludeSubtreeOf)
     }
 }

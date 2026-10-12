@@ -609,6 +609,76 @@ class RepositoryTest {
         assertTrue(added.let { id -> db.categoryDao().getById(id)!!.sortOrder > 0 })
     }
 
+
+    // ---- outline gestures: nest into, promote out, reparent, rename ----
+
+    private fun nestedPaper(): Unit = runBlocking {
+        repository.ensurePaperAndCategory("og", "Outline Paper", "og-x", "X")
+        val c2 = repository.addCategory("og", "Y", parentId = null)
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "og-qx", categoryId = "og-x",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("X?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "og-qy", categoryId = c2,
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Y?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+    }
+
+    @Test
+    fun nestingIntoTheSiblingAboveKeepsTheQuestionOrder() = runBlocking {
+        nestedPaper()
+        val yId = db.categoryDao().getByPaper("og").first { it.title == "Y" }.id
+        assertTrue(repository.nestCategoryIntoSibling(yId))
+        // Hierarchy changed, position did not: the outline -> gesture.
+        assertEquals(listOf("og-qx", "og-qy"), repository.getQuestionsForPaper("og").map { it.id })
+        val yRow = db.categoryDao().getByPaper("og").first { it.title == "Y" }
+        assertEquals("og-x", yRow.parentId)
+        // Every slot still unique.
+        assertEquals(2, db.categoryDao().getByPaper("og").map { it.sortOrder }.distinct().size)
+        // Promote back out: still no visual movement.
+        assertTrue(repository.promoteCategoryOutOfParent(yId))
+        assertEquals(null, db.categoryDao().getByPaper("og").first { it.title == "Y" }.parentId)
+        assertEquals(listOf("og-qx", "og-qy"), repository.getQuestionsForPaper("og").map { it.id })
+    }
+
+    @Test
+    fun promoteIsRefusedForRoots() = runBlocking {
+        nestedPaper()
+        val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
+        assertTrue(!repository.promoteCategoryOutOfParent(xId))
+    }
+
+    @Test
+    fun reparentRefusesCyclesAndRenamesWork() = runBlocking {
+        nestedPaper()
+        val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
+        val yId = db.categoryDao().getByPaper("og").first { it.title == "Y" }.id
+        // Nest Y under X, then X cannot become a child of its own child.
+        assertTrue(repository.nestCategoryIntoSibling(yId))
+        assertTrue(!repository.reparentCategory(xId, yId))
+        // Rename works.
+        assertTrue(repository.renameCategory(yId, "Yed"))
+        assertEquals("Yed", db.categoryDao().getById(yId)!!.title)
+        // And the top level is reachable again.
+        assertTrue(repository.reparentCategory(yId, null))
+        assertEquals(null, db.categoryDao().getById(yId)!!.parentId)
+    }
+
     @Test
     fun getByCategoriesMatchesThePerCategoryFetch() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")

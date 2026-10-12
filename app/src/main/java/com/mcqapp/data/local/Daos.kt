@@ -65,6 +65,9 @@ interface CategoryDao {
     @Query("UPDATE categories SET paperId = :paperId, title = :title, parentId = :parentId, sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateFields(id: String, paperId: String, title: String, parentId: String?, sortOrder: Int)
 
+    @Query("UPDATE categories SET parentId = :parentId WHERE id = :id")
+    suspend fun updateParent(id: String, parentId: String?)
+
     @Query("UPDATE categories SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
 

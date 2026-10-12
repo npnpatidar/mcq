@@ -47,6 +47,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.mcqapp.domain.ImportWarnings
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -512,9 +513,12 @@ private fun PreviewQuestionCard(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    question.text,
-                    style = MaterialTheme.typography.bodyMedium,
+                // The full element renderer, not the flattened text: a DOCX
+                // question can carry a table (or a formula) in its body,
+                // and the preview must show what will actually import.
+                ContentElements(
+                    question.elements,
+                    textStyle = MaterialTheme.typography.bodyMedium,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)

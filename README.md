@@ -281,9 +281,9 @@ the statements.
 ### The `Passage:` marker
 
 Comprehension sets need their context, so a line starting with `Passage:` (case-insensitive)
-marks the start of one. Everything from that line to the next marker — or the next `Passage:`
-— is the passage body, and every question after it belongs to that passage. Questions before
-the first `Passage:` stay standalone, and the `1.)` split is untouched:
+marks the start of one. Everything from that line to the next `N.)` question — or the next
+`Passage:` — is the passage body, and every question after the marker belongs to that passage.
+Questions before the first `Passage:` stay standalone, and the `N.)` split is untouched:
 
 ```
 1.) A standalone question before any passage marker.
@@ -311,12 +311,33 @@ Exp: Rainwater gathers in rivers.
 ```
 
 Here question 1 stays standalone and questions 2 and 3 share the passage, always appearing
-together. Everything from the `Passage:` line to the next question belongs to the passage.
-The text after `Passage:` on the same line becomes the passage title (a blank title falls
-back to "Passage"). In the app the passage is shown above each member everywhere the question
+together.
+
+**Rules, precisely:**
+
+- **Marker** — a paragraph starting with `Passage:` (any case: `passage:`, `PASSAGE:`). It
+  must start its own line; text mid-line never triggers it.
+- **Title** — everything after `Passage:` on the same line becomes the passage title.
+  A blank title falls back to "Passage".
+- **Body** — the paragraphs between the marker line and the first question are the passage
+  body. It can span multiple paragraphs and carry **tables, images and formulas** exactly like
+  a question can; all of it is shown above the members everywhere the passage appears.
+- **Membership** — a question belongs to the passage of the most recent `Passage:` marker
+  before it. A second `Passage:` starts a new group; questions after it leave the first one.
+- **Numbering** — the `N.)` numbers are labels only; members may continue the sequence
+  (2, 3, 4…) or restart it — the app renumbers per its own order.
+- **Placement** — a passage lives in the same category as its questions (the import puts all
+  members under the first member's category, one category per Word file), and members are
+  stored contiguously so they occur together in Browse, tests and every export.
+- **Edge cases** — a passage with no questions after it imports as an unassigned passage
+  (assign members later from the question editor); the last question's `Exp:` can even be
+  empty. A `Passage:` line inside a table cell does not start a passage — markers are
+  paragraph-level.
+
+In the app the passage is shown above each member everywhere the question
 appears — tests keep the whole group as one unbreakable block through shuffling and drills,
 study shows it whenever a member comes due, and every document export prints it once above
-its group, where the members sit together.
+the group so each question reads in context.
 
 A complete, valid document:
 
@@ -470,13 +491,86 @@ an answer key.
 category ids are optional too — a missing paper id is generated, and a missing question id is
 derived from the question's content so re-imports line up.
 
-**Reading passages.** A question with a `"passageId"` shares reading context with the other
-members of that passage; the passage itself lives in the top-level `passages` array (id, title,
-elements/image, optional `categoryId`). Export writes both; the importer writes each passage
-under the first member's category. A passage is not schedulable content — members keep their
-own SM-2 schedules — and deleting a passage that still has members is refused; unassign them
-first. Passages are searchable: a hit on a passage's text or title surfaces its group in
-Browse.
+### Reading passages in JSON
+
+A passage is a top-level object in the `passages` array; questions point at it by id with
+`"passageId"`. The full shape:
+
+```json
+{
+  "version": 1,
+  "papers": [{
+    "id": "p1", "title": "Geography set",
+    "categories": [{
+      "id": "cat-rivers", "title": "Rivers",
+      "questions": [{
+        "id": "q-r1",
+        "question_elements": [
+          { "type": "text", "content": "According to the passage, what fills rivers?" }
+        ],
+        "options_elements": {
+          "a": [{ "type": "text", "content": "Rain" }],
+          "b": [{ "type": "text", "content": "Snow" }],
+          "c": [{ "type": "text", "content": "Fog" }],
+          "d": [{ "type": "text", "content": "Dew" }]
+        },
+        "correctOptionIds": ["a"],
+        "explanation_elements": [{ "type": "text", "content": "The passage opens with rain." }],
+        "difficulty": "easy", "marks": 1, "tags": ["passage"],
+        "passageId": "passage-rivers"
+      }, {
+        "id": "q-r2",
+        "question_elements": [{ "type": "text", "content": "A standalone question." }],
+        "options_elements": {
+          "a": [{ "type": "text", "content": "One" }],
+          "b": [{ "type": "text", "content": "Two" }],
+          "c": [{ "type": "text", "content": "Three" }],
+          "d": [{ "type": "text", "content": "Four" }]
+        },
+        "correctOptionIds": ["a"]
+      }]
+    }]
+  }],
+  "passages": [{
+    "id": "passage-rivers",
+    "title": "The water cycle",
+    "categoryId": "cat-rivers",
+    "image": null,
+    "elements": [
+      { "type": "text", "content": "Rain fills rivers; the sun lifts the water back." },
+      { "type": "table", "content": [
+        ["Step", "What happens", "Example"],
+        ["Evaporation", "Liquid becomes vapour", "A puddle drying on a road"]
+      ] }
+    ]
+  }]
+}
+```
+
+**Passage object fields:**
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | The id members point at with `"passageId"`; must be unique within the file |
+| `title` | no | Shown on the passage card and in exports; blank falls back to "Passage" |
+| `elements` | no | Body content — the same `question_elements` shapes: `text`, `table`, `image`, `formula` |
+| `image` | no | An image data-URI shown under the body |
+| `categoryId` | no | The passage's home category; the importer defaults it to the first member's category |
+
+**Question side:** `"passageId"` on a question is optional — missing (or null) means standalone.
+`passageId` joins the question's content hash, so reassigning a passage resets that question's
+study progress exactly like editing its text.
+
+**Rules the app enforces on import:**
+
+- **One category per group.** Members are folded into the passage's category (the first
+  member's, when the passage declares none), so the group can always occur together. A file
+  that scatters members across categories still imports — the strays are moved in.
+- **The `passages` array is global to the file**, so a backup of several papers carries every
+  passage once, with members in each paper referencing them.
+- **Round trips are lossless**: export writes the array and every member's `passageId`; the
+  Anki deck embeds the passage in each member's payload; re-importing restores the grouping.
+  `sample_paper.json`'s "Reading Passages" category is the canonical worked example.
 
 **3. Legacy aliases.** Every level accepts common variants:
 

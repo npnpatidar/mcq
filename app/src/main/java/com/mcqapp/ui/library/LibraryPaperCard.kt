@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -333,57 +332,47 @@ private fun CategoryRow(
     onExportCategory: (String, String) -> Unit
 ) {
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
+        // Eight 48dp actions do not fit one line on a phone, so the row
+        // splits: movement gestures beside the title (line 1) and the
+        // management set on their own line (line 2). Sub-48dp buttons are
+        // rejected by UiAccessibilityTest for good reason.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
                 style = MaterialTheme.typography.bodyMedium,
-                // Eight actions squeeze the title into a narrow column on
-                // small screens; one ellipsized line keeps the row (and the
-                // card below it) from ballooning.
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-            // One uniform compact row: eight 32dp actions (the management
-            // set grew, and mixing 48dp defaults with 32dp made the rows
-            // taller and wider than a phone width).
-            @Composable
-            fun rowAction(
-                icon: androidx.compose.ui.graphics.vector.ImageVector,
-                description: String,
-                enabled: Boolean = true,
-                onClick: () -> Unit
-            ) {
-                IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(32.dp)) {
-                    Icon(icon, contentDescription = description, modifier = Modifier.size(18.dp))
+            if (canMoveUp || canMoveDown) {
+                IconButton(onClick = { onMoveCategory(node.id, -1) }, enabled = canMoveUp) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up))
+                }
+                IconButton(onClick = { onMoveCategory(node.id, +1) }, enabled = canMoveDown) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down))
                 }
             }
-            rowAction(Icons.Default.KeyboardArrowUp, stringResource(R.string.move_up), canMoveUp) {
-                onMoveCategory(node.id, -1)
-            }
-            rowAction(Icons.Default.KeyboardArrowDown, stringResource(R.string.move_down), canMoveDown) {
-                onMoveCategory(node.id, +1)
-            }
             // Outline gestures: -> nests into the category above (nothing
-            // moves visually), <- promotes out of the parent, and the pencil
-            // opens rename + re-parent. Delete rounds out the management set.
-            rowAction(Icons.Default.KeyboardArrowRight, stringResource(R.string.nest_category), canMoveUp) {
-                onNestCategory(node.id)
+            // moves visually), <- promotes out of the parent.
+            IconButton(onClick = { onNestCategory(node.id) }, enabled = canMoveUp) {
+                Icon(Icons.Default.KeyboardArrowRight, contentDescription = stringResource(R.string.nest_category))
             }
-            rowAction(Icons.Default.KeyboardArrowLeft, stringResource(R.string.promote_category), depth > 0) {
-                onPromoteCategory(node.id)
+            IconButton(onClick = { onPromoteCategory(node.id) }, enabled = depth > 0) {
+                Icon(Icons.Default.KeyboardArrowLeft, contentDescription = stringResource(R.string.promote_category))
             }
-            rowAction(Icons.Default.Edit, stringResource(R.string.edit_category)) {
-                onEditCategory(node)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onEditCategory(node) }) {
+                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_category))
             }
-            rowAction(Icons.Default.Share, stringResource(R.string.export_category)) {
-                onExportCategory(node.id, node.title)
+            IconButton(onClick = { onExportCategory(node.id, node.title) }) {
+                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_category))
             }
-            rowAction(Icons.Default.Add, stringResource(R.string.add_question)) {
-                onAddQuestion(node.id)
+            IconButton(onClick = { onAddQuestion(node.id) }) {
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_question))
             }
-            rowAction(Icons.Default.Delete, stringResource(R.string.delete_category)) {
-                onDeleteCategory(node.id)
+            IconButton(onClick = { onDeleteCategory(node.id) }) {
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_category))
             }
         }
         node.children.forEachIndexed { index, child ->

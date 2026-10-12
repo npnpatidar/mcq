@@ -150,7 +150,10 @@ interface QuestionDao {
         "SELECT questions.* FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "ORDER BY categories.rowid, questions.sortOrder, questions.rowid"
+            // Same (sortOrder, title) order as CategoryDao.getByPaper, so a
+            // category reordered in the drawer (or inline in Browse) moves
+            // its questions too — rowid order froze them at insertion.
+            "ORDER BY categories.sortOrder, categories.title, questions.sortOrder, questions.rowid"
     )
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 

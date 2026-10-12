@@ -506,6 +506,51 @@ class RepositoryTest {
         assertEquals(listOf("q2"), db.bookmarkDao().getAll())
     }
 
+
+    @Test
+    fun movingAManuallyAddedCategoryUpReordersThePaper() = runBlocking {
+        // addCategory leaves sortOrder at 0, so sibling order rests on the
+        // (sortOrder, title) tiebreak — exactly the seeded shape the browse
+        // UI test uses. The move must still rewrite the paper's order.
+        repository.ensurePaperAndCategory("mp", "Move Paper", "mc1", "First Cat")
+        val c2 = repository.addCategory("mp", "Second Cat", parentId = null)
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "mq1", categoryId = "mc1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("First?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "mq2", categoryId = c2,
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Second?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        assertEquals(listOf("mq1", "mq2"), repository.getQuestionsForPaper("mp").map { it.id })
+        assertTrue(repository.moveCategory(c2, -1))
+        assertEquals(listOf("mq2", "mq1"), repository.getQuestionsForPaper("mp").map { it.id })
+        assertTrue(repository.moveCategory(c2, +1))
+        assertEquals(listOf("mq1", "mq2"), repository.getQuestionsForPaper("mp").map { it.id })
+    }
+
+    @Test
+    fun movingTheOnlySiblingThatWayIsRefused() = runBlocking {
+        repository.ensurePaperAndCategory("mp", "Move Paper", "mc1", "First Cat")
+        val c2 = repository.addCategory("mp", "Second Cat", parentId = null)
+        assertTrue(!repository.moveCategory(c2, +1))
+        assertTrue(!repository.moveCategory("mc1", -1))
+    }
+
     @Test
     fun getByCategoriesMatchesThePerCategoryFetch() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")

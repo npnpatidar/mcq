@@ -5,8 +5,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -103,7 +106,6 @@ internal fun EditCategoryDialog(
     val paper = papers.firstOrNull { it.id == category.paperId }
     val categories = paper?.categories ?: emptyList()
     var selectedParent by remember { mutableStateOf(category.parentId) }
-    var dropdownOpen by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -118,27 +120,14 @@ internal fun EditCategoryDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.parent_category), style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = selectedParent == null,
-                            onClick = { selectedParent = null }
-                        )
-                        Text(stringResource(R.string.none_top_level))
-                    }
-                    // The category's own subtree cannot be its parent (cycles);
-                    // those nodes are hidden from the picker.
-                    categories.forEach { node ->
-                        ParentOptions(
-                            node = node,
-                            depth = 0,
-                            selectedParent = selectedParent,
-                            onSelect = { selectedParent = it },
-                            excludeSubtreeOf = category.id
-                        )
-                    }
-                }
+                // The category's own subtree cannot be its parent (cycles);
+                // those nodes are hidden from the picker.
+                ParentPicker(
+                    categories = categories,
+                    selectedParent = selectedParent,
+                    onSelect = { selectedParent = it },
+                    excludeSubtreeOf = category.id
+                )
             }
         },
         confirmButton = {
@@ -165,7 +154,6 @@ internal fun CategoryDialog(
     val paper = papers.firstOrNull { it.id == paperId }
     val categories = paper?.categories ?: emptyList()
     var selectedParent by remember { mutableStateOf(parentId) }
-    var dropdownOpen by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -180,24 +168,11 @@ internal fun CategoryDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.parent_category), style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = selectedParent == null,
-                            onClick = { selectedParent = null }
-                        )
-                        Text(stringResource(R.string.none_top_level))
-                    }
-                    categories.forEach { node ->
-                        ParentOptions(
-                            node = node,
-                            depth = 0,
-                            selectedParent = selectedParent,
-                            onSelect = { selectedParent = it }
-                        )
-                    }
-                }
+                ParentPicker(
+                    categories = categories,
+                    selectedParent = selectedParent,
+                    onSelect = { selectedParent = it }
+                )
             }
         },
         confirmButton = {
@@ -210,6 +185,47 @@ internal fun CategoryDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
+}
+
+/**
+ * The radio list of possible parent categories. The dialog clips content
+ * taller than its max height, so the list scrolls inside a bounded column —
+ * a paper with many categories otherwise hides its lower half behind an
+ * edge nothing can scroll to.
+ */
+@Composable
+private fun ParentPicker(
+    categories: List<CategoryNode>,
+    selectedParent: String?,
+    onSelect: (String?) -> Unit,
+    excludeSubtreeOf: String? = null
+) {
+    Text(
+        stringResource(R.string.parent_category),
+        style = androidx.compose.material3.MaterialTheme.typography.labelMedium
+    )
+    Column(
+        modifier = Modifier
+            .heightIn(max = 280.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = selectedParent == null,
+                onClick = { onSelect(null) }
+            )
+            Text(stringResource(R.string.none_top_level))
+        }
+        categories.forEach { node ->
+            ParentOptions(
+                node = node,
+                depth = 0,
+                selectedParent = selectedParent,
+                onSelect = { onSelect(it) },
+                excludeSubtreeOf = excludeSubtreeOf
+            )
+        }
+    }
 }
 
 @Composable

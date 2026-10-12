@@ -243,7 +243,7 @@ internal class PaperStore(
         paperId: String,
         override: (parent: String?, children: List<com.mcqapp.data.local.CategoryEntity>) -> List<com.mcqapp.data.local.CategoryEntity> = { _, c -> c }
     ) {
-        fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
+        suspend fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
             override(parent, childrenOf(paperId, parent))
                 .flatMap { listOf(it) + preorder(it.id) }
         preorder(null).forEachIndexed { index, node ->
@@ -309,7 +309,7 @@ internal class PaperStore(
                 if (newParent.paperId != category.paperId) return@withTransaction false
                 // No cycles: the new parent must not live in this category's
                 // own subtree (which includes the category itself).
-                fun subtree(id: String?): Boolean =
+                suspend fun subtree(id: String?): Boolean =
                     id == newParentId || childrenOf(category.paperId, id).any { subtree(it.id) }
                 if (subtree(categoryId)) return@withTransaction false
                 db.categoryDao().updateParent(categoryId, newParentId)

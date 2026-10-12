@@ -337,6 +337,11 @@ private fun CategoryRow(
             Text(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
                 style = MaterialTheme.typography.bodyMedium,
+                // Eight actions squeeze the title into a narrow column on
+                // small screens; one ellipsized line keeps the row (and the
+                // card below it) from ballooning.
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
             // One uniform compact row: eight 32dp actions (the management

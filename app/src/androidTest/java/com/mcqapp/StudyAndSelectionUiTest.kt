@@ -8,8 +8,6 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -267,15 +265,15 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("Delete paper", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        // DIAG: dump the tree so CI logcat shows the real bounds/state of the
-        // delete button when this test fails.
-        compose.onRoot().printToLog("DIAG_EXPANDED")
+        // The expanded card's actions can sit below the fold on the small
+        // emulator screen, and the expand animation is still moving them:
+        // settle first, then scroll the button into view, then click.
+        compose.waitForIdle()
+        compose.onNodeWithText("Delete paper", substring = true).performScrollTo()
+        compose.waitForIdle()
         compose.onNodeWithText("Delete paper", substring = true).performClick()
-        try {
-            waitFor("This cannot be undone.")
-        } finally {
-            compose.onRoot().printToLog("DIAG_AFTER_CLICK")
-        }
+
+        waitFor("This cannot be undone.")
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()
         compose.onNodeWithText("• 1 past attempt", substring = false).assertIsDisplayed()
         compose.onNodeWithText("• 1 bookmark", substring = false).assertIsDisplayed()

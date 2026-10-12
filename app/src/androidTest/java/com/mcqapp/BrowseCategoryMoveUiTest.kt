@@ -39,15 +39,19 @@ class BrowseCategoryMoveUiTest {
 
     @Before
     fun seed() = runBlocking {
-        repository.ensurePaperAndCategory("p1", "UITest Paper", "c1", "First Cat")
-        val c2 = repository.addCategory("p1", "Second Cat", parentId = null)
-        repository.saveQuestion(question("q1", "c1", "First question?"))
-        repository.saveQuestion(question("q2", "c2", "Second question?"))
+        // Ids unique to this class: instrumented classes share the app database,
+        // so a leak from another class must never be able to collide.
+        repository.ensurePaperAndCategory(
+            "uitest-browse-paper", "UITest Browse Paper", "uitest-browse-c1", "First Cat"
+        )
+        val c2 = repository.addCategory("uitest-browse-paper", "Second Cat", parentId = null)
+        repository.saveQuestion(question("ub-q1", "uitest-browse-c1", "First question?"))
+        repository.saveQuestion(question("ub-q2", c2, "Second question?"))
     }
 
     @After
     fun cleanup() = runBlocking {
-        repository.deletePaper("p1")
+        repository.deletePaper("uitest-browse-paper")
     }
 
     private fun question(id: String, categoryId: String, text: String) = Question(
@@ -63,7 +67,7 @@ class BrowseCategoryMoveUiTest {
         compose.setContent {
             BrowseScreen(
                 repository = repository,
-                paperId = "p1",
+                paperId = "uitest-browse-paper",
                 navController = rememberNavController()
             )
         }
@@ -81,14 +85,14 @@ class BrowseCategoryMoveUiTest {
         // one question, so each card is both first and last of its section):
         // the up move exists twice — disabled on the first section, enabled
         // on the second — so address the enabled one by position.
-        val orderBefore = runBlocking { repository.getQuestionsForPaper("p1").map { it.id } }
-        assertEquals(listOf("q1", "q2"), orderBefore)
+        val orderBefore = runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } }
+        assertEquals(listOf("ub-q1", "ub-q2"), orderBefore)
         val categoryUp = compose.onAllNodesWithContentDescription("Move the whole category up")
         categoryUp[0].assertIsNotEnabled()
         categoryUp[1].performClick()
         compose.waitUntil(15_000) {
-            runBlocking { repository.getQuestionsForPaper("p1").map { it.id } } ==
-                listOf("q2", "q1")
+            runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
+                listOf("ub-q2", "ub-q1")
         }
         // And back down for symmetry: after the swap the second category is
         // the first section, so its (enabled) down move sits at index 0.
@@ -96,8 +100,8 @@ class BrowseCategoryMoveUiTest {
         categoryDown[1].assertIsNotEnabled()
         categoryDown[0].performClick()
         compose.waitUntil(15_000) {
-            runBlocking { repository.getQuestionsForPaper("p1").map { it.id } } ==
-                listOf("q1", "q2")
+            runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
+                listOf("ub-q1", "ub-q2")
         }
         assertTrue(true)
     }

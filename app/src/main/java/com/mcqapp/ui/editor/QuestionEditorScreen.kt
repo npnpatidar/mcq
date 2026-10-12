@@ -196,14 +196,21 @@ fun QuestionEditorScreen(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            if (state.passages.isNotEmpty()) {
-                PassageDropdown(
-                    passages = state.passages,
-                    selectedId = state.passageId,
-                    onSelect = { viewModel.updatePassage(it) }
-                )
-                Spacer(Modifier.height(8.dp))
-            }
+            // A question can only join a passage of its own category: a
+            // group has to occur together, and its members share the
+            // passage's category. The list follows the chosen category, and
+            // changing category drops an assignment that no longer fits.
+            state.passages
+                .filter { it.categoryId == state.categoryId }
+                .takeIf { it.isNotEmpty() }
+                ?.let { categoryPassages ->
+                    PassageDropdown(
+                        passages = categoryPassages,
+                        selectedId = state.passageId,
+                        onSelect = { viewModel.updatePassage(it) }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
 
             Text(stringResource(R.string.question), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))

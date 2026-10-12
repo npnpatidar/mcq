@@ -250,7 +250,17 @@ class EditorViewModel(
     fun updateTags(value: String) = updateState { it.copy(tags = value) }
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
     fun updateMarks(value: String) = updateState { it.copy(marks = value) }
-    fun updateCategory(value: String) = updateState { it.copy(categoryId = value) }
+    /**
+     * A question can only belong to a passage of its own category (the
+     * group's members share one), so switching category drops an assignment
+     * that no longer fits; the picker offers the new category's passages.
+     */
+    fun updateCategory(value: String) = updateState {
+        val keepPassage = it.passageId?.takeIf { pid ->
+            it.passages.any { p -> p.id == pid && p.categoryId == value }
+        }
+        it.copy(categoryId = value, passageId = keepPassage)
+    }
 
     /** Assigns this question to a passage (null clears membership). */
     fun updatePassage(value: String?) = updateState { it.copy(passageId = value) }

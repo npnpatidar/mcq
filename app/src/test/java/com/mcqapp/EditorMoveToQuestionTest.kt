@@ -134,4 +134,33 @@ class EditorMoveToQuestionTest {
         shadowOf(Looper.getMainLooper()).runToEndOfTasks()
         assertEquals("q1", vm.state.value.questionId)
     }
+
+    @Test
+    fun switchingCategoryDropsAPassageThatNoLongerFits() = runBlocking {
+        val repository = (ApplicationProvider.getApplicationContext<McqApplication>()).repository
+        val pid = repository.savePassage(
+            com.mcqapp.domain.Passage(id = "", categoryId = "c1", title = "P")
+        )
+        repository.assignQuestionsToPassage(listOf("q1"), pid)
+        val otherCategory = repository.addCategory("p1", "Other", parentId = null)
+
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = EditorViewModel(app, "q1", "p1", "c1")
+        pumpUntil { !vm.state.value.loading }
+        assertEquals(pid, vm.state.value.passageId)
+
+        // The picker only offers the question's category's passages, and a
+        // category switch drops an assignment that no longer fits — a
+        // member cannot stay in a passage of another category.
+        vm.updateCategory(otherCategory)
+        assertEquals(null, vm.state.value.passageId)
+        assertEquals(otherCategory, vm.state.value.categoryId)
+
+        // Switching back does not resurrect the dropped assignment…
+        vm.updateCategory("c1")
+        assertEquals(null, vm.state.value.passageId)
+        // …but the passage of that category is still pickable.
+        vm.updatePassage(pid)
+        assertEquals(pid, vm.state.value.passageId)
+    }
 }

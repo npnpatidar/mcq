@@ -265,6 +265,10 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("Delete paper", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+        // The expanded card grew taller (the category rows now carry the
+        // whole management set), so the delete button can sit below the
+        // fold: scroll to it like a reader would.
+        compose.onNodeWithText("Delete paper", substring = true).performScrollTo()
         compose.onNodeWithText("Delete paper", substring = true).performClick()
 
         waitFor("This cannot be undone.")

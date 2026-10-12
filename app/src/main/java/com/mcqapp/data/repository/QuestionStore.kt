@@ -152,11 +152,14 @@ internal class QuestionStore(
                 }
             )
             Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.correctOptionIds.size} correct answers written - done")
-            // A newly assigned (or newly created) member moves next to its
-            // group's last member, so "questions of a passage occur
-            // together" holds in Browse, tests and exports without the user
-            // hand-placing it. Contiguous imports are no-ops.
+            // A newly assigned (or newly created) member joins the passage's
+            // category — a group can only occur together when its members
+            // share one — and then moves next to the group's last member, so
+            // "questions of a passage occur together" holds in Browse, tests
+            // and exports without the user hand-placing it. Contiguous
+            // imports are no-ops.
             if (question.passageId != null && existing?.passageId != question.passageId) {
+                enforcePassageCategory(question.id, question.passageId)
                 placeWithGroup(question.id)
             }
         }
@@ -391,6 +394,20 @@ internal class QuestionStore(
                 if (row.sortOrder != index) db.questionDao().updateSortOrder(row.id, index)
             }
             true
+        }
+    }
+
+    /**
+     * Keeps a passage group's members in the passage's category (a group can
+     * only occur together when its members share one): a member saved into a
+     * passage that lives elsewhere is moved over before being placed with
+     * the group. No-op when the categories already match.
+     */
+    internal suspend fun enforcePassageCategory(questionId: String, passageId: String) {
+        val passage = db.passageDao().getById(passageId) ?: return
+        val member = db.questionDao().getById(questionId) ?: return
+        if (member.categoryId != passage.categoryId) {
+            moveQuestionsToCategory(setOf(questionId), passage.categoryId)
         }
     }
 

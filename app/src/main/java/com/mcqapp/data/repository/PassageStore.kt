@@ -87,15 +87,30 @@ internal class PassageStore(
         return true
     }
 
-    /** Assigns questions to a passage; they keep their own category. */
+    /**
+     * Assigns questions to a passage. A group can only occur together when
+     * its members share a category, so an assignee from another category is
+     * moved into the passage's category first (the same semantics as the
+     * bulk "move to category"), then placed right after the group's last
+     * member.
+     */
     suspend fun assignQuestions(questionIds: Collection<String>, passageId: String) {
         if (questionIds.isEmpty()) return
+        val passage = db.passageDao().getById(passageId)
         db.withTransaction {
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
             questionIds.forEach { refreshContentHash(it) }
         }
-        // After the membership write: each new member moves next to the
-        // group, so Browse, tests and every export keep the block whole.
+        // Category first, placement second: placeWithGroup anchors within
+        // the (new) category, so it must already be the passage's.
+        if (passage != null) {
+            questionIds.forEach { id ->
+                val member = db.questionDao().getById(id) ?: return@forEach
+                if (member.categoryId != passage.categoryId) {
+                    questionStore.moveQuestionsToCategory(setOf(id), passage.categoryId)
+                }
+            }
+        }
         // Sequential placement keeps a multi-question batch in order too —
         // each one anchors after the last member, including those just
         // placed.

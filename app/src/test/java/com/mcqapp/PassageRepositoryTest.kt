@@ -8,6 +8,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -112,6 +113,62 @@ class PassageRepositoryTest {
         // A mismatched id set is refused rather than half-applied.
         assertFalse(repository.renumberQuestions("c1", listOf("q1", "q2", "nope")))
         assertEquals(listOf("q3", "q1", "q2"), orderOf("q1", "q2", "q3"))
+    }
+
+
+    // ---- members share the passage's category, so groups occur together ----
+
+    @Test
+    fun assigningAMemberFromAnotherCategoryMovesItIntoThePassagesCategory() = runBlocking {
+        val c2 = repository.addCategory("p1", "Other", parentId = null)
+        repository.saveQuestion(question("q9").copy(categoryId = c2))
+        val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
+        repository.assignQuestionsToPassage(listOf("q1", "q9"), pid)
+        // q9 came from another category: membership moves it into the
+        // passage's, or the group could never sit together in Browse.
+        val row = db.questionDao().getById("q9")!!
+        assertEquals("c1", row.categoryId)
+        assertEquals(pid, row.passageId)
+        // And it lands with its group, not at the category's end.
+        assertEquals(listOf("q1", "q9"), orderOf("q1", "q9"))
+        val blocks = repository.buildPassageBlocks(repository.getQuestionsForPaper("p1"))
+        assertEquals(1, blocks.size)
+    }
+
+    @Test
+    fun savingANewMemberFromAnotherCategoryLandsInThePassagesCategory() = runBlocking {
+        val c2 = repository.addCategory("p1", "Other", parentId = null)
+        val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
+        repository.assignQuestionsToPassage(listOf("q2"), pid)
+        // A new question saved (editor flow) with a passage that lives in
+        // another category: the row joins the passage's category.
+        repository.saveQuestion(question("q9").copy(categoryId = c2, passageId = pid))
+        val row = db.questionDao().getById("q9")!!
+        assertEquals("c1", row.categoryId)
+        assertEquals(listOf("q2", "q9"), orderOf("q2", "q9"))
+    }
+
+    @Test
+    fun importingScatteredMembersFoldsThemIntoThePassagesCategory() = runBlocking {
+        val json = """
+            {"passages":[{"id":"px","title":"P",
+              "elements":[{"type":"text","content":"body"}],"categoryId":"gc1"}],
+             "papers":[{"id":"p9","title":"Folded","categories":[
+               {"id":"gc1","title":"One","questions":[
+                 {"id":"f1","text":"A","options":[{"id":"a","text":"x"},{"id":"b","text":"y"}],
+                  "correctOptionIds":["a"],"passageId":"px"}]},
+               {"id":"gc2","title":"Two","questions":[
+                 {"id":"f2","text":"B","options":[{"id":"a","text":"x"},{"id":"b","text":"y"}],
+                  "correctOptionIds":["a"],"passageId":"px"}]}]}]}
+        """.trimIndent()
+        val file = com.mcqapp.data.io.LegacyParser.parse(json)
+        com.mcqapp.data.io.Importer(db, repository.updateAnswersOnDuplicate().first()).import(file)
+        val stray = db.questionDao().getById("f2")!!
+        assertEquals("the member written into gc2 must fold into the passage's category",
+            "gc1", stray.categoryId)
+        // The folded member sits with its group, after the in-place member.
+        val members = db.questionDao().getMembersByPassage("px")
+        assertEquals(listOf("f1", "f2"), members.map { it.id })
     }
 
     @Test

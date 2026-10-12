@@ -195,6 +195,9 @@ class Importer(
                     }
                 }
 
+                // Passages this paper wrote; their members must end up in the
+                // passage's category (the fold below enforces it).
+                val paperPassageIds = mutableSetOf<String>()
                 effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
                     val scaledCategory = scaledCategories[categoryIndex]
                     // Category identity within the paper: match by id first, then
@@ -248,6 +251,7 @@ class Importer(
                         val passageDto = file.passages.firstOrNull { it.id == passageId }
                             ?: continue
                         seenPassageIds.add(passageId)
+                        paperPassageIds.add(passageId)
                         val existing = db.passageDao().getById(passageId)
                         db.passageDao().upsert(
                             PassageEntity(
@@ -434,6 +438,25 @@ class Importer(
                         db.correctAnswerDao().upsertAll(
                             questionDto.correctOptionIds.map { CorrectAnswerEntity(questionDto.id, it) }
                         )
+                    }
+                }
+
+                // A passage group only occurs together when its members share
+                // the passage's category. A file that scattered members across
+                // categories folds them in here — appended after the passage's
+                // category, in member order, so they at least arrive as one
+                // contiguous run.
+                for (passageId in paperPassageIds) {
+                    val passage = db.passageDao().getById(passageId) ?: continue
+                    val strays = db.questionDao().getMembersByPassage(passageId)
+                        .filter { it.categoryId != passage.categoryId }
+                    if (strays.isEmpty()) continue
+                    Logger.i("IMPORT", "Folding ${strays.size} passage member(s) of " +
+                        "$passageId into ${passage.categoryId}")
+                    var next = (db.questionDao().getMaxSortOrder(passage.categoryId) ?: -1) + 1
+                    for (stray in strays) {
+                        db.questionDao().updateCategory(listOf(stray.id), passage.categoryId)
+                        db.questionDao().updateSortOrder(stray.id, next++)
                     }
                 }
             }

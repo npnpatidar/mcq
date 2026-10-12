@@ -6,6 +6,7 @@ import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -88,7 +89,14 @@ class BrowseCategoryMoveUiTest {
         // wrong — a positional index would click a disabled button silently.
         val orderBefore = runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } }
         assertEquals(listOf("ub-q1", "ub-q2"), orderBefore)
+        // The CI emulator screen is short: with the search, chips and
+        // category filter stacked above the list, the second card's button
+        // row can sit at (or past) the window edge. assertIsDisplayed on
+        // the row text above it still passes, but a tap at an off-window
+        // coordinate is dropped without error — scroll the card into view
+        // first, like the delete-paper test.
         compose.onNode(hasContentDescription("Move the whole category up") and isEnabled())
+            .performScrollTo()
             .performClick()
         compose.waitUntil(15_000) {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
@@ -97,6 +105,7 @@ class BrowseCategoryMoveUiTest {
         // And back down for symmetry: after the swap the enabled down move
         // belongs to the section that is now first.
         compose.onNode(hasContentDescription("Move the whole category down") and isEnabled())
+            .performScrollTo()
             .performClick()
         compose.waitUntil(15_000) {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==

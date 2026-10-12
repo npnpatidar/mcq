@@ -59,6 +59,7 @@ import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
+import com.mcqapp.util.displayName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -195,16 +196,17 @@ fun LibraryScreen(
                 Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
                 // The file name becomes the paper title (the document rarely
-                // names its own paper).
+                // names its own paper). The provider's display name, not the
+                // opaque row id a content Uri carries in lastPathSegment.
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
-                    picked.lastPathSegment?.substringAfterLast('/')
+                    context.contentResolver.displayName(picked)
                 navController.navigate("import/direct")
                 return@launch
             }
             if (isZip) {
                 // The bytes are already in hand; hand them over rather than
                 // reading the same archive a second time.
-                val title = picked.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg"
+                val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
                 viewModel.importAnkiPackage(title) { bytes }
                 return@launch
             }

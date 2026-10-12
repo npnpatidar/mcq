@@ -159,16 +159,6 @@ internal fun PaperCard(
                         Text("${leechCount} tricky")
                     }
                 }
-                if (waitingCount > 0) {
-                    // The button says what this session will serve; this says
-                    // what the daily limits are holding back. Without it a
-                    // capped count just looks like the whole backlog.
-                    Text(
-                        stringResource(R.string.n_more_waiting, waitingCount),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
                 OutlinedButton(onClick = onExport) {
                     Text(stringResource(R.string.export))
                 }
@@ -200,6 +190,18 @@ internal fun PaperCard(
                         Text("Mistakes ($mistakeCount)")
                     }
                 }
+            }
+            if (waitingCount > 0) {
+                // The button says what this session will serve; this says
+                // what the daily limits are holding back. Without it a
+                // capped count just looks like the whole backlog. Its own
+                // caption line — inside the button row it wrapped into the
+                // buttons and scrambled their arrangement.
+                Text(
+                    stringResource(R.string.n_more_waiting, waitingCount),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             if (showDrillDialog) {
                 AlertDialog(

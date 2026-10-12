@@ -252,11 +252,6 @@ fun LibraryScreen(
                         )
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
-                    onDeleteCategory = { id -> viewModel.deleteCategory(id) },
-                    onMoveCategory = { id, delta -> viewModel.moveCategory(id, delta) },
-                    onNestCategory = { id -> viewModel.nestCategory(id) },
-                    onPromoteCategory = { id -> viewModel.promoteCategory(id) },
-                    onEditCategory = { node -> editingCategory = node }
                 )
             }
         }
@@ -383,6 +378,16 @@ fun LibraryScreen(
                                 },
                                 onMoveCategory = { categoryId, delta ->
                                     viewModel.moveCategory(categoryId, delta)
+                                },
+                                onNestCategory = { categoryId ->
+                                    viewModel.nestCategory(categoryId)
+                                },
+                                onPromoteCategory = { categoryId ->
+                                    viewModel.promoteCategory(categoryId)
+                                },
+                                onEditCategory = { node -> editingCategory = node },
+                                onDeleteCategory = { categoryId ->
+                                    viewModel.deleteCategory(categoryId)
                                 }
                             )
                         }

@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
@@ -61,6 +63,10 @@ internal fun PaperCard(
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit,
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
+    onNestCategory: (String) -> Unit = {},
+    onPromoteCategory: (String) -> Unit = {},
+    onEditCategory: (CategoryNode) -> Unit = {},
+    onDeleteCategory: (String) -> Unit = {},
     onPracticeMistakes: () -> Unit = {},
     onDrill: (Int, Int) -> Unit = { _, _ -> },
     onStudy: () -> Unit = {},
@@ -275,6 +281,10 @@ internal fun PaperCard(
                             canMoveUp = index > 0,
                             canMoveDown = index < paper.categories.lastIndex,
                             onMoveCategory = onMoveCategory,
+                            onNestCategory = onNestCategory,
+                            onPromoteCategory = onPromoteCategory,
+                            onEditCategory = onEditCategory,
+                            onDeleteCategory = onDeleteCategory,
                             onEditQuestion = onEditQuestion,
                             onAddQuestion = onAddQuestion,
                             onExportCategory = onExportCategory
@@ -313,6 +323,10 @@ private fun CategoryRow(
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
+    onNestCategory: (String) -> Unit = {},
+    onPromoteCategory: (String) -> Unit = {},
+    onEditCategory: (CategoryNode) -> Unit = {},
+    onDeleteCategory: (String) -> Unit = {},
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit
@@ -340,11 +354,34 @@ private fun CategoryRow(
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down), modifier = Modifier.padding(0.dp))
                 }
             }
-            IconButton(onClick = { onExportCategory(node.id, node.title) }) {
+            // Outline gestures: -> nests into the category above (nothing
+            // moves visually), <- promotes out of the parent, and the pencil
+            // opens rename + re-parent. Delete rounds out the management set.
+            IconButton(
+                onClick = { onNestCategory(node.id) },
+                enabled = canMoveUp,
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Default.KeyboardArrowRight, contentDescription = stringResource(R.string.nest_category), modifier = Modifier.padding(0.dp))
+            }
+            IconButton(
+                onClick = { onPromoteCategory(node.id) },
+                enabled = depth > 0,
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Default.KeyboardArrowLeft, contentDescription = stringResource(R.string.promote_category), modifier = Modifier.padding(0.dp))
+            }
+            IconButton(onClick = { onEditCategory(node) }, modifier = Modifier.height(32.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_category), modifier = Modifier.padding(0.dp))
+            }
+            IconButton(onClick = { onExportCategory(node.id, node.title) }, modifier = Modifier.height(32.dp)) {
                 Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_category), modifier = Modifier.padding(0.dp))
             }
-            IconButton(onClick = { onAddQuestion(node.id) }) {
+            IconButton(onClick = { onAddQuestion(node.id) }, modifier = Modifier.height(32.dp)) {
                 Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_question), modifier = Modifier.padding(0.dp))
+            }
+            IconButton(onClick = { onDeleteCategory(node.id) }, modifier = Modifier.height(32.dp)) {
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_category), modifier = Modifier.padding(0.dp))
             }
         }
         node.children.forEachIndexed { index, child ->
@@ -354,6 +391,10 @@ private fun CategoryRow(
                 canMoveUp = index > 0,
                 canMoveDown = index < node.children.lastIndex,
                 onMoveCategory = onMoveCategory,
+                onNestCategory = onNestCategory,
+                onPromoteCategory = onPromoteCategory,
+                onEditCategory = onEditCategory,
+                onDeleteCategory = onDeleteCategory,
                 onEditQuestion = onEditQuestion,
                 onAddQuestion = onAddQuestion,
                 onExportCategory = onExportCategory

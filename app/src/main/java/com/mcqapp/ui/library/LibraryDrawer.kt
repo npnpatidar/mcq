@@ -14,10 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -59,12 +55,7 @@ internal fun DrawerContent(
     onOpenPassages: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
-    onImport: () -> Unit,
-    onDeleteCategory: (String) -> Unit,
-    onMoveCategory: (String, Int) -> Unit,
-    onNestCategory: (String) -> Unit,
-    onPromoteCategory: (String) -> Unit,
-    onEditCategory: (com.mcqapp.domain.CategoryNode) -> Unit
+    onImport: () -> Unit
 ) {
     var expandedPaperId by remember { mutableStateOf<String?>(null) }
     val checkedCategories = remember { mutableStateOf(setOf<String>()) }
@@ -194,11 +185,6 @@ internal fun DrawerContent(
                                         if (!add(id)) remove(id)
                                     }
                                 },
-                                onDelete = onDeleteCategory,
-                                onMove = onMoveCategory,
-                                onNest = onNestCategory,
-                                onPromote = onPromoteCategory,
-                                onEdit = onEditCategory
                             )
                             val selected = checkedCategories.value
                             if (selected.isNotEmpty()) {
@@ -245,14 +231,9 @@ internal fun DrawerContent(
 private fun CategoryTree(
     nodes: List<CategoryNode>,
     checked: Set<String>,
-    onToggle: (String) -> Unit,
-    onDelete: (String) -> Unit,
-    onMove: (String, Int) -> Unit,
-    onNest: (String) -> Unit,
-    onPromote: (String) -> Unit,
-    onEdit: (CategoryNode) -> Unit
+    onToggle: (String) -> Unit
 ) {
-    for ((index, node) in nodes.withIndex()) {
+    for (node in nodes) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -265,68 +246,11 @@ private fun CategoryTree(
             )
             Text(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                modifier = Modifier.weight(1f)
             )
-            // Outline gestures, inline on the node: up/down reorder among
-            // siblings, -> nests into the category above (nothing moves
-            // visually), <- promotes out of the parent, and the pencil opens
-            // rename + re-parent.
-            IconButton(onClick = { onMove(node.id, -1) }, enabled = index > 0) {
-                Icon(
-                    Icons.Default.KeyboardArrowUp,
-                    contentDescription = stringResource(R.string.move_up),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            IconButton(onClick = { onMove(node.id, +1) }, enabled = index < nodes.size - 1) {
-                Icon(
-                    Icons.Default.KeyboardArrowDown,
-                    contentDescription = stringResource(R.string.move_down),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            IconButton(onClick = { onNest(node.id) }, enabled = index > 0) {
-                Icon(
-                    Icons.Default.KeyboardArrowRight,
-                    contentDescription = stringResource(R.string.nest_category),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            IconButton(onClick = { onPromote(node.id) }) {
-                Icon(
-                    Icons.Default.KeyboardArrowLeft,
-                    contentDescription = stringResource(R.string.promote_category),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            IconButton(onClick = { onEdit(node) }) {
-                Icon(
-                    Icons.Default.Edit,
-                    contentDescription = stringResource(R.string.edit_category),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            IconButton(onClick = { onDelete(node.id) }) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.delete_category),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
         }
         Column(modifier = Modifier.padding(start = 24.dp)) {
-            CategoryTree(
-                nodes = node.children,
-                checked = checked,
-                onToggle = onToggle,
-                onDelete = onDelete,
-                onMove = onMove,
-                onNest = onNest,
-                onPromote = onPromote,
-                onEdit = onEdit
-            )
+            CategoryTree(nodes = node.children, checked = checked, onToggle = onToggle)
         }
     }
 }

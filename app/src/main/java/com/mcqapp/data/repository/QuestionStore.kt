@@ -39,21 +39,28 @@ internal class QuestionStore(
     fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
         // Bulk load (one options + one answers query for all rows) and map off
         // the main thread: the per-row re-fetch version stalled Browse badly.
-        // One IN query replaces the per-category fetch; the counts trigger is
-        // global so any question write refreshes this paper's list.
-        db.questionDao().observeCategoryCounts().map {
-            val started = android.os.SystemClock.elapsedRealtime()
-            val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
-            // An empty IN list is invalid SQL; a paper with no categories has
-            // no questions to load.
-            if (categoryIds.isEmpty()) return@map emptyList()
-            val entities = db.questionDao().getByCategoriesChunked(categoryIds)
-            val result = mapper.toDomainBulk(entities)
-            Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
-                "mapped ${result.size} questions in " +
-                "${android.os.SystemClock.elapsedRealtime() - started}ms")
-            result
-        }.flowOn(Dispatchers.IO)
+        // One IN query replaces the per-category fetch; the triggers are
+        // global so any question write refreshes this paper's list, and any
+        // CATEGORIES write refreshes it too — a category moved in the drawer
+        // or inline changes the section order, and the questions follow it.
+        kotlinx.coroutines.flow.combine(
+            db.questionDao().observeCategoryCounts(),
+            db.categoryDao().observeAll()
+        ) { _, _ -> Unit }
+            .map {
+                val started = android.os.SystemClock.elapsedRealtime()
+                val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+                // An empty IN list is invalid SQL; a paper with no categories has
+                // no questions to load.
+                if (categoryIds.isEmpty()) return@map emptyList()
+                val entities = db.questionDao().getByCategoriesChunked(categoryIds)
+                val result = mapper.toDomainBulk(entities)
+                Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
+                    "mapped ${result.size} questions in " +
+                    "${android.os.SystemClock.elapsedRealtime() - started}ms")
+                result
+            }
+            .flowOn(Dispatchers.IO)
 
     suspend fun getQuestionsForCategories(categoryIds: List<String>): List<Question> {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")

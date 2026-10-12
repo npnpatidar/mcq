@@ -41,8 +41,15 @@ class BrowseViewModel(
         val created = android.os.SystemClock.elapsedRealtime()
         var firstLoad = true
         viewModelScope.launch {
-            val paper = repository.getPaper(paperId)
-            _state.value = _state.value.copy(paper = paper)
+            // Observed, not fetched once: a category moved in the drawer or
+            // inline rewrites the tree this screen's sibling math and section
+            // labels read — a stale snapshot left the second move computed
+            // against the pre-move order.
+            repository.observePapers().collect { papers ->
+                papers.firstOrNull { it.id == paperId }?.let { paper ->
+                    _state.value = _state.value.copy(paper = paper)
+                }
+            }
         }
         viewModelScope.launch {
             try {
@@ -61,6 +68,10 @@ class BrowseViewModel(
                     }
                     _state.update { it.copy(loading = false, questions = questions) }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Navigating away cancels the collector; that is the flow of
+                // things, not a failure worth an error line.
+                throw e
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Observation of questions for paper $paperId FAILED", e)
             }

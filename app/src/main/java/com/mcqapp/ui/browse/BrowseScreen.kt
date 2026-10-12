@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Share
@@ -274,6 +276,35 @@ fun BrowseScreen(
         val categoryQuestions = remember(questions) {
             questions.groupBy { it.categoryId }
         }
+        // The category each row belongs to (label on the card) and the
+        // section bounds the category-move buttons hang on.
+        val categoryTitles = remember(state.paper) {
+            flattenCategories(state.paper?.categories ?: emptyList())
+                .associate { it.first.id to it.first.title }
+        }
+        val categoryBounds = remember(questions) {
+            val first = mutableMapOf<String, Int>()
+            val last = mutableMapOf<String, Int>()
+            questions.forEachIndexed { i, q ->
+                if (q.categoryId !in first) first[q.categoryId] = i
+                last[q.categoryId] = i
+            }
+            first to last
+        }
+        // The drawer's reorder, answered inline: whether a category can
+        // move among its siblings (same parent) — the double-arrow buttons
+        // on a section's first and last row use it.
+        val categoryMove = remember(state.paper) {
+            fun canMove(categoryId: String, up: Boolean): Boolean {
+                val flat = flattenCategories(state.paper?.categories ?: emptyList())
+                val self = flat.firstOrNull { it.first.id == categoryId } ?: return false
+                val siblings = flat.filter { it.first.parentId == self.first.parentId }
+                val index = siblings.indexOfFirst { it.first.id == categoryId }
+                if (index < 0) return false
+                return if (up) index > 0 else index < siblings.size - 1
+            }
+            ::canMove
+        }
         val filtered = remember(searched, filterValue, state.paper) {
             val titles = flattenCategories(state.paper?.categories ?: emptyList())
                 .associate { it.first.id to it.first.title }
@@ -411,20 +442,44 @@ fun BrowseScreen(
                         Spacer(Modifier.height(2.dp))
                     }
                 }
+                // A section's first and last rows carry the category moves:
+                // those two positions could never move their own question
+                // anyway (pinned at the category edge), so the double-arrow
+                // buttons give them the drawer's category reorder inline.
+                val (categoryFirstIndex, categoryLastIndex) = categoryBounds
+                val isCategoryFirst = categoryFirstIndex[question.categoryId] == index
+                val isCategoryLast = categoryLastIndex[question.categoryId] == index
                 BrowseQuestionCard(
                     index = index + 1,
                     question = question,
+                    categoryTitle = categoryTitles[question.categoryId],
                     selectionMode = selectionMode,
                     selected = question.id in selectedIds,
                     highlighted = question.id == highlightId,
-                    canMoveUp = reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
-                        categoryList, categoryList.indexOfFirst { it.id == question.id }, up = true
-                    ),
-                    canMoveDown = reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
-                        categoryList, categoryList.indexOfFirst { it.id == question.id }, up = false
-                    ),
-                    onMoveUp = { moveOrder(true) },
-                    onMoveDown = { moveOrder(false) },
+                    moveUpIsCategory = isCategoryFirst,
+                    moveDownIsCategory = isCategoryLast,
+                    canMoveUp = if (isCategoryFirst) {
+                        reorderEnabled && categoryMove(question.categoryId, true)
+                    } else {
+                        reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                            categoryList, categoryList.indexOfFirst { it.id == question.id }, up = true
+                        )
+                    },
+                    canMoveDown = if (isCategoryLast) {
+                        reorderEnabled && categoryMove(question.categoryId, false)
+                    } else {
+                        reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                            categoryList, categoryList.indexOfFirst { it.id == question.id }, up = false
+                        )
+                    },
+                    onMoveUp = {
+                        if (isCategoryFirst) viewModel.moveCategory(question.categoryId, -1)
+                        else moveOrder(true)
+                    },
+                    onMoveDown = {
+                        if (isCategoryLast) viewModel.moveCategory(question.categoryId, +1)
+                        else moveOrder(false)
+                    },
                     onToggleSelect = {
                         selectedIds = selectedIds.toMutableSet().apply {
                             if (!add(question.id)) remove(question.id)
@@ -692,6 +747,12 @@ private fun BrowseQuestionCard(
     selected: Boolean = false,
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
+    /** Section edges: the button moves the whole category, not the question. */
+    moveUpIsCategory: Boolean = false,
+    moveDownIsCategory: Boolean = false,
+    /** The row's category, labelled so a section's bounds (and its pinned
+     *  edge buttons) explain themselves. */
+    categoryTitle: String? = null,
     onMoveUp: () -> Unit = {},
     onMoveDown: () -> Unit = {},
     onToggleSelect: () -> Unit = {},
@@ -708,6 +769,13 @@ private fun BrowseQuestionCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            if (categoryTitle != null) {
+                Text(
+                    categoryTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
                     Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
@@ -775,11 +843,28 @@ private fun BrowseQuestionCard(
             if (!selectionMode) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (canMoveUp || canMoveDown) {
+                        // Double arrows mark a section move: the button
+                        // carries the whole category past its sibling, like
+                        // the drawer's category reorder.
                         IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up))
+                            Icon(
+                                if (moveUpIsCategory) Icons.Default.KeyboardDoubleArrowUp
+                                else Icons.Default.KeyboardArrowUp,
+                                contentDescription = stringResource(
+                                    if (moveUpIsCategory) R.string.move_category_up
+                                    else R.string.move_up
+                                )
+                            )
                         }
                         IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down))
+                            Icon(
+                                if (moveDownIsCategory) Icons.Default.KeyboardDoubleArrowDown
+                                else Icons.Default.KeyboardArrowDown,
+                                contentDescription = stringResource(
+                                    if (moveDownIsCategory) R.string.move_category_down
+                                    else R.string.move_down
+                                )
+                            )
                         }
                     }
                     IconButton(onClick = onEdit) {

@@ -114,6 +114,19 @@ class BrowseViewModel(
         }
     }
 
+    /**
+     * Moves a whole category among its siblings — the double-arrow buttons
+     * on a section's first and last row. Same semantics as the drawer's
+     * category reorder.
+     */
+    fun moveCategory(categoryId: String, delta: Int) {
+        viewModelScope.launch {
+            if (!repository.moveCategory(categoryId, delta)) {
+                Logger.i("BROWSEVM", "moveCategory($categoryId, $delta) refused: no sibling that way")
+            }
+        }
+    }
+
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

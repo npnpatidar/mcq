@@ -551,6 +551,64 @@ class RepositoryTest {
         assertTrue(!repository.moveCategory("mc1", -1))
     }
 
+
+    @Test
+    fun movingARootPastANestedParentKeepsTheSubtreeTogether() = runBlocking {
+        // The demo paper's shape: Chemistry and Physics are children of
+        // Science, and the category sortOrders form one global pre-order
+        // sequence. Moving Mathematics up must not leave the roots sharing
+        // sortOrders with Science's children (which surfaced as
+        // "maths, chemistry, science, physics" through the title tiebreak).
+        repository.ensurePaperAndCategory("np", "Nested Paper", "ns", "Science")
+        val nc = repository.addCategory("np", "Chemistry", parentId = "ns")
+        val np2 = repository.addCategory("np", "Physics", parentId = "ns")
+        val nm = repository.addCategory("np", "Mathematics", parentId = null)
+        fun q(id: String, cat: String) = com.mcqapp.domain.Question(
+            id = id, categoryId = cat,
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("$id?")),
+            options = listOf(
+                com.mcqapp.domain.QuestionOption("a", "A"),
+                com.mcqapp.domain.QuestionOption("b", "B")
+            ),
+            correctOptionIds = setOf("a")
+        )
+        repository.saveQuestion(q("nq-s", "ns"))
+        repository.saveQuestion(q("nq-c", nc))
+        repository.saveQuestion(q("nq-p", np2))
+        repository.saveQuestion(q("nq-m", nm))
+
+        // Roots: Science, then Mathematics above nobody but Science.
+        assertTrue(repository.moveCategory(nm, -1))
+        assertEquals(
+            "Mathematics goes above Science's whole subtree, in tree order",
+            listOf("nq-m", "nq-s", "nq-c", "nq-p"),
+            repository.getQuestionsForPaper("np").map { it.id }
+        )
+        // Every category still holds a unique slot — no tiebreak games.
+        assertEquals(
+            4,
+            db.categoryDao().getByPaper("np").map { it.sortOrder }.distinct().size
+        )
+        // And Science moves back up with its subtree following it.
+        assertTrue(repository.moveCategory("ns", -1))
+        assertEquals(
+            listOf("nq-s", "nq-c", "nq-p", "nq-m"),
+            repository.getQuestionsForPaper("np").map { it.id }
+        )
+        // The pinned direction is refused: Mathematics is the last root.
+        assertTrue(!repository.moveCategory(nm, +1))
+    }
+
+    @Test
+    fun aFreshCategoryTakesTheNextSortSlot() = runBlocking {
+        repository.ensurePaperAndCategory("np", "Nested Paper", "ns", "Science")
+        val added = repository.addCategory("np", "Added", parentId = null)
+        // 0 belongs to the ensured category; the new one must not collide.
+        val slots = db.categoryDao().getByPaper("np").map { it.sortOrder }
+        assertEquals(2, slots.distinct().size)
+        assertTrue(added.let { id -> db.categoryDao().getById(id)!!.sortOrder > 0 })
+    }
+
     @Test
     fun getByCategoriesMatchesThePerCategoryFetch() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")

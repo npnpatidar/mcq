@@ -139,12 +139,18 @@ internal class PaperStore(
     suspend fun addCategory(paperId: String, title: String, parentId: String?): String {
         val id = "cat-" + System.currentTimeMillis().toString(36) + "-" + (0..9999).random()
         Logger.d("REPO", "addCategory($paperId, '$title', parent=$parentId) -> $id")
+        // Category sortOrder is one global sequence per paper, so a fresh
+        // category takes the next slot after the current maximum — 0 would
+        // collide with the first category and leave the order to the title
+        // tiebreak.
+        val next = (db.categoryDao().getByPaper(paperId).maxOfOrNull { it.sortOrder } ?: -1) + 1
         db.categoryDao().upsert(
             CategoryEntity(
                 id = id,
                 paperId = paperId,
                 title = title,
-                parentId = parentId
+                parentId = parentId,
+                sortOrder = next
             )
         )
         return id
@@ -172,20 +178,42 @@ internal class PaperStore(
 
     /** Moves a category up/down among same-paper, same-parent siblings. */
     suspend fun moveCategory(categoryId: String, delta: Int): Boolean {
-        // One transaction: the reorder writes every sibling's position, so a
-        // crash must not leave two of them sharing one.
+        // One transaction: the reorder rewrites the paper's whole category
+        // sequence, so a crash must not leave two of them sharing a slot.
         return db.withTransaction {
             val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
-            val siblings = db.categoryDao().getByPaper(category.paperId)
-                .filter { it.parentId == category.parentId }
+            val paperCategories = db.categoryDao().getByPaper(category.paperId)
+            val byParent = paperCategories.groupBy { it.parentId }
+            fun childrenOf(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
+                byParent[parent].orEmpty().sortedBy { it.sortOrder }
+
+            // The move is among the category's own siblings (its parent's
+            // children); everything else keeps its tree position.
+            val siblings = childrenOf(category.parentId)
             val fromIndex = siblings.indexOfFirst { it.id == categoryId }
             if (fromIndex < 0) return@withTransaction false
             val target = (fromIndex + delta).coerceIn(siblings.indices)
             if (target == fromIndex) return@withTransaction false
-            val order = com.mcqapp.domain.Reorder.normalizedOrder(
-                siblings.map { it.id }, fromIndex, delta
-            )
-            order.forEach { (id, sortOrder) -> db.categoryDao().updateSortOrder(id, sortOrder) }
+
+            // Category sortOrder is ONE global sequence per paper, laid out in
+            // tree pre-order — parents immediately followed by their children —
+            // so question order (which sorts by it) matches the drawer's tree.
+            // Renumbering only the swapped siblings (indices 0..n over the
+            // root level) used to collide with the children's slots: moving
+            // Mathematics up in the demo paper left Chemistry and Physics
+            // sharing sortOrders with the roots, and the (sortOrder, title)
+            // tiebreak surfaced as "maths, chemistry, science, physics".
+            // Rewriting the full traversal keeps every slot unique.
+            val moved = siblings.toMutableList().apply {
+                val item = removeAt(fromIndex)
+                add(target, item)
+            }
+            fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
+                (if (parent == category.parentId) moved else childrenOf(parent))
+                    .flatMap { listOf(it) + preorder(it.id) }
+            preorder(null).forEachIndexed { index, node ->
+                db.categoryDao().updateSortOrder(node.id, index)
+            }
             Logger.i("REPO", "moveCategory($categoryId by $delta)")
             true
         }

@@ -252,7 +252,7 @@ fun LibraryScreen(
                         )
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
-                    onDeleteCategory = { id -> viewModel.deleteCategory(id) }
+                    onDeleteCategory = { id -> viewModel.deleteCategory(id) },
                     onMoveCategory = { id, delta -> viewModel.moveCategory(id, delta) }
                     onNestCategory = { id -> viewModel.nestCategory(id) }
                     onPromoteCategory = { id -> viewModel.promoteCategory(id) }

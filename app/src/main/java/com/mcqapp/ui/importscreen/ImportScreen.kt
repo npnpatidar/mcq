@@ -20,7 +20,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -168,7 +172,9 @@ fun ImportScreen(
         val pendingDocx = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes
         if (pendingDocx != null) {
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = null
-            viewModel.loadDocx(pendingDocx)
+            val pendingName = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = null
+            viewModel.loadDocx(pendingDocx, pendingName)
         } else if (importText != null) {
             viewModel.loadJsonText(importText)
             // Drop the global copy once consumed: the VM owns the text now
@@ -234,12 +240,11 @@ fun ImportScreen(
                 item {
                     Text(stringResource(R.string.paper_details), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
+                    SuggestionTextField(
+                        label = stringResource(R.string.paper_title),
                         value = state.paperTitle,
                         onValueChange = viewModel::updatePaperTitle,
-                        label = { Text(stringResource(R.string.paper_title)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        suggestions = state.paperTitleSuggestions
                     )
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
@@ -269,12 +274,11 @@ fun ImportScreen(
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
+                    SuggestionTextField(
+                        label = stringResource(R.string.category_name_for_all_questions),
                         value = state.categoryName,
                         onValueChange = viewModel::updateCategoryName,
-                        label = { Text(stringResource(R.string.category_name_for_all_questions)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        suggestions = state.categorySuggestions
                     )
                 }
 
@@ -572,6 +576,50 @@ private fun PreviewQuestionCard(
                 src = question.explanationImage,
                 modifier = Modifier.padding(top = 2.dp)
             )
+        }
+    }
+}
+
+/**
+ * A text field that suggests existing names as you type but accepts a new
+ * one: tapping a row fills the field, typing whatever else just becomes the
+ * value. A hard dropdown would force re-imports to invent near-duplicate
+ * paper and category names.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SuggestionTextField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    suggestions: List<String>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val matches = remember(value, suggestions) { suggestNames(value, suggestions) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {
+                onValueChange(it)
+                expanded = true
+            },
+            label = { Text(label) },
+            singleLine = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            matches.forEach { match ->
+                DropdownMenuItem(
+                    text = { Text(match) },
+                    onClick = {
+                        onValueChange(match)
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }

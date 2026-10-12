@@ -194,6 +194,10 @@ fun LibraryScreen(
             if (isZip && com.mcqapp.data.docx.isDocxArchive(bytes)) {
                 Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
+                // The file name becomes the paper title (the document rarely
+                // names its own paper).
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
+                    picked.lastPathSegment?.substringAfterLast('/')
                 navController.navigate("import/direct")
                 return@launch
             }

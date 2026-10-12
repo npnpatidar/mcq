@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -265,13 +267,15 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("Delete paper", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        // The expanded card grew taller (the category rows now carry the
-        // whole management set), so the delete button can sit below the
-        // fold: scroll to it like a reader would.
-        compose.onNodeWithText("Delete paper", substring = true).performScrollTo()
+        // DIAG: dump the tree so CI logcat shows the real bounds/state of the
+        // delete button when this test fails.
+        compose.onRoot().printToLog("DIAG_EXPANDED")
         compose.onNodeWithText("Delete paper", substring = true).performClick()
-
-        waitFor("This cannot be undone.")
+        try {
+            waitFor("This cannot be undone.")
+        } finally {
+            compose.onRoot().printToLog("DIAG_AFTER_CLICK")
+        }
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()
         compose.onNodeWithText("• 1 past attempt", substring = false).assertIsDisplayed()
         compose.onNodeWithText("• 1 bookmark", substring = false).assertIsDisplayed()

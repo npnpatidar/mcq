@@ -458,15 +458,17 @@ fun BrowseScreen(
                     )
                 }
             }
-            // Section (whole-category) moves hang off first/last *row of a
-            // section in the paper-wide list*. A search or a chip filter
-            // already hides rows, and so does the category filter — in every
-            // case the rendered order stops matching the paper's section
-            // order, so the category move is disabled. Question-level moves
-            // stay available: they are computed against the question's own
-            // category list, which a filter never reorders.
-            val reorderEnabled = filterValue == "All" && searchQuery.isBlank() &&
+            // Section (whole-category) moves hang off the first/last row of a
+            // section in the paper-wide list, so they need the rendered list
+            // to *be* the paper-wide list: any filter (search, chip, category)
+            // hides rows and the paper-wide categoryBounds no longer match
+            // rendered indices. Question- and passage-block moves are
+            // computed against the question's own category list, which no
+            // filter reorders, so only search and chip filters disable them
+            // (the pre-category-filter contract).
+            val categorySectionMoveEnabled = filterValue == "All" && searchQuery.isBlank() &&
                 categoryFilterId == null
+            val questionMoveEnabled = filterValue == "All" && searchQuery.isBlank()
             itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
                 val categoryList = categoryQuestions[question.categoryId].orEmpty()
                 val moveOrder: (Boolean) -> Unit = { up ->
@@ -480,9 +482,9 @@ fun BrowseScreen(
                     passagesById.value[pid]?.let { passage ->
                         PassageHeaderCard(
                             passage = passage,
-                            canMoveUp = reorderEnabled &&
+                            canMoveUp = questionMoveEnabled &&
                                 com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = true) != null,
-                            canMoveDown = reorderEnabled &&
+                            canMoveDown = questionMoveEnabled &&
                                 com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = false) != null,
                             onMoveUp = {
                                 com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = true)
@@ -516,9 +518,14 @@ fun BrowseScreen(
                 // those two positions could never move their own question
                 // anyway (pinned at the category edge), so the double-arrow
                 // buttons give them the drawer's category reorder inline.
+                // Under a filter the paper-wide bounds don't match rendered
+                // indices, so no row claims a section edge: every row renders
+                // its own question move instead.
                 val (categoryFirstIndex, categoryLastIndex) = categoryBounds
-                val isCategoryFirst = categoryFirstIndex[question.categoryId] == index
-                val isCategoryLast = categoryLastIndex[question.categoryId] == index
+                val isCategoryFirst = categorySectionMoveEnabled &&
+                    categoryFirstIndex[question.categoryId] == index
+                val isCategoryLast = categorySectionMoveEnabled &&
+                    categoryLastIndex[question.categoryId] == index
                 BrowseQuestionCard(
                     index = index + 1,
                     question = question,
@@ -529,16 +536,16 @@ fun BrowseScreen(
                     moveUpIsCategory = isCategoryFirst,
                     moveDownIsCategory = isCategoryLast,
                     canMoveUp = if (isCategoryFirst) {
-                        reorderEnabled && categoryMove(question.categoryId, true)
+                        categoryMove(question.categoryId, true)
                     } else {
-                        reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                        questionMoveEnabled && com.mcqapp.domain.PassageReorder.canMove(
                             categoryList, categoryList.indexOfFirst { it.id == question.id }, up = true
                         )
                     },
                     canMoveDown = if (isCategoryLast) {
-                        reorderEnabled && categoryMove(question.categoryId, false)
+                        categoryMove(question.categoryId, false)
                     } else {
-                        reorderEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                        questionMoveEnabled && com.mcqapp.domain.PassageReorder.canMove(
                             categoryList, categoryList.indexOfFirst { it.id == question.id }, up = false
                         )
                     },

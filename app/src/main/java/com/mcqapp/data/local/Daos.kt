@@ -162,9 +162,10 @@ interface QuestionDao {
             // category grouping here matches the drawer's tree order (and
             // getQuestionsForPaper, which feeds it the ids in that order).
             // The (sortOrder, title) pair is what makes the grouping total:
-            // addCategory leaves siblings at sortOrder 0, so title is the
-            // tiebreak that reproduces getByPaper's order. Within a category,
-            // the question's own (sortOrder, rowid) keeps its internal order.
+            // addCategory assigns the next slot, but title stays as the
+            // defensive tiebreak for any residual equal sortOrders (legacy
+            // data), reproducing getByPaper's order. Within a category, the
+            // question's own (sortOrder, rowid) keeps its internal order.
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )

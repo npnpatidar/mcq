@@ -45,8 +45,10 @@ internal class PassageStore(
 
     /**
      * Creates or updates a passage. Returns the passage id; a blank incoming
-     * id mints a fresh one. Member questions are never touched here —
-     * assigning members is explicit (see [assignQuestions], [unassignAll]).
+     * id mints a fresh one. Members are only touched when the passage moves
+     * to another category: every member follows it, and is renumbered into a
+     * contiguous block (see [assignQuestions], [unassignAll] for explicit
+     * membership changes).
      */
     suspend fun savePassage(passage: Passage): String {
         val id = passage.id.ifBlank {
@@ -69,11 +71,19 @@ internal class PassageStore(
             // only meaningful together). Moving the passage to another
             // category therefore moves every member with it — otherwise they
             // keep pointing at a passage in a different category and the
-            // group renders split in Browse and exports.
+            // group renders split in Browse and exports. The move only sets
+            // categoryId, so each member is then re-placed after the group's
+            // last member: without that, the members keep their old sortOrders,
+            // collide with the target's existing questions, and Browse
+            // interleaves the group with them — still split.
             if (existing != null && existing.categoryId != passage.categoryId) {
                 val members = db.passageDao().memberIds(id)
                 if (members.isNotEmpty()) {
                     questionStore.moveQuestionsToCategory(members, passage.categoryId)
+                    // Sequential placement keeps a multi-member batch in
+                    // order: each anchors after the last member, including
+                    // those just placed (same as assignQuestions).
+                    members.forEach { questionStore.placeWithGroup(it) }
                 }
             }
         }

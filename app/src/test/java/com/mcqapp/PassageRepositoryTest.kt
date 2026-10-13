@@ -138,6 +138,10 @@ class PassageRepositoryTest {
     @Test
     fun movingAPassageToAnotherCategoryMovesItsMembers() = runBlocking {
         val c2 = repository.addCategory("p1", "Other", parentId = null)
+        // The target already holds a question: without renumbering, the moved
+        // members keep their old sortOrders, collide with q8, and Browse
+        // interleaves the group with it — still split.
+        repository.saveQuestion(question("q8").copy(categoryId = c2))
         val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
         repository.assignQuestionsToPassage(listOf("q1", "q2"), pid)
         // Editing the passage's category must carry its members, or they keep
@@ -146,7 +150,9 @@ class PassageRepositoryTest {
         repository.savePassage(Passage(id = pid, categoryId = c2, title = "P"))
         assertEquals(c2, db.questionDao().getById("q1")!!.categoryId)
         assertEquals(c2, db.questionDao().getById("q2")!!.categoryId)
-        // The group stays together and contiguous under its new category.
+        // The group stays together AND contiguous: the members land after the
+        // target's existing question, not interleaved with it.
+        assertEquals(listOf("q8", "q1", "q2"), orderOf("q8", "q1", "q2"))
         val blocks = repository.buildPassageBlocks(repository.getQuestionsForPaper("p1"))
         assertEquals(1, blocks.size)
     }

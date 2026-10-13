@@ -146,7 +146,8 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                     selection = state.currentSelection,
                     revealed = state.revealed,
                     reason = state.reasons[question.id],
-                    onToggleOption = { viewModel.toggleOption(it) }
+                    onToggleOption = { viewModel.toggleOption(it) },
+                    passage = state.passages[question.passageId]
                 )
                 Spacer(Modifier.height(12.dp))
                 if (state.revealed) {
@@ -172,7 +173,8 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                     selection = state.currentSelection,
                     revealed = state.revealed,
                     reason = state.reasons[question.id],
-                    onToggleOption = { viewModel.toggleOption(it) }
+                    onToggleOption = { viewModel.toggleOption(it) },
+                    passage = state.passages[question.passageId]
                 )
             }
             Column(
@@ -355,10 +357,32 @@ private fun QuestionCard(
     selection: Set<String>,
     revealed: Boolean,
     reason: StudyReason?,
-    onToggleOption: (String) -> Unit
+    onToggleOption: (String) -> Unit,
+    passage: com.mcqapp.domain.Passage? = null
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
+            // Shared context: the passage renders above every member whenever
+            // it comes due — no queue grouping, the schedule stays per question.
+            if (passage != null) {
+                Text(
+                    passage.title.ifBlank { stringResource(R.string.passage) },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(2.dp))
+                ContentElements(
+                    passage.elements,
+                    textStyle = MaterialTheme.typography.bodyMedium
+                )
+                QuestionImage(
+                    src = passage.image,
+                    contentDescription = stringResource(R.string.passage_image),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             if (reason == StudyReason.LEECH) {
                 LeeChip()
                 Spacer(Modifier.height(6.dp))

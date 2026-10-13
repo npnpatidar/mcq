@@ -60,7 +60,11 @@ data class EditorUiState(
     val tags: String = "",
     val options: List<OptionEditorState> = emptyList(),
     val categories: List<CategoryNode> = emptyList(),
-    val isNew: Boolean = true
+    /** Passages of this paper for the assign picker; empty when none exist. */
+    val passages: List<com.mcqapp.domain.Passage> = emptyList(),
+    val isNew: Boolean = true,
+    /** The passage this question belongs to, editable in the picker. */
+    val passageId: String? = null
 ) {
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
@@ -142,7 +146,7 @@ class EditorViewModel(
         return listOf(
             normElements(s.elements), normImage(s.image), normElements(s.explanationElements),
             normImage(s.explanationImage), s.difficulty.label,
-            s.marks.trim(), tags, s.categoryId
+            s.marks.trim(), tags, s.categoryId, s.passageId.orEmpty()
         ).joinToString("\n") + "\n" + opts.joinToString("\n")
     }
 
@@ -210,7 +214,9 @@ class EditorViewModel(
                             )
                         },
                         categories = categories,
-                        categoryId = question.categoryId
+                        categoryId = question.categoryId,
+                        passages = repository.getPassagesForPaper(paperId),
+                        passageId = question.passageId
                     )
                     snapshotClean()
                     return@launch
@@ -219,6 +225,7 @@ class EditorViewModel(
             _state.value = _state.value.copy(
                 loading = false,
                 categories = categories,
+                passages = if (paperId.isNotBlank()) repository.getPassagesForPaper(paperId) else emptyList(),
                 elements = listOf(ContentElement.TextElement("")),
                 options = listOf(
                     OptionEditorState(id = "a", elements = listOf(ContentElement.TextElement("")), isCorrect = true),
@@ -243,7 +250,20 @@ class EditorViewModel(
     fun updateTags(value: String) = updateState { it.copy(tags = value) }
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
     fun updateMarks(value: String) = updateState { it.copy(marks = value) }
-    fun updateCategory(value: String) = updateState { it.copy(categoryId = value) }
+    /**
+     * A question can only belong to a passage of its own category (the
+     * group's members share one), so switching category drops an assignment
+     * that no longer fits; the picker offers the new category's passages.
+     */
+    fun updateCategory(value: String) = updateState {
+        val keepPassage = it.passageId?.takeIf { pid ->
+            it.passages.any { p -> p.id == pid && p.categoryId == value }
+        }
+        it.copy(categoryId = value, passageId = keepPassage)
+    }
+
+    /** Assigns this question to a passage (null clears membership). */
+    fun updatePassage(value: String?) = updateState { it.copy(passageId = value) }
 
     // ---- question-body blocks ----
 
@@ -488,7 +508,8 @@ class EditorViewModel(
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,
-            tags = dto.tags
+            tags = dto.tags,
+            passageId = _state.value.passageId?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -535,24 +556,33 @@ class EditorViewModel(
      * [EditorSession] queue. Stays on this screen: no navigation, so Back
      * still returns to the originating list. [onMoved] reports whether a
      * write happened (for user feedback).
+     *
+     * A *clean* form moves freely even when it is not savable (a demo edge
+     * question, say): there is nothing to lose, and gating Prev/Next on
+     * validity trapped the reader on such a question with every button
+     * disabled. Only dirty-and-invalid edits block the move.
      */
     fun moveToQuestion(targetId: String, onMoved: (saved: Boolean) -> Unit = {}) {
-        val dto = buildDto()
-        if (dto == null) {
-            Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: current edits invalid")
-            return
-        }
         val targetIndex = EditorSession.ids.indexOf(targetId)
         if (targetIndex < 0) {
             Logger.w("EDITORVM", "moveToQuestion($targetId): not in session queue")
             return
         }
         val dirty = signatureOf(_state.value) != cleanSignature
+        // A clean form moves freely even when it is not savable (an edge-case
+        // demo question, say): nothing is lost, and gating Prev/Next on
+        // validity trapped the reader on such a question with every button
+        // disabled. Only dirty-and-invalid edits block the move.
+        if (dirty && !canProceed()) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: unsaved edits are invalid")
+            return
+        }
+        val dto = if (dirty) buildDto() else null
         val savedSig = signatureOf(_state.value)
         Logger.i("EDITORVM", "moveToQuestion: ${if (dirty) "saving" else "no changes, skipping save for"} " +
-            "${dto.id}, loading $targetId (fromImportSession=$fromImportSession)")
+            "${_state.value.questionId}, loading $targetId (fromImportSession=$fromImportSession)")
         if (fromImportSession) {
-            if (dirty) {
+            if (dirty && dto != null) {
                 val writer = EditorSession.importWriter
                 if (writer != null) {
                     writer(dto)
@@ -585,6 +615,9 @@ class EditorViewModel(
                             isCorrect = o.id in next.correctOptionIds
                         )
                     },
+                    // The membership belongs to the loaded question; keeping
+                    // the previous one silently reassigned on save.
+                    passageId = next.passageId,
                     categoryId = ""
                 )
             }
@@ -594,7 +627,7 @@ class EditorViewModel(
         } else {
             viewModelScope.launch {
                 try {
-                    if (dirty) {
+                    if (dirty && dto != null) {
                         val categoryId = _state.value.categoryId
                         repository.saveQuestion(domainFrom(dto, categoryId))
                         cleanSignature = savedSig
@@ -623,6 +656,11 @@ class EditorViewModel(
                                     isCorrect = o.id in next.correctOptionIds
                                 )
                             },
+                            // Same two fields as the import branch: an
+                            // existing question is never "new", and its
+                            // passage membership is its own.
+                            isNew = false,
+                            passageId = next.passageId,
                             categoryId = next.categoryId
                         )
                     }

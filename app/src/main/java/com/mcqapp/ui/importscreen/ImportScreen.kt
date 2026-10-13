@@ -20,7 +20,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +39,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.mcqapp.domain.ImportWarnings
+import com.mcqapp.util.ContentElements
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -167,7 +174,9 @@ fun ImportScreen(
         val pendingDocx = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes
         if (pendingDocx != null) {
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = null
-            viewModel.loadDocx(pendingDocx)
+            val pendingName = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = null
+            viewModel.loadDocx(pendingDocx, pendingName)
         } else if (importText != null) {
             viewModel.loadJsonText(importText)
             // Drop the global copy once consumed: the VM owns the text now
@@ -233,12 +242,11 @@ fun ImportScreen(
                 item {
                     Text(stringResource(R.string.paper_details), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
+                    SuggestionTextField(
+                        label = stringResource(R.string.paper_title),
                         value = state.paperTitle,
                         onValueChange = viewModel::updatePaperTitle,
-                        label = { Text(stringResource(R.string.paper_title)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        suggestions = state.paperTitleSuggestions
                     )
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
@@ -268,12 +276,11 @@ fun ImportScreen(
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
+                    SuggestionTextField(
+                        label = stringResource(R.string.category_name_for_all_questions),
                         value = state.categoryName,
                         onValueChange = viewModel::updateCategoryName,
-                        label = { Text(stringResource(R.string.category_name_for_all_questions)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        suggestions = state.categorySuggestions
                     )
                 }
 
@@ -512,9 +519,12 @@ private fun PreviewQuestionCard(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    question.text,
-                    style = MaterialTheme.typography.bodyMedium,
+                // The full element renderer, not the flattened text: a DOCX
+                // question can carry a table (or a formula) in its body,
+                // and the preview must show what will actually import.
+                ContentElements(
+                    question.elements,
+                    textStyle = MaterialTheme.typography.bodyMedium,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -568,6 +578,50 @@ private fun PreviewQuestionCard(
                 src = question.explanationImage,
                 modifier = Modifier.padding(top = 2.dp)
             )
+        }
+    }
+}
+
+/**
+ * A text field that suggests existing names as you type but accepts a new
+ * one: tapping a row fills the field, typing whatever else just becomes the
+ * value. A hard dropdown would force re-imports to invent near-duplicate
+ * paper and category names.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SuggestionTextField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    suggestions: List<String>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val matches = remember(value, suggestions) { suggestNames(value, suggestions) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {
+                onValueChange(it)
+                expanded = true
+            },
+            label = { Text(label) },
+            singleLine = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            matches.forEach { match ->
+                DropdownMenuItem(
+                    text = { Text(match) },
+                    onClick = {
+                        onValueChange(match)
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }

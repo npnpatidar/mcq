@@ -39,21 +39,28 @@ internal class QuestionStore(
     fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
         // Bulk load (one options + one answers query for all rows) and map off
         // the main thread: the per-row re-fetch version stalled Browse badly.
-        // One IN query replaces the per-category fetch; the counts trigger is
-        // global so any question write refreshes this paper's list.
-        db.questionDao().observeCategoryCounts().map {
-            val started = android.os.SystemClock.elapsedRealtime()
-            val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
-            // An empty IN list is invalid SQL; a paper with no categories has
-            // no questions to load.
-            if (categoryIds.isEmpty()) return@map emptyList()
-            val entities = db.questionDao().getByCategoriesChunked(categoryIds)
-            val result = mapper.toDomainBulk(entities)
-            Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
-                "mapped ${result.size} questions in " +
-                "${android.os.SystemClock.elapsedRealtime() - started}ms")
-            result
-        }.flowOn(Dispatchers.IO)
+        // One IN query replaces the per-category fetch; the triggers are
+        // global so any question write refreshes this paper's list, and any
+        // CATEGORIES write refreshes it too — a category moved in the drawer
+        // or inline changes the section order, and the questions follow it.
+        kotlinx.coroutines.flow.combine(
+            db.questionDao().observeCategoryCounts(),
+            db.categoryDao().observeAll()
+        ) { _, _ -> Unit }
+            .map {
+                val started = android.os.SystemClock.elapsedRealtime()
+                val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+                // An empty IN list is invalid SQL; a paper with no categories has
+                // no questions to load.
+                if (categoryIds.isEmpty()) return@map emptyList()
+                val entities = db.questionDao().getByCategoriesChunked(categoryIds)
+                val result = mapper.toDomainBulk(entities)
+                Logger.d("REPO", "observeQuestionsForPaper($paperId): " +
+                    "mapped ${result.size} questions in " +
+                    "${android.os.SystemClock.elapsedRealtime() - started}ms")
+                result
+            }
+            .flowOn(Dispatchers.IO)
 
     suspend fun getQuestionsForCategories(categoryIds: List<String>): List<Question> {
         Logger.d("REPO", "getQuestionsForCategories(${categoryIds.size} categories)")
@@ -111,13 +118,15 @@ internal class QuestionStore(
             Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
                 "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
             val contentHash = mapper.computeContentHash(
-                question.text, question.options.map { it.text }, question.options.map { it.image }
+                question.text, question.options.map { it.text }, question.options.map { it.image },
+                question.passageId
             )
             Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
             db.questionDao().upsert(
                 QuestionEntity(
                     id = question.id,
                     categoryId = question.categoryId,
+                    passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
@@ -150,6 +159,16 @@ internal class QuestionStore(
                 }
             )
             Logger.d("REPO", "saveQuestion(id=${question.id}): ${question.correctOptionIds.size} correct answers written - done")
+            // A newly assigned (or newly created) member joins the passage's
+            // category — a group can only occur together when its members
+            // share one — and then moves next to the group's last member, so
+            // "questions of a passage occur together" holds in Browse, tests
+            // and exports without the user hand-placing it. Contiguous
+            // imports are no-ops.
+            if (question.passageId != null && existing?.passageId != question.passageId) {
+                enforcePassageCategory(question.id, question.passageId)
+                placeWithGroup(question.id)
+            }
         }
     }
 
@@ -177,6 +196,7 @@ internal class QuestionStore(
             QuestionEntity(
                 id = q.id,
                 categoryId = q.categoryId,
+                passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
@@ -332,6 +352,85 @@ internal class QuestionStore(
             db.questionDao().updateSortOrder(b.id, a.sortOrder)
             Logger.i("REPO", "swapQuestionOrder(${a.id} <-> ${b.id})")
             true
+        }
+    }
+
+    /**
+     * Rewrites one category's question order to [orderedIds], position by
+     * position. The Browse block moves hand over the full new order computed
+     * by [com.mcqapp.domain.PassageReorder]; plain two-row swaps keep using
+     * [swapQuestionOrder], which never touches the other rows.
+     */
+    suspend fun renumberQuestions(categoryId: String, orderedIds: List<String>): Boolean {
+        if (orderedIds.isEmpty()) return false
+        return db.withTransaction {
+            val rows = db.questionDao().getByCategory(categoryId).associateBy { it.id }
+            if (orderedIds.any { it !in rows } || rows.size != orderedIds.size) {
+                Logger.w("REPO", "renumberQuestions($categoryId): id set mismatch, refusing")
+                return@withTransaction false
+            }
+            orderedIds.forEachIndexed { index, id ->
+                if (rows.getValue(id).sortOrder != index) {
+                    db.questionDao().updateSortOrder(id, index)
+                }
+            }
+            Logger.i("REPO", "renumberQuestions($categoryId): ${orderedIds.size} positions")
+            true
+        }
+    }
+
+    /**
+     * Moves [questionId] to sit immediately after [anchorId] in their shared
+     * category, renumbering the category so the order stays dense. The
+     * category-wide rewrite is a few hundred rows at most — question banks —
+     * and keeps every other position meaningful.
+     */
+    internal suspend fun moveAfterAnchor(questionId: String, anchorId: String): Boolean {
+        return db.withTransaction {
+            val moved = db.questionDao().getById(questionId) ?: return@withTransaction false
+            val anchor = db.questionDao().getById(anchorId) ?: return@withTransaction false
+            if (moved.categoryId != anchor.categoryId) return@withTransaction false
+            val ordered = mutableListOf<QuestionEntity>()
+            for (row in db.questionDao().getByCategory(anchor.categoryId)) {
+                if (row.id == questionId) continue
+                ordered += row
+                if (row.id == anchorId) ordered += moved
+            }
+            if (ordered.none { it.id == questionId }) return@withTransaction false
+            ordered.forEachIndexed { index, row ->
+                if (row.sortOrder != index) db.questionDao().updateSortOrder(row.id, index)
+            }
+            true
+        }
+    }
+
+    /**
+     * Keeps a passage group's members in the passage's category (a group can
+     * only occur together when its members share one): a member saved into a
+     * passage that lives elsewhere is moved over before being placed with
+     * the group. No-op when the categories already match.
+     */
+    internal suspend fun enforcePassageCategory(questionId: String, passageId: String) {
+        val passage = db.passageDao().getById(passageId) ?: return
+        val member = db.questionDao().getById(questionId) ?: return
+        if (member.categoryId != passage.categoryId) {
+            moveQuestionsToCategory(setOf(questionId), passage.categoryId)
+        }
+    }
+
+    /**
+     * Keeps a passage group contiguous when it grows: the member is placed
+     * right after the last member of its passage **in the same category**.
+     * A passage's first member, or one whose category holds no others,
+     * stays where it is. No-op for already-contiguous imports.
+     */
+    suspend fun placeWithGroup(questionId: String) {
+        val member = db.questionDao().getById(questionId) ?: return
+        val passageId = member.passageId ?: return
+        val anchor = db.questionDao().lastMemberInCategory(passageId, member.categoryId, member.id)
+            ?: return
+        if (moveAfterAnchor(member.id, anchor.id)) {
+            Logger.i("REPO", "placeWithGroup(${member.id} after ${anchor.id})")
         }
     }
 }

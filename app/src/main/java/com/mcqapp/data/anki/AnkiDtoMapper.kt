@@ -56,7 +56,10 @@ object AnkiDtoMapper {
             explanationImage = dto.explanationImage,
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,
-            tags = dto.tags
+            tags = dto.tags,
+            // The membership rides along, or the apkg writer could not find
+            // the passage to prepend and the payload would lose the grouping.
+            passageId = dto.passageId
         )
     }
 }

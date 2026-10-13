@@ -73,7 +73,8 @@ object AnkiPackageWriter {
     fun write(
         paper: PaperDto,
         questions: List<Question>,
-        scheduling: Map<String, CardScheduleDto> = emptyMap()
+        scheduling: Map<String, CardScheduleDto> = emptyMap(),
+        passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
     ): ByteArray {
         val media = AnkiMediaPool()
         val nowSeconds = System.currentTimeMillis() / 1000
@@ -101,7 +102,8 @@ object AnkiPackageWriter {
             // the same id sequence, which would collide when both are
             // imported into one Anki collection.
             val noteId = idBase + index
-            val front = buildFront(question, media)
+            val passage = question.passageId?.let { passages[it] }
+            val front = buildFront(question, media, passage)
             val back = buildBack(question, media)
             notes += AnkiNoteRow(
                 id = noteId,
@@ -110,7 +112,8 @@ object AnkiPackageWriter {
                 tags = formatTags(question),
                 // Front, Back, then the structured payload. Anki splits fields on
                 // the unit separator; the template only renders the first two.
-                fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" + payloadOf(question).toField(),
+                fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" +
+                    payloadOf(question, passage).toField(),
                 sortField = question.text
             )
             val card = scheduling[question.id]
@@ -146,11 +149,27 @@ object AnkiPackageWriter {
     }
 
     /**
-     * The front of the card: the question followed by its options, so reviewing
-     * in Anki works like answering an MCQ rather than recalling an answer.
+     * The front of the card: the passage (when the question shares one), the
+     * question, then its options — reviewing in Anki works like answering an
+     * MCQ, and a comprehension question needs its context on the card.
      */
-    private fun buildFront(question: Question, media: AnkiMediaPool): String {
+    private fun buildFront(
+        question: Question,
+        media: AnkiMediaPool,
+        passage: com.mcqapp.domain.Passage?
+    ): String {
         val sb = StringBuilder()
+        if (passage != null) {
+            sb.append("<div class=\"mcqapp-passage\"><b>")
+                .append(AnkiMediaPool.escapeHtml(passage.title.ifBlank { "Passage" }))
+                .append("</b>")
+                .append(LINE_BREAK)
+                .append(media.elementsToHtml(passage.elements, passage.image))
+                .append("</div>")
+                .append(LINE_BREAK).append(LINE_BREAK)
+                .append("<hr>")
+                .append(LINE_BREAK).append(LINE_BREAK)
+        }
         sb.append(media.elementsToHtml(question.elements, question.image))
         sb.append(LINE_BREAK).append(LINE_BREAK)
         if (question.correctOptionIds.size > 1) {

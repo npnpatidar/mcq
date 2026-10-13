@@ -70,9 +70,25 @@ object PdfPaperWriter {
             var number = 0
             for (category in paper.categories) {
                 w.paragraph(category.title, 14f, Typeface.BOLD, Color.BLACK, spaceBefore = 10f)
+                // The passage prints once above its group, not above every
+                // member: contiguity is the invariant, and a reader reads a
+                // document linearly. A new run (or a resumed group in another
+                // category) prints its header again.
+                var openPassageId: String? = null
                 for (question in category.questions) {
                     number++
                     w.ensureSpace(120f)
+                    if (question.passageId != openPassageId) {
+                        openPassageId = question.passageId
+                        paper.passages.firstOrNull { it.id == question.passageId }
+                            ?.let { passage ->
+                                w.paragraph(
+                                    stripInlineHtml(passage.title.ifBlank { "Passage" }),
+                                    11f, Typeface.BOLD, Color.rgb(70, 70, 70), spaceBefore = 6f
+                                )
+                                w.elements(passage.elements, passage.image, indent = 0f)
+                            }
+                    }
                     // The number prefixes the body flow itself ("Q1. text…"
                     // in one paragraph) instead of a title line, so the
                     // question never prints twice nor starts below its

@@ -34,6 +34,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _mistakeCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
     val mistakeCounts: StateFlow<Map<String, Int>> = _mistakeCounts.asStateFlow()
 
+    // Due counts move whenever a study session rewrites a schedule, so they
+    // are recomputed with the rest of the badges. Declared BEFORE the init
+    // block: viewModelScope dispatches with Main.immediate, so the papers
+    // StateFlow's first emission runs synchronously inside the constructor
+    // and a later declaration would still be null at that point (the
+    // every-startup "getStudyCounts failed" NPE).
+    private val _studyCounts = MutableStateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>>(
+        emptyMap()
+    )
+    val studyCounts: StateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>> =
+        _studyCounts.asStateFlow()
+
     init {
         viewModelScope.launch {
             repository.observeAttempts().collect {
@@ -59,12 +71,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
-
-    private val _studyCounts = MutableStateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>>(
-        emptyMap()
-    )
-    val studyCounts: StateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>> =
-        _studyCounts.asStateFlow()
 
     /** Re-reads due counts, e.g. after returning from a study session. */
     fun refreshStudyCounts() {
@@ -237,6 +243,43 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Add category failed", e)
                 _exportError.value = "Could not add the category: ${e.message}"
+            }
+        }
+    }
+
+    /** Nests a category into the sibling above it (the outline -> gesture). */
+    fun nestCategory(categoryId: String) {
+        viewModelScope.launch {
+            try {
+                repository.nestCategoryIntoSibling(categoryId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Nest category failed", e)
+                _exportError.value = "Nest failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Promotes a category out of its parent (the outline <- gesture). */
+    fun promoteCategory(categoryId: String) {
+        viewModelScope.launch {
+            try {
+                repository.promoteCategoryOutOfParent(categoryId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Promote category failed", e)
+                _exportError.value = "Promote failed: ${e.message}"
+            }
+        }
+    }
+
+    /** The edit dialog's save: rename, and re-parent when it changed. */
+    fun editCategory(categoryId: String, title: String, parentId: String?) {
+        viewModelScope.launch {
+            try {
+                repository.renameCategory(categoryId, title)
+                repository.reparentCategory(categoryId, parentId)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Edit category failed", e)
+                _exportError.value = "Edit failed: ${e.message}"
             }
         }
     }

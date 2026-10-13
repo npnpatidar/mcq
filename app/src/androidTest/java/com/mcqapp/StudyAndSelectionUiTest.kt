@@ -265,6 +265,12 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("Delete paper", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+        // The expanded card's actions can sit below the fold on the small
+        // emulator screen, and the expand animation is still moving them:
+        // settle first, then scroll the button into view, then click.
+        compose.waitForIdle()
+        compose.onNodeWithText("Delete paper", substring = true).performScrollTo()
+        compose.waitForIdle()
         compose.onNodeWithText("Delete paper", substring = true).performClick()
 
         waitFor("This cannot be undone.")

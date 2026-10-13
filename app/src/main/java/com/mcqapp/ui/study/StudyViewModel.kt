@@ -72,7 +72,9 @@ data class StudyUiState(
     val againCount: Int = 0,
     val goodCount: Int = 0,
     val finished: Boolean = false,
-    val emptyReason: String = ""
+    val emptyReason: String = "",
+    /** Passages for the queue's members, keyed by id, for the context card. */
+    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
 ) {
     val currentQuestion: Question? get() = queue.getOrNull(index)
     val remaining: Int get() = (queue.size - index).coerceAtLeast(0)
@@ -123,6 +125,11 @@ class StudyViewModel(
                 Logger.i("STUDY", "Study session: paper=$paperId, cards=${cards.size}, loaded=${questions.size}")
                 config = repository.schedulerConfigNow()
                 val simplified = repository.simplifiedStudy().first()
+                // Shared context only (parked decision): each member keeps its
+                // own SM-2 schedule; its card just carries the passage above it.
+                val passages = repository.getPassagesByIds(
+                    questions.mapNotNull { it.passageId }.distinct()
+                ).associateBy { it.id }
                 _state.update {
                     it.copy(
                         loading = false,
@@ -130,6 +137,7 @@ class StudyViewModel(
                         queue = questions,
                         reasons = cards.associate { c -> c.questionId to c.reason },
                         states = cards.associate { c -> c.questionId to c.state },
+                        passages = passages,
                         simplified = simplified,
                         questionStartedAt = System.currentTimeMillis()
                     )

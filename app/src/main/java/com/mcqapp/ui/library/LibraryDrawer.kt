@@ -14,11 +14,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -52,10 +52,10 @@ internal fun DrawerContent(
     onOpenHistory: () -> Unit,
     onOpenBookmarks: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenPassages: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
-    onImport: () -> Unit,
-    onDeleteCategory: (String) -> Unit
+    onImport: () -> Unit
 ) {
     var expandedPaperId by remember { mutableStateOf<String?>(null) }
     val checkedCategories = remember { mutableStateOf(setOf<String>()) }
@@ -122,6 +122,22 @@ internal fun DrawerContent(
                         .fillMaxWidth()
                         .clickable {
                             onCloseDrawer()
+                            onOpenPassages()
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Notes, contentDescription = null)
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(R.string.passages))
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onCloseDrawer()
                             onOpenSettings()
                         }
                         .padding(16.dp),
@@ -169,7 +185,6 @@ internal fun DrawerContent(
                                         if (!add(id)) remove(id)
                                     }
                                 },
-                                onDelete = onDeleteCategory
                             )
                             val selected = checkedCategories.value
                             if (selected.isNotEmpty()) {
@@ -216,8 +231,7 @@ internal fun DrawerContent(
 private fun CategoryTree(
     nodes: List<CategoryNode>,
     checked: Set<String>,
-    onToggle: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onToggle: (String) -> Unit
 ) {
     for (node in nodes) {
         Row(
@@ -234,16 +248,9 @@ private fun CategoryTree(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
                 modifier = Modifier.weight(1f)
             )
-            IconButton(onClick = { onDelete(node.id) }) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.delete_category),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
         }
         Column(modifier = Modifier.padding(start = 24.dp)) {
-            CategoryTree(nodes = node.children, checked = checked, onToggle = onToggle, onDelete = onDelete)
+            CategoryTree(nodes = node.children, checked = checked, onToggle = onToggle)
         }
     }
 }

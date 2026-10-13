@@ -6,6 +6,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentLinkedDeque
 
 object Logger {
 
@@ -67,6 +68,18 @@ object Logger {
 
     fun crash(throwable: Throwable) = write("CRASH", "UNCAUGHT", throwable.javaClass.name + ": " + throwable.message, throwable)
 
+    /**
+     * A bounded ring of the most recent error/crash lines, for tests: a
+     * swallowed-and-logged exception is otherwise invisible to any assertion
+     * (the every-startup "getStudyCounts failed" NPE shipped silently for
+     * days because nothing could observe it).
+     */
+    private val recentErrors = ConcurrentLinkedDeque<String>()
+
+    fun recentErrors(limit: Int = 20): List<String> = recentErrors.toList().takeLast(limit)
+
+    fun clearRecentErrors() = recentErrors.clear()
+
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
         val trace = if (throwable != null) {
             try {
@@ -86,6 +99,10 @@ object Logger {
                 append('\n').append(trace)
             }
             append('\n')
+        }
+        if (level == "E" || level == "CRASH") {
+            recentErrors.addLast("$level/$tag: $message")
+            while (recentErrors.size > 100) recentErrors.removeFirst()
         }
         // Logging must never crash its caller, on device or on plain-JVM tests.
         try {

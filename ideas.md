@@ -6,10 +6,12 @@ re-litigating the design.
 
 ---
 
-## Passage-based questions (reading comprehension) — ON HOLD
+## Passage-based questions (reading comprehension) — RESUMED
 
-**Status:** Explored 2026-10-05. Parked because it is a breaking feature; the app
-should stabilise first.
+**Status:** Explored 2026-10-05. Resumed 2026-10-09 on `exp/passage-questions`;
+the full research and design (with the open decisions answered against the
+current codebase) now lives in **`PASSAGE-QUESTIONS.md`**. The decisions below
+still stand.
 
 **Requirement:** a passage with several questions (e.g. 5) asked from it. They must be
 grouped together and occur together.

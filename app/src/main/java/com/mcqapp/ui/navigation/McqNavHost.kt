@@ -161,6 +161,13 @@ fun McqNavHost(repository: McqRepository) {
                 navController = navController
             )
         }
+        composable("passages") {
+            Logger.i("NAV", "passages screen")
+            com.mcqapp.ui.editor.PassagesScreen(
+                repository = repository,
+                navController = navController
+            )
+        }
         composable("settings") {
             SettingsScreen(repository = repository, navController = navController)
         }

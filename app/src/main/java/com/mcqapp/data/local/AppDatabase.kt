@@ -17,9 +17,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookmarkEntity::class,
         AttemptEntity::class,
         QuestionResultEntity::class,
-        CardStateEntity::class
+        CardStateEntity::class,
+        PassageEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -31,6 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun attemptDao(): AttemptDao
     abstract fun cardStateDao(): CardStateDao
+    abstract fun passageDao(): PassageDao
 
     companion object {
         @Volatile
@@ -118,6 +120,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the `passages` table and the nullable `questions.passageId`
+         * column. Both are additive: nothing existing changes shape, so the
+         * migration is two CREATE/ALTER statements and every v8 row survives
+         * verbatim with `passageId = NULL` (standalone questions, exactly what
+         * they were).
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `passages` (" +
+                        "`id` TEXT NOT NULL, `categoryId` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, `image` TEXT, `sortOrder` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`), " +
+                        "FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_passages_categoryId` " +
+                        "ON `passages` (`categoryId`)"
+                )
+                db.execSQL("ALTER TABLE questions ADD COLUMN passageId TEXT")
+                // Four queries filter on passageId (member lookups, the
+                // last-member anchor, member counts, the search union); the
+                // index turns each from a full scan into an index seek.
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_questions_passageId` " +
+                        "ON `questions` (`passageId`)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -126,7 +160,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "mcq.db"
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8
+                    MIGRATION_7_8, MIGRATION_8_9
                 ).build().also { INSTANCE = it }
             }
     }

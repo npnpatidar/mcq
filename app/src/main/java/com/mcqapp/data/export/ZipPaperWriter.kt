@@ -37,6 +37,9 @@ object ZipPaperWriter {
             explanationImage = ref(q.explanationImage),
             options = q.options.map { o -> o.copy(image = ref(o.image)) }
         )
+        // Passages travel too; their images get the same relative-path
+        // treatment so the json alone never carries raw data URIs.
+        val newPassages = paper.passages.map { p -> p.copy(image = ref(p.image)) }
         val newCategories = paper.categories.map { cat ->
             cat.copy(questions = cat.questions.map { q -> remapQuestion(q) })
         }
@@ -46,7 +49,7 @@ object ZipPaperWriter {
         )
         val jsonText = json.encodeToString(
             McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = listOf(newPaper))
+            McqFileDto(version = 1, papers = listOf(newPaper), passages = newPassages)
         )
 
         val out = ByteArrayOutputStream()

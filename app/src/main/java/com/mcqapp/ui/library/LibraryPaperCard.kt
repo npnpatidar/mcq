@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
@@ -61,6 +63,10 @@ internal fun PaperCard(
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit,
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
+    onNestCategory: (String) -> Unit = {},
+    onPromoteCategory: (String) -> Unit = {},
+    onEditCategory: (CategoryNode) -> Unit = {},
+    onDeleteCategory: (String) -> Unit = {},
     onPracticeMistakes: () -> Unit = {},
     onDrill: (Int, Int) -> Unit = { _, _ -> },
     onStudy: () -> Unit = {},
@@ -153,16 +159,6 @@ internal fun PaperCard(
                         Text("${leechCount} tricky")
                     }
                 }
-                if (waitingCount > 0) {
-                    // The button says what this session will serve; this says
-                    // what the daily limits are holding back. Without it a
-                    // capped count just looks like the whole backlog.
-                    Text(
-                        stringResource(R.string.n_more_waiting, waitingCount),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
                 OutlinedButton(onClick = onExport) {
                     Text(stringResource(R.string.export))
                 }
@@ -194,6 +190,18 @@ internal fun PaperCard(
                         Text("Mistakes ($mistakeCount)")
                     }
                 }
+            }
+            if (waitingCount > 0) {
+                // The button says what this session will serve; this says
+                // what the daily limits are holding back. Without it a
+                // capped count just looks like the whole backlog. Its own
+                // caption line — inside the button row it wrapped into the
+                // buttons and scrambled their arrangement.
+                Text(
+                    stringResource(R.string.n_more_waiting, waitingCount),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             if (showDrillDialog) {
                 AlertDialog(
@@ -275,6 +283,10 @@ internal fun PaperCard(
                             canMoveUp = index > 0,
                             canMoveDown = index < paper.categories.lastIndex,
                             onMoveCategory = onMoveCategory,
+                            onNestCategory = onNestCategory,
+                            onPromoteCategory = onPromoteCategory,
+                            onEditCategory = onEditCategory,
+                            onDeleteCategory = onDeleteCategory,
                             onEditQuestion = onEditQuestion,
                             onAddQuestion = onAddQuestion,
                             onExportCategory = onExportCategory
@@ -313,38 +325,56 @@ private fun CategoryRow(
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
+    onNestCategory: (String) -> Unit = {},
+    onPromoteCategory: (String) -> Unit = {},
+    onEditCategory: (CategoryNode) -> Unit = {},
+    onDeleteCategory: (String) -> Unit = {},
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
     onExportCategory: (String, String) -> Unit
 ) {
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
+        // Eight 48dp actions do not fit one line on a phone, so the row
+        // splits: movement gestures beside the title (line 1) and the
+        // management set on their own line (line 2). Sub-48dp buttons are
+        // rejected by UiAccessibilityTest for good reason.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
                 style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
             if (canMoveUp || canMoveDown) {
-                IconButton(
-                    onClick = { onMoveCategory(node.id, -1) },
-                    enabled = canMoveUp,
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up), modifier = Modifier.padding(0.dp))
+                IconButton(onClick = { onMoveCategory(node.id, -1) }, enabled = canMoveUp) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up))
                 }
-                IconButton(
-                    onClick = { onMoveCategory(node.id, +1) },
-                    enabled = canMoveDown,
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down), modifier = Modifier.padding(0.dp))
+                IconButton(onClick = { onMoveCategory(node.id, +1) }, enabled = canMoveDown) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down))
                 }
+            }
+            // Outline gestures: -> nests into the category above (nothing
+            // moves visually), <- promotes out of the parent.
+            IconButton(onClick = { onNestCategory(node.id) }, enabled = canMoveUp) {
+                Icon(Icons.Default.KeyboardArrowRight, contentDescription = stringResource(R.string.nest_category))
+            }
+            IconButton(onClick = { onPromoteCategory(node.id) }, enabled = depth > 0) {
+                Icon(Icons.Default.KeyboardArrowLeft, contentDescription = stringResource(R.string.promote_category))
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { onEditCategory(node) }) {
+                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_category))
             }
             IconButton(onClick = { onExportCategory(node.id, node.title) }) {
-                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_category), modifier = Modifier.padding(0.dp))
+                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_category))
             }
             IconButton(onClick = { onAddQuestion(node.id) }) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_question), modifier = Modifier.padding(0.dp))
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_question))
+            }
+            IconButton(onClick = { onDeleteCategory(node.id) }) {
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_category))
             }
         }
         node.children.forEachIndexed { index, child ->
@@ -354,6 +384,10 @@ private fun CategoryRow(
                 canMoveUp = index > 0,
                 canMoveDown = index < node.children.lastIndex,
                 onMoveCategory = onMoveCategory,
+                onNestCategory = onNestCategory,
+                onPromoteCategory = onPromoteCategory,
+                onEditCategory = onEditCategory,
+                onDeleteCategory = onDeleteCategory,
                 onEditQuestion = onEditQuestion,
                 onAddQuestion = onAddQuestion,
                 onExportCategory = onExportCategory

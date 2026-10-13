@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Share
@@ -32,6 +34,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
@@ -65,6 +68,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.searchableText
 import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
@@ -237,6 +241,10 @@ fun BrowseScreen(
         val questions = state.questions
         val filterValue = filter.value
         var searchQuery by remember { mutableStateOf("") }
+        // Single-category filter: show only one category's questions. An id
+        // that no longer belongs to this paper reads as "all" below.
+        var categoryFilterId by remember { mutableStateOf<String?>(null) }
+        var categoryMenuOpen by remember { mutableStateOf(false) }
         // Debounced like the global search: filtering lowercases every
         // question's text, tags and option texts, and this list is already
         // in memory with base64 images, so it ran a full linear scan per
@@ -248,21 +256,102 @@ fun BrowseScreen(
                 searchQuery = searchInput
             }
         }
-        val searched = remember(questions, searchQuery) {
-            com.mcqapp.domain.QuestionSearch.filter(questions, searchQuery)
+        // Passage bodies feed the in-memory filter (D7): a member is found
+        // through its shared context, which is not part of the question row.
+        val paperPassages = remember { mutableStateOf<Map<String, com.mcqapp.domain.Passage>>(emptyMap()) }
+        val paperIdForPassages = state.paper?.id
+        LaunchedEffect(paperIdForPassages) {
+            paperPassages.value = if (paperIdForPassages.isNullOrBlank()) {
+                emptyMap()
+            } else {
+                repository.getPassagesForPaper(paperIdForPassages).associateBy { it.id }
+            }
         }
-        val filtered = remember(searched, filterValue, state.paper) {
-            val titles = flattenCategories(state.paper?.categories ?: emptyList())
+        val searched = remember(questions, searchQuery, paperPassages.value) {
+            com.mcqapp.domain.QuestionSearch.filter(
+                questions, searchQuery,
+                passageBodies = paperPassages.value.mapValues { (_, passage) ->
+                    passage.title + "\n" + passage.elements.searchableText
+                }
+            )
+        }
+        // Row and block moves are computed on the question's own category
+        // list — the only order a reorder can rewrite — not on the
+        // paper-wide filtered list.
+        val categoryQuestions = remember(questions) {
+            questions.groupBy { it.categoryId }
+        }
+        // The category each row belongs to (label on the card) and the
+        // section bounds the category-move buttons hang on.
+        val categoryTitles = remember(state.paper) {
+            flattenCategories(state.paper?.categories ?: emptyList())
                 .associate { it.first.id to it.first.title }
-            when (filterValue) {
+        }
+        // Flat list (with depth) for the category filter dropdown.
+        val flatCategories = remember(state.paper) {
+            flattenCategories(state.paper?.categories ?: emptyList())
+        }
+        val categoryBounds = remember(questions) {
+            val first = mutableMapOf<String, Int>()
+            val last = mutableMapOf<String, Int>()
+            questions.forEachIndexed { i, q ->
+                if (q.categoryId !in first) first[q.categoryId] = i
+                last[q.categoryId] = i
+            }
+            first to last
+        }
+        // The drawer's reorder, answered inline: whether a category can
+        // move among its siblings (same parent) — the double-arrow buttons
+        // on a section's first and last row use it.
+        val categoryMove = remember(state.paper, flatCategories) {
+            fun canMove(categoryId: String, up: Boolean): Boolean {
+                // Reuse the hoisted flat list; recomputing flattenCategories
+                // here ran once per row per recomposition.
+                val flat = flatCategories
+                val self = flat.firstOrNull { it.first.id == categoryId } ?: return false
+                val siblings = flat.filter { it.first.parentId == self.first.parentId }
+                val index = siblings.indexOfFirst { it.first.id == categoryId }
+                if (index < 0) return false
+                return if (up) index > 0 else index < siblings.size - 1
+            }
+            ::canMove
+        }
+        val filtered = remember(searched, filterValue, state.paper, categoryFilterId) {
+            // Reuse the hoisted flatCategories (same nodes as the drawer and
+            // the dropdown) rather than re-flattening state.paper per recompute.
+            val titles = flatCategories.associate { it.first.id to it.first.title }
+            val base = when (filterValue) {
                 "No answer" -> searched.filter { it.correctOptionIds.isEmpty() }
                 "No explanation" -> searched.filter { it.explanation.isBlank() }
                 "Uncategorized" -> com.mcqapp.domain.QuestionSearch
                     .filterUncategorized(searched, titles)
                 else -> searched
             }
+            applyCategoryFilter(base, subtreeIdsOf(flatCategories, categoryFilterId))
         }
         val filteredIds = remember(filtered) { filtered.map { it.id } }
+        // Passage grouping: a member that is the first of its passage in the
+        // filtered list gets a header row above it (D8 — the group renders as
+        // one block). Search hits on passage text surface the group because
+        // the DAO prefilter unions the passages table.
+        val passageTitlesByFirstMember = remember(filtered) {
+            buildMap {
+                val seen = mutableSetOf<String>()
+                filtered.forEach { q ->
+                    val pid = q.passageId ?: return@forEach
+                    if (seen.add(pid)) put(q.id, pid)
+                }
+            }
+        }
+        val passagesById = remember(passageTitlesByFirstMember.keys) {
+            mutableStateOf<Map<String, com.mcqapp.domain.Passage>>(emptyMap())
+        }
+        LaunchedEffect(passageTitlesByFirstMember) {
+            val ids = passageTitlesByFirstMember.values.toList()
+            passagesById.value = if (ids.isEmpty()) emptyMap() else {
+                repository.getPassagesByIds(ids).associateBy { it.id }
+            }
+        }
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         // Deep link from global search: highlight persists on screen.
         var highlightId by remember(focusQuestionId) { mutableStateOf(focusQuestionId) }
@@ -311,6 +400,55 @@ fun BrowseScreen(
                         )
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                // One category at a time: a paper with dozens of categories
+                // otherwise needs endless scrolling to reach a single one.
+                val selectedCategoryTitle = categoryFilterId
+                    ?.let { id -> flatCategories.firstOrNull { it.first.id == id }?.first?.title }
+                ExposedDropdownMenuBox(
+                    expanded = categoryMenuOpen,
+                    onExpandedChange = { categoryMenuOpen = it }
+                ) {
+                    OutlinedTextField(
+                        value = selectedCategoryTitle
+                            ?: stringResource(R.string.all_categories),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(stringResource(R.string.category)) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenuOpen)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = categoryMenuOpen,
+                        onDismissRequest = { categoryMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.all_categories)) },
+                            onClick = {
+                                categoryFilterId = null
+                                categoryMenuOpen = false
+                            }
+                        )
+                        flatCategories.forEach { (node, depth) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(R.string.label).repeat(depth) + node.title,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                },
+                                onClick = {
+                                    categoryFilterId = node.id
+                                    categoryMenuOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
                 if (filtered.isEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -320,23 +458,104 @@ fun BrowseScreen(
                     )
                 }
             }
-            val reorderEnabled = filterValue == "All" && searchQuery.isBlank()
+            // Section (whole-category) moves hang off the first/last row of a
+            // section in the paper-wide list, so they need the rendered list
+            // to *be* the paper-wide list: any filter (search, chip, category)
+            // hides rows and the paper-wide categoryBounds no longer match
+            // rendered indices. Question- and passage-block moves are
+            // computed against the question's own category list, which no
+            // filter reorders, so only search and chip filters disable them
+            // (the pre-category-filter contract).
+            val categorySectionMoveEnabled = filterValue == "All" && searchQuery.isBlank() &&
+                categoryFilterId == null
+            val questionMoveEnabled = filterValue == "All" && searchQuery.isBlank()
             itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
+                val categoryList = categoryQuestions[question.categoryId].orEmpty()
+                val moveOrder: (Boolean) -> Unit = { up ->
+                    com.mcqapp.domain.PassageReorder.moveQuestion(categoryList, question.id, up)
+                        ?.let { viewModel.renumberCategory(question.categoryId, it) }
+                }
+                // Header inline above the first member of each passage group
+                // (same list item, because LazyListScope.item cannot be
+                // called from inside another item's content lambda).
+                passageTitlesByFirstMember[question.id]?.let { pid ->
+                    passagesById.value[pid]?.let { passage ->
+                        PassageHeaderCard(
+                            passage = passage,
+                            canMoveUp = questionMoveEnabled &&
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = true) != null,
+                            canMoveDown = questionMoveEnabled &&
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = false) != null,
+                            onMoveUp = {
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = true)
+                                    ?.let { viewModel.renumberCategory(question.categoryId, it) }
+                            },
+                            onMoveDown = {
+                                com.mcqapp.domain.PassageReorder.movePassageBlock(categoryList, pid, up = false)
+                                    ?.let { viewModel.renumberCategory(question.categoryId, it) }
+                            }
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
+                // Later members carry a small label so the membership is
+                // visible mid-group, not only on the header above the first.
+                if (question.passageId != null && passageTitlesByFirstMember[question.id] == null) {
+                    passagesById.value[question.passageId]?.let { passage ->
+                        Text(
+                            stringResource(
+                                R.string.in_passage_label,
+                                passage.title.takeIf { it.isNotBlank() }
+                                    ?: stringResource(R.string.passage)
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(Modifier.height(2.dp))
+                    }
+                }
+                // A section's first and last rows carry the category moves:
+                // those two positions could never move their own question
+                // anyway (pinned at the category edge), so the double-arrow
+                // buttons give them the drawer's category reorder inline.
+                // Under a filter the paper-wide bounds don't match rendered
+                // indices, so no row claims a section edge: every row renders
+                // its own question move instead.
+                val (categoryFirstIndex, categoryLastIndex) = categoryBounds
+                val isCategoryFirst = categorySectionMoveEnabled &&
+                    categoryFirstIndex[question.categoryId] == index
+                val isCategoryLast = categorySectionMoveEnabled &&
+                    categoryLastIndex[question.categoryId] == index
                 BrowseQuestionCard(
                     index = index + 1,
                     question = question,
+                    categoryTitle = categoryTitles[question.categoryId],
                     selectionMode = selectionMode,
                     selected = question.id in selectedIds,
                     highlighted = question.id == highlightId,
-                    canMoveUp = reorderEnabled &&
-                        com.mcqapp.domain.Reorder.canMove(filtered, index, -1),
-                    canMoveDown = reorderEnabled &&
-                        com.mcqapp.domain.Reorder.canMove(filtered, index, +1),
+                    moveUpIsCategory = isCategoryFirst,
+                    moveDownIsCategory = isCategoryLast,
+                    canMoveUp = if (isCategoryFirst) {
+                        categoryMove(question.categoryId, true)
+                    } else {
+                        questionMoveEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                            categoryList, categoryList.indexOfFirst { it.id == question.id }, up = true
+                        )
+                    },
+                    canMoveDown = if (isCategoryLast) {
+                        categoryMove(question.categoryId, false)
+                    } else {
+                        questionMoveEnabled && com.mcqapp.domain.PassageReorder.canMove(
+                            categoryList, categoryList.indexOfFirst { it.id == question.id }, up = false
+                        )
+                    },
                     onMoveUp = {
-                        viewModel.swapQuestions(question.id, filtered[index - 1].id)
+                        if (isCategoryFirst) viewModel.moveCategory(question.categoryId, -1)
+                        else moveOrder(true)
                     },
                     onMoveDown = {
-                        viewModel.swapQuestions(question.id, filtered[index + 1].id)
+                        if (isCategoryLast) viewModel.moveCategory(question.categoryId, +1)
+                        else moveOrder(false)
                     },
                     onToggleSelect = {
                         selectedIds = selectedIds.toMutableSet().apply {
@@ -605,6 +824,12 @@ private fun BrowseQuestionCard(
     selected: Boolean = false,
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
+    /** Section edges: the button moves the whole category, not the question. */
+    moveUpIsCategory: Boolean = false,
+    moveDownIsCategory: Boolean = false,
+    /** The row's category, labelled so a section's bounds (and its pinned
+     *  edge buttons) explain themselves. */
+    categoryTitle: String? = null,
     onMoveUp: () -> Unit = {},
     onMoveDown: () -> Unit = {},
     onToggleSelect: () -> Unit = {},
@@ -621,6 +846,13 @@ private fun BrowseQuestionCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            if (categoryTitle != null) {
+                Text(
+                    categoryTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
                     Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
@@ -688,11 +920,28 @@ private fun BrowseQuestionCard(
             if (!selectionMode) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (canMoveUp || canMoveDown) {
+                        // Double arrows mark a section move: the button
+                        // carries the whole category past its sibling, like
+                        // the drawer's category reorder.
                         IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up))
+                            Icon(
+                                if (moveUpIsCategory) Icons.Default.KeyboardDoubleArrowUp
+                                else Icons.Default.KeyboardArrowUp,
+                                contentDescription = stringResource(
+                                    if (moveUpIsCategory) R.string.move_category_up
+                                    else R.string.move_up
+                                )
+                            )
                         }
                         IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down))
+                            Icon(
+                                if (moveDownIsCategory) Icons.Default.KeyboardDoubleArrowDown
+                                else Icons.Default.KeyboardArrowDown,
+                                contentDescription = stringResource(
+                                    if (moveDownIsCategory) R.string.move_category_down
+                                    else R.string.move_down
+                                )
+                            )
                         }
                     }
                     IconButton(onClick = onEdit) {
@@ -710,6 +959,53 @@ private fun BrowseQuestionCard(
     }
 }
 
+/** The shared-context card above a passage group in the browse list. */
+@Composable
+private fun PassageHeaderCard(
+    passage: com.mcqapp.domain.Passage,
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {}
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    passage.title.ifBlank { stringResource(R.string.passage) },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                // The whole group — passage plus its questions — moves as a
+                // block; a member's own up/down stay inside the group.
+                IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_passage_up))
+                }
+                IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_passage_down))
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            ContentElements(passage.elements, textStyle = MaterialTheme.typography.bodyMedium)
+            QuestionImage(
+                src = passage.image,
+                contentDescription = stringResource(R.string.passage_image),
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+    }
+}
+
 private fun flattenCategories(
     nodes: List<com.mcqapp.domain.CategoryNode>,
     depth: Int = 0
@@ -718,4 +1014,38 @@ private fun flattenCategories(
         add(node to depth)
         addAll(flattenCategories(node.children, depth + 1))
     }
+}
+
+/**
+ * The browse screen's single-category filter: with a set of category ids, only
+ * those categories' questions remain; null (or empty) keeps the list whole.
+ */
+internal fun applyCategoryFilter(
+    questions: List<com.mcqapp.domain.Question>,
+    categoryIds: Set<String>?
+): List<com.mcqapp.domain.Question> =
+    if (categoryIds.isNullOrEmpty()) questions
+    else questions.filter { it.categoryId in categoryIds }
+
+/**
+ * The ids of [rootId] plus every descendant, read from the pre-order
+ * [flatCategories] list: a node's subtree is exactly the nodes that follow it
+ * until the next node of depth <= its own. A null [rootId] means "no filter"
+ * (null); a non-null but unknown id filters to nothing (empty set) rather than
+ * showing everything.
+ */
+internal fun subtreeIdsOf(
+    flatCategories: List<Pair<com.mcqapp.domain.CategoryNode, Int>>,
+    rootId: String?
+): Set<String>? {
+    if (rootId == null) return null
+    val rootIndex = flatCategories.indexOfFirst { it.first.id == rootId }
+    if (rootIndex < 0) return emptySet()
+    val rootDepth = flatCategories[rootIndex].second
+    val out = mutableSetOf(rootId)
+    for ((node, depth) in flatCategories.subList(rootIndex + 1, flatCategories.size)) {
+        if (depth <= rootDepth) break
+        out.add(node.id)
+    }
+    return out
 }

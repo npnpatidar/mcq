@@ -57,7 +57,9 @@ object QuestionSearch {
     fun filter(
         questions: List<Question>,
         query: String,
-        scope: Scope = Scope.ALL
+        scope: Scope = Scope.ALL,
+        /** Passage id → its searchable text (title + body), for member matches. */
+        passageBodies: Map<String, String> = emptyMap()
     ): List<Question> {
         val q = query.trim().lowercase()
         if (q.isBlank()) return questions
@@ -69,10 +71,15 @@ object QuestionSearch {
             val inOptions = question.options.any {
                 it.elements.searchableText.lowercase().contains(q)
             }
+            // A member is also found through its shared context (D7): the
+            // passage body is not on the question, so the caller supplies it.
+            val inPassage = question.passageId
+                ?.let { passageBodies[it] }
+                ?.lowercase()?.contains(q) == true
             when (scope) {
-                Scope.QUESTION -> inQuestion
+                Scope.QUESTION -> inQuestion || inPassage
                 Scope.OPTIONS -> inOptions
-                Scope.ALL -> inQuestion || inOptions
+                Scope.ALL -> inQuestion || inOptions || inPassage
             }
         }
     }

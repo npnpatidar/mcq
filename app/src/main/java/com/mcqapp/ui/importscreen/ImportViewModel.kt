@@ -27,8 +27,40 @@ import kotlinx.coroutines.withContext
 object ImportDataHolder {
     var pendingJsonText: String? = null
     var pendingDocxBytes: ByteArray? = null
+    /** Display name of the picked Word file; becomes the default paper title. */
+    var pendingDocxName: String? = null
     var pendingEditQuestion: QuestionDto? = null
     var editingFromImport: Boolean = false
+}
+
+/**
+ * The paper title a picked Word file should default to: its file name
+ * without the extension. Word banks rarely name the paper inside the
+ * document, so the title used to arrive as whatever the parser invented.
+ */
+internal fun docxPaperTitle(fileName: String?): String? =
+    fileName
+        ?.substringAfterLast('/')
+        ?.substringBeforeLast('.')
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+/**
+ * Existing names that contain the typed text, closest matches first.
+ * The field keeps whatever the user typed — this only feeds the dropdown,
+ * so a name the library has never seen just becomes a new one.
+ */
+internal fun suggestNames(query: String, existing: List<String>, limit: Int = 8): List<String> {
+    val q = query.trim()
+    val needle = q.lowercase()
+    return existing
+        .asSequence()
+        .filter { it.isNotBlank() }
+        .filter { needle.isEmpty() || it.lowercase().contains(needle) }
+        .distinctBy { it.lowercase() }
+        .sortedBy { it.lowercase().startsWith(needle).not() }
+        .take(limit)
+        .toList()
 }
 
 data class ImportUiState(
@@ -38,6 +70,10 @@ data class ImportUiState(
     val durationMinutes: Int = 0,
     val negativeMarking: Double = 0.0,
     val categoryName: String = "Uncategorized",
+    /** Existing library paper titles, for the title field's suggestions. */
+    val paperTitleSuggestions: List<String> = emptyList(),
+    /** Existing library category names, for the category field's suggestions. */
+    val categorySuggestions: List<String> = emptyList(),
     val questions: List<QuestionDto> = emptyList(),
     /** Row-level parse diagnostics (skipped malformed rows); empty for clean files. */
     val parseWarnings: List<String> = emptyList(),
@@ -156,6 +192,10 @@ internal fun buildImportFile(
         return McqFileDto(
             version = 1,
             papers = listOf(buildPreviewPaperDto(s, null)),
+            // Passages are not previewed, but member questions keep their
+            // passageId, so the parsed block must ride along or the import
+            // would write members whose context never resolves.
+            passages = original?.passages ?: emptyList(),
             bookmarks = emptyList(),
             attempts = emptyList()
         )
@@ -164,6 +204,7 @@ internal fun buildImportFile(
     return McqFileDto(
         version = 1,
         papers = listOf(firstPaper) + original.papers.drop(1),
+        passages = original.passages,
         bookmarks = original.bookmarks,
         attempts = original.attempts,
         scheduling = original.scheduling
@@ -176,6 +217,26 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _state = MutableStateFlow(ImportUiState())
     val state: StateFlow<ImportUiState> = _state.asStateFlow()
+
+    init {
+        // Suggestions for the paper-title and category fields: what the
+        // library already calls things, so a re-import files itself next to
+        // the earlier one instead of spawning a near-duplicate name.
+        viewModelScope.launch {
+            try {
+                val titles = repository.existingPaperTitles()
+                val categoryNames = repository.existingCategoryNames()
+                _state.update {
+                    it.copy(
+                        paperTitleSuggestions = titles,
+                        categorySuggestions = categoryNames
+                    )
+                }
+            } catch (e: Exception) {
+                Logger.e("IMPORTVM", "loading name suggestions failed", e)
+            }
+        }
+    }
 
     var lastEditedQuestionId: String? = null
         private set
@@ -301,17 +362,18 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Word banks: convert to the labeled JSON our importer reads, then
      * follow the exact JSON path (preview, warnings, dedup). Docx-stage
-     * warnings ride alongside the parse warnings.
+     * warnings ride alongside the parse warnings. The picked file's name
+     * becomes the paper title — the document rarely names its own paper.
      */
-    fun loadDocx(bytes: ByteArray) {
+    fun loadDocx(bytes: ByteArray, fileName: String? = null) {
         viewModelScope.launch {
             try {
                 val parsed = withContext(Dispatchers.Default) {
                     com.mcqapp.data.docx.parseDocx(bytes)
                 }
                 Logger.i("IMPORTVM", "Converted Word file (${bytes.size} bytes) " +
-                    "with ${parsed.warnings.size} docx warnings")
-                loadJsonTextWithWarnings(parsed.json, parsed.warnings)
+                    "with ${parsed.warnings.size} docx warnings, title from '$fileName'")
+                loadJsonTextWithWarnings(parsed.json, parsed.warnings, docxPaperTitle(fileName))
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "Failed to parse Word file", e)
                 _state.update { it.copy(loading = false, error = "Could not parse the Word file: ${e.message}") }
@@ -319,19 +381,27 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun loadJsonTextWithWarnings(text: String, extraWarnings: List<String>) {
+    private suspend fun loadJsonTextWithWarnings(
+        text: String,
+        extraWarnings: List<String>,
+        titleOverride: String? = null
+    ) {
         val fp = withContext(Dispatchers.Default) { fingerprint(text) }
         if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) return
         loadedDirectFp = fp
         try {
-            withContext(Dispatchers.Default) { parseAndLoad(text, extraWarnings) }
+            withContext(Dispatchers.Default) { parseAndLoad(text, extraWarnings, titleOverride) }
         } catch (e: Exception) {
             loadedDirectFp = null
             throw e
         }
     }
 
-    private suspend fun parseAndLoad(text: String, extraWarnings: List<String> = emptyList()) {
+    private suspend fun parseAndLoad(
+        text: String,
+        extraWarnings: List<String> = emptyList(),
+        titleOverride: String? = null
+    ) {
         val file = LegacyParser.parse(text)
         val paper = file.papers.firstOrNull()
         if (paper == null) {
@@ -371,14 +441,16 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         }
         _state.value = ImportUiState(
             loading = false,
-            paperTitle = paper.title,
+            paperTitle = titleOverride ?: paper.title,
             paperDescription = paper.description,
             durationMinutes = paper.durationMinutes,
             negativeMarking = paper.negativeMarking,
             categoryName = effectiveCategory,
             questions = allQuestions,
             parseWarnings = extraWarnings + backupNotice + file.warnings,
-            originalFile = file
+            originalFile = file,
+            paperTitleSuggestions = _state.value.paperTitleSuggestions,
+            categorySuggestions = _state.value.categorySuggestions
         )
         Logger.i("IMPORTVM", "Loaded ${allQuestions.size} questions for import preview")
         refreshDuplicates()

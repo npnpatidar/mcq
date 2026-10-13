@@ -306,6 +306,32 @@ class LegacyParserTest {
         assertEquals(2.0, marks["q-o1"]!!, 0.0001)
         assertEquals(1.0, marks["q-o2"]!!, 0.0001)
         assertEquals(3.0, marks["q-o3"]!!, 0.0001)
+
+        // Reading passages: two groups, every member resolves, one standalone
+        // question shares the category without joining a passage, and the
+        // passage body carries rich content (a table) like a question can.
+        assertEquals(
+            "expected the two demo passages",
+            listOf("passage-1", "passage-2"),
+            file.passages.map { it.id }
+        )
+        assertEquals("The Water Cycle", file.passages[0].title)
+        assertEquals("खाद्य शृंखला", file.passages[1].title)
+        assertTrue(
+            "the demo passage should carry a table",
+            file.passages[0].elements.any { it is ContentElement.TableElement }
+        )
+        val passageIds = file.passages.map { it.id }.toSet()
+        val members = questions.filter { !it.passageId.isNullOrBlank() }
+        assertEquals("expected five passage members", 5, members.size)
+        assertTrue(
+            "a member points at a passage that is not in the file",
+            members.all { it.passageId in passageIds }
+        )
+        assertTrue(
+            "the standalone passage-category question should have no passage",
+            questions.single { it.id == "q-psg-6" }.passageId.isNullOrBlank()
+        )
     }
 
     private val DEVANAGARI = Regex("[\\u0900-\\u097F]")

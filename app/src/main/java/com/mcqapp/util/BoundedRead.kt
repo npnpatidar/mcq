@@ -1,5 +1,8 @@
 package com.mcqapp.util
 
+import android.content.ContentResolver
+import android.net.Uri
+import android.provider.OpenableColumns
 import java.io.IOException
 import java.io.InputStream
 
@@ -57,4 +60,36 @@ fun readBounded(stream: InputStream, limit: Long = MAX_IMPORT_BYTES): ByteArray 
         out.write(chunk, 0, read)
     }
     return out.toByteArray()
+}
+
+/**
+ * Prefers the provider's display name over a [Uri.getLastPathSegment] id.
+ *
+ * A picked document's last path segment is the provider's opaque row id, not
+ * a name: the Downloads provider hands back "msf:1001050295", which became
+ * the paper title when it was used as one. The display name wins when it is
+ * present and not blank; the id survives only as the last resort, and a
+ * blank answer from either side becomes null so the caller can fall back.
+ */
+fun pickDisplayName(displayName: String?, lastPathSegment: String?): String? =
+    displayName?.trim()?.takeIf { it.isNotBlank() }
+        ?: lastPathSegment?.substringAfterLast('/')?.trim()?.takeIf { it.isNotBlank() }
+
+/**
+ * The file's real name, as the provider labels it — "Physics Bank.docx".
+ *
+ * The display name comes from [OpenableColumns.DISPLAY_NAME]; a provider that
+ * refuses the query or answers blank falls back to the last path segment.
+ */
+fun ContentResolver.displayName(uri: Uri): String? {
+    val fromColumn = try {
+        query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        }
+    } catch (e: Exception) {
+        // A provider may reject the projection; the id is still a usable hint.
+        null
+    }
+    return pickDisplayName(fromColumn, uri.lastPathSegment)
 }

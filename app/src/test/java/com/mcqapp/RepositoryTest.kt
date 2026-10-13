@@ -506,6 +506,179 @@ class RepositoryTest {
         assertEquals(listOf("q2"), db.bookmarkDao().getAll())
     }
 
+
+    @Test
+    fun movingAManuallyAddedCategoryUpReordersThePaper() = runBlocking {
+        // addCategory leaves sortOrder at 0, so sibling order rests on the
+        // (sortOrder, title) tiebreak — exactly the seeded shape the browse
+        // UI test uses. The move must still rewrite the paper's order.
+        repository.ensurePaperAndCategory("mp", "Move Paper", "mc1", "First Cat")
+        val c2 = repository.addCategory("mp", "Second Cat", parentId = null)
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "mq1", categoryId = "mc1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("First?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "mq2", categoryId = c2,
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Second?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        assertEquals(listOf("mq1", "mq2"), repository.getQuestionsForPaper("mp").map { it.id })
+        assertTrue(repository.moveCategory(c2, -1))
+        assertEquals(listOf("mq2", "mq1"), repository.getQuestionsForPaper("mp").map { it.id })
+        assertTrue(repository.moveCategory(c2, +1))
+        assertEquals(listOf("mq1", "mq2"), repository.getQuestionsForPaper("mp").map { it.id })
+    }
+
+    @Test
+    fun movingTheOnlySiblingThatWayIsRefused() = runBlocking {
+        repository.ensurePaperAndCategory("mp", "Move Paper", "mc1", "First Cat")
+        val c2 = repository.addCategory("mp", "Second Cat", parentId = null)
+        assertTrue(!repository.moveCategory(c2, +1))
+        assertTrue(!repository.moveCategory("mc1", -1))
+    }
+
+
+    @Test
+    fun movingARootPastANestedParentKeepsTheSubtreeTogether() = runBlocking {
+        // The demo paper's shape: Chemistry and Physics are children of
+        // Science, and the category sortOrders form one global pre-order
+        // sequence. Moving Mathematics up must not leave the roots sharing
+        // sortOrders with Science's children (which surfaced as
+        // "maths, chemistry, science, physics" through the title tiebreak).
+        repository.ensurePaperAndCategory("np", "Nested Paper", "ns", "Science")
+        val nc = repository.addCategory("np", "Chemistry", parentId = "ns")
+        val np2 = repository.addCategory("np", "Physics", parentId = "ns")
+        val nm = repository.addCategory("np", "Mathematics", parentId = null)
+        fun q(id: String, cat: String) = com.mcqapp.domain.Question(
+            id = id, categoryId = cat,
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("$id?")),
+            options = listOf(
+                com.mcqapp.domain.QuestionOption("a", "A"),
+                com.mcqapp.domain.QuestionOption("b", "B")
+            ),
+            correctOptionIds = setOf("a")
+        )
+        repository.saveQuestion(q("nq-s", "ns"))
+        repository.saveQuestion(q("nq-c", nc))
+        repository.saveQuestion(q("nq-p", np2))
+        repository.saveQuestion(q("nq-m", nm))
+
+        // Roots: Science, then Mathematics above nobody but Science.
+        assertTrue(repository.moveCategory(nm, -1))
+        assertEquals(
+            "Mathematics goes above Science's whole subtree, in tree order",
+            listOf("nq-m", "nq-s", "nq-c", "nq-p"),
+            repository.getQuestionsForPaper("np").map { it.id }
+        )
+        // Every category still holds a unique slot — no tiebreak games.
+        assertEquals(
+            4,
+            db.categoryDao().getByPaper("np").map { it.sortOrder }.distinct().size
+        )
+        // And Science moves back up with its subtree following it.
+        assertTrue(repository.moveCategory("ns", -1))
+        assertEquals(
+            listOf("nq-s", "nq-c", "nq-p", "nq-m"),
+            repository.getQuestionsForPaper("np").map { it.id }
+        )
+        // The pinned direction is refused: Mathematics is the last root.
+        assertTrue(!repository.moveCategory(nm, +1))
+    }
+
+    @Test
+    fun aFreshCategoryTakesTheNextSortSlot() = runBlocking {
+        repository.ensurePaperAndCategory("np", "Nested Paper", "ns", "Science")
+        val added = repository.addCategory("np", "Added", parentId = null)
+        // 0 belongs to the ensured category; the new one must not collide.
+        val slots = db.categoryDao().getByPaper("np").map { it.sortOrder }
+        assertEquals(2, slots.distinct().size)
+        assertTrue(added.let { id -> db.categoryDao().getById(id)!!.sortOrder > 0 })
+    }
+
+
+    // ---- outline gestures: nest into, promote out, reparent, rename ----
+
+    private fun nestedPaper(): Unit = runBlocking {
+        repository.ensurePaperAndCategory("og", "Outline Paper", "og-x", "X")
+        val c2 = repository.addCategory("og", "Y", parentId = null)
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "og-qx", categoryId = "og-x",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("X?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "og-qy", categoryId = c2,
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Y?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+    }
+
+    @Test
+    fun nestingIntoTheSiblingAboveKeepsTheQuestionOrder() = runBlocking {
+        nestedPaper()
+        val yId = db.categoryDao().getByPaper("og").first { it.title == "Y" }.id
+        assertTrue(repository.nestCategoryIntoSibling(yId))
+        // Hierarchy changed, position did not: the outline -> gesture.
+        assertEquals(listOf("og-qx", "og-qy"), repository.getQuestionsForPaper("og").map { it.id })
+        val yRow = db.categoryDao().getByPaper("og").first { it.title == "Y" }
+        assertEquals("og-x", yRow.parentId)
+        // Every slot still unique.
+        assertEquals(2, db.categoryDao().getByPaper("og").map { it.sortOrder }.distinct().size)
+        // Promote back out: still no visual movement.
+        assertTrue(repository.promoteCategoryOutOfParent(yId))
+        assertEquals(null, db.categoryDao().getByPaper("og").first { it.title == "Y" }.parentId)
+        assertEquals(listOf("og-qx", "og-qy"), repository.getQuestionsForPaper("og").map { it.id })
+    }
+
+    @Test
+    fun promoteIsRefusedForRoots() = runBlocking {
+        nestedPaper()
+        val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
+        assertTrue(!repository.promoteCategoryOutOfParent(xId))
+    }
+
+    @Test
+    fun reparentRefusesCyclesAndRenamesWork() = runBlocking {
+        nestedPaper()
+        val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
+        val yId = db.categoryDao().getByPaper("og").first { it.title == "Y" }.id
+        // Nest Y under X, then X cannot become a child of its own child.
+        assertTrue(repository.nestCategoryIntoSibling(yId))
+        assertTrue(!repository.reparentCategory(xId, yId))
+        // Rename works.
+        assertTrue(repository.renameCategory(yId, "Yed"))
+        assertEquals("Yed", db.categoryDao().getById(yId)!!.title)
+        // And the top level is reachable again.
+        assertTrue(repository.reparentCategory(yId, null))
+        assertEquals(null, db.categoryDao().getById(yId)!!.parentId)
+    }
+
     @Test
     fun getByCategoriesMatchesThePerCategoryFetch() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")

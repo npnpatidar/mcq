@@ -23,10 +23,10 @@ format (papers, categories, bookmarks, history) and is documented in
 
 | Screen | What it does |
 |---|---|
-| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Settings, per-paper category trees (reorderable), test-by-category, JSON import |
-| Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
-| Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume |
-| Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. SM-2 schedules the next review (see below) |
+| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), test-by-category, JSON import |
+| Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); passage groups render with their shared context above the first member; edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
+| Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume; passage members always carry their passage above the stem and move as one block |
+| Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. SM-2 schedules the next review (see below); a passage member shows its passage above the question |
 | Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
@@ -39,7 +39,18 @@ format (papers, categories, bookmarks, history) and is documented in
 A question has: text, optional question image, 2+ options (each with id, text, optional
 image), a set of correct option ids (empty = no answer key, multiple = multi-correct),
 **marks** (weight, default 1), explanation text, optional explanation image, difficulty,
-tags, and an owning category.
+tags, an owning category, and an optional passage (shared reading context — see
+[Reading passages](#reading-passages)).
+
+### Reading passages (comprehension sets)
+
+A passage groups several questions that read from the same context. The passage holds the
+title, body and optional image; members are ordinary questions pointing at it. The grouping is
+enforced where it must be: a test keeps members contiguous, shuffling moves the whole block,
+and a drill samples whole blocks (the header shows "N asked, M shown" when a block overshoots
+the requested count). Study and Browse show the passage as context only — each member keeps
+its own schedule, bookmarks and stats. Edit assignments in the question editor's passage
+picker; create, reorder and delete passages from the drawer's Passages screen.
 
 Editor validation (shared by Save and Prev/Next): non-blank text, at least 2 options,
 no blank option. Buttons stay disabled until the form is valid. Invalid marks fall back
@@ -227,6 +238,7 @@ One question per block, built from literal marker text at the **start of a line*
 | Options | `(a)` … `(j)` | lowercase only, at least four, up to ten per question |
 | Answer | `Ans.` | case-sensitive, trailing period included |
 | Explanation | `Exp:` | case-sensitive, trailing colon included. **Optional** — see below |
+| Passage | `Passage:` | optional, case-insensitive. Starts a shared reading context; see [Reading passages](#reading-passages) |
 
 The stem, every option and the answer are mandatory. A document missing any of them is
 **rejected in full** with the offending question number, rather than silently losing
@@ -265,6 +277,67 @@ options name them back — statements numbered `(i)`–`(iv)` (options parenthes
 bare), and assertion questions that letter their statements `(a)`–`(d)` and then their
 code options `(a)`–`(d)` too (`सही कूट चुनिए`). The answer keys the options, never
 the statements.
+
+### The `Passage:` marker
+
+Comprehension sets need their context, so a line starting with `Passage:` (case-insensitive)
+marks the start of one. Everything from that line to the next `N.)` question — or the next
+`Passage:` — is the passage body, and every question after the marker belongs to that passage.
+Questions before the first `Passage:` stay standalone, and the `N.)` split is untouched:
+
+```
+1.) A standalone question before any passage marker.
+(a) one
+(b) two
+(c) three
+(d) four
+Ans. a
+Passage: The water cycle
+Rain fills rivers; the sun lifts the water back.
+2.) What drives evaporation?
+(a) Solar heat
+(b) Moonlight
+(c) Wind
+(d) Tides
+Ans. a
+Exp: Solar heat lifts water vapour.
+3.) Where does rain collect?
+(a) Rivers
+(b) Space
+(c) Clouds
+(d) Ice
+Ans. a
+Exp: Rainwater gathers in rivers.
+```
+
+Here question 1 stays standalone and questions 2 and 3 share the passage, always appearing
+together.
+
+**Rules, precisely:**
+
+- **Marker** — a paragraph starting with `Passage:` (any case: `passage:`, `PASSAGE:`). It
+  must start its own line; text mid-line never triggers it.
+- **Title** — everything after `Passage:` on the same line becomes the passage title.
+  A blank title falls back to "Passage".
+- **Body** — the paragraphs between the marker line and the first question are the passage
+  body. It can span multiple paragraphs and carry **tables, images and formulas** exactly like
+  a question can; all of it is shown above the members everywhere the passage appears.
+- **Membership** — a question belongs to the passage of the most recent `Passage:` marker
+  before it. A second `Passage:` starts a new group; questions after it leave the first one.
+- **Numbering** — the `N.)` numbers are labels only; members may continue the sequence
+  (2, 3, 4…) or restart it — the app renumbers per its own order.
+- **Placement** — a passage lives in the same category as its questions (the import puts all
+  members under the first member's category, one category per Word file), and members are
+  stored contiguously so they occur together in Browse, tests and every export.
+- **Edge cases** — a passage with no questions after it imports as an unassigned passage
+  (assign members later from the question editor); the last question's `Exp:` can even be
+  empty. A `Passage:` line inside a table cell does not start a passage — markers are
+  paragraph-level.
+
+In the app the passage is shown above each member everywhere the question
+appears — tests keep the whole group as one unbreakable block through shuffling and drills,
+study shows it whenever a member comes due, and every document export prints it once above
+the group so each question reads in context.
 
 A complete, valid document:
 
@@ -339,7 +412,8 @@ A Word import always creates **one paper** titled `Imported Questions` holding *
 titled `Uncategorized`. Papers, categories, per-question marks, difficulty and tags cannot be
 expressed in a Word document, so every question arrives with `marks` 1, difficulty `medium` and
 no tags. Re-importing the same document merges into that paper by title, so edits update in
-place instead of duplicating.
+place instead of duplicating. `Passage:` blocks become passages of that category and their
+questions are assigned to them (see [Reading passages](#reading-passages)).
 
 ### If a .docx is rejected
 
@@ -398,6 +472,11 @@ an answer key.
     }],
     "questions": [ /* optional top-level questions, kept in an "Uncategorized" category */ ]
   }],
+  "passages": [{
+    "id": "passage-1", "title": "The water cycle",
+    "elements": [{ "type": "text", "content": "Rain fills rivers." }],
+    "image": null, "categoryId": "cat-science"
+  }],
   "bookmarks": ["q-s1"],
   "attempts": [ /* full backups only; restored with history, see below */ ],
   "scheduling": { /* optional: SM-2 card state keyed by question id */
@@ -411,6 +490,87 @@ an answer key.
 `bookmarks`, `attempts` and `scheduling` are optional and ignored by foreign files. Paper and
 category ids are optional too — a missing paper id is generated, and a missing question id is
 derived from the question's content so re-imports line up.
+
+### Reading passages in JSON
+
+A passage is a top-level object in the `passages` array; questions point at it by id with
+`"passageId"`. The full shape:
+
+```json
+{
+  "version": 1,
+  "papers": [{
+    "id": "p1", "title": "Geography set",
+    "categories": [{
+      "id": "cat-rivers", "title": "Rivers",
+      "questions": [{
+        "id": "q-r1",
+        "question_elements": [
+          { "type": "text", "content": "According to the passage, what fills rivers?" }
+        ],
+        "options_elements": {
+          "a": [{ "type": "text", "content": "Rain" }],
+          "b": [{ "type": "text", "content": "Snow" }],
+          "c": [{ "type": "text", "content": "Fog" }],
+          "d": [{ "type": "text", "content": "Dew" }]
+        },
+        "correctOptionIds": ["a"],
+        "explanation_elements": [{ "type": "text", "content": "The passage opens with rain." }],
+        "difficulty": "easy", "marks": 1, "tags": ["passage"],
+        "passageId": "passage-rivers"
+      }, {
+        "id": "q-r2",
+        "question_elements": [{ "type": "text", "content": "A standalone question." }],
+        "options_elements": {
+          "a": [{ "type": "text", "content": "One" }],
+          "b": [{ "type": "text", "content": "Two" }],
+          "c": [{ "type": "text", "content": "Three" }],
+          "d": [{ "type": "text", "content": "Four" }]
+        },
+        "correctOptionIds": ["a"]
+      }]
+    }]
+  }],
+  "passages": [{
+    "id": "passage-rivers",
+    "title": "The water cycle",
+    "categoryId": "cat-rivers",
+    "image": null,
+    "elements": [
+      { "type": "text", "content": "Rain fills rivers; the sun lifts the water back." },
+      { "type": "table", "content": [
+        ["Step", "What happens", "Example"],
+        ["Evaporation", "Liquid becomes vapour", "A puddle drying on a road"]
+      ] }
+    ]
+  }]
+}
+```
+
+**Passage object fields:**
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | The id members point at with `"passageId"`; must be unique within the file |
+| `title` | no | Shown on the passage card and in exports; blank falls back to "Passage" |
+| `elements` | no | Body content — the same `question_elements` shapes: `text`, `table`, `image`, `formula` |
+| `image` | no | An image data-URI shown under the body |
+| `categoryId` | no | The passage's home category; the importer defaults it to the first member's category |
+
+**Question side:** `"passageId"` on a question is optional — missing (or null) means standalone.
+`passageId` joins the question's content hash, so reassigning a passage resets that question's
+study progress exactly like editing its text.
+
+**Rules the app enforces on import:**
+
+- **One category per group.** Members are folded into the passage's category (the first
+  member's, when the passage declares none), so the group can always occur together. A file
+  that scatters members across categories still imports — the strays are moved in.
+- **The `passages` array is global to the file**, so a backup of several papers carries every
+  passage once, with members in each paper referencing them.
+- **Round trips are lossless**: export writes the array and every member's `passageId`; the
+  Anki deck embeds the passage in each member's payload; re-importing restores the grouping.
+  `sample_paper.json`'s "Reading Passages" category is the canonical worked example.
 
 **3. Legacy aliases.** Every level accepts common variants:
 
@@ -511,16 +671,17 @@ respects the active filter; Import uses preview order). The top bar shows positi
 ## Export formats (per paper, per category, bookmarks)
 
 Tapping Export on a paper — or the share icon on a category row or the Bookmarks
-screen — asks for one of six formats (Settings keeps a JSON full backup):
+screen — asks for one of seven formats (Settings keeps a JSON full backup):
 
 | Format | Contents |
 |---|---|
 | JSON (images inline) | Canonical schema, data-URI images in place. **Re-importable.** |
 | ZIP (JSON + images) | `paper.json` (same schema) + `images/img001.jpg…` referenced by relative path; identical bytes deduped; remote URLs left as-is. Re-imports as questions, but the image files won't resolve back. |
-| Web page (answers shown) | Self-contained `.html`: inline CSS, embedded images, correct options highlighted, answers + explanations visible. Non-default marks shown per question. |
+| Web page (answers shown) | Self-contained `.html`: inline CSS, embedded images, correct options highlighted, answers + explanations visible. Non-default marks shown per question. A passage group prints its passage once, above the members. |
 | Web page (quiz mode) | Same page with answers hidden: per-question **Show answer** toggles plus Show/Hide-all, inline JS, no network needed (`file://` works). Suggested filename `*-quiz.html`. |
-| PDF (answers inline) | A4 via framework `PdfDocument`: questions, ✓/○ options, answers under each question, embedded images scaled to page width, page numbers. |
+| PDF (answers inline) | A4 via framework `PdfDocument`: questions, ✓/○ options, answers under each question, embedded images scaled to page width, page numbers. A passage group prints its passage once, above the members. |
 | PDF (answer key at end) | Questions print unmarked; all answers + explanations move to an **Answer Key** section for self-testing. Suggested filename `*-answer-key.pdf`. |
+| Anki (.apkg) | Schema-11 package for Anki import; the passage is prepended to the front of each member card and travels in the structured payload, so re-importing the deck here restores the grouping. |
 
 Quirks: nested category trees render flat; remote-URL images render as an `[image: url]` line in PDF (no offline fetch); filenames are sanitized from the paper/category title. Category exports include descendants; bookmark exports group by source paper and keep original ids (re-import merges).
 

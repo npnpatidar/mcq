@@ -43,12 +43,20 @@ data class TestUiState(
     val autoAdvance: Boolean = false,
     val mistakesOnly: Boolean = false,
     val isDrill: Boolean = false,
+    /** The requested drill count; a passage block may push [questions] past it. */
+    val drillRequested: Int = 0,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
     val timeWarning: String? = null,
-    val bookmarked: Set<String> = emptySet()
+    val bookmarked: Set<String> = emptySet(),
+    /** Passages for this session's questions, keyed by id, for the header card. */
+    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
 ) {
     val currentQuestion: Question? get() = questions.getOrNull(currentIndex)
+
+    /** The passage the question on screen belongs to, or null when standalone. */
+    val currentPassage: com.mcqapp.domain.Passage?
+        get() = currentQuestion?.passageId?.let { passages[it] }
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
     val isCurrentRevealed: Boolean get() = currentQuestion?.id in revealed
 }
@@ -120,7 +128,10 @@ class TestViewModel(
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
                 val seed = Random.nextLong()
-                val ordered = Shuffle.shuffleAttempt(questions, seed, shuffleQ, shuffleO)
+                // Block-aware: passage members move as one block, so a
+                // comprehension set is never split by the shuffle.
+                val ordered = com.mcqapp.domain.PassageBlocks
+                    .shuffleAttempt(questions, seed, shuffleQ, shuffleO)
                 if (shuffleQ || shuffleO) {
                     Logger.i("TESTVM", "Shuffled attempt: seed=$seed, " +
                         "questions=$shuffleQ, options=$shuffleO")
@@ -129,7 +140,9 @@ class TestViewModel(
                 val drilled = if (isDrill) {
                     val seed = Random.nextLong()
                     Logger.i("TESTVM", "Drill: sampling $drillCount of ${ordered.size}, seed=$seed")
-                    com.mcqapp.domain.Drill.sample(ordered, drillCount, seed)
+                    // Whole blocks are taken, so the result may overshoot the
+                    // requested count when a passage does not fit the cut.
+                    com.mcqapp.domain.PassageBlocks.sample(ordered, drillCount, seed)
                 } else {
                     ordered
                 }
@@ -144,18 +157,25 @@ class TestViewModel(
                 val advance = repository.autoAdvance().first()
                 if (practice && !strict) Logger.i("TESTVM", "Practice mode on: live feedback enabled")
                 if (strict) Logger.i("TESTVM", "Strict exam mode on: aids hidden")
+                // Context for the session's passage members; a session without
+                // passages pays one empty-list read and no query at all.
+                val passages = repository.getPassagesByIds(
+                    drilled.mapNotNull { it.passageId }.distinct()
+                ).associateBy { it.id }
                 _state.update {
                     it.copy(
                         loading = false,
                         paper = paper,
                         questions = drilled,
+                        passages = passages,
                         totalSeconds = totalSeconds,
                         remainingSeconds = totalSeconds,
                         practiceMode = practice,
                         strictMode = strict,
                         autoAdvance = advance,
                         mistakesOnly = mistakesOnly,
-                        isDrill = isDrill
+                        isDrill = isDrill,
+                        drillRequested = if (isDrill) drillCount else 0
                     )
                 }
                 checkResumeOffer()

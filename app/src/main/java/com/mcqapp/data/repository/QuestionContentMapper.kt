@@ -2,9 +2,11 @@ package com.mcqapp.data.repository
 
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.OptionEntity
+import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.Difficulty
+import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.parseContentElements
@@ -21,14 +23,21 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
 
     val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * The single content hash. [passageId] joined it on purpose: reassigning a
+     * passage changes the hash, so that question's `card_state` resets —
+     * exactly what an edit of its text does. Leaving the passage out would let
+     * a question change passages without the schedule ever noticing.
+     */
     fun computeContentHash(
         text: String,
         optionTexts: List<String>,
-        optionImages: List<String?>
+        optionImages: List<String?>,
+        passageId: String? = null
     ): String =
         // Single source of truth lives in ContentHash; this wrapper keeps the
         // existing call sites readable.
-        com.mcqapp.data.io.ContentHash.of(text, optionTexts, optionImages)
+        com.mcqapp.data.io.ContentHash.of(text, optionTexts, optionImages, passageId)
 
     /**
      * Mirrors the hash written by [QuestionStore.saveQuestion] so a stored card
@@ -37,7 +46,8 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
     fun contentHashOf(question: Question): String = computeContentHash(
         question.text,
         question.options.map { it.text },
-        question.options.map { it.image }
+        question.options.map { it.image },
+        question.passageId
     )
 
     suspend fun toDomain(entity: QuestionEntity): Question {
@@ -54,7 +64,8 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
             explanationImage = entity.explanationImage,
             difficulty = Difficulty.fromLabel(entity.difficulty),
             marks = entity.marks,
-            tags = entity.tags.split(",").filter { it.isNotBlank() }
+            tags = entity.tags.split(",").filter { it.isNotBlank() },
+            passageId = entity.passageId
         )
     }
 
@@ -77,8 +88,29 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
                 explanationImage = entity.explanationImage,
                 difficulty = Difficulty.fromLabel(entity.difficulty),
                 marks = entity.marks,
-                tags = entity.tags.split(",").filter { it.isNotBlank() }
+                tags = entity.tags.split(",").filter { it.isNotBlank() },
+                passageId = entity.passageId
             )
         }
     }
+
+    // ---- passages ----
+
+    fun toPassage(entity: PassageEntity): Passage = Passage(
+        id = entity.id,
+        categoryId = entity.categoryId,
+        title = entity.title,
+        elements = entity.text.parseContentElements(json),
+        image = entity.image,
+        sortOrder = entity.sortOrder
+    )
+
+    fun toEntity(passage: Passage): PassageEntity = PassageEntity(
+        id = passage.id,
+        categoryId = passage.categoryId,
+        title = passage.title,
+        text = passage.elements.toContentJson(json),
+        image = passage.image,
+        sortOrder = passage.sortOrder
+    )
 }

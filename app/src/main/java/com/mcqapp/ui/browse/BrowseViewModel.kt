@@ -41,8 +41,15 @@ class BrowseViewModel(
         val created = android.os.SystemClock.elapsedRealtime()
         var firstLoad = true
         viewModelScope.launch {
-            val paper = repository.getPaper(paperId)
-            _state.value = _state.value.copy(paper = paper)
+            // Observed, not fetched once: a category moved in the drawer or
+            // inline rewrites the tree this screen's sibling math and section
+            // labels read — a stale snapshot left the second move computed
+            // against the pre-move order.
+            repository.observePapers().collect { papers ->
+                papers.firstOrNull { it.id == paperId }?.let { paper ->
+                    _state.value = _state.value.copy(paper = paper)
+                }
+            }
         }
         viewModelScope.launch {
             try {
@@ -61,6 +68,10 @@ class BrowseViewModel(
                     }
                     _state.update { it.copy(loading = false, questions = questions) }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Navigating away cancels the collector; that is the flow of
+                // things, not a failure worth an error line.
+                throw e
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Observation of questions for paper $paperId FAILED", e)
             }
@@ -97,6 +108,33 @@ class BrowseViewModel(
     fun swapQuestions(firstId: String, secondId: String) {
         viewModelScope.launch {
             repository.swapQuestionOrder(firstId, secondId)
+        }
+    }
+
+    /**
+     * Applies a computed category order (a block-aware move from
+     * PassageReorder: a row jump over a passage group, or a whole group
+     * swapping with its neighbour). The id list is the category's complete
+     * new order; the store refuses a mismatched set.
+     */
+    fun renumberCategory(categoryId: String, orderedIds: List<String>) {
+        viewModelScope.launch {
+            if (!repository.renumberQuestions(categoryId, orderedIds)) {
+                Logger.w("BROWSEVM", "renumberCategory($categoryId) refused: stale order?")
+            }
+        }
+    }
+
+    /**
+     * Moves a whole category among its siblings — the double-arrow buttons
+     * on a section's first and last row. Same semantics as the drawer's
+     * category reorder.
+     */
+    fun moveCategory(categoryId: String, delta: Int) {
+        viewModelScope.launch {
+            if (!repository.moveCategory(categoryId, delta)) {
+                Logger.i("BROWSEVM", "moveCategory($categoryId, $delta) refused: no sibling that way")
+            }
         }
     }
 

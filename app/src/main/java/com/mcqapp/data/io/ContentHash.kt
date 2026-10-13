@@ -12,20 +12,33 @@ import kotlinx.serialization.json.Json
  * Single source of truth for duplicate detection. Both the import preview
  * (ImportViewModel) and the actual import (Importer) must agree on what
  * counts as a duplicate, so they share this hash: question text + option
- * texts + option images. Correct answers / explanations do not affect it.
+ * texts + option images + passage id. Correct answers / explanations do not
+ * affect it.
+ *
+ * [passageId] deliberately changed the signature (v9): a question that moved
+ * between passages must read as edited content to the study layer, which
+ * resets its card instead of keeping an interval earned on other context.
+ * The passage TEXT never enters the hash — editing a passage is not editing
+ * any of its members' content.
  */
 object ContentHash {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun of(text: String, optionTexts: List<String>, optionImages: List<String?>): String {
-        val raw = text + "|" + optionTexts.joinToString(",") + "|" + optionImages.joinToString(",")
+    fun of(
+        text: String,
+        optionTexts: List<String>,
+        optionImages: List<String?>,
+        passageId: String? = null
+    ): String {
+        val raw = text + "|" + optionTexts.joinToString(",") + "|" +
+            optionImages.joinToString(",") + "|" + (passageId ?: "")
         val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
     fun of(dto: QuestionDto): String =
-        of(dto.text, dto.options.map { it.text }, dto.options.map { it.image })
+        of(dto.text, dto.options.map { it.text }, dto.options.map { it.image }, dto.passageId)
 
     /**
      * Whether [dto] is *genuinely* the same question as the stored row and its

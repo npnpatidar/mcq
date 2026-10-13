@@ -93,6 +93,55 @@ class QuestionSearchTest {
     }
 
     @Test
+    fun aMemberIsFoundThroughItsPassageText() {
+        val member = questions[0].copy(passageId = "p1")
+        val passageBodies = mapOf("p1" to "The water cycle\nRain fills rivers.")
+        // The query only exists in the passage body, not on the question.
+        assertEquals(
+            listOf("q1"),
+            QuestionSearch.filter(listOf(member), "rivers", passageBodies = passageBodies)
+                .map { it.id }
+        )
+        // The passage title is searchable too.
+        assertEquals(
+            listOf("q1"),
+            QuestionSearch.filter(listOf(member), "water cycle", passageBodies = passageBodies)
+                .map { it.id }
+        )
+        // Without the passage body the question must not match.
+        assertEquals(
+            emptyList<Question>(),
+            QuestionSearch.filter(listOf(member), "rivers")
+        )
+    }
+
+    @Test
+    fun aPassageHitDoesNotLeakIntoTheOptionsScope() {
+        val member = questions[0].copy(passageId = "p1")
+        val passageBodies = mapOf("p1" to "Rain fills rivers.")
+        assertEquals(
+            emptyList<Question>(),
+            QuestionSearch.filter(
+                listOf(member), "rivers", QuestionSearch.Scope.OPTIONS, passageBodies
+            )
+        )
+    }
+
+    @Test
+    fun aStandaloneQuestionIsUnaffectedByPassageBodies() {
+        val passageBodies = mapOf("p1" to "Rain fills rivers.")
+        assertEquals(
+            listOf("q2"),
+            QuestionSearch.filter(questions, "france", passageBodies = passageBodies)
+                .map { it.id }
+        )
+        assertEquals(
+            emptyList<Question>(),
+            QuestionSearch.filter(questions, "rivers", passageBodies = passageBodies)
+        )
+    }
+
+    @Test
     fun uncategorizedMatchesTitleAndBlankIds() {
         val mixed = listOf(
             Question(

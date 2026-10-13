@@ -2,6 +2,7 @@ package com.mcqapp.data.local
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +66,9 @@ interface CategoryDao {
     @Query("UPDATE categories SET paperId = :paperId, title = :title, parentId = :parentId, sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateFields(id: String, paperId: String, title: String, parentId: String?, sortOrder: Int)
 
+    @Query("UPDATE categories SET parentId = :parentId WHERE id = :id")
+    suspend fun updateParent(id: String, parentId: String?)
+
     @Query("UPDATE categories SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
 
@@ -88,6 +92,68 @@ data class QuestionCategoryRow(
 )
 
 @Dao
+interface PassageDao {
+    @Query("SELECT * FROM passages WHERE id = :id")
+    suspend fun getById(id: String): PassageEntity?
+
+    @Query("SELECT * FROM passages WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<PassageEntity>
+
+    @Query("SELECT * FROM passages WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
+    suspend fun getByCategory(categoryId: String): List<PassageEntity>
+
+    @Query("SELECT * FROM passages")
+    suspend fun getAll(): List<PassageEntity>
+
+    @Query("SELECT * FROM passages")
+    fun observeAll(): Flow<List<PassageEntity>>
+
+    /** How many questions still point at the passage, for the delete guard. */
+    @Query("SELECT COUNT(*) FROM questions WHERE passageId = :passageId")
+    suspend fun memberCount(passageId: String): Int
+
+    /** Member count per passage in one grouped read, for the list screen. */
+    @Query("SELECT passageId, COUNT(*) AS cnt FROM questions WHERE passageId IS NOT NULL GROUP BY passageId")
+    suspend fun memberCountsByPassage(): Map<
+        @MapColumn(columnName = "passageId") String,
+        @MapColumn(columnName = "cnt") Int
+        >
+
+    /**
+     * Which questions still point at [passageId], for reassignment and
+     * reparenting. Ordered so sequential placement after a move preserves the
+     * group's category order deterministically, not by rowid accident.
+     */
+    @Query("SELECT id FROM questions WHERE passageId = :passageId ORDER BY sortOrder, rowid")
+    suspend fun memberIds(passageId: String): List<String>
+
+    /** A question's membership; queried only inside saveQuestion's transaction. */
+    @Query("UPDATE questions SET passageId = :passageId WHERE id = :questionId")
+    suspend fun assignToMember(questionId: String, passageId: String?)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(passage: PassageEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(passage: PassageEntity)
+
+    @Query("UPDATE passages SET categoryId = :categoryId, title = :title, text = :text, image = :image, sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateFields(
+        id: String,
+        categoryId: String,
+        title: String,
+        text: String,
+        image: String?,
+        sortOrder: Int
+    )
+
+    @Query("UPDATE passages SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Int)
+
+    @Query("DELETE FROM passages WHERE id = :id")
+    suspend fun deleteById(id: String)
+}
+@Dao
 interface QuestionDao {
     @Query("SELECT * FROM questions WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
     suspend fun getByCategory(categoryId: String): List<QuestionEntity>
@@ -96,7 +162,16 @@ interface QuestionDao {
         "SELECT questions.* FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "ORDER BY categories.rowid, questions.sortOrder, questions.rowid"
+            // Same (sortOrder, title) order as CategoryDao.getByPaper, so the
+            // category grouping here matches the drawer's tree order (and
+            // getQuestionsForPaper, which feeds it the ids in that order).
+            // The (sortOrder, title) pair is what makes the grouping total:
+            // addCategory assigns the next slot, but title stays as the
+            // defensive tiebreak for any residual equal sortOrders (legacy
+            // data), reproducing getByPaper's order. Within a category, the
+            // question's own (sortOrder, rowid) keeps its internal order.
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
     )
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 
@@ -161,6 +236,29 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?
 
+    /**
+     * The passage member with the highest position in [categoryId] other than
+     * [excludeId] — the anchor a newly assigned member is placed after, so a
+     * group stays contiguous when it grows.
+     */
+    @Query(
+        "SELECT * FROM questions WHERE passageId = :passageId " +
+            "AND categoryId = :categoryId AND id != :excludeId " +
+            "ORDER BY sortOrder DESC, rowid DESC LIMIT 1"
+    )
+    suspend fun lastMemberInCategory(
+        passageId: String,
+        categoryId: String,
+        excludeId: String
+    ): QuestionEntity?
+
+    /** All members of a passage, grouped by their own category order. */
+    @Query(
+        "SELECT * FROM questions WHERE passageId = :passageId " +
+            "ORDER BY categoryId, sortOrder, rowid"
+    )
+    suspend fun getMembersByPassage(passageId: String): List<QuestionEntity>
+
     @Query("SELECT * FROM questions WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<QuestionEntity>
 
@@ -201,23 +299,46 @@ interface QuestionDao {
     /**
      * `:fragment` is the longest single word of the query; `:query` is the whole
      * thing. Either may match, so a phrase split by markup still reaches the
-     * in-memory filter that understands it.
+     * in-memory filter that understands it. The passage UNION keeps scope
+     * QUESTION consistent with [searchIncludingOptions] and the in-memory
+     * filter: a question whose only match is in its passage's text must not be
+     * dropped by the prefilter here while the filter accepts it elsewhere.
      */
-    @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' ESCAPE '\\' OR tags LIKE '%' || :query || '%' ESCAPE '\\' OR text LIKE '%' || :fragment || '%' ESCAPE '\\' OR tags LIKE '%' || :fragment || '%' ESCAPE '\\' ORDER BY rowid DESC")
+    @Query(
+        "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
+            "WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
+            "(SELECT id FROM passages WHERE text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "ORDER BY q.qrowid DESC"
+    )
     suspend fun search(query: String, fragment: String): List<QuestionEntity>
 
     @Query(
-        "SELECT DISTINCT questions.* FROM questions LEFT JOIN options " +
+        "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions LEFT JOIN options " +
             "ON options.questionId = questions.id WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.text LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "ORDER BY questions.rowid DESC"
+            "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
+            "(SELECT id FROM passages WHERE text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "ORDER BY q.qrowid DESC"
     )
     suspend fun searchIncludingOptions(query: String, fragment: String): List<QuestionEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)
+
+    @Query("UPDATE questions SET contentHash = :contentHash WHERE id = :questionId")
+    suspend fun updateContentHash(questionId: String, contentHash: String)
 
     /** Whole-selection insert; callers use it for minted-fresh copy ids. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)

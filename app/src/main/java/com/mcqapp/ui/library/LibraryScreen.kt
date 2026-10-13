@@ -59,6 +59,7 @@ import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
+import com.mcqapp.util.displayName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,6 +100,7 @@ fun LibraryScreen(
     var showCategoryDialog by remember { mutableStateOf(false) }
     var categoryDialogPaperId by remember { mutableStateOf("") }
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
+    var editingCategory by remember { mutableStateOf<com.mcqapp.domain.CategoryNode?>(null) }
     var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
     var pendingExportCategory by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
@@ -193,13 +195,18 @@ fun LibraryScreen(
             if (isZip && com.mcqapp.data.docx.isDocxArchive(bytes)) {
                 Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
+                // The file name becomes the paper title (the document rarely
+                // names its own paper). The provider's display name, not the
+                // opaque row id a content Uri carries in lastPathSegment.
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
+                    context.contentResolver.displayName(picked)
                 navController.navigate("import/direct")
                 return@launch
             }
             if (isZip) {
                 // The bytes are already in hand; hand them over rather than
                 // reading the same archive a second time.
-                val title = picked.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg"
+                val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
                 viewModel.importAnkiPackage(title) { bytes }
                 return@launch
             }
@@ -236,6 +243,10 @@ fun LibraryScreen(
                         scope.launch { drawerState.close() }
                         navController.navigate("search")
                     },
+                    onOpenPassages = {
+                        scope.launch { drawerState.close() }
+                        navController.navigate("passages")
+                    },
                     onOpenSettings = {
                         scope.launch { drawerState.close() }
                         navController.navigate("settings")
@@ -247,7 +258,6 @@ fun LibraryScreen(
                         )
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
-                    onDeleteCategory = { id -> viewModel.deleteCategory(id) }
                 )
             }
         }
@@ -374,6 +384,16 @@ fun LibraryScreen(
                                 },
                                 onMoveCategory = { categoryId, delta ->
                                     viewModel.moveCategory(categoryId, delta)
+                                },
+                                onNestCategory = { categoryId ->
+                                    viewModel.nestCategory(categoryId)
+                                },
+                                onPromoteCategory = { categoryId ->
+                                    viewModel.promoteCategory(categoryId)
+                                },
+                                onEditCategory = { node -> editingCategory = node },
+                                onDeleteCategory = { categoryId ->
+                                    viewModel.deleteCategory(categoryId)
                                 }
                             )
                         }
@@ -402,6 +422,18 @@ fun LibraryScreen(
             onSave = { title, parent ->
                 viewModel.addCategory(categoryDialogPaperId, title, parent)
                 showCategoryDialog = false
+            }
+        )
+    }
+
+    editingCategory?.let { category ->
+        EditCategoryDialog(
+            category = category,
+            papers = papers,
+            onDismiss = { editingCategory = null },
+            onSave = { title, parent ->
+                viewModel.editCategory(category.id, title, parent)
+                editingCategory = null
             }
         )
     }

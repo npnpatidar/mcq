@@ -557,28 +557,28 @@ class SpacedRepetitionTest {
     // --- retention ---
 
     @Test
-    fun `retention is full before the due date`() {
-        val card = CardState(questionId = "q", intervalDays = 5, dueAt = now + 2 * day, reps = 2)
-        assertEquals(1.0, sched.retention(card, now), 0.0001)
-    }
-
-    @Test
-    fun `retention decays as the due date passes`() {
-        val card = CardState(questionId = "q", intervalDays = 5, dueAt = now, reps = 2)
-        val late = sched.retention(card, now + 5 * day)
-        assertTrue(late < 1.0)
-        assertTrue(late in 0.0..1.0)
-    }
-
-    @Test
-    fun `retention is zero for a card still learning`() {
-        assertEquals(0.0, sched.retention(sched.initial("q"), now), 0.0001)
-        val relearning = sched.next(
-            graduate(listOf(ReviewGrade.GOOD)),
-            ReviewGrade.AGAIN,
-            now
+    fun `retention starts full and decays with elapsed time`() {
+        val card = CardState(
+            questionId = "q", intervalDays = 5, dueAt = now + 2 * day, reps = 2,
+            stability = 5.0, lastReviewedAt = now
         )
-        assertEquals(0.0, sched.retention(relearning, now), 0.0001)
+        assertEquals(1.0, sched.retention(card, now), 0.0001)
+        val later = sched.retention(card, now + day)
+        assertTrue(later < 1.0)
+        assertTrue(later in 0.0..1.0)
+    }
+
+    @Test
+    fun `retention is zero for a card that has no memory`() {
+        assertEquals(0.0, sched.retention(sched.initial("q"), now), 0.0001)
+    }
+
+    @Test
+    fun `a lapse collapses stability instead of zeroing it`() {
+        val before = graduate(listOf(ReviewGrade.GOOD))
+        val lapsed = sched.next(before, ReviewGrade.AGAIN, now)
+        assertTrue(lapsed.stability < before.stability)
+        assertTrue(lapsed.stability > 0.0)
     }
 
     // --- reset ---

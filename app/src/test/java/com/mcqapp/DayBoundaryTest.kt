@@ -181,7 +181,8 @@ class DayBoundaryTest {
     fun `the boundary hour is configurable end to end`() {
         val sched = scheduler(boundaryHour = 5)
         val next = sched.next(CardState("q1"), ReviewGrade.GOOD, midnightUtc)
-        assertEquals(midnightUtc + 5 * hour, next.dueAt)
+        // Two days from the study day that began at 05:00 the morning before.
+        assertEquals(midnightUtc + 29 * hour, next.dueAt)
     }
 
     @Test

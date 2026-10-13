@@ -192,7 +192,9 @@ class FsrsSchedulerTest {
 
         assertEquals(CardStateKind.RELEARNING, relearning.state)
         assertEquals(0, relearning.intervalDays)
-        assertEquals(review.dueAt + 2 * dayMs + SchedulerConfig().relearnMs, relearning.dueAt)
+        // The failure schedules from the failure moment, never snapped: the
+        // review was graded at t0 and failed two days later.
+        assertEquals(at(2.0) + SchedulerConfig().relearnMs, relearning.dueAt)
         assertEquals(1, relearning.lapses)
 
         // Still recovering: another failure repeats the step, no new lapse.

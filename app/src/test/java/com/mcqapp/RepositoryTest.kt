@@ -153,9 +153,9 @@ class RepositoryTest {
             "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, dwellSeconds = 5L, now = 1000L
         )
         assertEquals(1, next.reps)
-        // FSRS S₀(Good) = 1.29 days at the default 0.9 retention → 1 day.
-        assertEquals(1, next.intervalDays)
-        assertEquals(com.mcqapp.domain.DayBoundary.dueAfter(1000L, 1, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(1000L)), next.dueAt)
+        // FSRS S₀(Good) = 2.31 days at the default 0.9 retention → 2 days.
+        assertEquals(2, next.intervalDays)
+        assertEquals(com.mcqapp.domain.DayBoundary.dueAfter(1000L, 2, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(1000L)), next.dueAt)
         val stored = db.cardStateDao().get("p1", "q1")
         assertEquals(1, stored!!.reps)
         assertEquals(1, stored.reviewCount)
@@ -181,7 +181,7 @@ class RepositoryTest {
         assertEquals(3, first.rating)
         assertEquals(1000L, first.reviewedAt)
         assertEquals(5L, first.elapsedSeconds!!)
-        assertEquals(1, first.intervalDaysAfter!!)
+        assertEquals(2, first.intervalDaysAfter!!)
         assertEquals("no state exists before a first review", null, first.stateBefore)
         assertEquals("REVIEW", logs[1].stateBefore)
     }

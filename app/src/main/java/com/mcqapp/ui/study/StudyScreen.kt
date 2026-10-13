@@ -443,7 +443,7 @@ private fun QuestionCard(
                     )
                     Spacer(Modifier.height(6.dp))
                 }
-                StudyReason.DUE -> {}
+                StudyReason.DUE, null -> {}
             }
             // Bumped a step: the stem is the primary reading text and was set
             // small relative to the option markers around it.

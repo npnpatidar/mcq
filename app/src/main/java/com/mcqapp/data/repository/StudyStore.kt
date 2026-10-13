@@ -5,7 +5,6 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getForQuestionsChunked
-import com.mcqapp.data.local.getGradedResultsForQuestionsChunked
 import com.mcqapp.data.io.ContentHash
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
@@ -47,7 +46,11 @@ internal class StudyStore(
         reps = reps,
         lapses = lapses,
         leech = leech,
-        lastReviewedAt = lastReviewedAt
+        lastReviewedAt = lastReviewedAt,
+        difficulty = difficulty,
+        stability = stability,
+        state = cardState,
+        reviewCount = reviewCount
     )
 
     private fun com.mcqapp.domain.CardState.toEntity(paperId: String, hash: String) =
@@ -61,13 +64,19 @@ internal class StudyStore(
             lapses = lapses,
             leech = leech,
             lastReviewedAt = lastReviewedAt,
-            contentHash = hash
+            contentHash = hash,
+            difficulty = difficulty,
+            stability = stability,
+            cardState = state,
+            reviewCount = reviewCount
         )
 
     /**
-     * Today's study queue for a paper, seeding any card that has never been
-     * studied from existing attempt history so an existing install starts warm
-     * instead of treating every question as new.
+     * Today's study queue for a paper. Cards the store has never seen start
+     * new: attempt history no longer re-seeds schedules (it would resurrect
+     * the SM-2 states the FSRS switch wiped, and its inferred grades were a
+     * guess at the learner's memory, not a record of it). Imports remain the
+     * only warm-start vectors.
      */
     suspend fun getStudyQueue(
         paperId: String,
@@ -144,10 +153,9 @@ internal class StudyStore(
     }
 
     /**
-     * Resolves every question's card state, seeding anything missing from
-     * attempt history and resetting questions whose text has changed. Both the
-     * queue and the library badges go through here, so the badge can never
-     * disagree with what the queue would actually offer.
+     * Resolves every question's card state, resetting questions whose text has
+     * changed. Both the queue and the library badges go through here, so the
+     * badge can never disagree with what the queue would actually offer.
      */
     private suspend fun resolveStudyStates(
         paperId: String,
@@ -156,7 +164,6 @@ internal class StudyStore(
     ): Map<String, com.mcqapp.domain.CardState> {
         val scheduler = com.mcqapp.domain.Sm2Scheduler(config)
         val stored = db.cardStateDao().getByPaper(paperId).associate { it.questionId to it }
-        val history = historySignalsFor(paperId, questionInputs.map { it.id }, config)
         val states = mutableMapOf<String, com.mcqapp.domain.CardState>()
         val seeded = mutableListOf<CardStateEntity>()
         for (q in questionInputs) {
@@ -174,11 +181,9 @@ internal class StudyStore(
                     states[q.id] = existing.toDomain()
                 }
             } else {
-                val rebuilt = history[q.id]?.let {
-                    com.mcqapp.domain.Study.rebuild(scheduler, q.id, it)
-                } ?: scheduler.initial(q.id)
-                states[q.id] = rebuilt
-                seeded += rebuilt.toEntity(paperId, q.contentHash)
+                val fresh = scheduler.initial(q.id)
+                states[q.id] = fresh
+                seeded += fresh.toEntity(paperId, q.contentHash)
             }
         }
         if (seeded.isNotEmpty()) {
@@ -251,32 +256,5 @@ internal class StudyStore(
                 "reps=${next.reps}, lapses=${next.lapses}, leech=${next.leech}"
         )
         return next
-    }
-
-    /**
-     * Graded history for the given questions, newest last. Rows with no
-     * selection or no answer key carry no memory signal, so they are skipped.
-     */
-    private suspend fun historySignalsFor(
-        paperId: String,
-        questionIds: List<String>,
-        config: com.mcqapp.domain.SchedulerConfig = com.mcqapp.domain.SchedulerConfig()
-    ): Map<String, List<com.mcqapp.domain.ReviewSignal>> {
-        if (questionIds.isEmpty()) return emptyMap()
-        val attemptsById = db.attemptDao().getByPaper(paperId).associateBy { it.id }
-        if (attemptsById.isEmpty()) return emptyMap()
-        val signals = mutableMapOf<String, MutableList<com.mcqapp.domain.ReviewSignal>>()
-        // Scoped to this paper and these question ids in SQL, rather than
-        // loading every attempt and every result row in the database.
-        val rows = db.attemptDao().getGradedResultsForQuestionsChunked(paperId, questionIds)
-        for (row in rows) {
-            val attempt = attemptsById[row.attemptId] ?: continue
-            val grade = com.mcqapp.domain.Study.inferGrade(
-                row.isCorrect, row.dwellSeconds, config = config
-            )
-            signals.getOrPut(row.questionId) { mutableListOf() }
-                .add(com.mcqapp.domain.ReviewSignal(row.questionId, grade, attempt.finishedAt))
-        }
-        return signals
     }
 }

@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.mcqapp.domain.CardStateKind
 
 @Entity(tableName = "papers")
 data class PaperEntity(
@@ -143,7 +144,51 @@ data class CardStateEntity(
     val lapses: Int,
     val leech: Boolean,
     val lastReviewedAt: Long,
-    val contentHash: String
+    val contentHash: String,
+    /**
+     * FSRS memory state (v10). [difficulty] is the 1..10 estimate of how hard
+     * the material is for this learner and [stability] the days until recall
+     * probability falls to the benchmark retention; both zero for a card that
+     * has never been studied under FSRS.
+     */
+    val difficulty: Double = 0.0,
+    val stability: Double = 0.0,
+    val cardState: CardStateKind = CardStateKind.NEW,
+    /** Total FSRS reviews ever applied. Mirrored into [reps]. */
+    val reviewCount: Int = 0
+)
+
+/**
+ * One graded study review, appended and never edited: the immutable history
+ * the FSRS scheduler's future optimizer will need, and today's record of what
+ * actually happened to a card. Deliberately local-only and autoincrement-keyed
+ * (the `attempts` convention, not the spec's UUIDs), and scoped to the paper
+ * like every other per-question row.
+ */
+@Entity(
+    tableName = "review_log",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("questionId", "reviewedAt"), Index("paperId")]
+)
+data class ReviewLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val paperId: String,
+    val questionId: String,
+    /** 1=Again, 2=Hard, 3=Good, 4=Easy. */
+    val rating: Int,
+    val reviewedAt: Long,
+    val elapsedSeconds: Long? = null,
+    val stateBefore: String? = null,
+    val stabilityAfter: Double? = null,
+    val difficultyAfter: Double? = null,
+    val intervalDaysAfter: Int? = null
 )
 
 @Entity(tableName = "bookmarks")

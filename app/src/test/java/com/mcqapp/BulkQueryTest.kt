@@ -118,13 +118,10 @@ class BulkQueryTest {
         )
         repository.saveQuestion(question("q1"))
         repository.saveQuestion(question("q2", categoryId = "c2"))
-        repository.saveAttempt(
-            paperId = "p1", paperTitle = "Paper",
-            questions = listOf(repository.getQuestion("q1")!!),
-            selections = mapOf("q1" to setOf("q1-a")),
-            negativeMarking = 0.0, durationSeconds = 5, finishedAt = 1L
+        repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L
         )
-        // p2 has no attempts at all: its card must be seeded as brand new
+        // p2 has no reviews at all: its card must read as untouched
         // even though p1 was reviewed.
         repository.getStudyCounts("p1")
         repository.getStudyCounts("p2")
@@ -132,10 +129,10 @@ class BulkQueryTest {
         val reviewed = repository.cardState("p1", "q1")!!
         val untouched = repository.cardState("p2", "q2")!!
         assertTrue("p1's question was reviewed", reviewed.reps > 0)
-        // If p1's attempt had leaked into p2's scan, this card would have been
-        // rebuilt from those signals and would not be untouched.
+        // If p1's scheduling had leaked into p2's scan, this card would show
+        // that review instead of staying untouched.
         assertEquals("p2's question was never reviewed", 0, untouched.reps)
-        // And p2's history must not have seeded a card for p1's other question.
+        // And p2's read must not have materialized a card for p1's other question.
         assertEquals(null, repository.cardState("p1", "q2"))
     }
 

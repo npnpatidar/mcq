@@ -174,10 +174,40 @@ class MigrationTest {
                 AppDatabase.MIGRATION_5_6,
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
-                AppDatabase.MIGRATION_8_9
+                AppDatabase.MIGRATION_8_9,
+                AppDatabase.MIGRATION_9_10
             )
             .allowMainThreadQueries()
             .build()
+
+    /**
+     * Builds a genuine v9 file: the v6 schema plus the *real* 6->7, 7->8 and
+     * 8->9 migrations, then a seeded SM-2 schedule. Replaying the production
+     * [androidx.room.migration.Migration] objects instead of copying their DDL
+     * keeps this fixture from going stale when those statements change.
+     */
+    private fun createV9WithSeed() {
+        createV6(insertPaper())
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO card_state (paperId,questionId,ease,intervalDays,dueAt," +
+                    "reps,lapses,leech,lastReviewedAt,contentHash) " +
+                    "VALUES ('p1','q1',2.5,3,1234,2,1,0,1000,'hash1')"
+            )
+            raw.version = 9
+        }
+    }
 
     @Test
     fun `migration 6 to 7 creates the card_state table`() {
@@ -352,7 +382,68 @@ class MigrationTest {
     }
 
     @Test
-    fun `full chain 3 to 8 migrates cleanly and keeps data`() {
+    fun `migration 9 to 10 wipes card_state and lands FSRS columns and review_log`() {
+        runBlocking {
+            createV9WithSeed()
+            val db = openMigrated()
+            // Opening ran 9->10 and Room validated the final schema.
+            // The wipe: an SM-2 schedule must not be misread as FSRS memory.
+            assertTrue(db.cardStateDao().getByPaper("p1").isEmpty())
+            // The four new columns are live and round-trip.
+            db.cardStateDao().upsert(
+                sampleCard().copy(
+                    difficulty = 6.5,
+                    stability = 12.0,
+                    cardState = com.mcqapp.domain.CardStateKind.REVIEW,
+                    reviewCount = 4
+                )
+            )
+            val stored = db.cardStateDao().get("p1", "q1")!!
+            assertEquals(6.5, stored.difficulty, 0.0001)
+            assertEquals(12.0, stored.stability, 0.0001)
+            assertEquals(com.mcqapp.domain.CardStateKind.REVIEW, stored.cardState)
+            assertEquals(4, stored.reviewCount)
+            // review_log exists and accepts a graded review.
+            db.reviewLogDao().insert(
+                com.mcqapp.data.local.ReviewLogEntity(
+                    paperId = "p1",
+                    questionId = "q1",
+                    rating = 3,
+                    reviewedAt = 5000,
+                    elapsedSeconds = 12,
+                    stateBefore = "new",
+                    stabilityAfter = 3.5,
+                    difficultyAfter = 5.0,
+                    intervalDaysAfter = 3
+                )
+            )
+            val history = db.reviewLogDao().historyForQuestion("q1")
+            assertEquals(1, history.size)
+            assertEquals(3, history.first().rating)
+            assertEquals(3.5, history.first().stabilityAfter!!, 0.0001)
+            assertEquals(1, db.reviewLogDao().countByPaper("p1"))
+            db.close()
+        }
+    }
+
+    @Test
+    fun `review_log rows are removed with their paper`() {
+        runBlocking {
+            createV9WithSeed()
+            val db = openMigrated()
+            db.reviewLogDao().insert(
+                com.mcqapp.data.local.ReviewLogEntity(
+                    paperId = "p1", questionId = "q1", rating = 1, reviewedAt = 100
+                )
+            )
+            db.paperDao().deleteById("p1")
+            assertTrue(db.reviewLogDao().historyForQuestion("q1").isEmpty())
+            db.close()
+        }
+    }
+
+    @Test
+    fun `full chain 3 to 10 migrates cleanly and keeps data`() {
         runBlocking {
             context.deleteDatabase("chain-test.db")
             val chainFile = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(
@@ -382,11 +473,12 @@ class MigrationTest {
                     AppDatabase.MIGRATION_5_6,
                     AppDatabase.MIGRATION_6_7,
                     AppDatabase.MIGRATION_7_8,
-                    AppDatabase.MIGRATION_8_9
+                    AppDatabase.MIGRATION_8_9,
+                    AppDatabase.MIGRATION_9_10
                 )
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->5->6->7->8; Room validates the final schema.
+            // One open exercises 3->4->...->10; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)

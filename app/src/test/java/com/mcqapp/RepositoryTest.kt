@@ -251,20 +251,10 @@ class RepositoryTest {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))
         repository.saveQuestion(question("q2", setOf("q2-a")))
-        // A past correct answer must be reflected in the badge even before any
-        // study session has run, otherwise the library promises cards that the
-        // queue then refuses to show.
-        val questions = repository.getQuestionsForPaper("p1")
-        repository.saveAttempt(
-            paperId = "p1",
-            paperTitle = "Paper",
-            questions = questions,
-            selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("q2-b")),
-            negativeMarking = 0.0,
-            durationSeconds = 30,
-            finishedAt = 5000L,
-            dwellSeconds = mapOf("q1" to 15L, "q2" to 15L)
-        )
+        // The badge and the queue read the same resolve path, so a review
+        // recorded straight away must show up in both, before any session runs.
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 5000L)
+        repository.recordStudyReview("p1", "q2", com.mcqapp.domain.ReviewGrade.AGAIN, now = 5000L)
         val counts = repository.getStudyCounts("p1", now = 6000L)
         // q1 graded correct -> scheduled into the future, so not new and not due.
         // q2 graded wrong -> relearning later today, so also not due yet.
@@ -323,7 +313,7 @@ class RepositoryTest {
     }
 
     @Test
-    fun historySeedsNewCardsSoAnInstallStartsWarm() = runBlocking {
+    fun attemptHistoryDoesNotSeedCards() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))
         val questions = repository.getQuestionsForPaper("p1")
@@ -337,18 +327,14 @@ class RepositoryTest {
             finishedAt = 5000L,
             dwellSeconds = mapOf("q1" to 15L)
         )
-        // The seeded card is scheduled for tomorrow, so it is not due yet.
-        assertTrue(repository.getStudyQueue("p1", now = 6000L).isEmpty())
-        val stored = db.cardStateDao().get("p1", "q1")!!
-        assertEquals("history must seed a card, not leave it new", 1, stored.reps)
-        // Aligned to the study-day boundary, so not a flat 24h after the attempt.
-        val due = com.mcqapp.domain.DayBoundary.dueAfter(5000L, 1, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(5000L))
-        assertEquals(due, stored.dueAt)
-        // And it becomes due once that date passes.
-        val later = due
-        val queue = repository.getStudyQueue("p1", now = later)
-        assertEquals(1, queue.size)
-        assertEquals(com.mcqapp.domain.StudyReason.DUE, queue.first().reason)
+        // The FSRS switch wiped SM-2 schedules, and attempt history must not
+        // resurrect them: its inferred grades were a guess at the learner's
+        // memory, not a record of it. The card stays new until it is reviewed
+        // under FSRS (or warmed by a JSON/Anki import).
+        val card = repository.getStudyQueue("p1", now = 6000L).first()
+        assertEquals(com.mcqapp.domain.StudyReason.NEW, card.reason)
+        assertEquals(0, card.state.reps)
+        assertEquals(0, card.state.reviewCount)
     }
 
     @Test

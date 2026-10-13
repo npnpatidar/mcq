@@ -74,13 +74,6 @@ data class StudyCard(
     val state: CardState
 )
 
-/** One graded answer, used to rebuild a card's schedule from history. */
-data class ReviewSignal(
-    val questionId: String,
-    val grade: ReviewGrade,
-    val at: Long
-)
-
 /**
  * A forgetting model: given a card and a grade, what happens next.
  *
@@ -356,21 +349,6 @@ object Study {
         if (selection != correctOptionIds) return ReviewGrade.AGAIN
         if (isGuess) return ReviewGrade.HARD
         return inferGrade(isCorrect = true, dwellSeconds = dwellSeconds, config = config)
-    }
-
-    /**
-     * Replays graded history in order to rebuild a card's schedule, so an
-     * existing install starts warm instead of treating everything as new.
-     */
-    fun rebuild(
-        scheduler: Scheduler,
-        questionId: String,
-        signals: List<ReviewSignal>
-    ): CardState {
-        val ordered = signals.filter { it.questionId == questionId }.sortedBy { it.at }
-        return ordered.fold(scheduler.initial(questionId)) { state, signal ->
-            scheduler.next(state, signal.grade, signal.at)
-        }
     }
 
     /**

@@ -3,7 +3,6 @@ package com.mcqapp
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.ReviewGrade
-import com.mcqapp.domain.ReviewSignal
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.Sm2Scheduler
 import com.mcqapp.domain.Study
@@ -256,52 +255,6 @@ class SpacedRepetitionTest {
     @Test
     fun `normal correct answers infer good`() {
         assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 15))
-    }
-
-    // --- rebuild from history ---
-
-    @Test
-    fun `rebuild replays history in time order`() {
-        val signals = listOf(
-            ReviewSignal("q1", ReviewGrade.GOOD, now + 3000),
-            ReviewSignal("q1", ReviewGrade.GOOD, now + 1000),
-            ReviewSignal("q1", ReviewGrade.GOOD, now + 2000)
-        )
-        val card = Study.rebuild(sched, "q1", signals)
-        val expected = graduate(
-            listOf(ReviewGrade.GOOD, ReviewGrade.GOOD, ReviewGrade.GOOD),
-            start = now + 1000
-        )
-        assertEquals(expected.intervalDays, card.intervalDays)
-        assertEquals(expected.reps, card.reps)
-        // The last review happened at now+3000, so the due date is measured
-        // from that review, not from the first one.
-        assertEquals(DayBoundary.dueAfter(now + 3000, 15, zoneOffsetMillis = 0), card.dueAt)
-    }
-
-    @Test
-    fun `rebuild ignores other questions`() {
-        val signals = listOf(
-            ReviewSignal("q1", ReviewGrade.GOOD, now),
-            ReviewSignal("q2", ReviewGrade.AGAIN, now)
-        )
-        assertEquals(0, Study.rebuild(sched, "q1", signals).lapses)
-        assertEquals(1, Study.rebuild(sched, "q1", signals).reps)
-    }
-
-    @Test
-    fun `rebuild with no history yields a new card`() {
-        assertTrue(Study.rebuild(sched, "q1", emptyList()).isNew)
-    }
-
-    @Test
-    fun `rebuild reflects a lapse in existing history`() {
-        val signals = listOf(
-            ReviewSignal("q1", ReviewGrade.GOOD, now),
-            ReviewSignal("q1", ReviewGrade.AGAIN, now + 1000),
-            ReviewSignal("q1", ReviewGrade.GOOD, now + 2000)
-        )
-        assertEquals(1, Study.rebuild(sched, "q1", signals).lapses)
     }
 
     // --- queue ---

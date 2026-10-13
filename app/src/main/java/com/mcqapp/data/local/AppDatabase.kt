@@ -18,9 +18,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AttemptEntity::class,
         QuestionResultEntity::class,
         CardStateEntity::class,
+        ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun attemptDao(): AttemptDao
     abstract fun cardStateDao(): CardStateDao
+    abstract fun reviewLogDao(): ReviewLogDao
     abstract fun passageDao(): PassageDao
 
     companion object {
@@ -152,6 +154,53 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Moves scheduling to FSRS (v10): the memory columns land on
+         * `card_state`, the immutable `review_log` table is created, and every
+         * SM-2 schedule is wiped. The wipe is the decision, not a side effect:
+         * SM-2 ease/interval numbers are meaningless to the FSRS model, so
+         * carrying them over would fake a memory state no formula produced.
+         * Attempt history does not re-seed (that path is deleted), so the
+         * blank slate survives; JSON and Anki imports remain the only
+         * warm-start vectors.
+         *
+         * `rating` is INTEGER, not the plan's SMALLINT — SQLite gives SMALLINT
+         * INTEGER affinity anyway, and INTEGER is what Room expects for an
+         * Int field, so validation passes without a type converter.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE card_state ADD COLUMN difficulty REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE card_state ADD COLUMN stability REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE card_state ADD COLUMN cardState TEXT NOT NULL DEFAULT 'NEW'")
+                db.execSQL("ALTER TABLE card_state ADD COLUMN reviewCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("DELETE FROM card_state")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `review_log` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`paperId` TEXT NOT NULL, " +
+                        "`questionId` TEXT NOT NULL, " +
+                        "`rating` INTEGER NOT NULL, " +
+                        "`reviewedAt` INTEGER NOT NULL, " +
+                        "`elapsedSeconds` INTEGER, " +
+                        "`stateBefore` TEXT, " +
+                        "`stabilityAfter` REAL, " +
+                        "`difficultyAfter` REAL, " +
+                        "`intervalDaysAfter` INTEGER, " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_review_log_questionId_reviewedAt` " +
+                        "ON `review_log` (`questionId`, `reviewedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_review_log_paperId` " +
+                        "ON `review_log` (`paperId`)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -160,7 +209,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "mcq.db"
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8, MIGRATION_8_9
+                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
                 ).build().also { INSTANCE = it }
             }
     }

@@ -13,6 +13,17 @@ package com.mcqapp.domain
  * Every implementation must be pure and deterministic: no clock, no
  * randomness, no Android types.
  */
+/**
+ * Where a card sits in the FSRS learning pipeline.
+ *
+ * [NEW] has no memory yet; [LEARNING] is a first-exposure card recovering
+ * inside the same sitting; [REVIEW] is a graduated card on a multi-day FSRS
+ * interval; [RELEARNING] is a graduated card that was forgotten and is
+ * recovering. The kind drives state transitions and the candidate pools, not
+ * the math: stability and difficulty carry the memory.
+ */
+enum class CardStateKind { NEW, LEARNING, REVIEW, RELEARNING }
+
 data class CardState(
     val questionId: String,
     val ease: Double = SchedulerConfig().defaultEase,
@@ -21,7 +32,17 @@ data class CardState(
     val reps: Int = 0,
     val lapses: Int = 0,
     val leech: Boolean = false,
-    val lastReviewedAt: Long = 0L
+    val lastReviewedAt: Long = 0L,
+    /**
+     * FSRS memory state. [difficulty] is the 1..10 ease-of-recall estimate and
+     * [stability] the days until recall probability drops to the benchmark
+     * retention; both are zero for a card never studied.
+     */
+    val difficulty: Double = 0.0,
+    val stability: Double = 0.0,
+    val state: CardStateKind = CardStateKind.NEW,
+    /** Total grades ever applied, including failures. Mirrored into [reps]. */
+    val reviewCount: Int = 0
 ) {
     /**
      * Never studied: no reviews and no due date. An "Again" answer also leaves

@@ -11,7 +11,7 @@ sessions. No daily quotas, no session caps, no forced backlog clearing, no
 guilt messaging.
 
 - Baseline: `main` @ current HEAD (v10 schema work starts from DB version 9)
-- Supersedes `SCHEDULING-PARITY.md` Track E (which deferred exactly this work)
+- Supersedes the previous scheduling-parity plan (Track E deferred exactly this work)
 - Rules: one fix per commit; no commit mixes tracks; CI must stay green
 - Verify JVM locally with the AGENTS.md gradle command; Robolectric DB tests are
   CI-authoritative (native SQLite unsupported on this ARM64 host)
@@ -319,7 +319,7 @@ leeches-only, no quota blocking ever.
 | Interop | `data/io/{JsonDto,Exporter,Importer,LegacyParser}.kt`, `data/anki/*` (mapping only) |
 | UI | `ui/study/{StudyScreen,StudyViewModel}.kt`, `ui/settings/SettingsScreen.kt`, `ui/library/*` (badge fields) |
 | Tests | `app/src/test/...` (`FsrsSchedulerTest`, `MigrationTest`, `StudyQueueTest`, backup/an ki tests, ranking tests) |
-| Docs | `README.md` scheduling section; `SCHEDULING-PARITY.md` Track E marked superseded |
+| Docs | `README.md` scheduling section; `audit.md` tracks the branch's open findings |
 
 ---
 

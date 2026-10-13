@@ -60,6 +60,10 @@ suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String
     questionIds.toList().chunks().forEach { deleteByQuestions(it) }
 }
 
+suspend fun ReviewLogDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
+    questionIds.toList().chunks().forEach { deleteByQuestions(it) }
+}
+
 /**
  * Escapes [prefix] for a `LIKE :pattern ESCAPE '\\'` query so `%`, `_` and the
  * escape character itself match literally, then appends the wildcard: the

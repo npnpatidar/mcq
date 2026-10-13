@@ -69,12 +69,15 @@ class FsrsSchedulerTest {
 
     @Test
     fun repeatedGoodIntervalsMatchTheReferenceLadder() {
-        // py-fsrs test_review_card reviews Good at each card's due and records
-        // [0, 2, 11, 46, 163, 498]: the leading 0 is its learning-step ladder,
-        // which this port replaces with an immediate graduation. Replaying the
-        // same *history* — graduate, one same-day review, then each review
-        // exactly one interval after the last — reproduces the reference's
-        // difficulty lineage, so every later interval must match it exactly.
+        // This is the app's own ladder, NOT the reference's: without
+        // learning_steps the reference replay yields [2, 11, 46, 163, 497, …],
+        // so [2, 2, 11, 46, 163, 498] — the leading 2 being the app's immediate
+        // graduation plus one same-day review — has no reference vector to
+        // match. Each value was verified against a replay of the ported
+        // reference under this exact history (graduate, one same-day review,
+        // then each review one interval after the last); the values are asserted
+        // so a change to the port shows up here, not as a claim of reference
+        // parity. The canonical vector above is the parity test.
         val scheduler = exactScheduler()
         var state = scheduler.initial("q")
         var now = t0

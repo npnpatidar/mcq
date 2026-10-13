@@ -31,7 +31,7 @@ drill refusal, export selection, and delete confirmation. Add:
 | Session counter | "N reviewed this session" increments; **no** fixed-queue progress bar (previous `index/queue` UI is gone) |
 | Empty state action | with nothing due and new cards off, the empty state offers "Introduce new cards" (`StudyScreen.kt:659`) |
 
-Lessons from the previous D-track attempt (see `SCHEDULING-PARITY.md` D5):
+Lessons from the previous D-track attempt (scheduling parity):
 assert via test tag and `useUnmergedTree = true`, and assert existence, not
 `assertIsDisplayed` — layout/visibility assumptions failed under CI.
 

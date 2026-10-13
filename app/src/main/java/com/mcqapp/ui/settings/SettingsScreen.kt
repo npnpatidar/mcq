@@ -525,8 +525,7 @@ private fun AnkiSchedulerSection(
             }
             Text(
                 stringResource(R.string.sm_2_scheduling_for_study_these_match_anki_s_review_options_) +
-                    "the same values work in both apps. Changes apply to the next " +
-                    "review; cards already scheduled keep their current date.",
+                    stringResource(R.string.sm_2_scheduling_tail_the_same_values_work_in_both_apps),
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(12.dp))
@@ -550,9 +549,9 @@ private fun AnkiSchedulerSection(
 
             // --- the everyday pull-based controls ---
 
-            Text("Study", style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.study_section), style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp))
-            Text("Target retention", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.target_retention), style = MaterialTheme.typography.bodyMedium)
             Slider(
                 value = config.desiredRetention.toFloat(),
                 onValueChange = { onChange(config.copy(desiredRetention = it.toDouble())) },
@@ -561,12 +560,11 @@ private fun AnkiSchedulerSection(
                 steps = 21
             )
             Text(
-                "How reliably you want to recall cards when they come due. " +
-                    "Higher asks for shorter intervals and more reviews.",
+                stringResource(R.string.target_retention_help),
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(12.dp))
-            Text("Ranking mode", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.ranking_mode), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
@@ -574,19 +572,18 @@ private fun AnkiSchedulerSection(
                     onClick = {
                         onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.MEMORY_FIRST))
                     },
-                    label = { Text("Memory first") }
+                    label = { Text(stringResource(R.string.memory_first)) }
                 )
                 FilterChip(
                     selected = config.studyMode == com.mcqapp.domain.StudyMode.EXPLORE_NEW,
                     onClick = {
                         onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.EXPLORE_NEW))
                     },
-                    label = { Text("Explore new cards") }
+                    label = { Text(stringResource(R.string.explore_new_cards)) }
                 )
             }
             Text(
-                "Memory first clears what is due before showing anything new. " +
-                    "Explore surfaces a new card every few reviews.",
+                stringResource(R.string.ranking_mode_help),
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(12.dp))
@@ -595,10 +592,9 @@ private fun AnkiSchedulerSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Introduce new cards")
+                    Text(stringResource(R.string.introduce_new_cards))
                     Text(
-                        "Switch off for review-only sessions. Many new cards " +
-                            "increase future review load.",
+                        stringResource(R.string.introduce_new_cards_help),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -610,8 +606,8 @@ private fun AnkiSchedulerSection(
             Spacer(Modifier.height(12.dp))
 
             AnkiNumberRow(
-                label = "Easy answer threshold",
-                help = "Auto-graded Easy below this response time",
+                label = stringResource(R.string.easy_answer_threshold),
+                help = stringResource(R.string.easy_answer_threshold_help),
                 value = config.fastSeconds,
                 step = 1.0,
                 range = 1f..600f,
@@ -619,8 +615,8 @@ private fun AnkiSchedulerSection(
                 onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
             )
             AnkiNumberRow(
-                label = "Hard answer threshold",
-                help = "Auto-graded Hard above this response time",
+                label = stringResource(R.string.hard_answer_threshold),
+                help = stringResource(R.string.hard_answer_threshold_help),
                 value = config.slowSeconds,
                 step = 1.0,
                 range = 1f..3600f,
@@ -631,7 +627,7 @@ private fun AnkiSchedulerSection(
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.the_response_time_thresholds_only_apply_when_rebuilding_a_sc) +
-                    "from past test attempts. In Study you grade every card yourself.",
+                    stringResource(R.string.response_time_thresholds_study_tail),
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(12.dp))

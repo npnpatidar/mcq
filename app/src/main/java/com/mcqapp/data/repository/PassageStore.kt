@@ -14,8 +14,8 @@ import kotlinx.coroutines.flow.map
  * assign/unassign members. Split out of [McqRepository] like the other
  * collaborators so the facade stays a table of contents.
  *
- * Deleting a passage that still has members is refused (D5 in
- * PASSAGE-QUESTIONS.md): the caller unassigns first, so no question ever
+ * Deleting a passage that still has members is refused: the caller
+ * unassigns first, so no question ever
  * loses its context by surprise. This mirrors `deleteCategory`, which
  * reparents children rather than orphaning them.
  */

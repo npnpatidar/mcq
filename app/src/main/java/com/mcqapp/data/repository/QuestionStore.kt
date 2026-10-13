@@ -231,11 +231,12 @@ internal class QuestionStore(
 
     suspend fun deleteQuestion(questionId: String) {
         Logger.d("REPO", "deleteQuestion($questionId)")
-        // One transaction: the question row, its schedule and its bookmark
-        // must disappear together.
+        // One transaction: the question row, its schedule, its bookmark and
+        // its review log must disappear together.
         db.withTransaction {
             db.questionDao().deleteById(questionId)
             db.cardStateDao().deleteByQuestion(questionId)
+            db.reviewLogDao().deleteByQuestion(questionId)
             // No FK on bookmarks: backup restores tolerate dangling bookmark ids,
             // so stale ones are removed here instead of by cascade.
             db.bookmarkDao().remove(questionId)
@@ -250,6 +251,9 @@ internal class QuestionStore(
                 db.questionDao().deleteById(it)
                 db.cardStateDao().deleteByQuestion(it)
             }
+            // The log has no FK to questions, so it is swept in the same bulk
+            // form rather than per id — the log must not outlive its card.
+            if (questionIds.isNotEmpty()) db.reviewLogDao().deleteByQuestions(questionIds)
             if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
         }
     }
@@ -292,6 +296,9 @@ internal class QuestionStore(
                     .map { it.id }
                 if (crossPaperIds.isNotEmpty()) {
                     db.cardStateDao().deleteByQuestionsChunked(crossPaperIds)
+                    // The reset wipes history too: the old paper's log rows
+                    // would otherwise describe a schedule that no longer exists.
+                    db.reviewLogDao().deleteByQuestionsChunked(crossPaperIds)
                 }
             }
         }

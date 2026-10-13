@@ -3,7 +3,7 @@ package com.mcqapp.domain
 import kotlin.random.Random
 
 /**
- * Passage blocks for test sessions (D1/D2 in PASSAGE-QUESTIONS.md).
+ * Passage blocks for test sessions.
  *
  * Togetherness is a correctness requirement in a test: a comprehension
  * question cannot be answered without its passage on screen. So members stay

@@ -108,7 +108,17 @@ object AnkiScheduling {
         val inferred = if (lastReviewedAtMillis > 0L) {
             lastReviewedAtMillis
         } else {
-            max(0L, dueAt - intervalDays * DAY_MS).coerceAtMost(nowMillis)
+            // The review we cannot see sits at Anki's own anchor: the card's
+            // due date back-dated by its interval. A card due today with no
+            // review log carries that anchor before the epoch, so never
+            // fabricate 0 — the engine reads a zeroed last-review on a card
+            // with memory as "reviewed ~its interval ago", and anchoring at
+            // "now minus the interval" says the same thing in a real
+            // timestamp instead of relying on that sentinel.
+            max(
+                nowMillis - intervalDays * DAY_MS,
+                max(0L, dueAt - intervalDays * DAY_MS)
+            ).coerceAtMost(nowMillis)
         }
         // FSRS conversion (spec §6): the card kind follows Anki's own type, the
         // interval doubles as the stability (at the benchmark retention a
@@ -151,9 +161,8 @@ object AnkiScheduling {
      * The package is written with `crt` = export time, so a review card's due
      * day is simply its interval from today: 0 means due today, and a card that
      * is already overdue is also 0, which is what Anki shows for an overdue
-     * card. Days are rounded, not truncated, because Anki's own day boundary
-     * rolls over at 04:00 and an exact multiple of 24 hours is not a
-     * reconstruction of that.
+     * card. Schedules are anchored to day starts on both sides, so the day
+     * count below is exact; no rounding is involved.
      */
     fun toAnki(state: CardScheduleDto, crtSeconds: Long, nowMillis: Long = System.currentTimeMillis()): AnkiCardSchedule {
         val factor = (state.ease * 1000).roundToInt().coerceIn(
@@ -183,7 +192,9 @@ object AnkiScheduling {
         // not from the creation instant. Due dates are aligned to that boundary
         // too, so a card due at 04:00 the next morning is one day out even when
         // the package is written at 23:00; measuring from the creation instant
-        // and rounding would call it due today.
+        // and rounding would call it due today. Every schedule this app writes
+        // anchors its due dates to a day start, so the division below is an
+        // exact whole number of days and truncation loses nothing.
         val daysFromExport = ((state.dueAt - startOfDay(crtSeconds * 1000L)).toDouble() / DAY_MS)
             .toLong().coerceAtLeast(0L).toInt()
         return AnkiCardSchedule(

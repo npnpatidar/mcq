@@ -127,17 +127,16 @@ internal class StudyStore(
         reviewsSinceNew: Int = 0,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.StudyCard? {
-        val questionList = questions.getQuestionsForPaper(paperId)
-        if (questionList.isEmpty()) return null
+        // The pull runs after every graded card, so it pays the badge's
+        // reduced price: ids and content hashes only, never the option text
+        // or the answer key — the pull never reads them.
+        val inputs = studyInputs(paperId)
+        if (inputs.isEmpty()) return null
         val config = settings.schedulerConfigNow()
-        val states = resolveStudyStates(
-            paperId,
-            questionList.map { StudyInput(it.id, mapper.contentHashOf(it)) },
-            config
-        )
+        val states = resolveStudyStates(paperId, inputs, config)
         return com.mcqapp.domain.Study.selectNext(
             fsrs(config),
-            questionList.map { it.id },
+            inputs.map { it.id },
             states,
             now,
             config.studyMode,
@@ -152,22 +151,26 @@ internal class StudyStore(
      */
     suspend fun getStudyEligibility(
         paperId: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /**
+         * Overrides the stored introduce-new-cards toggle. The empty state asks
+         * the opposite question ("would there be new cards if it were on?"),
+         * so it can offer exactly the flip. Null reads the config.
+         */
+        introduceNewCards: Boolean? = null
     ): com.mcqapp.domain.StudyEligibility {
-        val questionList = questions.getQuestionsForPaper(paperId)
-        if (questionList.isEmpty()) return com.mcqapp.domain.StudyEligibility()
+        // Same reduced price as the pull and the badge (finding 2 of the
+        // scheduling audit): ids and hashes, never option text or the key.
+        val inputs = studyInputs(paperId)
+        if (inputs.isEmpty()) return com.mcqapp.domain.StudyEligibility()
         val config = settings.schedulerConfigNow()
-        val states = resolveStudyStates(
-            paperId,
-            questionList.map { StudyInput(it.id, mapper.contentHashOf(it)) },
-            config
-        )
+        val states = resolveStudyStates(paperId, inputs, config)
         return com.mcqapp.domain.Study.eligibility(
             fsrs(config),
-            questionList.map { it.id },
+            inputs.map { it.id },
             states,
             now,
-            config.introduceNewCards
+            introduceNewCards ?: config.introduceNewCards
         )
     }
 

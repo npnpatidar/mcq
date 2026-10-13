@@ -55,14 +55,11 @@ data class CardState(
     val reviewCount: Int = 0
 ) {
     /**
-     * Never studied: no reviews and no due date. An "Again" answer also leaves
-     * [reps] at zero, but it does set [dueAt], which keeps relearning cards out
-     * of the new-card limit so they still come back the same day.
+     * Never studied: no reviews and no due date. Any grade — Again included —
+     * leaves this false: FSRS gives the card a shorter interval and schedules
+     * it back into the same sitting, but it is no longer unread material.
      */
     val isNew: Boolean get() = reps == 0 && dueAt == 0L
-
-    /** Failed, waiting on a short relearning interval rather than a new card. */
-    val isLearning: Boolean get() = reps == 0 && dueAt != 0L
 
     /** Has a due date at all (new cards are due by definition, not by date). */
     val isScheduled: Boolean get() = dueAt != 0L

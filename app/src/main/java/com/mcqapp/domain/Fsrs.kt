@@ -70,11 +70,12 @@ class FsrsScheduler(
         // the reference implementation's day arithmetic, and the < 1 day test
         // below matches its floor-to-days boundary: 23.9h is a same-day
         // review, 24.1h is not.
-        val elapsedDays = if (state.lastReviewedAt == 0L) {
-            0.0
-        } else {
-            (now - state.lastReviewedAt).toDouble() / DAY_MS
-        }
+        // A card may carry memory without a last-review timestamp (an Anki
+        // import whose history is unknown): "no last review" on a card with
+        // memory means "reviewed about its interval ago, and due now", not
+        // "reviewed this instant" — so the same-day shortcut must not fire and
+        // the card takes the recall formula for a card due exactly on time.
+        val elapsedDays = elapsedDaysSinceLastReview(state, now)
 
         val stability = when {
             // First exposure: the formulas for never-studied memory.
@@ -150,9 +151,24 @@ class FsrsScheduler(
      * reference scheduler returns 0 for a never-reviewed card.
      */
     override fun retention(state: CardState, now: Long): Double {
-        if (state.stability <= 0.0 || state.lastReviewedAt == 0L) return 0.0
-        val elapsedDays = ((now - state.lastReviewedAt).toDouble() / DAY_MS).coerceAtLeast(0.0)
-        return retrievabilityOf(state.stability, elapsedDays)
+        if (state.stability <= 0.0) return 0.0
+        return retrievabilityOf(state.stability, elapsedDaysSinceLastReview(state, now))
+    }
+
+    /**
+     * Days since the card's last review, shared by [next] and [retention] so
+     * the two can never disagree about what "never reviewed" means.
+     */
+    private fun elapsedDaysSinceLastReview(state: CardState, now: Long): Double {
+        if (state.lastReviewedAt == 0L) {
+            // No timestamp at all: a genuinely new card has elapsed 0, while a
+            // card with memory was last reviewed ~its interval ago (it is due
+            // now with that interval, so elapsed = interval is what its own
+            // schedule claims) — retrievability lands on the retention target.
+            return if (state.stability > 0.0) state.intervalDays.toDouble().coerceAtLeast(1.0)
+            else 0.0
+        }
+        return ((now - state.lastReviewedAt).toDouble() / DAY_MS).coerceAtLeast(0.0)
     }
 
     override fun reset(state: CardState): CardState = initial(state.questionId)

@@ -412,17 +412,32 @@ interface CardStateDao {
 
 @Dao
 interface ReviewLogDao {
-    /** Appends one graded review; the log is never updated or deleted. */
+    /** Appends one graded review; a row is never updated once written. */
     @Insert
     suspend fun insert(log: ReviewLogEntity): Long
 
-    /** One question's review history, oldest first. */
+    /** One question's review history, oldest first. Exercised by the
+     *  repository tests; the optimizer will read it once it lands. */
     @Query("SELECT * FROM review_log WHERE questionId = :questionId ORDER BY reviewedAt ASC, id ASC")
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>
 
-    /** How many reviews a paper has logged; the future optimizer's gauge. */
+    /** How many reviews a paper has logged; the future optimizer's gauge.
+     *  Counted by the repository tests pending that optimizer. */
     @Query("SELECT COUNT(*) FROM review_log WHERE paperId = :paperId")
     suspend fun countByPaper(paperId: String): Int
+
+    /**
+     * Removes one question's logged reviews. The log is immutable per review,
+     * but it is not a graveyard: deleting a question, bulk-deleting or moving
+     * one across papers drops its schedule and its history in the same
+     * transaction, so the log never outlives the card it describes.
+     */
+    @Query("DELETE FROM review_log WHERE questionId = :questionId")
+    suspend fun deleteByQuestion(questionId: String)
+
+    /** The bulk form of [deleteByQuestion]; the caller keeps ids chunked. */
+    @Query("DELETE FROM review_log WHERE questionId IN (:questionIds)")
+    suspend fun deleteByQuestions(questionIds: Collection<String>): Int
 }
 
 @Dao

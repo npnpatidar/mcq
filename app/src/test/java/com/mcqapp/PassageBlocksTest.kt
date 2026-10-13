@@ -13,7 +13,7 @@ import org.junit.Test
  * Hard togetherness (the core requirement): members of a passage stay
  * contiguous, shuffle moves the block as one, and drill sampling takes whole
  * blocks with overshoot — plus the member-order stability decision (D2) and
- * the all-or-nothing drill rule (D1) from PASSAGE-QUESTIONS.md.
+ * the all-or-nothing drill rule (D1).
  */
 class PassageBlocksTest {
 

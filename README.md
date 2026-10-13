@@ -136,6 +136,9 @@ writes an attempt: it only schedules *when you should see a question again*.
 `review_log` recording every review beside it). Migration is automatic and preserves
 everything else. A card belongs to a paper, so deleting a paper, or a question, removes
 its schedule and its logged reviews; moving a question to another paper starts it fresh.
+One documented gap: JSON backups and Anki packages carry the schedules but *not* the
+`review_log` rows — the log is a local-only history (its rows are still cleaned up when
+their question is), pending the optimizer that will read it.
 
 **Roadmap.** The FSRS weights are the official unoptimized set; an optimizer that fits
 them to your own `review_log` is the natural next step, and the log is already being

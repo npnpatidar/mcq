@@ -43,7 +43,12 @@ class RepositoryTest {
     }
 
     @After
-    fun teardown() {
+    fun teardown() = runBlocking {
+        // Robolectric's DataStore delegate is one JVM-wide singleton with a
+        // file pinned to the first accessor: scheduler settings written here
+        // would leak into every later test process in the run. Reset before
+        // the database closes so test order cannot change what a pull serves.
+        repository.resetSchedulerConfig()
         db.close()
     }
 

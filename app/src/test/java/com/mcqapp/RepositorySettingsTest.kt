@@ -11,6 +11,7 @@ import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.StudyMode
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,6 +39,14 @@ class RepositorySettingsTest {
 
     private fun store(): SettingsStore =
         SettingsStore(ApplicationProvider.getApplicationContext<Context>())
+
+    @After
+    fun restoreDefaults() = runBlocking {
+        // The DataStore singleton is JVM-wide under Robolectric with the file
+        // pinned by the first accessor: a config written for one test would
+        // silently drive every later test in the run. Re-assert a blank slate.
+        store().resetSchedulerConfig()
+    }
 
     @Test
     fun aFreshStoreYieldsTheDocumentedDefaults() = runBlocking {
@@ -110,7 +119,9 @@ class RepositorySettingsTest {
         )
         val config = store.schedulerConfigNow()
         assertEquals(0.75, config.desiredRetention, 0.0001)
-        assertEquals(4, config.dayStartHour)
+        // sanitized() clamps the day start to the 0..23 range it can express:
+        // 99 lands on the ceiling, not on any "sensible" hour.
+        assertEquals(23, config.dayStartHour)
     }
 
     /**

@@ -3,7 +3,7 @@
 An offline-first Android app for practicing multiple-choice questions: build papers with
 recursive categories, import question banks from **Word (.docx)** or **JSON**, take timed
 tests with negative marking and per-question weights, study in practice/strict/mistakes
-modes, review explanations, track mastery over time, keep questions fresh with SM-2
+modes, review explanations, track mastery over time, keep questions fresh with FSRS-6
 spaced repetition, and export papers as JSON, ZIP, HTML, or PDF.
 
 - **Stack:** Kotlin, Jetpack Compose (Material 3), Room, Navigation-Compose, DataStore, Coil, kotlinx.serialization
@@ -26,7 +26,7 @@ format (papers, categories, bookmarks, history) and is documented in
 | Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), test-by-category, JSON import |
 | Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); passage groups render with their shared context above the first member; edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
 | Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume; passage members always carry their passage above the stem and move as one block |
-| Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. SM-2 schedules the next review (see below); a passage member shows its passage above the question |
+| Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. FSRS-6 schedules the next review (see below); a passage member shows its passage above the question |
 | Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
@@ -105,31 +105,41 @@ writes an attempt: it only schedules *when you should see a question again*.
   it. Between the two, a "Change grade" affordance edits the proposal — for the
   "knew it but misclicked" case — without writing twice. Leaving without Next loses
   the review, exactly as leaving manual mode without grading does.
-- **Scheduling is SM-2.** Good graduates a card to 1 day, then 6 days, then ~3× the
-  previous interval; Easy jumps to 4 days on the first review. Hard grows the interval by
-  the smaller of +1 day and +20%. Again drops the card to zero reps and re-queues it in
-  **10 minutes**, so a failed card still comes back the same session.
-- **Ease** starts at 2.5 and is clamped to 1.3–3.0. It drops on Again/Hard and rises on
-  Easy, so easy questions stretch out and hard ones come back more often.
-- **New-card limit** is 20 per paper per day; due and relearning cards are never counted
-  against it.
-- **Leeches** are cards failed 8 times or more. They are labelled `tricky` in the library
-  and are surfaced first in the queue.
+- **Scheduling is FSRS-6** (the open-spaced-repetition three-component model, ported from
+  the reference implementation and validated against its published vectors). Each card
+  carries **stability** (days until recall probability falls to the benchmark) and
+  **difficulty** (1–10, how hard the material is for this learner). Again re-queues the
+  card in **10 minutes**, so a failed card still comes back the same session; any pass
+  graduates the card to a whole-day interval snapped to the study-day boundary.
+- **Target retention** (Settings → Study, default 0.9) scales every interval: higher asks
+  for shorter intervals and more reviews. It is clamped to 0.75–0.97.
+- **The session pulls, it does not march a queue.** Learning steps due right now come
+  first, then graduated cards ranked by predicted recall — the one you are most likely
+  to forget next — then new cards. There are no daily limits and no waiting list: the
+  badge counts exactly what the session serves. **Ranking mode** picks between
+  *memory first* (new cards only once nothing is due) and *explore* (a new card every
+  few reviews so a backlog cannot starve new material). "Done for now" closes the
+  sitting whenever you like; the schedule never demands a backlog be cleared.
+- **Leeches** are cards failed 8 times or more. They are labelled `tricky` in the
+  library and drilled through their own button; in the main session a due leech is just
+  an ordinary review — the most at-risk one, in fact.
 - **Editing a question resets its schedule.** An interval describes memory of *that*
   text, so changing the question text or options starts the card over. Bookmarks, history
   and results are untouched.
-- An existing install starts warm: correct and wrong answers in past attempts are replayed
-  through the scheduler to rebuild each card's position, so the first Study session is
-  already scheduled rather than showing everything as new.
+- An existing install starts fresh: the SM-2 schedules the FSRS switch replaced cannot be
+  honestly replayed from attempt history, so every card reads as new until it is reviewed
+  under FSRS. Importing a JSON backup or an Anki package is the warm-start path — both
+  carry the FSRS memory model, and an Anki card's interval and ease are converted to an
+  initial stability and difficulty.
 
-**Where the schedule lives.** A `card_state` row per question, added in Room schema v7.
-Migration is automatic and preserves everything else. A card belongs to a paper, so
-deleting a paper, or a question, removes its schedule; moving a question to another paper
-starts it fresh.
+**Where the schedule lives.** A `card_state` row per question (schema v10, with
+`review_log` recording every review beside it). Migration is automatic and preserves
+everything else. A card belongs to a paper, so deleting a paper, or a question, removes
+its schedule and its logged reviews; moving a question to another paper starts it fresh.
 
-**Roadmap.** The scheduler sits behind a `Scheduler` interface, so FSRS can be added
-later as another implementation — it would slot in without changing storage or the study
-UI.
+**Roadmap.** The FSRS weights are the official unoptimized set; an optimizer that fits
+them to your own `review_log` is the natural next step, and the log is already being
+kept for it.
 
 ## Taking a test
 
@@ -479,10 +489,12 @@ an answer key.
   }],
   "bookmarks": ["q-s1"],
   "attempts": [ /* full backups only; restored with history, see below */ ],
-  "scheduling": { /* optional: SM-2 card state keyed by question id */
+  "scheduling": { /* optional: card state keyed by question id */
     "q-s1": { "ease": 2.5, "intervalDays": 6, "dueAt": 1767225600000,
               "reps": 2, "lapses": 0, "leech": false,
-              "lastReviewedAt": 1766601600000 }
+              "lastReviewedAt": 1766601600000,
+              "difficulty": 4.8, "stability": 6.0, "cardState": "REVIEW",
+              "reviewCount": 2 }
   }
 }
 ```
@@ -739,7 +751,7 @@ test). Deleting a paper deletes its categories; deleting a category deletes its
 questions (FK cascades) — options and answer keys go with their question. Anything that
 reached the paper only by id is deleted explicitly in the same transaction, because no
 foreign key covers it: **bookmarks** for those questions, **history** (`attempts` for
-that `paperId`, whose `question_results` cascade from them), and **SM-2 cards** in
+that `paperId`, whose `question_results` cascade from them), and **scheduled cards** in
 `card_state` (already covered by a cascade, deleted anyway so the intent is visible and
 does not depend on the foreign-key pragma). A single in-progress **test snapshot** in
 DataStore is discarded too, but only when it belongs to the deleted paper, so another
@@ -821,8 +833,8 @@ Local builds need the Android SDK and a QEMU aapt2 wrapper on ARM64 hosts (see
 `BUILDING.md` for the exact command). CI (`.github/workflows/build.yml`, x86_64) runs
 on every push/PR:
 
-- **build**: `assembleDebug` + full JVM unit test suite (580+ tests: scoring, JSON + DOCX
-  parsers + 1000-case seeded fuzz, import/export writers, domain rules, SM-2 scheduling),
+- **build**: `assembleDebug` + full JVM unit test suite (870+ tests: scoring, JSON + DOCX
+  parsers + 1000-case seeded fuzz, import/export writers, domain rules, FSRS scheduling),
   uploads
   APK + results.
 - **ui-test**: boots an API-34 emulator (KVM enabled) and runs the critical-path tests

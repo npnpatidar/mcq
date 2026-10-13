@@ -1,5 +1,10 @@
 # FSRS Pull-Based Spaced Repetition — Tracked Work Plan
 
+> **Status: implemented.** All six phases shipped on `exp/fsrs-scheduling` and merged
+> through PR #2 — FSRS-6 engine, schema v10 with `review_log`, pull-based candidate
+> pools, the Study UX and settings, and FSRS-aware backup/Anki interop. CI green
+> throughout; the phase sections below are the record of what was built.
+
 Pressure-free, adaptive spaced-repetition engine for this app: FSRS-6 scheduling,
 immutable review history, dynamically ranked candidate pools, user-controlled
 sessions. No daily quotas, no session caps, no forced backlog clearing, no

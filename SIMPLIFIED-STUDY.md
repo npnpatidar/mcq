@@ -1,5 +1,8 @@
 # Simplified Study — Tracked Work Plan
 
+> **Superseded in part.** The engine named SM-2 below is now FSRS-6 (see
+> `FSRS-PLAN.md`); the grade inference and guess rules described here are unchanged.
+
 Goal: a study mode where the learner just answers questions and the app grades.
 No Again/Hard/Good/Easy decision per card. On by default.
 
@@ -11,10 +14,10 @@ No Again/Hard/Good/Easy decision per card. On by default.
 
 ## Agreed design (2026-10-05, do not re-litigate without cause)
 
-**One engine, two inputs.** SM-2, `card_state`, `recordStudyReview`, queue, badge,
-export — all untouched. The toggle changes only where a grade comes from: finger
-(manual) vs inference (simplified). Flipping it mid-stream is safe; schedules are
-grade-agnostic snapshots.
+**One engine, two inputs.** The scheduler (FSRS-6), `card_state`, `recordStudyReview`,
+the pull, the badge, export — all untouched. The toggle changes only where a grade comes
+from: finger (manual) vs inference (simplified). Flipping it mid-stream is safe;
+schedules are grade-agnostic snapshots.
 
 **Grade mapping (simplified):**
 

@@ -1,5 +1,10 @@
 # Scheduling Parity — Tracked Work Plan
 
+> **Superseded.** This plan finished its tracks, and the daily-limit quota model it
+> aligned with Anki has since been replaced by pull-based candidate ranking under
+> FSRS-6 — see `FSRS-PLAN.md` and the Study section of the README. The document below
+> is kept as the record of how the SM-2 layer was built and audited.
+
 Goal: make this app's **spaced-repetition layer** correct and Anki-consistent.
 Explicitly **not** a feature-parity clone of Anki. See "Deliberately dropped" at the end.
 

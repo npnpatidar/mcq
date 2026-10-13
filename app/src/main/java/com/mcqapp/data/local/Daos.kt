@@ -156,16 +156,17 @@ interface QuestionDao {
 
     @Query(
         "SELECT questions.* FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            // Same (sortOrder, rowid) order as the per-category getByCategory,
-            // so the flatMap-of-getByCategory form and this single-query form
-            // agree (RepositoryTest pins that equality). The prior
-            // (categories.sortOrder, title) order broke the agreement: it
-            // grouped by category and was rename-sensitive, while
-            // getByCategory orders by the question's own sortOrder within one
-            // category. Callers that want a category-first grouping use
-            // getByCategoriesChunked, which flatMaps per-category already.
-            "ORDER BY questions.sortOrder, questions.rowid"
+            // Same (sortOrder, title) order as CategoryDao.getByPaper, so the
+            // category grouping here matches the drawer's tree order (and
+            // getQuestionsForPaper, which feeds it the ids in that order).
+            // The (sortOrder, title) pair is what makes the grouping total:
+            // addCategory leaves siblings at sortOrder 0, so title is the
+            // tiebreak that reproduces getByPaper's order. Within a category,
+            // the question's own (sortOrder, rowid) keeps its internal order.
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
     )
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 

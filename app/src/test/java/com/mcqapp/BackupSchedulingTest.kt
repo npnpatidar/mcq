@@ -105,7 +105,7 @@ class BackupSchedulingTest {
         // The FSRS memory model travels with the backup too.
         assertEquals(before.difficulty, after.difficulty, 0.0001)
         assertEquals(before.stability, after.stability, 0.0001)
-        assertEquals(before.cardState, after.cardState)
+        assertEquals(before.state, after.state)
         assertEquals(before.reviewCount, after.reviewCount)
     }
 

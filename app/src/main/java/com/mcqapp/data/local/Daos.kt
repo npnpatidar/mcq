@@ -119,8 +119,12 @@ interface PassageDao {
         @MapColumn(columnName = "cnt") Int
         >
 
-    /** Which questions still point at [passageId], for reassignment and reparenting. */
-    @Query("SELECT id FROM questions WHERE passageId = :passageId")
+    /**
+     * Which questions still point at [passageId], for reassignment and
+     * reparenting. Ordered so sequential placement after a move preserves the
+     * group's category order deterministically, not by rowid accident.
+     */
+    @Query("SELECT id FROM questions WHERE passageId = :passageId ORDER BY sortOrder, rowid")
     suspend fun memberIds(passageId: String): List<String>
 
     /** A question's membership; queried only inside saveQuestion's transaction. */

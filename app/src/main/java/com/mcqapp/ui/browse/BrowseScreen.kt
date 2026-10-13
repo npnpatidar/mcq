@@ -303,9 +303,11 @@ fun BrowseScreen(
         // The drawer's reorder, answered inline: whether a category can
         // move among its siblings (same parent) — the double-arrow buttons
         // on a section's first and last row use it.
-        val categoryMove = remember(state.paper) {
+        val categoryMove = remember(state.paper, flatCategories) {
             fun canMove(categoryId: String, up: Boolean): Boolean {
-                val flat = flattenCategories(state.paper?.categories ?: emptyList())
+                // Reuse the hoisted flat list; recomputing flattenCategories
+                // here ran once per row per recomposition.
+                val flat = flatCategories
                 val self = flat.firstOrNull { it.first.id == categoryId } ?: return false
                 val siblings = flat.filter { it.first.parentId == self.first.parentId }
                 val index = siblings.indexOfFirst { it.first.id == categoryId }
@@ -315,8 +317,9 @@ fun BrowseScreen(
             ::canMove
         }
         val filtered = remember(searched, filterValue, state.paper, categoryFilterId) {
-            val titles = flattenCategories(state.paper?.categories ?: emptyList())
-                .associate { it.first.id to it.first.title }
+            // Reuse the hoisted flatCategories (same nodes as the drawer and
+            // the dropdown) rather than re-flattening state.paper per recompute.
+            val titles = flatCategories.associate { it.first.id to it.first.title }
             val base = when (filterValue) {
                 "No answer" -> searched.filter { it.correctOptionIds.isEmpty() }
                 "No explanation" -> searched.filter { it.explanation.isBlank() }
@@ -324,7 +327,7 @@ fun BrowseScreen(
                     .filterUncategorized(searched, titles)
                 else -> searched
             }
-            applyCategoryFilter(base, categoryFilterId?.takeIf { it in titles })
+            applyCategoryFilter(base, subtreeIdsOf(flatCategories, categoryFilterId))
         }
         val filteredIds = remember(filtered) { filtered.map { it.id } }
         // Passage grouping: a member that is the first of its passage in the
@@ -455,7 +458,15 @@ fun BrowseScreen(
                     )
                 }
             }
-            val reorderEnabled = filterValue == "All" && searchQuery.isBlank()
+            // Section (whole-category) moves hang off first/last *row of a
+            // section in the paper-wide list*. A search or a chip filter
+            // already hides rows, and so does the category filter — in every
+            // case the rendered order stops matching the paper's section
+            // order, so the category move is disabled. Question-level moves
+            // stay available: they are computed against the question's own
+            // category list, which a filter never reorders.
+            val reorderEnabled = filterValue == "All" && searchQuery.isBlank() &&
+                categoryFilterId == null
             itemsIndexed(filtered, key = { _, question -> question.id }) { index, question ->
                 val categoryList = categoryQuestions[question.categoryId].orEmpty()
                 val moveOrder: (Boolean) -> Unit = { up ->
@@ -999,11 +1010,35 @@ private fun flattenCategories(
 }
 
 /**
- * The browse screen's single-category filter: with an id, only that
- * category's questions remain; null keeps the list whole.
+ * The browse screen's single-category filter: with a set of category ids, only
+ * those categories' questions remain; null (or empty) keeps the list whole.
  */
 internal fun applyCategoryFilter(
     questions: List<com.mcqapp.domain.Question>,
-    categoryId: String?
+    categoryIds: Set<String>?
 ): List<com.mcqapp.domain.Question> =
-    if (categoryId == null) questions else questions.filter { it.categoryId == categoryId }
+    if (categoryIds.isNullOrEmpty()) questions
+    else questions.filter { it.categoryId in categoryIds }
+
+/**
+ * The ids of [rootId] plus every descendant, read from the pre-order
+ * [flatCategories] list: a node's subtree is exactly the nodes that follow it
+ * until the next node of depth <= its own. A null [rootId] means "no filter"
+ * (null); a non-null but unknown id filters to nothing (empty set) rather than
+ * showing everything.
+ */
+internal fun subtreeIdsOf(
+    flatCategories: List<Pair<com.mcqapp.domain.CategoryNode, Int>>,
+    rootId: String?
+): Set<String>? {
+    if (rootId == null) return null
+    val rootIndex = flatCategories.indexOfFirst { it.first.id == rootId }
+    if (rootIndex < 0) return emptySet()
+    val rootDepth = flatCategories[rootIndex].second
+    val out = mutableSetOf(rootId)
+    for ((node, depth) in flatCategories.subList(rootIndex + 1, flatCategories.size)) {
+        if (depth <= rootDepth) break
+        out.add(node.id)
+    }
+    return out
+}

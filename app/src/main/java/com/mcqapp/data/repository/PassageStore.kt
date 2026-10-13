@@ -65,12 +65,25 @@ internal class PassageStore(
                     sortOrder = existing?.sortOrder ?: passage.sortOrder
                 )
             )
+            // A passage's members must live in its category (the group is
+            // only meaningful together). Moving the passage to another
+            // category therefore moves every member with it — otherwise they
+            // keep pointing at a passage in a different category and the
+            // group renders split in Browse and exports.
+            if (existing != null && existing.categoryId != passage.categoryId) {
+                val members = db.passageDao().memberIds(id)
+                if (members.isNotEmpty()) {
+                    questionStore.moveQuestionsToCategory(members, passage.categoryId)
+                }
+            }
         }
         return id
     }
 
     /** How many questions still point at the passage — the delete guard's number. */
     suspend fun memberCount(passageId: String): Int = db.passageDao().memberCount(passageId)
+
+    suspend fun memberCounts(): Map<String, Int> = db.passageDao().memberCountsByPassage()
 
     /**
      * Deletes a passage, refusing while members remain. The caller shows the
@@ -96,25 +109,29 @@ internal class PassageStore(
      */
     suspend fun assignQuestions(questionIds: Collection<String>, passageId: String) {
         if (questionIds.isEmpty()) return
-        val passage = db.passageDao().getById(passageId)
+        // One transaction: the assignment, the category move and the
+        // placement all land together or not at all. Room's withTransaction
+        // nests, so the inner move/place helpers reuse their own transactions
+        // safely.
         db.withTransaction {
+            val passage = db.passageDao().getById(passageId)
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
             questionIds.forEach { refreshContentHash(it) }
-        }
-        // Category first, placement second: placeWithGroup anchors within
-        // the (new) category, so it must already be the passage's.
-        if (passage != null) {
-            questionIds.forEach { id ->
-                val member = db.questionDao().getById(id) ?: return@forEach
-                if (member.categoryId != passage.categoryId) {
-                    questionStore.moveQuestionsToCategory(setOf(id), passage.categoryId)
+            // Category first, placement second: placeWithGroup anchors within
+            // the (new) category, so it must already be the passage's.
+            if (passage != null) {
+                questionIds.forEach { id ->
+                    val member = db.questionDao().getById(id) ?: return@forEach
+                    if (member.categoryId != passage.categoryId) {
+                        questionStore.moveQuestionsToCategory(setOf(id), passage.categoryId)
+                    }
                 }
             }
+            // Sequential placement keeps a multi-question batch in order too —
+            // each one anchors after the last member, including those just
+            // placed.
+            questionIds.forEach { questionStore.placeWithGroup(it) }
         }
-        // Sequential placement keeps a multi-question batch in order too —
-        // each one anchors after the last member, including those just
-        // placed.
-        questionIds.forEach { questionStore.placeWithGroup(it) }
         Logger.i("REPO", "assignQuestions(${questionIds.size} ids -> $passageId)")
     }
 

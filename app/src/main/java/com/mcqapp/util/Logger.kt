@@ -6,6 +6,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentLinkedDeque
 
 object Logger {
 
@@ -73,12 +74,10 @@ object Logger {
      * (the every-startup "getStudyCounts failed" NPE shipped silently for
      * days because nothing could observe it).
      */
-    private val recentErrors = ArrayDeque<String>()
+    private val recentErrors = ConcurrentLinkedDeque<String>()
 
-    @Synchronized
     fun recentErrors(limit: Int = 20): List<String> = recentErrors.toList().takeLast(limit)
 
-    @Synchronized
     fun clearRecentErrors() = recentErrors.clear()
 
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
@@ -102,10 +101,8 @@ object Logger {
             append('\n')
         }
         if (level == "E" || level == "CRASH") {
-            synchronized(this) {
-                recentErrors.addLast("$level/$tag: $message")
-                while (recentErrors.size > 100) recentErrors.removeFirst()
-            }
+            recentErrors.addLast("$level/$tag: $message")
+            while (recentErrors.size > 100) recentErrors.removeFirst()
         }
         // Logging must never crash its caller, on device or on plain-JVM tests.
         try {

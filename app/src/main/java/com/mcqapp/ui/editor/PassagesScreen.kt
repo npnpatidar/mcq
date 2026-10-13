@@ -85,10 +85,9 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch {
-            passages.collect { list ->
-                val counts = list.associate { passage ->
-                    passage.id to repository.passageMemberCount(passage.id)
-                }
+            passages.collect {
+                // One grouped COUNT for every passage, not one query per row.
+                val counts = repository.passageMemberCounts()
                 _state.update { it.copy(memberCounts = counts, loading = false) }
             }
         }
@@ -147,6 +146,22 @@ fun PassagesScreen(
     // Passages whose member questions are listed under the row.
     var expandedIds by remember { mutableStateOf(emptySet<String>()) }
 
+    // categoryId -> owning paper, hoisted: the per-row firstOrNull below ran
+    // once per scroll frame for every visible row.
+    val paperByCategoryId = remember(state.papers) {
+        buildMap {
+            state.papers.forEach { paper ->
+                fun walk(nodes: List<com.mcqapp.domain.CategoryNode>) {
+                    nodes.forEach { node ->
+                        put(node.id, paper)
+                        walk(node.children)
+                    }
+                }
+                walk(paper.categories)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -179,8 +194,7 @@ fun PassagesScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(passages, key = { it.id }) { passage ->
-                    val paperTitle = state.papers
-                        .firstOrNull { paper -> paper.categories.any { it.id == passage.categoryId } }
+                    val paperTitle = paperByCategoryId[passage.categoryId]
                     val paperId = paperTitle?.id.orEmpty()
                     val expanded = passage.id in expandedIds
                     val memberCount = state.memberCounts[passage.id] ?: 0
@@ -351,7 +365,11 @@ private fun PassageEditDialog(
             nodes.flatMap { listOf(it) + flatten(it.children) }
         flatten(paper.categories)
     }
-    androidx.compose.runtime.LaunchedEffect(categories) {
+    // Keyed on Unit: `categories` is a fresh allocation each recomposition, so
+    // keying on it would cancel and relaunch this on every keystroke in the
+    // dialog. The effect only needs the first pick, and the blank-guard makes
+    // a later re-run harmless.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
         if (categoryId.isBlank()) {
             categoryId = categories.firstOrNull()?.id.orEmpty()
         }
@@ -392,14 +410,25 @@ private fun PassageEditDialog(
         confirmButton = {
             TextButton(
                 onClick = {
+                    // The text field is seeded from `initial?.text`, which is
+                    // the flattened `textContent` — it drops tables, formulas
+                    // and images. Rewriting elements from that flattened string
+                    // would destroy a rich passage on a no-op save, so keep the
+                    // original elements unless the user actually edited the
+                    // text (and then accept that rich markup is lost, as it is
+                    // for questions).
+                    val edited = text.trim()
+                    val elements = if (edited == initial?.text) {
+                        initial.elements
+                    } else {
+                        listOf(com.mcqapp.domain.ContentElement.TextElement(edited))
+                    }
                     onSave(
                         Passage(
                             id = initial?.id.orEmpty(),
                             categoryId = categoryId,
                             title = title.trim(),
-                            elements = listOf(
-                                com.mcqapp.domain.ContentElement.TextElement(text)
-                            )
+                            elements = elements
                         )
                     )
                 },

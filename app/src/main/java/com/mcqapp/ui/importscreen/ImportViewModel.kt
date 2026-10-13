@@ -224,8 +224,8 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         // the earlier one instead of spawning a near-duplicate name.
         viewModelScope.launch {
             try {
-                val titles = repository.db().paperDao().getAll().map { it.title }
-                val categoryNames = repository.db().categoryDao().getAll().map { it.title }
+                val titles = repository.existingPaperTitles()
+                val categoryNames = repository.existingCategoryNames()
                 _state.update {
                     it.copy(
                         paperTitleSuggestions = titles,

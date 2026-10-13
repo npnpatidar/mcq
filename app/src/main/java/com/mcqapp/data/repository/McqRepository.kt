@@ -172,6 +172,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         passageStore.savePassage(passage)
     suspend fun passageMemberCount(passageId: String): Int =
         passageStore.memberCount(passageId)
+    suspend fun passageMemberCounts(): Map<String, Int> =
+        passageStore.memberCounts()
     suspend fun deletePassage(passageId: String): Boolean =
         passageStore.deletePassage(passageId)
     suspend fun renumberQuestions(categoryId: String, orderedIds: List<String>): Boolean =
@@ -213,6 +215,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun moveCategory(categoryId: String, delta: Int): Boolean =
         paperStore.moveCategory(categoryId, delta)
     suspend fun duplicatePaper(paperId: String): String? = paperStore.duplicatePaper(paperId)
+
+    /** Existing names, for the import screen's title/category suggestions. */
+    suspend fun existingPaperTitles(): List<String> = paperStore.allPaperTitles()
+    suspend fun existingCategoryNames(): List<String> = paperStore.allCategoryTitles()
 
     /** Counts shown in the delete confirmation. */
     data class DeleteImpact(

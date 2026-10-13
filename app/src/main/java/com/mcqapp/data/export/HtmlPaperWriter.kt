@@ -5,11 +5,13 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.renderInlineHtml
-import com.mcqapp.domain.ContentElement    /**
-     * Renders a paper as a single self-contained HTML page. Data-URI images
-     * are embedded as-is; remote URLs are referenced in the markup but the
-     * page's CSP blocks loading them, so a shared export never phones home.
-     */
+import com.mcqapp.domain.ContentElement
+
+/**
+ * Renders a paper as a single self-contained HTML page. Data-URI images
+ * are embedded as-is; remote URLs are referenced in the markup but the
+ * page's CSP blocks loading them, so a shared export never phones home.
+ */
 object HtmlPaperWriter {
 
     fun paperToHtml(paper: PaperDto, passages: List<PassageDto> = emptyList()): String {

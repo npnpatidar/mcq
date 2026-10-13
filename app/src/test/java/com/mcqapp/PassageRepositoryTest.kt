@@ -136,6 +136,22 @@ class PassageRepositoryTest {
     }
 
     @Test
+    fun movingAPassageToAnotherCategoryMovesItsMembers() = runBlocking {
+        val c2 = repository.addCategory("p1", "Other", parentId = null)
+        val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
+        repository.assignQuestionsToPassage(listOf("q1", "q2"), pid)
+        // Editing the passage's category must carry its members, or they keep
+        // pointing at a passage that no longer lives in their category and the
+        // group renders split in Browse and exports.
+        repository.savePassage(Passage(id = pid, categoryId = c2, title = "P"))
+        assertEquals("c2", db.questionDao().getById("q1")!!.categoryId)
+        assertEquals("c2", db.questionDao().getById("q2")!!.categoryId)
+        // The group stays together and contiguous under its new category.
+        val blocks = repository.buildPassageBlocks(repository.getQuestionsForPaper("p1"))
+        assertEquals(1, blocks.size)
+    }
+
+    @Test
     fun savingANewMemberFromAnotherCategoryLandsInThePassagesCategory() = runBlocking {
         val c2 = repository.addCategory("p1", "Other", parentId = null)
         val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))

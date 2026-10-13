@@ -2,6 +2,7 @@ package com.mcqapp.data.local
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
@@ -111,14 +112,18 @@ interface PassageDao {
     @Query("SELECT COUNT(*) FROM questions WHERE passageId = :passageId")
     suspend fun memberCount(passageId: String): Int
 
+    /** Member count per passage in one grouped read, for the list screen. */
+    @Query("SELECT passageId, COUNT(*) AS cnt FROM questions WHERE passageId IS NOT NULL GROUP BY passageId")
+    suspend fun memberCountsByPassage(): Map<
+        @MapColumn(columnName = "passageId") String,
+        @MapColumn(columnName = "cnt") Int
+        >
+
     /** Which questions still point at [passageId], for reassignment and reparenting. */
     @Query("SELECT id FROM questions WHERE passageId = :passageId")
     suspend fun memberIds(passageId: String): List<String>
 
     /** A question's membership; queried only inside saveQuestion's transaction. */
-    @Query("UPDATE questions SET passageId = :passageId WHERE categoryId = :categoryId")
-    suspend fun assignToMembersOfCategory(categoryId: String, passageId: String?)
-
     @Query("UPDATE questions SET passageId = :passageId WHERE id = :questionId")
     suspend fun assignToMember(questionId: String, passageId: String?)
 
@@ -153,10 +158,13 @@ interface QuestionDao {
         "SELECT questions.* FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            // Same (sortOrder, title) order as CategoryDao.getByPaper, so a
-            // category reordered in the drawer (or inline in Browse) moves
-            // its questions too — rowid order froze them at insertion.
-            "ORDER BY categories.sortOrder, categories.title, questions.sortOrder, questions.rowid"
+            // Same sortOrder order as CategoryDao.getByPaper, so a category
+            // reordered in the drawer (or inline in Browse) moves its
+            // questions too — rowid order froze them at insertion. sortOrder
+            // is a dense unique sequence per paper (renumberPaperPreorder), so
+            // no secondary key is needed; title would reorder a category's
+            // questions on a mere rename.
+            "ORDER BY categories.sortOrder, questions.sortOrder, questions.rowid"
     )
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 
@@ -284,9 +292,24 @@ interface QuestionDao {
     /**
      * `:fragment` is the longest single word of the query; `:query` is the whole
      * thing. Either may match, so a phrase split by markup still reaches the
-     * in-memory filter that understands it.
+     * in-memory filter that understands it. The passage UNION keeps scope
+     * QUESTION consistent with [searchIncludingOptions] and the in-memory
+     * filter: a question whose only match is in its passage's text must not be
+     * dropped by the prefilter here while the filter accepts it elsewhere.
      */
-    @Query("SELECT * FROM questions WHERE text LIKE '%' || :query || '%' ESCAPE '\\' OR tags LIKE '%' || :query || '%' ESCAPE '\\' OR text LIKE '%' || :fragment || '%' ESCAPE '\\' OR tags LIKE '%' || :fragment || '%' ESCAPE '\\' ORDER BY rowid DESC")
+    @Query(
+        "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
+            "WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
+            "(SELECT id FROM passages WHERE text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "ORDER BY q.qrowid DESC"
+    )
     suspend fun search(query: String, fragment: String): List<QuestionEntity>
 
     @Query(

@@ -137,8 +137,9 @@ class Exporter(private val db: AppDatabase) {
             .mapNotNull { it.passageId }
             .toSet()
         if (memberIds.isEmpty()) return emptyList()
-        return db.passageDao().getAll()
-            .filter { it.id in memberIds }
+        // getByIds fetches just the needed rows; getAll() read every passage
+        // (and decoded its JSON) once per exported paper.
+        return db.passageDao().getByIds(memberIds.toList())
             .map { it.toPassageDto() }
     }
 

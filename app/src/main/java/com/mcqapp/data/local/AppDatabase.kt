@@ -142,6 +142,13 @@ abstract class AppDatabase : RoomDatabase() {
                         "ON `passages` (`categoryId`)"
                 )
                 db.execSQL("ALTER TABLE questions ADD COLUMN passageId TEXT")
+                // Four queries filter on passageId (member lookups, the
+                // last-member anchor, member counts, the search union); the
+                // index turns each from a full scan into an index seek.
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_questions_passageId` " +
+                        "ON `questions` (`passageId`)"
+                )
             }
         }
 

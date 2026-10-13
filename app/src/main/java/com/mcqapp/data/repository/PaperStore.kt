@@ -42,6 +42,12 @@ internal class PaperStore(
         return db.paperDao().getById(paperId)?.toDomain()
     }
 
+    /** Every paper's title, for the import screen's name suggestions. */
+    suspend fun allPaperTitles(): List<String> = db.paperDao().getAll().map { it.title }
+
+    /** Every category's title, for the import screen's name suggestions. */
+    suspend fun allCategoryTitles(): List<String> = db.categoryDao().getAll().map { it.title }
+
     /**
      * `countMap` lets the library pass the counts it already has; null means
      * fetch them here. The previous default of an empty map produced a Paper
@@ -205,7 +211,7 @@ internal class PaperStore(
      */
     private suspend fun planSiblingMove(categoryId: String, delta: Int): TreePlan? {
         val category = db.categoryDao().getById(categoryId) ?: return null
-        val siblings = childrenOf(category.paperId, category.parentId)
+        val siblings = childrenOf(db.categoryDao().getByPaper(category.paperId), category.parentId)
         val fromIndex = siblings.indexOfFirst { it.id == categoryId }
         if (fromIndex < 0) return null
         val target = (fromIndex + delta).coerceIn(siblings.indices)
@@ -217,12 +223,11 @@ internal class PaperStore(
         return TreePlan(category.paperId, category.parentId, children)
     }
 
-    private suspend fun childrenOf(
-        paperId: String,
+    private fun childrenOf(
+        all: List<com.mcqapp.data.local.CategoryEntity>,
         parent: String?
     ): List<com.mcqapp.data.local.CategoryEntity> =
-        db.categoryDao().getByPaper(paperId)
-            .filter { it.parentId == parent }
+        all.filter { it.parentId == parent }
             .sortedBy { it.sortOrder }
 
     /**
@@ -243,8 +248,11 @@ internal class PaperStore(
         paperId: String,
         override: (parent: String?, children: List<com.mcqapp.data.local.CategoryEntity>) -> List<com.mcqapp.data.local.CategoryEntity> = { _, c -> c }
     ) {
+        // One read of the paper's whole category set; childrenOf then filters
+        // in memory rather than re-querying per node (O(n) reads → O(1)).
+        val all = db.categoryDao().getByPaper(paperId)
         suspend fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
-            override(parent, childrenOf(paperId, parent))
+            override(parent, childrenOf(all, parent))
                 .flatMap { listOf(it) + preorder(it.id) }
         preorder(null).forEachIndexed { index, node ->
             db.categoryDao().updateSortOrder(node.id, index)
@@ -260,7 +268,7 @@ internal class PaperStore(
     suspend fun nestCategoryIntoSibling(categoryId: String): Boolean {
         return db.withTransaction {
             val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
-            val siblings = childrenOf(category.paperId, category.parentId)
+            val siblings = childrenOf(db.categoryDao().getByPaper(category.paperId), category.parentId)
             val index = siblings.indexOfFirst { it.id == categoryId }
             if (index <= 0) return@withTransaction false
             val newParent = siblings[index - 1]
@@ -308,18 +316,21 @@ internal class PaperStore(
                     ?: return@withTransaction false
                 if (newParent.paperId != category.paperId) return@withTransaction false
                 // No cycles: the new parent must not live in this category's
-                // own subtree (which includes the category itself).
-                suspend fun subtree(id: String?): Boolean =
-                    id == newParentId || childrenOf(category.paperId, id).any { subtree(it.id) }
+                // own subtree (which includes the category itself). One read
+                // of the paper's categories, then an in-memory walk — a
+                // per-node childrenOf re-queried the whole set each step.
+                val all = db.categoryDao().getByPaper(category.paperId)
+                fun subtree(id: String?): Boolean =
+                    id == newParentId || childrenOf(all, id).any { subtree(it.id) }
                 if (subtree(categoryId)) return@withTransaction false
                 db.categoryDao().updateParent(categoryId, newParentId)
                 // Append as the last child, deterministically.
-                val last = childrenOf(category.paperId, newParentId)
+                val last = childrenOf(all, newParentId)
                     .maxOfOrNull { it.sortOrder } ?: -1
                 db.categoryDao().updateSortOrder(categoryId, last + 1)
             } else {
                 db.categoryDao().updateParent(categoryId, null)
-                val last = childrenOf(category.paperId, null)
+                val last = childrenOf(db.categoryDao().getByPaper(category.paperId), null)
                     .maxOfOrNull { it.sortOrder } ?: -1
                 db.categoryDao().updateSortOrder(categoryId, last + 1)
             }

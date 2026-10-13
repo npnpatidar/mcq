@@ -221,7 +221,11 @@ class StudyViewModel(
         var freshAvailable = false
         if (!leechesOnly && _state.value.reviewed == 0) {
             try {
-                freshAvailable = repository.getStudyEligibility(paperId).fresh > 0
+                // Ask as if new cards were on: the empty state offers exactly
+                // that flip, and the toggle being off is what emptied the
+                // session — counting under the off flag would always say no.
+                freshAvailable = repository
+                    .getStudyEligibility(paperId, introduceNewCards = true).fresh > 0
             } catch (e: Exception) {
                 Logger.e("STUDY", "getStudyEligibility failed", e)
             }

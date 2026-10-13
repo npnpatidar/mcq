@@ -155,6 +155,109 @@ class RepositoryTest {
     }
 
     @Test
+    fun midSessionModeSwitchChangesTheNextPull() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q0", setOf("q0-a")))
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        // q0 graduated and then came due; q1 has never been studied.
+        repository.recordStudyReview("p1", "q0", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        val later = 90L * 86_400_000L
+
+        // Memory-first: the due card wins however far into the session we are.
+        repository.setSchedulerConfig(
+            repository.schedulerConfigNow().copy(studyMode = com.mcqapp.domain.StudyMode.MEMORY_FIRST)
+        )
+        assertEquals("q0", repository.getNextStudyCard("p1", reviewsSinceNew = 99, now = later)?.questionId)
+
+        // Explore mode surfaces new material ahead of that same backlog.
+        repository.setSchedulerConfig(
+            repository.schedulerConfigNow().copy(studyMode = com.mcqapp.domain.StudyMode.EXPLORE_NEW)
+        )
+        val explored = repository.getNextStudyCard(
+            "p1", reviewsSinceNew = com.mcqapp.domain.Study.EXPLORE_NEW_EVERY, now = later
+        )
+        assertEquals("q1", explored?.questionId)
+        assertEquals(com.mcqapp.domain.StudyReason.NEW, explored?.reason)
+        // Below its pacing interval, explore still serves the backlog first —
+        // the switch paces new cards, it does not reorder memory work away.
+        assertEquals("q0", repository.getNextStudyCard("p1", reviewsSinceNew = 0, now = later)?.questionId)
+    }
+
+    @Test
+    fun thePullClearsTheBacklogBeforeNewMaterialThenServesIt() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q0", setOf("q0-a")))
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q0", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        val later = 90L * 86_400_000L
+        assertEquals("q0", repository.getNextStudyCard("p1", now = later)?.questionId)
+        // Grading the overdue card pushes its interval far past the sitting, so
+        // with the backlog cleared the session goes and gets the new card.
+        repository.recordStudyReview("p1", "q0", com.mcqapp.domain.ReviewGrade.GOOD, now = later)
+        val fresh = repository.getNextStudyCard("p1", now = later + 60_000L)
+        assertEquals("q1", fresh?.questionId)
+        assertEquals(com.mcqapp.domain.StudyReason.NEW, fresh?.reason)
+    }
+
+    @Test
+    fun switchingNewCardsOffMakesTheSessionReviewOnly() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q0", setOf("q0-a")))
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        repository.recordStudyReview("p1", "q0", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        val later = 90L * 86_400_000L
+        repository.setSchedulerConfig(
+            repository.schedulerConfigNow().copy(introduceNewCards = false)
+        )
+        // The overload serves the due backlog and nothing else.
+        assertEquals("q0", repository.getNextStudyCard("p1", now = later)?.questionId)
+        // Once the backlog is cleared there is nothing at all — no new cards
+        // are smuggled in by the pull.
+        repository.recordStudyReview("p1", "q0", com.mcqapp.domain.ReviewGrade.GOOD, now = later)
+        val drained = later + 60_000L
+        assertNull(repository.getNextStudyCard("p1", now = drained))
+        assertEquals(0, repository.getStudyEligibility("p1", now = drained).fresh)
+        // But the empty state asks with the toggle overridden on, so it can
+        // offer exactly the flip that would unstick the session.
+        val asIfOn = repository.getStudyEligibility("p1", now = drained, introduceNewCards = true)
+        assertEquals(2, asIfOn.fresh)
+        // The badge keeps honoring the toggle: no phantom "new" to click.
+        assertEquals(0, repository.getStudyCounts("p1", now = drained).fresh)
+    }
+
+    @Test
+    fun theReviewLogKeepsOrderedHistoryAcrossSittings() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val day = 86_400_000L
+        // First exposure, two later good recalls, then a miss a sitting apart.
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, dwellSeconds = 12L, now = 1000L)
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L + 40 * day)
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.AGAIN, now = 1000L + 80 * day)
+
+        val history = db.reviewLogDao().historyForQuestion("q1")
+        assertEquals(3, history.size)
+        assertEquals(
+            listOf(1000L, 1000L + 40 * day, 1000L + 80 * day),
+            history.map { it.reviewedAt }
+        )
+        assertEquals(3, history[0].rating)
+        assertEquals(3, history[1].rating)
+        assertEquals(1, history[2].rating)
+        // The numbers the optimizer will need are captured per row: success
+        // grew stability, the lapse collapsed it, and the before-state is the
+        // graduated REVIEW kind, which is what makes it a lapse at all.
+        assertTrue(history[1].stabilityAfter!! > history[0].stabilityAfter!!)
+        assertTrue(history[2].stabilityAfter!! < history[1].stabilityAfter!!)
+        assertEquals("REVIEW", history[2].stateBefore)
+        assertEquals(com.mcqapp.domain.CardStateKind.RELEARNING, db.cardStateDao().get("p1", "q1")!!.cardState)
+        // Append-only: the earlier rows still describe the same reviews.
+        assertEquals(3, history[1].rating)
+        assertEquals(3, db.reviewLogDao().countByPaper("p1"))
+    }
+
+    @Test
     fun theBadgeAndThePullReadTheSameEligibility() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repeat(4) { repository.saveQuestion(question("q$it", setOf("q$it-a"))) }
@@ -215,6 +318,57 @@ class RepositoryTest {
         assertEquals(2, first.intervalDaysAfter!!)
         assertEquals("no state exists before a first review", null, first.stateBefore)
         assertEquals("REVIEW", logs[1].stateBefore)
+    }
+
+    @Test
+    fun deletingAQuestionRemovesItsLoggedReviews() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        assertEquals(1, db.reviewLogDao().countByPaper("p1"))
+
+        repository.deleteQuestion("q1")
+        // The log has no FK to questions, so it is swept explicitly: history
+        // must not outlive the card it describes, or an id reuse would
+        // inherit a stranger's reviews.
+        assertTrue(db.reviewLogDao().historyForQuestion("q1").isEmpty())
+        assertEquals(0, db.reviewLogDao().countByPaper("p1"))
+    }
+
+    @Test
+    fun bulkDeletingQuestionsRemovesTheirLoggedReviews() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q2", com.mcqapp.domain.ReviewGrade.HARD, now = 1000L)
+        assertEquals(2, db.reviewLogDao().countByPaper("p1"))
+
+        repository.deleteQuestions(listOf("q1", "q2"))
+        assertTrue(db.reviewLogDao().historyForQuestion("q1").isEmpty())
+        assertTrue(db.reviewLogDao().historyForQuestion("q2").isEmpty())
+        assertEquals(0, db.reviewLogDao().countByPaper("p1"))
+    }
+
+    @Test
+    fun movingAQuestionAcrossPapersResetsItsHistoryHereToo() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper 1", "c1", "Cat 1")
+        db.paperDao().upsert(
+            com.mcqapp.data.local.PaperEntity(id = "p2", title = "Paper 2", createdAt = 1L)
+        )
+        db.categoryDao().upsert(
+            com.mcqapp.data.local.CategoryEntity(id = "c2", paperId = "p2", title = "Cat 2")
+        )
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        assertEquals(1, db.reviewLogDao().countByPaper("p1"))
+
+        // The move resets the schedule (card_state goes with the old paper);
+        // the rows that described it go with it, not into "p2"'s log.
+        repository.moveQuestionsToCategory(listOf("q1"), "c2")
+        assertTrue(db.reviewLogDao().historyForQuestion("q1").isEmpty())
+        assertEquals(0, db.reviewLogDao().countByPaper("p1"))
+        assertEquals(0, db.reviewLogDao().countByPaper("p2"))
     }
 
     @Test

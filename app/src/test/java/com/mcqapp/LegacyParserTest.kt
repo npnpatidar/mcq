@@ -719,4 +719,104 @@ class LegacyParserTest {
         )
         assertTrue(file.warnings.isEmpty())
     }
+
+    // --- scheduling: the FSRS memory model travels beside the legacy columns ---
+
+    private fun schedulingJson(scheduling: String) = """
+        {
+          "version": 1,
+          "papers": [{
+            "id": "p1",
+            "title": "Paper",
+            "categories": [{
+              "id": "c1",
+              "title": "Cat",
+              "questions": [{
+                "id": "q1",
+                "text": "Question?",
+                "options": [{"id": "a", "text": "A"}],
+                "correctOptionIds": ["a"]
+              }]
+            }]
+          }],
+          "scheduling": $scheduling
+        }
+        """.trimIndent()
+
+    @Test
+    fun parsesTheFsrsMemoryModelOutOfSchedulingEntries() {
+        val file = LegacyParser.parse(
+            schedulingJson(
+                """{"q1": {"ease": 2.5, "intervalDays": 3, "dueAt": 123,
+                     "reps": 2, "lapses": 1, "leech": true, "lastReviewedAt": 99,
+                     "difficulty": 5.4, "stability": 3.2,
+                     "cardState": "REVIEW", "reviewCount": 7}}"""
+            )
+        )
+        val schedule = file.scheduling["q1"]!!
+        // The FSRS memory model survives the parse untouched — this is the
+        // regression the dropped-fields fix guards.
+        assertEquals(5.4, schedule.difficulty, 0.0001)
+        assertEquals(3.2, schedule.stability, 0.0001)
+        assertEquals("REVIEW", schedule.cardState)
+        assertEquals(7, schedule.reviewCount)
+        // And the legacy columns still travel with it.
+        assertEquals(3, schedule.intervalDays)
+        assertEquals(123L, schedule.dueAt)
+        assertEquals(1, schedule.lapses)
+        assertTrue(schedule.leech)
+    }
+
+    @Test
+    fun aLegacySchedulingEntryDefaultsItsMemoryModel() {
+        val file = LegacyParser.parse(
+            schedulingJson(
+                """{"q1": {"ease": 2.5, "intervalDays": 0, "dueAt": 0,
+                     "reps": 0, "lapses": 0, "leech": false, "lastReviewedAt": 0}}"""
+            )
+        )
+        val schedule = file.scheduling["q1"]!!
+        // No FSRS fields in the file: the card imports at new rather than
+        // pretending to know a stability it never carried.
+        assertEquals(0.0, schedule.difficulty, 0.0001)
+        assertEquals(0.0, schedule.stability, 0.0001)
+        assertEquals("NEW", schedule.cardState)
+        assertEquals(0, schedule.reviewCount)
+    }
+
+    @Test
+    fun corruptSchedulingValuesFallBackToDefaultsInsteadOfThrowing() {
+        // One unreadable entry costs that card's schedule, never the import:
+        // wrong-typed numbers, an unknown state name, a non-object entry and
+        // a non-object scheduling map are all tolerated.
+        val file = LegacyParser.parse(
+            schedulingJson(
+                """{"q1": {"difficulty": "oops", "stability": true,
+                     "cardState": "banana", "reviewCount": "many"},
+                    "q2": 7},
+                   "schedulingExtra": []"""
+            )
+        )
+        val schedule = file.scheduling["q1"]!!
+        assertEquals(0.0, schedule.difficulty, 0.0001)
+        assertEquals(0.0, schedule.stability, 0.0001)
+        assertEquals("NEW", schedule.cardState)
+        assertEquals(0, schedule.reviewCount)
+        // A non-object entry is skipped wholesale.
+        assertEquals(null, file.scheduling["q2"])
+    }
+
+    @Test
+    fun aNonObjectSchedulingMapYieldsNoSchedules() {
+        val json = """
+        {
+          "version": 1,
+          "papers": [],
+          "scheduling": ["q1", "q2"]
+        }
+        """.trimIndent()
+        val file = LegacyParser.parse(json)
+        assertTrue(file.scheduling.isEmpty())
+        assertTrue(file.warnings.isEmpty())
+    }
 }

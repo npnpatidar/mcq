@@ -286,9 +286,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** Per-pool eligibility: what a session would serve right now, and why. */
     suspend fun getStudyEligibility(
         paperId: String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /** Overrides the stored introduce-new-cards toggle; see [StudyStore]. */
+        introduceNewCards: Boolean? = null
     ): com.mcqapp.domain.StudyEligibility =
-        studyStore.getStudyEligibility(paperId, now)
+        studyStore.getStudyEligibility(paperId, now, introduceNewCards)
     suspend fun getStudyCounts(
         paperId: String,
         now: Long = System.currentTimeMillis()

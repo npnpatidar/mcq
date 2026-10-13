@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-private val Context.dataStore by preferencesDataStore(name = "settings")
+// Internal, not private: RepositorySettingsTest seeds the same file directly to
+// prove legacy keys are inert and that corrupt values fall back to defaults.
+internal val Context.dataStore by preferencesDataStore(name = "settings")
 
 /**
  * Every DataStore-backed preference in one place: appearance, behaviour

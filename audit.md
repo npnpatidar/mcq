@@ -219,3 +219,37 @@ Gaps worth adding:
 3. Question deletion removes `review_log` rows (finding 1).
 4. A large-paper session asserts a bounded number of queries (finding 2) — the project
    already has `CopyQueryCountTest` and `ImportCollisionQueryCountTest` to copy.
+
+---
+
+## Disposition — 2026-10-14
+
+All nine findings were re-verified as genuine, then fixed or explicitly dispositioned.
+Pushed `75e598a`, `ce290aa` and five working commits to `origin/exp/fsrs-scheduling`;
+CI run `38453901956` is green on all four jobs (build, ui-test, release-build,
+wrapper-validation). The debug APK was downloaded to this host's download folder
+(`~/Download/app-debug.apk`, sha256 `b40055b8…adeafb9d`) in place of AGENTS.md's
+`/sdcard/Download` path, which this environment does not have.
+
+| Finding | Action | Verification |
+|---|---|---|
+| 1 review_log orphans | `ReviewLogDao` gained `deleteByQuestion`/`deleteByQuestions` (+ a chunked wrapper); `deleteQuestion`, `deleteQuestions` and cross-paper moves sweep the log in the same transaction as the card state. README documents that backups carry schedules but not `review_log` rows. | `RepositoryTest`: single delete, bulk delete and cross-paper move each assert the log empties |
+| 2 pull re-reads the paper | `getNextStudyCard` and `getStudyEligibility` now use the badge's `studyInputs()` path (ids + content hashes; no option text, no answer key). | `StudyPullQueryCountTest` (new): pull SELECT count does not grow with paper size and never queries `correct_answers` |
+| 3 imported card takes the same-day formula | `Fsrs.next`/`retention` read elapsed through one guard: memory without a last-review timestamp means "reviewed ~its interval ago", so the recall formula applies and the card ranks at the retention target; `fromAnki` also floors the inferred last review at `now − interval` instead of fabricating epoch zero. | `FsrsImportGuardTest` (new): the recall branch is taken, retrievability lands on the benchmark, and truly-new cards keep elapsed 0 |
+| 4 dead `isLearning` / stale `isNew` doc | `isLearning` deleted (zero readers); the `isNew` KDoc rewritten for FSRS. | `FsrsImportGuardTest.everyGradeKeepsRepsAndReviewCountMirrored` pins the mirror invariant for every grade |
+| 5 ladder comment overstates parity | Comment reworded to "the app's own ladder, NOT the reference's"; the canonical vector test remains the parity claim. | Static; no behaviour change |
+| 6 "rounded" vs truncation | `toAnki` KDoc now says the day count is exact because schedules anchor to day starts on both sides — no rounding involved. | Static; no behaviour change |
+| 7 unpushed commit + dangling refs | Both local commits are pushed. Comments citing `PASSAGE-QUESTIONS.md` / `SCHEDULING-PARITY.md` rewritten in `PassageStore`, `PassageBlocks`, `PassageBlocksTest`, `FSRS-PLAN.md` and `Tests_Required.md`. The scratch files removed mid-audit stay removed (intentional deletions, nothing to restore). | CI built the pushed tip |
+| 8 settings copy bypasses strings.xml | The FSRS study section's literals (Study header, retention, ranking mode, chips, introduce toggle, easy/hard thresholds, split strings) moved into `strings.xml`; a duplicate `introduce_new_cards` entry an early pass created was caught and removed before it could break AAPT. | `StringResourceUsageTest` green — its rendered-sink list gained `help =` because `AnkiNumberRow` renders label and help into `Text`s verbatim |
+| 9 unused ReviewLogDao reads | Kept (tests exercise `historyForQuestion`/`countByPaper`); KDoc states they are test-exercised pending the optimizer, matching the roadmap. | CI green; `NoDeadCodeTest` unaffected |
+
+In addition, the `Tests_Required.md` gaps landed while fixing these: P1 (five UI tests on
+the pull-session surface), P2 (settings persistence incl. legacy `anki_*` keys and a
+corrupt `study_mode`), P3 (the ViewModel pull flow, the break-strip state rule, and
+guess/change-grade `pendingGrade`), P4 (repo-level mode behaviour), P5 (legacy parser
+FSRS fields) and P6 (review-log history reads). Two non-audit defects surfaced by those
+tests were fixed along the way: Robolectric's JVM-singleton DataStore leaked a scheduler
+config across test classes (both writing test classes now reset in `@After`), and
+`StudyViewModel.restart` left the stale card on screen instead of re-pulling.
+
+**No finding remains open; no blockage remains.**

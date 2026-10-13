@@ -272,6 +272,16 @@ class Sm2Scheduler(
             else -> DayBoundary.dueAfter(now, interval, config.dayStartHour, zoneOffset(now))
         }
         val reps = if (grade == ReviewGrade.AGAIN) 0 else maxOf(1, state.reps + 1)
+        // Same rule as the FSRS engine: a failed graduated card is relearning,
+        // a failed never-graduated one is still learning, any pass graduates.
+        val kind = when {
+            grade == ReviewGrade.AGAIN && state.state == CardStateKind.REVIEW ->
+                CardStateKind.RELEARNING
+            grade == ReviewGrade.AGAIN && state.state == CardStateKind.RELEARNING ->
+                CardStateKind.RELEARNING
+            grade == ReviewGrade.AGAIN -> CardStateKind.LEARNING
+            else -> CardStateKind.REVIEW
+        }
         return state.copy(
             ease = ease,
             intervalDays = interval.coerceAtLeast(0),
@@ -279,7 +289,8 @@ class Sm2Scheduler(
             reps = reps,
             lapses = lapses,
             leech = lapses >= config.leechThreshold,
-            lastReviewedAt = now
+            lastReviewedAt = now,
+            state = kind
         )
     }
 

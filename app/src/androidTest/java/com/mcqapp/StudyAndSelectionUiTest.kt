@@ -16,6 +16,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.ui.navigation.McqNavHost
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -80,6 +81,9 @@ class StudyAndSelectionUiTest {
     @After
     fun cleanup() = runBlocking {
         seeded.forEach { repository.deletePaper(it) }
+        // The mode tests below mutate the shared scheduler settings; leaving
+        // them as found keeps test order irrelevant.
+        repository.resetSchedulerConfig()
     }
 
     private fun waitFor(text: String) {
@@ -280,5 +284,202 @@ class StudyAndSelectionUiTest {
         // Cancelling must leave the paper alone.
         compose.onNodeWithText("Cancel", substring = false).performClick()
         assertTrue(runBlocking { repository.getPaper("ui-sel") != null })
+    }
+
+    // ---- the pull-based session surface ----
+
+    /**
+     * Each chip is rendered for exactly the pool that served the card: a due
+     * relearning step says "Learning step", an overdue review whose predicted
+     * recall has sunk says "Likely to be forgotten soon", and unseen material
+     * says "New question". A chip that described the wrong pool (or never
+     * rendered) would send the learner hunting for meaning that is not there.
+     */
+    @Test
+    fun eachPulledCardNamesThePoolThatServedIt() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper(
+            "ui-chips", "UIChips Paper", "ui-chips-cat",
+            single("ui-chips-learn", "ui-chips-cat"),
+            single("ui-chips-low", "ui-chips-cat"),
+            single("ui-chips-new", "ui-chips-cat")
+        )
+        val minute = 60_000L
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        runBlocking {
+            // A card that failed 15 minutes ago is inside its 10-minute
+            // relearning step, now overdue — the learning pool's card.
+            repository.recordStudyReview(
+                "ui-chips", "ui-chips-learn", ReviewGrade.AGAIN,
+                now = now - 15 * minute
+            )
+            // A card graduated from a fresh one 90 days ago: its interval was
+            // ~2 days, so its predicted recall is far into the floor — the
+            // most-at-risk review.
+            repository.recordStudyReview(
+                "ui-chips", "ui-chips-low", ReviewGrade.GOOD,
+                now = now - 90 * day
+            )
+        }
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-chips").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-chips").performClick()
+
+        // The learning step outranks the rest of the backlog.
+        waitFor("Learning step")
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+
+        waitFor("Likely to be forgotten soon")
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+
+        waitFor("New question")
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+
+        waitFor("Reviewed 3 this session")
+    }
+
+    /**
+     * A voluntary stop is offered from the first card, ends the session on
+     * the summary with the real tally, and never badgers the learner to
+     * continue.
+     */
+    @Test
+    fun stoppingShowsTheSessionSummaryWithoutDemandingMore() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper(
+            "ui-stop", "UIStop Paper", "ui-stop-cat",
+            single("ui-stop-q1", "ui-stop-cat"),
+            single("ui-stop-q2", "ui-stop-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-stop").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-stop").performClick()
+
+        // Offered before anything has been graded: a stop is always reachable.
+        waitFor("Done for now")
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+        waitFor("UITest ui-stop-q2?")
+
+        compose.onNodeWithText("Done for now", substring = false).performClick()
+        waitFor("Session complete")
+        compose.onNodeWithText("1 reviewed • 0 again • 1 remembered", substring = false)
+            .assertIsDisplayed()
+        // Done means done: the stop affordance is gone, nothing asks to go on.
+        assertTrue(
+            "the session kept asking the learner to continue",
+            compose.onAllNodesWithText("Done for now", substring = false)
+                .fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    /**
+     * The break strip suggests at the ten-review marker, dismisses without
+     * a fight, and a dismissal never blocks the pull: the next card arrives
+     * as though the strip had never shown.
+     */
+    @Test
+    fun theBreakStripSuggestsThenYieldsWithoutBlockingTheNextCard() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper(
+            "ui-break", "UIBreak Paper", "ui-break-cat",
+            *(1..12).map { single("ui-break-q$it", "ui-break-cat") }.toTypedArray()
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-break").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-break").performClick()
+
+        repeat(10) { n ->
+            waitFor("UITest ui-break-q${n + 1}?")
+            compose.onNodeWithText("Alpha", substring = false).performClick()
+            compose.onNodeWithTag("study-check").performClick()
+            compose.onNodeWithTag("study-next").performClick()
+            waitFor("Reviewed ${n + 1} this session")
+        }
+
+        waitFor("a good moment for a break")
+        compose.onNodeWithText("Dismiss", substring = false).performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("a good moment", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        }
+
+        // The pull keeps working through the dismissal: card 11 is served,
+        // reviewed, and the counter moves without the strip returning (the
+        // dismissal holds until the next milestone).
+        waitFor("UITest ui-break-q11?")
+        assertTrue(
+            "the dismissed strip came back too early",
+            compose.onAllNodesWithText("a good moment", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+        waitFor("Reviewed 11 this session")
+    }
+
+    /**
+     * The session's only progress indicator is what has been done: an
+     * incrementing count with no denominator. The fixed "index/queue" bar of
+     * the pre-pull UI must not have crept back.
+     */
+    @Test
+    fun theSessionCounterCountsUpWithoutADenominator() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper(
+            "ui-count", "UICount Paper", "ui-count-cat",
+            single("ui-count-q1", "ui-count-cat"),
+            single("ui-count-q2", "ui-count-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-count").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-count").performClick()
+
+        waitFor("Reviewed 0 this session")
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+        waitFor("Reviewed 1 this session")
+        // The old fixed-queue progress bar rendered "done/total". With the
+        // pull-based counter there is no total to show.
+        assertTrue(
+            "a fixed-queue progress bar reappeared",
+            compose.onAllNodesWithText("1/2", substring = false)
+                .fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    /**
+     * With nothing due and new cards switched off, the empty state offers the
+     * flip right there instead of sending the learner through settings, and
+     * the offer starts a real session.
+     */
+    @Test
+    fun anEmptyReviewOnlySessionOffersToTurnNewCardsOn() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper("ui-empty", "UIEmpty Paper", "ui-empty-cat", single("ui-empty-q1", "ui-empty-cat"))
+        runBlocking {
+            repository.setSchedulerConfig(
+                repository.schedulerConfigNow().copy(introduceNewCards = false)
+            )
+        }
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-empty").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-empty").performClick()
+
+        waitFor("New cards are switched off")
+        compose.onNodeWithText("Introduce new cards", substring = false).performClick()
+        waitFor("UITest ui-empty-q1?")
+        // The offer is not a one-screen gesture: the toggle behind it persists.
+        assertTrue(runBlocking { repository.schedulerConfigNow().introduceNewCards })
     }
 }

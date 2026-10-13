@@ -93,7 +93,17 @@ object LegacyParser {
                     reps = entry["reps"]?.jsonPrimitive?.intOrNull ?: 0,
                     lapses = entry["lapses"]?.jsonPrimitive?.intOrNull ?: 0,
                     leech = entry["leech"]?.jsonPrimitive?.booleanOrNull ?: false,
-                    lastReviewedAt = entry["lastReviewedAt"]?.jsonPrimitive?.longOrNull ?: 0L
+                    lastReviewedAt = entry["lastReviewedAt"]?.jsonPrimitive?.longOrNull ?: 0L,
+                    difficulty = entry["difficulty"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
+                    stability = entry["stability"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
+                    cardState = entry["cardState"]?.jsonPrimitive
+                        ?.takeIf { it.isString }?.content
+                        ?.let { name ->
+                            runCatching { com.mcqapp.domain.CardStateKind.valueOf(name) }
+                                .getOrNull()
+                        }?.name
+                        ?: com.mcqapp.domain.CardStateKind.NEW.name,
+                    reviewCount = entry["reviewCount"]?.jsonPrimitive?.intOrNull ?: 0
                 )
             } catch (_: Exception) {
                 // Keep the rest of the progress.

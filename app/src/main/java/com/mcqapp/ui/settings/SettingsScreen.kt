@@ -26,12 +26,14 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -541,6 +543,67 @@ private fun AnkiSchedulerSection(
                 Switch(
                     checked = simplifiedStudy,
                     onCheckedChange = onSimplifiedChange
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // --- the everyday pull-based controls ---
+
+            Text("Study", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("Target retention", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = config.desiredRetention.toFloat(),
+                onValueChange = { onChange(config.copy(desiredRetention = it.toDouble())) },
+                // 0.75..0.97 in 0.01 steps: matches SchedulerConfig.sanitized's clamp.
+                valueRange = 0.75f..0.97f,
+                steps = 21
+            )
+            Text(
+                "How reliably you want to recall cards when they come due. " +
+                    "Higher asks for shorter intervals and more reviews.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("Ranking mode", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = config.studyMode == com.mcqapp.domain.StudyMode.MEMORY_FIRST,
+                    onClick = {
+                        onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.MEMORY_FIRST))
+                    },
+                    label = { Text("Memory first") }
+                )
+                FilterChip(
+                    selected = config.studyMode == com.mcqapp.domain.StudyMode.EXPLORE_NEW,
+                    onClick = {
+                        onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.EXPLORE_NEW))
+                    },
+                    label = { Text("Explore new cards") }
+                )
+            }
+            Text(
+                "Memory first clears what is due before showing anything new. " +
+                    "Explore surfaces a new card every few reviews.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Introduce new cards")
+                    Text(
+                        "Switch off for review-only sessions. Many new cards " +
+                            "increase future review load.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(
+                    checked = config.introduceNewCards,
+                    onCheckedChange = { onChange(config.copy(introduceNewCards = it)) }
                 )
             }
             Spacer(Modifier.height(12.dp))

@@ -33,7 +33,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -118,17 +117,26 @@ fun StudyScreen(
                 state.finished -> StudySummary(
                     state = state,
                     onRestart = { viewModel.restart() },
+                    onEnableNewCards = { viewModel.enableNewCards() },
                     onDone = { navController.popBackStack() }
                 )
-                else -> StudyBody(state = state, viewModel = viewModel)
+                else -> StudyBody(
+                    state = state,
+                    viewModel = viewModel,
+                    onStop = { viewModel.stop() }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
-    val question = state.currentQuestion ?: return
+private fun StudyBody(
+    state: StudyUiState,
+    viewModel: StudyViewModel,
+    onStop: () -> Unit
+) {
+    val question = state.question ?: return
     if (state.simplified) {
         // Like test mode: the question scrolls, but Check, Guess and Next live
         // in a fixed footer so they are always tappable without scrolling.
@@ -139,15 +147,15 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                StudyHeader(state)
+                StudyHeader(state, onStop, onDismissBreak = { viewModel.dismissBreak() })
                 Spacer(Modifier.height(12.dp))
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
                     revealed = state.revealed,
-                    reason = state.reasons[question.id],
+                    reason = state.current?.reason,
                     onToggleOption = { viewModel.toggleOption(it) },
-                    passage = state.passages[question.passageId]
+                    passage = state.passage
                 )
                 Spacer(Modifier.height(12.dp))
                 if (state.revealed) {
@@ -166,15 +174,15 @@ private fun StudyBody(state: StudyUiState, viewModel: StudyViewModel) {
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                StudyHeader(state)
+                StudyHeader(state, onStop, onDismissBreak = { viewModel.dismissBreak() })
                 Spacer(Modifier.height(12.dp))
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
                     revealed = state.revealed,
-                    reason = state.reasons[question.id],
+                    reason = state.current?.reason,
                     onToggleOption = { viewModel.toggleOption(it) },
-                    passage = state.passages[question.passageId]
+                    passage = state.passage
                 )
             }
             Column(
@@ -256,7 +264,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Text(stringResource(R.string.check))
             }
         } else {
-            val question = state.currentQuestion
+            val question = state.question
             var showPicker by remember(question?.id) { mutableStateOf(false) }
             if (showPicker) {
                 GradeButtons(
@@ -332,22 +340,44 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
 }
 
 @Composable
-private fun StudyHeader(state: StudyUiState) {
+private fun StudyHeader(
+    state: StudyUiState,
+    onStop: () -> Unit,
+    onDismissBreak: () -> Unit
+) {
     Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                state.paperTitle,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            // A voluntary stopping point, always visible. Stopping shows the
+            // session summary; it never blocks or judges mid-session.
+            TextButton(onClick = onStop) {
+                Text(stringResource(R.string.done_for_now))
+            }
+        }
+        // No denominator and no progress bar: a pull-based session has no
+        // fixed length, only what has been done so far.
         Text(
-            state.paperTitle,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Text(
-            "${state.remaining} left in this session",
+            stringResource(R.string.reviewed_this_session, state.reviewed),
             style = MaterialTheme.typography.labelMedium
         )
-        Spacer(Modifier.height(8.dp))
-        LinearProgressIndicator(
-            progress = { state.progress },
-            modifier = Modifier.fillMaxWidth()
-        )
+        if (state.showBreakStrip) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.break_suggestion, state.reviewed),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onDismissBreak) {
+                    Text(stringResource(R.string.dismiss))
+                }
+            }
+        }
     }
 }
 
@@ -383,16 +413,37 @@ private fun QuestionCard(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            if (reason == StudyReason.LEECH) {
-                LeeChip()
-                Spacer(Modifier.height(6.dp))
-            } else if (reason == StudyReason.NEW) {
-                Text(
-                    stringResource(R.string.new_question),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
-                Spacer(Modifier.height(6.dp))
+            // Why this card was pulled. Optional context, never a demand.
+            when (reason) {
+                StudyReason.LEECH -> {
+                    LeeChip()
+                    Spacer(Modifier.height(6.dp))
+                }
+                StudyReason.NEW -> {
+                    Text(
+                        stringResource(R.string.new_question),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                StudyReason.LOW_RECALL_RISK -> {
+                    Text(
+                        stringResource(R.string.likely_to_be_forgotten_soon),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                StudyReason.LEARNING -> {
+                    Text(
+                        stringResource(R.string.learning_step),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                StudyReason.DUE -> {}
             }
             // Bumped a step: the stem is the primary reading text and was set
             // small relative to the option markers around it.
@@ -586,6 +637,7 @@ private fun StudyLoadError(message: String, onRetry: () -> Unit, onDone: () -> U
 private fun StudySummary(
     state: StudyUiState,
     onRestart: () -> Unit,
+    onEnableNewCards: () -> Unit,
     onDone: () -> Unit
 ) {
     Column(
@@ -601,6 +653,23 @@ private fun StudySummary(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+            // New cards exist but are switched off: offer the toggle here,
+            // where the learner is looking at an empty session, without
+            // sending them hunting through settings.
+            if (!state.introduceNewCards && state.freshAvailable) {
+                Text(
+                    stringResource(R.string.new_cards_are_switched_off),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Button(
+                    onClick = onEnableNewCards,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.introduce_new_cards))
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             // There is nothing to repeat, so only offer a way out.
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.back_to_library))
@@ -617,6 +686,19 @@ private fun StudySummary(
                 "${state.reviewed} reviewed • ${state.againCount} again • ${state.goodCount} remembered",
                 style = MaterialTheme.typography.bodyMedium
             )
+            if (state.reviewed > 0) {
+                Spacer(Modifier.height(4.dp))
+                // Stats only, no goals: how the sitting went, not a score to
+                // defend.
+                Text(
+                    stringResource(
+                        R.string.session_accuracy,
+                        state.goodCount * 100 / state.reviewed
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(Modifier.height(16.dp))
         }
         OutlinedButton(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {

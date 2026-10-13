@@ -5,10 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
-import com.mcqapp.domain.CardState
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
@@ -33,22 +33,25 @@ data class StudyResult(
     val nextIn: String
 )
 
+/**
+ * A pull-based study session: there is no prebuilt queue and no target. The
+ * session holds the card on screen plus a running tally of what happened; the
+ * next card arrives by asking the scheduler what to pull now, so a failed card
+ * can come back within the same sitting and the session ends only when nothing
+ * is eligible any more.
+ */
 data class StudyUiState(
     val loading: Boolean = true,
     val loadError: String? = null,
     val paperTitle: String = "",
-    val queue: List<Question> = emptyList(),
-    val reasons: Map<String, StudyReason> = emptyMap(),
-    /**
-     * The schedule each card had when the session was built. Kept because the
-     * answer buttons show the delay each grade would produce, and that is a
-     * function of where this card currently sits.
-     */
-    val states: Map<String, CardState> = emptyMap(),
+    /** The card the session pulled, or null when nothing is eligible. */
+    val current: StudyCard? = null,
+    val question: Question? = null,
+    /** The current card's passage, if it belongs to one. */
+    val passage: com.mcqapp.domain.Passage? = null,
     /** Formatted delay per grade for the card on screen, shown on the buttons. */
     val previews: Map<ReviewGrade, String> = emptyMap(),
-    val index: Int = 0,
-    val selections: Map<String, Set<String>> = emptyMap(),
+    val selection: Set<String> = emptySet(),
     val revealed: Boolean = false,
     val grading: Boolean = false,
     /**
@@ -68,19 +71,32 @@ data class StudyUiState(
     val pendingGrade: ReviewGrade? = null,
     /** What the last check decided, for the result card. */
     val lastResult: StudyResult? = null,
+    // Session stats: a record of what happened, never a target.
     val reviewed: Int = 0,
     val againCount: Int = 0,
     val goodCount: Int = 0,
+    /** Reviews served since the last new card; explore mode paces on this. */
+    val reviewsSinceNew: Int = 0,
+    /** True once the pull has run dry — nothing eligible left right now. */
     val finished: Boolean = false,
+    /** Why the session is empty; only set when nothing was ever studied. */
     val emptyReason: String = "",
-    /** Passages for the queue's members, keyed by id, for the context card. */
-    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
+    /** Whether new cards can be introduced at all (drives the empty-state hint). */
+    val introduceNewCards: Boolean = true,
+    /** New cards exist but are switched off, so the empty state can offer them. */
+    val freshAvailable: Boolean = false,
+    /** The reviewed-count the break strip was dismissed at, so it can return at the next milestone. */
+    val breakDismissedAt: Int = 0
 ) {
-    val currentQuestion: Question? get() = queue.getOrNull(index)
-    val remaining: Int get() = (queue.size - index).coerceAtLeast(0)
-    val currentSelection: Set<String> get() = currentQuestion?.let { selections[it.id] }.orEmpty()
+    val currentSelection: Set<String> get() = selection
     val isCurrentRevealed: Boolean get() = revealed
-    val progress: Float get() = if (queue.isEmpty()) 0f else index.toFloat() / queue.size
+
+    /**
+     * Suggested after every ten reviews. Dismissible, never blocking, and it
+     * returns only at the next multiple of ten.
+     */
+    val showBreakStrip: Boolean
+        get() = reviewed > 0 && reviewed % 10 == 0 && breakDismissedAt < reviewed
 }
 
 class StudyViewModel(
@@ -98,57 +114,54 @@ class StudyViewModel(
         load()
     }
 
-    /** Read once per session, alongside the queue, for the button previews. */
+    /** Read once per session, for the button previews. */
     private var config: SchedulerConfig? = null
+
+    /** Resolved once per session; a pull then only has to map id to question. */
+    private var questionsById: Map<String, Question> = emptyMap()
+
+    /**
+     * The tricky drill serves a fixed list of the paper's leeches; the main
+     * session pulls card by card from the scheduler. Non-null switches the
+     * pull source to this list.
+     */
+    private var drillCards: List<StudyCard>? = null
+    private var drillIndex = 0
 
     private fun load() {
         viewModelScope.launch {
             try {
                 val paper = repository.getPaper(paperId)
-                val cards = repository.getStudyQueue(paperId, leechesOnly = leechesOnly)
-                if (cards.isEmpty()) {
-                    _state.update {
-                        it.copy(
-                            loading = false,
-                            finished = true,
-                            emptyReason = if (leechesOnly) {
-                                "No tricky questions left. Keep reviewing and they will come back."
-                            } else {
-                                "Nothing due here. Come back later, or study a different paper."
-                            }
-                        )
-                    }
-                    return@launch
-                }
-                val byId = repository.getQuestionsForPaper(paperId).associateBy { it.id }
-                val questions = cards.mapNotNull { byId[it.questionId] }
-                Logger.i("STUDY", "Study session: paper=$paperId, cards=${cards.size}, loaded=${questions.size}")
                 config = repository.schedulerConfigNow()
-                val simplified = repository.simplifiedStudy().first()
-                // Shared context only (parked decision): each member keeps its
-                // own SM-2 schedule; its card just carries the passage above it.
-                val passages = repository.getPassagesByIds(
-                    questions.mapNotNull { it.passageId }.distinct()
-                ).associateBy { it.id }
+                if (leechesOnly) {
+                    drillCards = repository.getStudyQueue(paperId, leechesOnly = true)
+                }
+                questionsById = repository.getQuestionsForPaper(paperId).associateBy { it.id }
+                Logger.i(
+                    "STUDY",
+                    "Study session: paper=$paperId, drill=$leechesOnly, " +
+                        "cards=${drillCards?.size ?: "pull"}, loaded=${questionsById.size}"
+                )
                 _state.update {
                     it.copy(
                         loading = false,
                         paperTitle = paper?.title ?: "Study",
-                        queue = questions,
-                        reasons = cards.associate { c -> c.questionId to c.reason },
-                        states = cards.associate { c -> c.questionId to c.state },
-                        passages = passages,
-                        simplified = simplified,
-                        questionStartedAt = System.currentTimeMillis()
+                        simplified = repository.simplifiedStudy().first(),
+                        introduceNewCards = config?.introduceNewCards ?: true
                     )
                 }
-                refreshPreviews()
+                pullCard()
             } catch (e: Exception) {
                 // `finished = true` with an empty reason rendered the success
                 // branch: "Session complete / 0 reviewed". A failure has to
                 // look like a failure.
                 Logger.e("STUDY", "Failed to load study session", e)
-                _state.update { it.copy(loading = false, loadError = "Could not start the session: ${e.message}") }
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        loadError = "Could not start the session: ${e.message}"
+                    )
+                }
             }
         }
     }
@@ -159,23 +172,101 @@ class StudyViewModel(
         load()
     }
 
+    /** The next card: the drill's fixed list, or whatever the scheduler pulls. */
+    private suspend fun nextCard(): StudyCard? {
+        val list = drillCards ?: return repository.getNextStudyCard(paperId, _state.value.reviewsSinceNew)
+        val card = list.getOrNull(drillIndex)
+        if (card != null) drillIndex++
+        return card
+    }
+
+    /**
+     * Pulls the next card onto the screen. Cards whose question vanished
+     * mid-session are skipped; when nothing eligible remains the session ends.
+     */
+    private suspend fun pullCard() {
+        while (true) {
+            val card = nextCard()
+            if (card == null) {
+                finishEmpty()
+                return
+            }
+            val question = questionsById[card.questionId] ?: continue
+            val passage = question.passageId?.let { pid ->
+                repository.getPassagesByIds(listOf(pid)).firstOrNull()
+            }
+            _state.update {
+                it.copy(
+                    current = card,
+                    question = question,
+                    passage = passage,
+                    selection = emptySet(),
+                    revealed = false,
+                    grading = false,
+                    pendingGrade = null,
+                    lastResult = null,
+                    isGuess = false,
+                    questionStartedAt = System.currentTimeMillis(),
+                    reviewsSinceNew = if (card.reason == StudyReason.NEW) 0 else it.reviewsSinceNew + 1,
+                    finished = false
+                )
+            }
+            refreshPreviews()
+            return
+        }
+    }
+
+    /** The pull ran dry: a summary if work was done, an honest empty state if not. */
+    private suspend fun finishEmpty() {
+        var freshAvailable = false
+        if (!leechesOnly && _state.value.reviewed == 0) {
+            try {
+                freshAvailable = repository.getStudyEligibility(paperId).fresh > 0
+            } catch (e: Exception) {
+                Logger.e("STUDY", "getStudyEligibility failed", e)
+            }
+        }
+        _state.update {
+            it.copy(
+                current = null,
+                question = null,
+                passage = null,
+                previews = emptyMap(),
+                selection = emptySet(),
+                revealed = false,
+                grading = false,
+                pendingGrade = null,
+                lastResult = null,
+                finished = true,
+                emptyReason = if (it.reviewed > 0) {
+                    ""
+                } else if (leechesOnly) {
+                    "No tricky questions right now."
+                } else {
+                    "Nothing due right now."
+                },
+                freshAvailable = freshAvailable
+            )
+        }
+    }
+
     fun toggleOption(optionId: String) {
-        val question = _state.value.currentQuestion ?: return
+        val question = _state.value.question ?: return
         if (_state.value.revealed) return
         _state.update { state ->
-            val current = state.selections[question.id] ?: emptySet()
+            val current = state.selection
             val updated = if (question.isMultiCorrect) {
                 if (current.contains(optionId)) current - optionId else current + optionId
             } else {
                 setOf(optionId)
             }
-            state.copy(selections = state.selections + (question.id to updated))
+            state.copy(selection = updated)
         }
     }
 
     fun reveal() {
         if (_state.value.revealed) return
-        Logger.d("STUDY", "reveal question=${_state.value.currentQuestion?.id}")
+        Logger.d("STUDY", "reveal question=${_state.value.question?.id}")
         _state.update { it.copy(revealed = true) }
     }
 
@@ -197,11 +288,11 @@ class StudyViewModel(
      */
     fun check() {
         val current = _state.value
-        val question = current.currentQuestion ?: return
+        val question = current.question ?: return
         if (!current.simplified || current.revealed || current.grading) return
         val now = System.currentTimeMillis()
         val dwellSeconds = ((now - current.questionStartedAt).coerceAtLeast(0L)) / 1000L
-        val selection = current.selections[question.id].orEmpty()
+        val selection = current.selection
         val grade = com.mcqapp.domain.Study.autoGrade(
             correctOptionIds = question.correctOptionIds,
             selection = selection,
@@ -230,7 +321,7 @@ class StudyViewModel(
         now: Long
     ): StudyResult? {
         val schedulerConfig = config ?: return null
-        val card = _state.value.states[question.id] ?: return null
+        val card = _state.value.current?.state ?: return null
         val scheduler = com.mcqapp.domain.FsrsScheduler(
             desiredRetention = schedulerConfig.desiredRetention,
             config = schedulerConfig
@@ -249,7 +340,7 @@ class StudyViewModel(
     /** Replaces the proposed grade before it is persisted. */
     fun changeGrade(grade: ReviewGrade) {
         val current = _state.value
-        val question = current.currentQuestion ?: return
+        val question = current.question ?: return
         if (!current.simplified || !current.revealed || current.pendingGrade == null) return
         val now = System.currentTimeMillis()
         val dwellSeconds = ((now - current.questionStartedAt).coerceAtLeast(0L)) / 1000L
@@ -258,7 +349,7 @@ class StudyViewModel(
                 pendingGrade = grade,
                 lastResult = buildResult(
                     question,
-                    it.selections[question.id].orEmpty(),
+                    it.selection,
                     grade,
                     it.isGuess,
                     dwellSeconds,
@@ -269,12 +360,13 @@ class StudyViewModel(
     }
 
     /**
-     * Persists the proposed grade and advances. Guarded like [grade]: the write
-     * is async, so a second tap would persist two reviews for one question.
+     * Persists the proposed grade and pulls the next card. Guarded like [grade]:
+     * the write is async, so a second tap would persist two reviews for one
+     * question.
      */
     fun next() {
         val current = _state.value
-        val question = current.currentQuestion ?: return
+        val question = current.question ?: return
         val proposed = current.pendingGrade ?: return
         if (!current.simplified || !current.revealed) return
         if (current.grading) return
@@ -292,40 +384,23 @@ class StudyViewModel(
                     "graded ${question.id} -> $proposed (auto), next in ${next.intervalDays}d, " +
                         "leech=${next.leech}"
                 )
-                val reasons = current.reasons - question.id
-                _state.update {
-                    it.copy(
-                        reviewed = it.reviewed + 1,
-                        againCount = it.againCount + if (proposed == ReviewGrade.AGAIN) 1 else 0,
-                        goodCount = it.goodCount + if (proposed == ReviewGrade.AGAIN) 0 else 1,
-                        selections = it.selections - question.id,
-                        revealed = false,
-                        grading = false,
-                        index = it.index + 1,
-                        reasons = reasons,
-                        isGuess = false,
-                        questionStartedAt = System.currentTimeMillis(),
-                        pendingGrade = null,
-                        lastResult = null,
-                        finished = it.index + 1 >= it.queue.size
-                    )
-                }
+                advanceStats(proposed)
+                pullCard()
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update { it.copy(grading = false) }
             }
-            refreshPreviews()
         }
     }
 
     /**
-     * Applies a grade, persists the new schedule, and advances. The learner
-     * sees the answer before grading, so the grade is self-reported — that is
-     * the whole point of the four-button vocabulary.
+     * Applies a grade, persists the new schedule, and pulls the next card. The
+     * learner sees the answer before grading, so the grade is self-reported —
+     * that is the whole point of the four-button vocabulary.
      */
     fun grade(grade: ReviewGrade) {
         val current = _state.value
-        val question = current.currentQuestion ?: return
+        val question = current.question ?: return
         // Claim the card before launching: the write is async, so a second tap
         // would otherwise persist two reviews for the same question.
         if (current.grading) return
@@ -343,47 +418,75 @@ class StudyViewModel(
                     "graded ${question.id} -> $grade, next in ${next.intervalDays}d, " +
                         "leech=${next.leech}"
                 )
-                val reasons = current.reasons - question.id
-                _state.update {
-                    it.copy(
-                        reviewed = it.reviewed + 1,
-                        againCount = it.againCount + if (grade == ReviewGrade.AGAIN) 1 else 0,
-                        goodCount = it.goodCount + if (grade == ReviewGrade.AGAIN) 0 else 1,
-                        selections = it.selections - question.id,
-                        revealed = false,
-                        grading = false,
-                        index = it.index + 1,
-                        reasons = reasons,
-                        questionStartedAt = System.currentTimeMillis(),
-                        finished = it.index + 1 >= it.queue.size
-                    )
-                }
+                advanceStats(grade)
+                pullCard()
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update { it.copy(grading = false) }
             }
-            // The next card has its own schedule, so its labels have to be
-            // recomputed rather than left showing the graded card's delays.
-            refreshPreviews()
+        }
+    }
+
+    private fun advanceStats(grade: ReviewGrade) {
+        _state.update {
+            it.copy(
+                reviewed = it.reviewed + 1,
+                againCount = it.againCount + if (grade == ReviewGrade.AGAIN) 1 else 0,
+                goodCount = it.goodCount + if (grade == ReviewGrade.AGAIN) 0 else 1
+            )
+        }
+    }
+
+    /**
+     * A voluntary stopping point. Never blocks and never judges: the session
+     * just closes with its tally, and the card on screen stays exactly where
+     * the scheduler put it — due when it is due.
+     */
+    fun stop() {
+        _state.update { it.copy(finished = true, emptyReason = "") }
+    }
+
+    fun dismissBreak() {
+        _state.update { it.copy(breakDismissedAt = it.reviewed) }
+    }
+
+    /**
+     * Turns new-card introduction on from the empty state and pulls again, so
+     * the offer is one tap from being taken up.
+     */
+    fun enableNewCards() {
+        val current = config ?: return
+        val updated = current.copy(introduceNewCards = true)
+        config = updated
+        viewModelScope.launch {
+            try {
+                repository.setSchedulerConfig(updated)
+                _state.update { it.copy(introduceNewCards = true, loading = true) }
+                pullCard()
+                _state.update { it.copy(loading = false) }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "enableNewCards failed", e)
+                _state.update { it.copy(loading = false, loadError = "Could not start the session: ${e.message}") }
+            }
         }
     }
 
     /**
      * The four button labels for whichever card is on screen.
      *
-     * Read off the same pure [com.mcqapp.domain.Scheduler.next] the grading path
-     * uses, so a button cannot promise an interval the scheduler would not
+     * Read off the same pure [com.mcqapp.domain.FsrsScheduler.next] the grading
+     * path uses, so a button cannot promise an interval the scheduler would not
      * schedule. Nothing is persisted, and a card whose schedule is unknown gets
      * no labels rather than a guess.
      */
     private fun refreshPreviews() {
-        val current = config ?: return
+        val cfg = config ?: return
         val scheduler = com.mcqapp.domain.FsrsScheduler(
-            desiredRetention = current.desiredRetention,
-            config = current
+            desiredRetention = cfg.desiredRetention,
+            config = cfg
         )
         _state.update { state ->
-            val card = state.currentQuestion?.id?.let { state.states[it] }
+            val card = state.current?.state
             state.copy(
                 previews = if (card == null) {
                     emptyMap()
@@ -396,25 +499,35 @@ class StudyViewModel(
         }
     }
 
-    /** Restarts the same question list so a session can be repeated. */
+    /** Re-pulls from the top so a session can be repeated. */
     fun restart() {
-        _state.update {
-            it.copy(
-                index = 0,
-                selections = emptyMap(),
-                revealed = false,
-                grading = false,
-                reviewed = 0,
-                againCount = 0,
-                goodCount = 0,
-                finished = false,
-                isGuess = false,
-                questionStartedAt = System.currentTimeMillis(),
-                pendingGrade = null,
-                lastResult = null
-            )
+        viewModelScope.launch {
+            try {
+                drillIndex = 0
+                _state.update {
+                    it.copy(
+                        reviewed = 0,
+                        againCount = 0,
+                        goodCount = 0,
+                        reviewsSinceNew = 0,
+                        finished = false,
+                        emptyReason = "",
+                        freshAvailable = false,
+                        selection = emptySet(),
+                        revealed = false,
+                        grading = false,
+                        pendingGrade = null,
+                        lastResult = null,
+                        isGuess = false,
+                        questionStartedAt = System.currentTimeMillis(),
+                        breakDismissedAt = 0
+                    )
+                }
+                pullCard()
+            } catch (e: Exception) {
+                Logger.e("STUDY", "restart failed", e)
+                _state.update { it.copy(loadError = "Could not start the session: ${e.message}") }
+            }
         }
-        refreshPreviews()
-        Logger.i("STUDY", "restart study session: ${_state.value.queue.size} cards")
     }
 }

@@ -78,7 +78,6 @@
     <string name="move_block_up">Move block up</string>
     <string name="move_down">Move down</string>
     <string name="move_up">Move up</string>
-    <string name="n_more_waiting">%1$d more waiting</string>
     <string name="negative_marking">Negative marking</string>
     <string name="negative_marking_e_g_0_33">Negative marking (e.g. 0.33)</string>
     <string name="new_category">New category</string>
@@ -184,7 +183,6 @@
     <string name="blank_fields_keep_existing_values">Blank fields keep existing values.</string>
     <string name="categories">Categories</string>
     <string name="category_breakdown">Category breakdown</string>
-    <string name="daily_limits">Daily limits</string>
     <string name="data">Data</string>
     <string name="explanation">Explanation</string>
     <string name="flow_questions_down_the_left_column_then_the_right">Flow questions down the left column, then the right</string>
@@ -226,7 +224,7 @@
     <string name="searching">Searching…</string>
     <string name="session_complete">Session complete</string>
     <string name="show_correct_answers_and_explanations_instantly">Show correct answers and explanations instantly</string>
-    <string name="sm_2_scheduling_for_study_these_match_anki_s_review_options_">SM-2 scheduling for Study. These match Anki\'s review options, so </string>
+    <string name="sm_2_scheduling_for_study_these_match_anki_s_review_options_">FSRS scheduling for Study. These match Anki\'s review options, so </string>
     <string name="advanced_anki_settings">Advanced Anki settings</string>
     <string name="spaced_repetition">Spaced repetition</string>
     <string name="simplified_anki">Simplified Anki</string>
@@ -238,7 +236,6 @@
     <string name="test">Test</string>
     <string name="text_size">Text size</string>
     <string name="the_response_time_thresholds_only_apply_when_rebuilding_a_sc">The response-time thresholds only apply when rebuilding a schedule </string>
-    <string name="the_review_limit_also_limits_new_cards_so_clearing_a_backlog">The review limit also limits new cards, so clearing a backlog cannot make it worse.</string>
     <string name="theme">Theme</string>
     <string name="tick_the_correct_answer_s">Tick the correct answer(s)</string>
     <string name="time_taken_02d_02d">Time taken: %02d:%02d</string>
@@ -248,4 +245,12 @@
     <string name="when_off_pictures_from_the_web_stay_hidden_so_whoever_aut">When off, pictures from the web stay hidden so whoever authored the bank can\'t see when you open a question. Pictures saved inside the bank always show.</string>
     <string name="you_keep_missing_this_one">You keep missing this one</string>
     <string name="version">Version %1$s</string>
+    <string name="done_for_now">Done for now</string>
+    <string name="reviewed_this_session">Reviewed %1$d this session</string>
+    <string name="break_suggestion">Reviewed %1$d cards — a good moment for a break.</string>
+    <string name="likely_to_be_forgotten_soon">Likely to be forgotten soon</string>
+    <string name="learning_step">Learning step</string>
+    <string name="session_accuracy">Recalled %1$d%% of them</string>
+    <string name="new_cards_are_switched_off">New cards are switched off, so nothing new is being introduced.</string>
+    <string name="introduce_new_cards">Introduce new cards</string>
 </resources>

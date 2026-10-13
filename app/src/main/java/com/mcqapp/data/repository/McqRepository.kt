@@ -273,10 +273,22 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getStudyQueue(
         paperId: String,
         now: Long = System.currentTimeMillis(),
-        newLimit: Int? = null,
         leechesOnly: Boolean = false
     ): List<com.mcqapp.domain.StudyCard> =
-        studyStore.getStudyQueue(paperId, now, newLimit, leechesOnly)
+        studyStore.getStudyQueue(paperId, now, leechesOnly)
+    /** The card a pull-based session serves next, or null when nothing is due. */
+    suspend fun getNextStudyCard(
+        paperId: String,
+        reviewsSinceNew: Int = 0,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.StudyCard? =
+        studyStore.getNextStudyCard(paperId, reviewsSinceNew, now)
+    /** Per-pool eligibility: what a session would serve right now, and why. */
+    suspend fun getStudyEligibility(
+        paperId: String,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.StudyEligibility =
+        studyStore.getStudyEligibility(paperId, now)
     suspend fun getStudyCounts(
         paperId: String,
         now: Long = System.currentTimeMillis()

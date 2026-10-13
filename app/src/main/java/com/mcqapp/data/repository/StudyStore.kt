@@ -73,16 +73,17 @@ internal class StudyStore(
         )
 
     /**
-     * Today's study queue for a paper. Cards the store has never seen start
-     * new: attempt history no longer re-seeds schedules (it would resurrect
-     * the SM-2 states the FSRS switch wiped, and its inferred grades were a
-     * guess at the learner's memory, not a record of it). Imports remain the
-     * only warm-start vectors.
+     * Every eligible card in study order — the tricky drill's source. The main
+     * session no longer prebuilds a queue; it pulls one card at a time through
+     * [getNextStudyCard], which reads the same pools this assembles. Cards the
+     * store has never seen start new: attempt history no longer re-seeds
+     * schedules (it would resurrect the SM-2 states the FSRS switch wiped, and
+     * its inferred grades were a guess at the learner's memory, not a record
+     * of it). Imports remain the only warm-start vectors.
      */
     suspend fun getStudyQueue(
         paperId: String,
         now: Long = System.currentTimeMillis(),
-        newLimit: Int? = null,
         leechesOnly: Boolean = false
     ): List<com.mcqapp.domain.StudyCard> {
         val questionList = questions.getQuestionsForPaper(paperId)
@@ -93,25 +94,81 @@ internal class StudyStore(
             questionList.map { StudyInput(it.id, mapper.contentHashOf(it)) },
             config
         )
-        val selection = com.mcqapp.domain.Study.selection(
+        val pools = com.mcqapp.domain.Study.pools(
             fsrs(config),
             questionList.map { it.id },
             states,
             now,
-            // No daily caps: badges and the queue describe every eligible card.
-            // The optional newLimit narrows the stream for a drill or preview.
-            newLimit ?: Int.MAX_VALUE,
-            Int.MAX_VALUE,
-            false
+            config.introduceNewCards
         )
+        val queue = pools.learning + pools.reviews + pools.fresh
         Logger.i(
             "REPO",
             "getStudyQueue($paperId): ${questionList.size} questions, " +
-                "serving due=${selection.due.size} tricky=${selection.leeches.size} " +
-                "new=${selection.fresh.size}"
+                "learning=${pools.learning.size} due=${pools.reviews.size} " +
+                "new=${pools.fresh.size}"
         )
-        val queue = selection.queue
-        return if (leechesOnly) com.mcqapp.domain.Study.onlyLeeches(queue) else queue
+        return if (leechesOnly) {
+            // The drill is an explicit request for problem questions, so its
+            // cards wear the leech label however they were pulled.
+            com.mcqapp.domain.Study.onlyLeeches(queue)
+                .map { it.copy(reason = com.mcqapp.domain.StudyReason.LEECH) }
+        } else {
+            queue
+        }
+    }
+
+    /**
+     * The card a session should pull next, or null when nothing is eligible —
+     * the same pools the badge counts, so the empty state and the pull agree.
+     */
+    suspend fun getNextStudyCard(
+        paperId: String,
+        reviewsSinceNew: Int = 0,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.StudyCard? {
+        val questionList = questions.getQuestionsForPaper(paperId)
+        if (questionList.isEmpty()) return null
+        val config = settings.schedulerConfigNow()
+        val states = resolveStudyStates(
+            paperId,
+            questionList.map { StudyInput(it.id, mapper.contentHashOf(it)) },
+            config
+        )
+        return com.mcqapp.domain.Study.selectNext(
+            fsrs(config),
+            questionList.map { it.id },
+            states,
+            now,
+            config.studyMode,
+            config.introduceNewCards,
+            reviewsSinceNew
+        )
+    }
+
+    /**
+     * Per-pool eligibility counts for the pull path: what a session would
+     * serve right now and why. The badge reads the same pools.
+     */
+    suspend fun getStudyEligibility(
+        paperId: String,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.StudyEligibility {
+        val questionList = questions.getQuestionsForPaper(paperId)
+        if (questionList.isEmpty()) return com.mcqapp.domain.StudyEligibility()
+        val config = settings.schedulerConfigNow()
+        val states = resolveStudyStates(
+            paperId,
+            questionList.map { StudyInput(it.id, mapper.contentHashOf(it)) },
+            config
+        )
+        return com.mcqapp.domain.Study.eligibility(
+            fsrs(config),
+            questionList.map { it.id },
+            states,
+            now,
+            config.introduceNewCards
+        )
     }
 
     /**
@@ -204,21 +261,19 @@ internal class StudyStore(
         if (inputs.isEmpty()) return StudyCounts()
         val config = settings.schedulerConfigNow()
         val states = resolveStudyStates(paperId, inputs, config)
-        // The same selection the study session is built from, so the badge can
-        // never advertise a card the session then refuses to serve.
-        val selection = com.mcqapp.domain.Study.selection(
+        // The same pools the study pull reads, so the badge can never
+        // advertise a card the session then refuses to serve.
+        val e = com.mcqapp.domain.Study.eligibility(
             fsrs(config),
             inputs.map { it.id },
             states,
             now,
-            Int.MAX_VALUE,
-            Int.MAX_VALUE,
-            false
+            config.introduceNewCards
         )
         return StudyCounts(
-            due = selection.due.size,
-            leeches = selection.leeches.size,
-            fresh = selection.fresh.size
+            due = e.learning + e.due,
+            leeches = e.leeches,
+            fresh = e.fresh
         )
     }
 

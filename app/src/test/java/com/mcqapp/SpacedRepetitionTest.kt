@@ -1,14 +1,17 @@
 package com.mcqapp
 
 import com.mcqapp.domain.CardState
+import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.Sm2Scheduler
 import com.mcqapp.domain.Study
+import com.mcqapp.domain.StudyMode
 import com.mcqapp.domain.StudyReason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -99,10 +102,9 @@ class SpacedRepetitionTest {
         val failed = sched.next(
             graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD)), ReviewGrade.AGAIN, now
         )
-        val early = Study.queue(
-            sched, listOf("q1"), mapOf("q1" to failed), now = now
-        )
-        assertTrue(early.isEmpty())
+        val pools = Study.pools(sched, listOf("q1"), mapOf("q1" to failed), now = now)
+        assertTrue(pools.learning.isEmpty() && pools.reviews.isEmpty())
+        assertNull(Study.selectNext(sched, listOf("q1"), mapOf("q1" to failed), now = now))
     }
 
     @Test
@@ -111,28 +113,29 @@ class SpacedRepetitionTest {
             graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD)), ReviewGrade.AGAIN, now
         )
         val later = now + SchedulerConfig().relearnMs
-        val queue = Study.queue(
+        val card = Study.selectNext(
             sched, listOf("q1"), mapOf("q1" to failed), now = later
         )
-        assertEquals(1, queue.size)
-        assertEquals(StudyReason.DUE, queue.first().reason)
+        assertEquals("q1", card?.questionId)
+        assertEquals(StudyReason.LEARNING, card?.reason)
     }
 
     @Test
-    fun `the new limit does not hide a relearning card`() {
+    fun `a due relearning step is served even with new cards switched off`() {
         val failed = sched.next(
             graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD)), ReviewGrade.AGAIN, now
         )
         val later = now + SchedulerConfig().relearnMs
-        val queue = Study.queue(
-            sched,
-            listOf("q1", "q2", "q3"),
-            mapOf("q1" to failed, "q2" to sched.initial("q2")),
-            now = later,
-            newLimit = 0
+        val states = mapOf(
+            "q1" to failed,
+            "q2" to sched.initial("q2"),
+            "q3" to sched.initial("q3")
         )
-        assertEquals(1, queue.size)
-        assertEquals("q1", queue.first().questionId)
+        val card = Study.selectNext(
+            sched, listOf("q1", "q2", "q3"), states, now = later,
+            introduceNewCards = false
+        )
+        assertEquals("q1", card?.questionId)
     }
 
     // --- failure path ---
@@ -257,182 +260,229 @@ class SpacedRepetitionTest {
         assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 15))
     }
 
-    // --- queue ---
+    // --- the pull-based candidate pools ---
 
     @Test
-    fun `queue returns nothing for an empty paper`() {
-        assertTrue(Study.queue(sched, emptyList(), emptyMap(), now).isEmpty())
+    fun `pools are empty and the pull serves nothing for an empty paper`() {
+        val pools = Study.pools(sched, emptyList(), emptyMap(), now)
+        assertTrue(pools.learning.isEmpty() && pools.reviews.isEmpty() && pools.fresh.isEmpty())
+        assertNull(Study.selectNext(sched, emptyList(), emptyMap(), now))
+        assertEquals(0, Study.eligibility(sched, emptyList(), emptyMap(), now).total)
     }
 
     @Test
-    fun `queue caps new cards at the daily limit`() {
-        val ids = (1..50).map { "q$it" }
-        val queue = Study.queue(sched, ids, emptyMap(), now, newLimit = 5)
-        assertEquals(5, queue.size)
-        assertTrue(queue.all { it.reason == StudyReason.NEW })
-    }
-
-    @Test
-    fun `queue includes due cards ahead of new cards`() {
-        val queue = Study.queue(
-            sched,
-            listOf("new1", "new2", "due1"),
-            mapOf("due1" to CardState(questionId = "due1", intervalDays = 3, dueAt = now - day, reps = 2)),
-            now
+    fun `the pull serves a due review before a new card`() {
+        // Due exactly at pull time: full recall, so the plain DUE reason. An
+        // overdue card would already read as LOW_RECALL_RISK instead.
+        val states = mapOf(
+            "due1" to CardState(questionId = "due1", intervalDays = 3, dueAt = now, reps = 2)
         )
-        assertEquals("due1", queue.first().questionId)
-        assertEquals(StudyReason.DUE, queue.first().reason)
-        // due1 + both new cards (default limit of 20 covers both)
-        assertEquals(3, queue.size)
+        val first = Study.selectNext(sched, listOf("new1", "due1"), states, now)
+        assertEquals("due1", first?.questionId)
+        assertEquals(StudyReason.DUE, first?.reason)
     }
 
     @Test
-    fun `queue excludes cards that are not yet due`() {
+    fun `cards that are not yet due sit in no pool`() {
         val states = mapOf(
             "later" to CardState(questionId = "later", intervalDays = 3, dueAt = now + day, reps = 2)
         )
-        assertTrue(Study.queue(sched, listOf("later"), states, now).isEmpty())
+        val pools = Study.pools(sched, listOf("later"), states, now)
+        assertTrue(pools.learning.isEmpty() && pools.reviews.isEmpty() && pools.fresh.isEmpty())
+        assertNull(Study.selectNext(sched, listOf("later"), states, now))
     }
 
     @Test
-    fun `queue sorts due cards oldest first`() {
+    fun `reviews rank by recall risk, not by age alone`() {
+        // A small-interval card four days overdue has lost more recall than a
+        // long-interval card six days overdue, even though the long one became
+        // due first. Risk, not age, is what the pull serves.
         val states = mapOf(
-            "recent" to CardState(questionId = "recent", intervalDays = 2, dueAt = now - day, reps = 1),
-            "oldest" to CardState(questionId = "oldest", intervalDays = 9, dueAt = now - 9 * day, reps = 3),
-            "middle" to CardState(questionId = "middle", intervalDays = 4, dueAt = now - 4 * day, reps = 2)
-        )
-        val queue = Study.queue(
-            sched,
-            listOf("recent", "oldest", "middle"),
-            states,
-            now
-        )
-        assertEquals(listOf("oldest", "middle", "recent"), queue.map { it.questionId })
-    }
-
-    @Test
-    fun `due leeches are labelled as leeches`() {
-        val states = mapOf(
-            "leech1" to CardState(
-                questionId = "leech1",
-                intervalDays = 2,
-                dueAt = now - day,
-                reps = 3,
-                lapses = 8,
-                leech = true
+            "shallow" to CardState(
+                questionId = "shallow", intervalDays = 2, dueAt = now - 4 * day, reps = 2
+            ),
+            "deep" to CardState(
+                questionId = "deep", intervalDays = 30, dueAt = now - 6 * day, reps = 5
             )
         )
-        val queue = Study.queue(sched, listOf("leech1"), states, now)
-        assertEquals(StudyReason.LEECH, queue.first().reason)
+        val pools = Study.pools(sched, listOf("deep", "shallow"), states, now)
+        assertEquals(listOf("shallow", "deep"), pools.reviews.map { it.questionId })
     }
 
     @Test
-    fun `new limit does not suppress due cards`() {
+    fun `equal recall risk breaks the tie by oldest due date`() {
+        // Both cards sit at exactly the same predicted recall (overdue divided
+        // by interval is equal), so the one that has waited longer goes first.
         val states = mapOf(
-            "due1" to CardState(questionId = "due1", intervalDays = 2, dueAt = now - day, reps = 1),
-            "due2" to CardState(questionId = "due2", intervalDays = 2, dueAt = now - day, reps = 1)
+            "a" to CardState(questionId = "a", intervalDays = 2, dueAt = now - 4 * day, reps = 2),
+            "b" to CardState(questionId = "b", intervalDays = 4, dueAt = now - 8 * day, reps = 2)
         )
-        val queue = Study.queue(
-            sched,
-            listOf("due1", "due2", "new1"),
-            states,
-            now,
-            newLimit = 0
-        )
-        assertEquals(2, queue.size)
-        assertTrue(queue.none { it.reason == StudyReason.NEW })
+        val pools = Study.pools(sched, listOf("a", "b"), states, now)
+        assertEquals(listOf("b", "a"), pools.reviews.map { it.questionId })
     }
 
     @Test
-    fun `queue order is stable across repeated calls`() {
+    fun `a due leech is an ordinary review plus the drill filter`() {
+        val leech = CardState(
+            questionId = "leech1", intervalDays = 2, dueAt = now - day,
+            reps = 3, lapses = 8, leech = true
+        )
+        val pools = Study.pools(sched, listOf("leech1"), mapOf("leech1" to leech), now)
+        // In the review pool with everyone else — no separate stream, no cap.
+        assertEquals("leech1", pools.reviews.single().questionId)
+        assertEquals(listOf("leech1"), Study.onlyLeeches(pools.reviews).map { it.questionId })
+    }
+
+    @Test
+    fun `the pull order is learning, then risk-ranked reviews, then new cards`() {
+        val states = mapOf(
+            "learn" to CardState(
+                questionId = "learn", intervalDays = 0, dueAt = now - 60_000L,
+                reps = 1, state = CardStateKind.LEARNING
+            ),
+            "due" to CardState(questionId = "due", intervalDays = 2, dueAt = now - day, reps = 2)
+        )
+        val ids = listOf("new1", "due", "learn")
+        assertEquals("learn", Study.selectNext(sched, ids, states, now)?.questionId)
+        val pools = Study.pools(sched, ids, states, now)
+        assertEquals(
+            listOf("learn", "due", "new1"),
+            (pools.learning + pools.reviews + pools.fresh).map { it.questionId }
+        )
+    }
+
+    @Test
+    fun `memory first serves new cards only once nothing is due`() {
+        val ids = listOf("new1", "due1")
+        val withDue = mapOf(
+            "due1" to CardState(questionId = "due1", intervalDays = 2, dueAt = now - day, reps = 2)
+        )
+        assertEquals("due1", Study.selectNext(sched, ids, withDue, now)?.questionId)
+        // Backlog cleared (the due card moved well past this sitting): the
+        // new stream is next.
+        val cleared = mapOf(
+            "due1" to CardState(questionId = "due1", intervalDays = 2, dueAt = now + 5 * day, reps = 2)
+        )
+        assertEquals("new1", Study.selectNext(sched, ids, cleared, now + 3 * day)?.questionId)
+    }
+
+    @Test
+    fun `explore mode surfaces a new card every few reviews`() {
+        val ids = listOf("new1", "new2", "due1", "due2", "due3", "due4")
+        val states = listOf("due1", "due2", "due3", "due4").associateWith {
+            CardState(questionId = it, intervalDays = 2, dueAt = now - day, reps = 2)
+        }
+        // Below the cadence, the review backlog wins.
+        assertEquals(
+            "due1",
+            Study.selectNext(
+                sched, ids, states, now,
+                studyMode = StudyMode.EXPLORE_NEW, reviewsSinceNew = 2
+            )?.questionId
+        )
+        // Cadence reached: the new card jumps ahead of the backlog.
+        assertEquals(
+            "new1",
+            Study.selectNext(
+                sched, ids, states, now,
+                studyMode = StudyMode.EXPLORE_NEW,
+                reviewsSinceNew = Study.EXPLORE_NEW_EVERY
+            )?.questionId
+        )
+        // Memory first ignores the counter entirely.
+        assertEquals(
+            "due1",
+            Study.selectNext(
+                sched, ids, states, now,
+                studyMode = StudyMode.MEMORY_FIRST, reviewsSinceNew = 99
+            )?.questionId
+        )
+    }
+
+    @Test
+    fun `introducing new cards can be switched off`() {
+        val ids = listOf("new1", "due1")
+        val states = mapOf(
+            "due1" to CardState(questionId = "due1", intervalDays = 2, dueAt = now + day, reps = 2)
+        )
+        val pools = Study.pools(sched, ids, states, now, introduceNewCards = false)
+        assertTrue(pools.fresh.isEmpty())
+        assertNull(Study.selectNext(sched, ids, states, now, introduceNewCards = false))
+        // With the toggle on, the same paper offers the new card once the
+        // review is not yet due.
+        assertEquals("new1", Study.selectNext(sched, ids, states, now)?.questionId)
+    }
+
+    @Test
+    fun `eligibility counts what the pools serve`() {
+        val states = mapOf(
+            "learn" to CardState(
+                questionId = "learn", intervalDays = 0, dueAt = now - 60_000L,
+                reps = 1, state = CardStateKind.RELEARNING
+            ),
+            "due" to CardState(questionId = "due", intervalDays = 2, dueAt = now - day, reps = 2),
+            "leech" to CardState(
+                questionId = "leech", intervalDays = 2, dueAt = now - day,
+                reps = 2, lapses = 8, leech = true
+            ),
+            "future" to CardState(questionId = "future", intervalDays = 2, dueAt = now + day, reps = 2)
+        )
+        val e = Study.eligibility(sched, states.keys.toList() + "missing", states, now)
+        assertEquals(1, e.learning)
+        assertEquals(1, e.due)
+        assertEquals(1, e.leeches)
+        assertEquals(1, e.fresh)
+        // The badge's contract: every pool member is counted exactly once.
+        val p = Study.pools(sched, states.keys.toList() + "missing", states, now)
+        assertEquals(p.learning.size + p.reviews.size + p.fresh.size, e.total)
+    }
+
+    @Test
+    fun `only leeches that are due are tricky`() {
+        // A leech that is not due today is not in any pool, so counting it in
+        // the badge would promise a card the drill cannot serve.
+        val states = mapOf(
+            "a" to CardState(
+                questionId = "a", leech = true, intervalDays = 2, dueAt = now - day, reps = 2
+            ),
+            "b" to CardState(
+                questionId = "b", leech = true, intervalDays = 2, dueAt = now + day, reps = 2
+            )
+        )
+        assertEquals(1, Study.eligibility(sched, states.keys.toList(), states, now).leeches)
+    }
+
+    @Test
+    fun `a leech that lapsed back into learning is still drilled`() {
+        val states = mapOf(
+            "relearn" to CardState(
+                questionId = "relearn", intervalDays = 0, dueAt = now - 60_000L,
+                reps = 3, lapses = 8, leech = true, state = CardStateKind.RELEARNING
+            )
+        )
+        val e = Study.eligibility(sched, listOf("relearn"), states, now)
+        assertEquals(1, e.leeches)
+        assertEquals(0, e.learning)
+        // And the drill filter over the whole pull order finds it.
+        val pools = Study.pools(sched, listOf("relearn"), states, now)
+        assertEquals(
+            listOf("relearn"),
+            Study.onlyLeeches(pools.learning + pools.reviews).map { it.questionId }
+        )
+    }
+
+    @Test
+    fun `pool order is stable across repeated calls`() {
         val ids = (1..10).map { "q$it" }
         val states = mapOf(
             "q3" to CardState(questionId = "q3", intervalDays = 2, dueAt = now - day, reps = 1)
         )
+        val first = Study.pools(sched, ids, states, now)
+        val second = Study.pools(sched, ids, states, now)
         assertEquals(
-            Study.queue(sched, ids, states, now).map { it.questionId },
-            Study.queue(sched, ids, states, now).map { it.questionId }
+            (first.learning + first.reviews + first.fresh).map { it.questionId },
+            (second.learning + second.reviews + second.fresh).map { it.questionId }
         )
-    }
-
-    // --- selection ---
-
-    @Test
-    fun `selection ignores new and not-yet-due cards when counting due`() {
-        val states = mapOf(
-            "new" to CardState(questionId = "new"),
-            "due" to CardState(questionId = "due", intervalDays = 2, dueAt = now - day, reps = 2),
-            "later" to CardState(questionId = "later", intervalDays = 2, dueAt = now + day, reps = 2)
-        )
-        val selection = Study.selection(sched, states.keys.toList(), states, now)
-        assertEquals(listOf("due"), selection.due.map { it.questionId })
-        assertEquals(0, selection.dueWaiting)
-    }
-
-    @Test
-    fun `selection counts missing and unreviewed cards as new`() {
-        val states = mapOf(
-            "b" to CardState(questionId = "b", intervalDays = 1, dueAt = now, reps = 1)
-        )
-        val selection = Study.selection(sched, listOf("a", "b", "c"), states, now)
-        assertEquals(listOf("a", "c"), selection.fresh.map { it.questionId })
-    }
-
-    @Test
-    fun `selection counts only due leeches as tricky`() {
-        // A leech that is not due today is not in the queue, so counting it in
-        // the badge would promise a card the session cannot serve.
-        val states = mapOf(
-            "a" to CardState(questionId = "a", leech = true, intervalDays = 2, dueAt = now - day, reps = 2),
-            "b" to CardState(questionId = "b", leech = true, intervalDays = 2, dueAt = now + day, reps = 2),
-            "c" to CardState(questionId = "c")
-        )
-        val selection = Study.selection(sched, states.keys.toList(), states, now)
-        assertEquals(listOf("a"), selection.leeches.map { it.questionId })
-    }
-
-    @Test
-    fun `selection reports what the daily limits hold back`() {
-        val ids = (1..10).map { "q$it" }
-        val states = ids.associateWith { CardState(questionId = it, intervalDays = 2, dueAt = now - day, reps = 2) }
-        val selection = Study.selection(
-            sched, ids, states, now, newLimit = 2, reviewLimit = 3
-        )
-        assertEquals(3, selection.due.size)
-        assertEquals(7, selection.dueWaiting)
-        // No new cards in this paper, so only the review cap holds anything back.
-        assertEquals(0, selection.freshWaiting)
-        assertEquals(7, selection.waiting)
-    }
-
-    @Test
-    fun `selection reports new cards held back by the new limit`() {
-        val ids = (1..10).map { "q$it" }
-        val selection = Study.selection(sched, ids, emptyMap(), now, newLimit = 4)
-        assertEquals(4, selection.fresh.size)
-        assertEquals(6, selection.freshWaiting)
-        assertFalse(selection.newBlockedByReviewLimit)
-    }
-
-    @Test
-    fun `selection flags new cards blocked by the review limit`() {
-        val dueIds = (1..10).map { "d$it" }
-        val due = dueIds.associateWith {
-            CardState(questionId = it, intervalDays = 2, dueAt = now - day, reps = 2)
-        }
-        val selection = Study.selection(
-            sched, dueIds + "n1", due, now, newLimit = 5, reviewLimit = 2
-        )
-        assertTrue(selection.newBlockedByReviewLimit)
-        assertEquals(0, selection.fresh.size)
-        assertEquals(1, selection.freshWaiting)
-    }
-
-    @Test
-    fun `an empty paper selects nothing`() {
-        val selection = Study.selection(sched, emptyList(), emptyMap(), now)
-        assertTrue(selection.queue.isEmpty())
-        assertEquals(0, selection.waiting)
     }
 
     // --- automatic grading ---
@@ -557,13 +607,13 @@ class SpacedRepetitionTest {
         )
     }
 
-    // --- badge / queue agreement ---
+    // --- badge / eligibility agreement ---
     //
-    // The library badge counted every unseen card while the queue served only
-    // the daily limit, so "44 new" opened a session of 20. Both now read one
-    // selection, and these pin the two together.
+    // The library badge and the pull read the same pools, so the badge can
+    // never advertise a card the session refuses to serve. These pin the two
+    // together across mixed papers.
 
-    private fun selectionCases(): List<Triple<List<String>, Map<String, CardState>, Int>> {
+    private fun poolCases(): List<Pair<List<String>, Map<String, CardState>>> {
         val due = (1..8).map { "d$it" }
         val leeches = (1..3).map { "l$it" }
         val states = mutableMapOf<String, CardState>()
@@ -579,52 +629,40 @@ class SpacedRepetitionTest {
         }
         val fresh = (1..12).map { "n$it" }
         return listOf(
-            Triple(due + leeches + fresh, states, 4),
-            Triple(due + leeches + fresh, states, 100),
-            Triple(due, states, 0),
-            Triple(fresh, emptyMap(), 3),
-            Triple(emptyList(), emptyMap(), 5)
+            Pair(due + leeches + fresh, states),
+            Pair(due, states),
+            Pair(fresh, emptyMap()),
+            Pair(emptyList(), emptyMap())
         )
     }
 
     @Test
-    fun `the served count always equals the queue length`() {
-        selectionCases().forEach { (ids, states, newLimit) ->
-            listOf(0, 3, 200).forEach { reviewLimit ->
-                listOf(false, true).forEach { ignore ->
-                    val selection = Study.selection(
-                        sched, ids, states, now,
-                        newLimit = newLimit,
-                        reviewLimit = reviewLimit,
-                        newCardsIgnoreReviewLimit = ignore
-                    )
-                    assertEquals(
-                        "badge/queue mismatch for newLimit=$newLimit " +
-                            "reviewLimit=$reviewLimit ignore=$ignore",
-                        selection.queue.size,
-                        selection.due.size + selection.leeches.size + selection.fresh.size
-                    )
-                    assertEquals(selection.queue.size, Study.queue(
-                        sched, ids, states, now,
-                        newLimit = newLimit,
-                        reviewLimit = reviewLimit,
-                        newCardsIgnoreReviewLimit = ignore
-                    ).size)
-                }
+    fun `the eligibility total always equals the pools size`() {
+        poolCases().forEach { (ids, states) ->
+            listOf(true, false).forEach { introduce ->
+                val pools = Study.pools(sched, ids, states, now, introduce)
+                val e = Study.eligibility(sched, ids, states, now, introduce)
+                assertEquals(
+                    "badge/queue mismatch for introduceNewCards=$introduce",
+                    pools.learning.size + pools.reviews.size + pools.fresh.size,
+                    e.total
+                )
+                assertEquals(pools.fresh.size, e.fresh)
             }
         }
     }
 
     @Test
-    fun `nothing is dropped between the waiting counts and the totals`() {
-        selectionCases().forEach { (ids, states, newLimit) ->
-            val selection = Study.selection(sched, ids, states, now, newLimit = newLimit, reviewLimit = 3)
-            val served = selection.due.size + selection.leeches.size + selection.fresh.size
-            assertTrue(selection.waiting >= 0)
-            assertTrue(selection.newBlockedByReviewLimit || selection.freshWaiting >= 0)
-            // Every question is either served or accounted for as waiting or
-            // held behind the review cap.
-            assertEquals(ids.size, served + selection.waiting)
+    fun `every question is either eligible or not, nothing in between`() {
+        // No caps and no waiting list: a question is either served by the pull
+        // or never offered, and the badge counts exactly the served set.
+        poolCases().forEach { (ids, states) ->
+            val e = Study.eligibility(sched, ids, states, now)
+            val expected = ids.count { id ->
+                val s = states[id]
+                s == null || s.isNew || s.dueAt <= now
+            }
+            assertEquals("eligible count for ${ids.size} questions", expected, e.total)
         }
     }
 
@@ -787,13 +825,6 @@ class SpacedRepetitionTest {
     }
 
     @Test
-    fun `queue honors the new limit parameter`() {
-        val ids = (1..10).map { "q$it" }
-        val queue = Study.queue(sched, ids, emptyMap(), now, newLimit = 3)
-        assertEquals(3, queue.size)
-    }
-
-    @Test
     fun `infer grade uses the configured time thresholds`() {
         val slow = SchedulerConfig(fastSeconds = 1, slowSeconds = 60)
         assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 30, config = slow))
@@ -827,152 +858,4 @@ class SpacedRepetitionTest {
         assertEquals(SchedulerConfig(), SchedulerConfig().sanitized())
     }
 
-    // --- review limit ---
-    //
-    // reviewLimit was persisted and editable in Settings but never applied to
-    // the queue, so a learner who set "50/day" was still served every due card.
-
-    private fun dueStates(ids: List<String>, dueAt: Long = now - day) =
-        ids.associateWith { CardState(questionId = it, intervalDays = 3, dueAt = dueAt, reps = 2) }
-
-    @Test
-    fun `queue caps due cards at the review limit`() {
-        val ids = (1..50).map { "q$it" }
-        val queue = Study.queue(sched, ids, dueStates(ids), now, reviewLimit = 5)
-        assertEquals(5, queue.size)
-        assertTrue(queue.all { it.reason == StudyReason.DUE })
-    }
-
-    @Test
-    fun `review limit keeps the oldest due cards`() {
-        val ids = (1..5).map { "q$it" }
-        // q5 is the most overdue, so it must be the one that survives the cap.
-        val states = ids.mapIndexed { index, id ->
-            id to CardState(
-                questionId = id,
-                intervalDays = 3,
-                dueAt = now - day * (index + 1).toLong(),
-                reps = 2
-            )
-        }.toMap()
-        val queue = Study.queue(sched, ids, states, now, reviewLimit = 2)
-        assertEquals(listOf("q5", "q4"), queue.map { it.questionId })
-    }
-
-    @Test
-    fun `review limit of zero serves nothing at all`() {
-        val ids = (1..10).map { "q$it" }
-        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
-        val queue = Study.queue(
-            sched, ids + "new1", states, now, newLimit = 20, reviewLimit = 0
-        )
-        assertTrue(queue.isEmpty())
-    }
-
-    @Test
-    fun `new cards are blocked once the review limit is reached`() {
-        val ids = (1..30).map { "q$it" }
-        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
-        val queue = Study.queue(
-            sched, ids + "new1", states, now, newLimit = 20, reviewLimit = 10
-        )
-        assertEquals(10, queue.size)
-        assertTrue(queue.none { it.reason == StudyReason.NEW })
-    }
-
-    @Test
-    fun `new cards are served when the review limit is not reached`() {
-        val ids = (1..5).map { "q$it" }
-        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
-        val queue = Study.queue(
-            sched, ids + "new1", states, now, newLimit = 20, reviewLimit = 10
-        )
-        assertEquals(6, queue.size)
-        assertEquals(1, queue.count { it.reason == StudyReason.NEW })
-    }
-
-    @Test
-    fun `new cards ignore review limit opt-out serves new cards past the cap`() {
-        val ids = (1..30).map { "q$it" }
-        val states = dueStates(ids) + ("new1" to CardState(questionId = "new1"))
-        val queue = Study.queue(
-            sched, ids + "new1", states, now,
-            newLimit = 20, reviewLimit = 10, newCardsIgnoreReviewLimit = true
-        )
-        assertEquals(10, queue.count { it.reason == StudyReason.DUE })
-        assertEquals(1, queue.count { it.reason == StudyReason.NEW })
-    }
-
-    @Test
-    fun `learning cards count against the review limit`() {
-        // A card failed earlier today: reps 0 but a due date set, so it is
-        // relearning rather than new. Anki counts these against the limit.
-        val states = (1..30).associate {
-            "q$it" to CardState(questionId = "q$it", intervalDays = 0, dueAt = now - 60_000L, reps = 0)
-        }
-        val queue = Study.queue(
-            sched, states.keys.toList(), states, now, newLimit = 0, reviewLimit = 4
-        )
-        assertEquals(4, queue.size)
-        assertTrue(queue.all { it.reason == StudyReason.DUE })
-    }
-
-    @Test
-    fun `learning cards still bypass the new card limit`() {
-        val learning = CardState(questionId = "l1", intervalDays = 0, dueAt = now - 60_000L, reps = 0)
-        val queue = Study.queue(
-            sched, listOf("l1"), mapOf("l1" to learning), now, newLimit = 0
-        )
-        assertEquals(1, queue.size)
-    }
-
-    @Test
-    fun `tricky cards are never capped by the review limit`() {
-        // A leech is an explicit drill, not backlog: counting it would make the
-        // "tricky" button return fewer cards than its badge promised.
-        val ids = (1..30).map { "q$it" }
-        val states = ids.associate { id ->
-            id to CardState(
-                questionId = id, intervalDays = 3, dueAt = now - day, reps = 2, leech = true
-            )
-        }
-        val queue = Study.queue(sched, ids, states, now, reviewLimit = 5)
-        assertEquals(30, queue.size)
-        assertTrue(queue.all { it.reason == StudyReason.LEECH })
-    }
-
-    @Test
-    fun `a due leech is counted once and not also treated as a due review`() {
-        val leech = CardState(
-            questionId = "l1", intervalDays = 3, dueAt = now - day, reps = 2, leech = true
-        )
-        val plain = CardState(questionId = "p1", intervalDays = 3, dueAt = now - day, reps = 2)
-        val queue = Study.queue(
-            sched, listOf("l1", "p1"), mapOf("l1" to leech, "p1" to plain),
-            now, reviewLimit = 1
-        )
-        // The leech must not consume the single review slot.
-        assertEquals(1, queue.count { it.reason == StudyReason.LEECH })
-        assertEquals(1, queue.count { it.reason == StudyReason.DUE })
-    }
-
-    @Test
-    fun `review limit of zero still serves tricky cards`() {
-        val leech = CardState(
-            questionId = "l1", intervalDays = 3, dueAt = now - day, reps = 2, leech = true
-        )
-        val queue = Study.queue(
-            sched, listOf("l1"), mapOf("l1" to leech), now, reviewLimit = 0
-        )
-        assertEquals(1, queue.size)
-    }
-
-    @Test
-    fun `negative review limit is clamped rather than throwing`() {
-        val ids = listOf("q1")
-        val queue = Study.queue(
-            sched, ids, dueStates(ids), now, newLimit = -1, reviewLimit = -1
-        )
-        assertTrue(queue.isEmpty())
-    }
 }

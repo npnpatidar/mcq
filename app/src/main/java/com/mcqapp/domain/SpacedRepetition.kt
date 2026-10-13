@@ -75,7 +75,26 @@ enum class ReviewGrade(val label: String) {
 }
 
 /** Why a question is in today's study queue. */
-enum class StudyReason { DUE, NEW, LEECH }
+/**
+ * Why the session pulled a card now. Drives the chip on the card and nothing
+ * else — the pull order itself is [Study.selectNext]'s business.
+ */
+enum class StudyReason {
+    /** A learning/relearning step is due: short-term repetition first. */
+    LEARNING,
+
+    /** A graduated card whose recall probability has dropped well past due. */
+    LOW_RECALL_RISK,
+
+    /** A graduated card that is due. */
+    DUE,
+
+    /** A card that has never been studied. */
+    NEW,
+
+    /** Set only on the tricky-drill surface; the main pull never labels it. */
+    LEECH
+}
 
 data class StudyCard(
     val questionId: String,
@@ -294,7 +313,7 @@ class Sm2Scheduler(
 }
 
 /**
- * Scheduler-agnostic study queue and grade inference.
+ * Scheduler-agnostic study loop: what to pull next, and grade inference.
  *
  * These rules are about *what to study*, not *how memory decays*, so they stay
  * shared no matter which [Scheduler] is in use.
@@ -309,9 +328,21 @@ object Study {
     /** Correct answers slower than this read as a struggle. */
     const val SLOW_SECONDS = 30L
 
-    const val DEFAULT_NEW_LIMIT = 20
+    /**
+     * A due review whose predicted recall has fallen below this is pulled with
+     * [StudyReason.LOW_RECALL_RISK] — "likely to be forgotten soon". Absolute,
+     * not relative to the retention target, so the chip means the same thing at
+     * every setting; one obvious place to tune (spec §7: no universal optimal
+     * score).
+     */
+    const val LOW_RECALL_RISK_RETENTION = 0.75
 
-    const val DEFAULT_REVIEW_LIMIT = 200
+    /**
+     * Explore mode surfaces a new card after this many reviews since the last
+     * one, so a backlog cannot starve new material (spec §7). A pacing hint
+     * only: new cards are still served whenever nothing is due.
+     */
+    const val EXPLORE_NEW_EVERY = 3
 
     /**
      * Infers a grade from an answered attempt. Untracked timing (0s) is a
@@ -357,97 +388,139 @@ object Study {
         return inferGrade(isCorrect = true, dwellSeconds = dwellSeconds, config = config)
     }
 
-    /**
-     * What one session would actually serve today, plus how much is waiting
-     * behind the daily limits.
-     *
-     * The library badge and the study queue both read this, so a card can never
-     * be counted on the library screen yet be missing from the session that
-     * screen offers.
-     */
-    data class Selection(
-        /** Due cards served, oldest first. Capped by the review limit. */
-        val due: List<StudyCard>,
-        /** Tricky cards served. Deliberately uncapped; see [selection]. */
-        val leeches: List<StudyCard>,
-        /** New cards served. Capped by the new limit. */
-        val fresh: List<StudyCard>,
-        /** Due cards that did not fit under the review limit. */
-        val dueWaiting: Int,
-        /** New cards that did not fit under the new limit. */
-        val freshWaiting: Int,
-        /** New cards were withheld because the review limit was reached. */
-        val newBlockedByReviewLimit: Boolean
-    ) {
-        /** The queue itself, in study order. */
-        val queue: List<StudyCard> get() = due + leeches + fresh
-
-        /** Cards held back by the daily limits. */
-        val waiting: Int get() = dueWaiting + freshWaiting
-    }
+    /** Every card eligible right now, split into the pull order's pools. */
+    data class CandidatePools(
+        /** Learning/relearning steps due now: short-term repetition first. */
+        val learning: List<StudyCard>,
+        /** Graduated cards due now, most forgettable first (lowest R wins). */
+        val reviews: List<StudyCard>,
+        /** Never-studied cards, in the caller's stable order. */
+        val fresh: List<StudyCard>
+    )
 
     /**
-     * Today's selection for a paper: due cards oldest-due first, then leeches,
-     * then new cards. Questions absent from [states] are new. Order is stable so
-     * a reload mid-session does not reshuffle the deck.
+     * All eligible cards for a paper, in the three pull-based pools. A question
+     * absent from [states] is new. A due leech is an ordinary review here — the
+     * tricky drill ([onlyLeeches]) is a filter over this, not a separate stream.
      *
-     * The limits are function parameters, not settings: the badge path passes
-     * no cap, so counts describe every eligible card. Only explicit callers
-     * (a drill, a preview) narrow the stream.
+     * Order is deterministic: reviews rank by predicted recall ascending (the
+     * card most likely to be forgotten first), ties by oldest due date, then by
+     * the caller's order, so a reload mid-session does not reshuffle the deck.
      *
-     * Two deliberate exceptions to Anki's rules:
-     *  - A leech is an explicit drill the learner asked for rather than backlog,
-     *    so it is never capped. Counting it would make the "tricky" button
-     *    silently return fewer cards than its count promised.
-     *  - Learning cards (failed earlier today, due again in minutes) count
-     *    against the review limit, as in Anki, but still bypass the *new*-card
-     *    limit so one sitting can recover them.
+     * [introduceNewCards] off empties the fresh pool: review-only sessions.
      */
-    fun selection(
+    fun pools(
         scheduler: Scheduler,
         questionIds: List<String>,
         states: Map<String, CardState>,
         now: Long,
-        newLimit: Int = DEFAULT_NEW_LIMIT,
-        reviewLimit: Int = DEFAULT_REVIEW_LIMIT,
-        newCardsIgnoreReviewLimit: Boolean = false
-    ): Selection {
-        val due = mutableListOf<StudyCard>()
-        val leeches = mutableListOf<StudyCard>()
-        val newCandidates = mutableListOf<String>()
+        introduceNewCards: Boolean = true
+    ): CandidatePools {
+        val learning = mutableListOf<StudyCard>()
+        val dueReviews = mutableListOf<Pair<StudyCard, Double>>()
+        val fresh = mutableListOf<StudyCard>()
 
         questionIds.forEach { id ->
             val state = states[id]
             when {
-                state == null || state.isNew -> newCandidates += id
-                state.leech && state.dueAt <= now -> leeches.add(StudyCard(id, StudyReason.LEECH, state))
-                state.dueAt <= now -> due.add(StudyCard(id, StudyReason.DUE, state))
+                state == null || state.isNew ->
+                    if (introduceNewCards) {
+                        fresh += StudyCard(id, StudyReason.NEW, state ?: scheduler.initial(id))
+                    }
+                (state.state == CardStateKind.LEARNING ||
+                    state.state == CardStateKind.RELEARNING) && state.dueAt <= now ->
+                    learning += StudyCard(id, StudyReason.LEARNING, state)
+                state.dueAt <= now -> {
+                    val recall = scheduler.retention(state, now)
+                    val reason = if (recall < LOW_RECALL_RISK_RETENTION) {
+                        StudyReason.LOW_RECALL_RISK
+                    } else {
+                        StudyReason.DUE
+                    }
+                    dueReviews += StudyCard(id, reason, state) to recall
+                }
             }
         }
 
-        // Oldest first, then capped: an overdue card is the one most at risk of
-        // being lost, so it wins the slot when there are more than the limit.
-        val cappedReviews = due.sortedBy { it.state.dueAt }.take(reviewLimit.coerceAtLeast(0))
-        val reviewsCapped = cappedReviews.size < due.size
+        val reviews = dueReviews
+            .sortedWith(compareBy({ it.second }, { it.first.state.dueAt }))
+            .map { it.first }
+        return CandidatePools(learning, reviews, fresh)
+    }
 
-        // Anki's v3 default is for the review limit to gate new cards too, so
-        // clearing a backlog cannot make it worse.
-        val newAllowed = newCardsIgnoreReviewLimit || !reviewsCapped
-        val cappedNew = if (newAllowed) {
-            newCandidates.take(newLimit.coerceAtLeast(0))
-        } else {
-            emptyList()
+    /**
+     * The card a pull-based session should serve next, or null when nothing is
+     * eligible: the badge, the empty state and the session itself all read the
+     * same eligibility, so the UI can never promise a card the pull refuses.
+     *
+     * Pull order (spec §7):
+     *  1. learning steps — a due repetition beats everything;
+     *  2. [StudyMode.MEMORY_FIRST]: due reviews by risk, new cards only once
+     *     nothing is due. [StudyMode.EXPLORE_NEW]: a new card surfaces every
+     *     [EXPLORE_NEW_EVERY] reviews ([reviewsSinceNew], tracked by the
+     *     session) ahead of the backlog, so exploring cannot starve memory
+     *     work and memory work cannot starve exploration.
+     *
+     * No limits, no caps: what the badge counts is what this serves.
+     */
+    fun selectNext(
+        scheduler: Scheduler,
+        questionIds: List<String>,
+        states: Map<String, CardState>,
+        now: Long,
+        studyMode: StudyMode = StudyMode.MEMORY_FIRST,
+        introduceNewCards: Boolean = true,
+        reviewsSinceNew: Int = 0
+    ): StudyCard? {
+        val pools = pools(scheduler, questionIds, states, now, introduceNewCards)
+        pools.learning.firstOrNull()?.let { return it }
+        val exploreNew = studyMode == StudyMode.EXPLORE_NEW &&
+            reviewsSinceNew >= EXPLORE_NEW_EVERY
+        return when {
+            exploreNew && pools.fresh.isNotEmpty() -> pools.fresh.first()
+            pools.reviews.isNotEmpty() -> pools.reviews.first()
+            pools.fresh.isNotEmpty() -> pools.fresh.first()
+            else -> null
         }
+    }
 
-        return Selection(
-            due = cappedReviews,
-            leeches = leeches.sortedBy { it.state.dueAt },
-            fresh = cappedNew.map {
-                StudyCard(it, StudyReason.NEW, states[it] ?: scheduler.initial(it))
-            },
-            dueWaiting = due.size - cappedReviews.size,
-            freshWaiting = newCandidates.size - cappedNew.size,
-            newBlockedByReviewLimit = !newAllowed
+    /** What a pull-based session would serve right now, per pool. */
+    data class StudyEligibility(
+        /** Learning/relearning steps due now, leeches excluded. */
+        val learning: Int = 0,
+        /** Graduated cards due now, leeches excluded. */
+        val due: Int = 0,
+        /**
+         * Due leeches wherever they sit in the pull order — the tricky drill's
+         * promise. A leech that lapsed back into learning is drilled, not
+         * hidden behind the memory-first ordering.
+         */
+        val leeches: Int = 0,
+        /** Never-studied cards available. */
+        val fresh: Int = 0
+    ) {
+        /** Everything the main session serves: the badge's contract. */
+        val total: Int get() = learning + due + leeches + fresh
+    }
+
+    /**
+     * Eligibility counts, read from the same [pools] the pull uses — the badge
+     * can never disagree with what a session serves.
+     */
+    fun eligibility(
+        scheduler: Scheduler,
+        questionIds: List<String>,
+        states: Map<String, CardState>,
+        now: Long,
+        introduceNewCards: Boolean = true
+    ): StudyEligibility {
+        val p = pools(scheduler, questionIds, states, now, introduceNewCards)
+        val leeches = (p.learning + p.reviews).count { it.state.leech }
+        return StudyEligibility(
+            learning = p.learning.count { !it.state.leech },
+            due = p.reviews.count { !it.state.leech },
+            leeches = leeches,
+            fresh = p.fresh.size
         )
     }
 
@@ -466,23 +539,10 @@ object Study {
         scheduler.next(state, grade, now).dueAt - now
     }
 
-    /** Today's queue, in study order. See [selection]. */
-    fun queue(
-        scheduler: Scheduler,
-        questionIds: List<String>,
-        states: Map<String, CardState>,
-        now: Long,
-        newLimit: Int = DEFAULT_NEW_LIMIT,
-        reviewLimit: Int = DEFAULT_REVIEW_LIMIT,
-        newCardsIgnoreReviewLimit: Boolean = false
-    ): List<StudyCard> = selection(
-        scheduler, questionIds, states, now, newLimit, reviewLimit, newCardsIgnoreReviewLimit
-    ).queue
-
     /**
-     * Only the cards flagged as leeches. The library's "N tricky" button
-     * promised the user's problem questions but ran the ordinary due+new queue,
-     * so the label did not match the behaviour.
+     * Only the cards flagged as leeches — the tricky drill. A drill is the
+     * learner explicitly asking for their problem questions, so it filters the
+     * full eligibility ([pools]) rather than serving a capped stream of its own.
      */
     fun onlyLeeches(cards: List<StudyCard>): List<StudyCard> =
         cards.filter { it.reason == StudyReason.LEECH || it.state.leech }

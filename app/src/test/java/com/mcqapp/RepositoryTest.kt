@@ -139,10 +139,41 @@ class RepositoryTest {
     }
 
     @Test
-    fun studyQueueRespectsTheNewLimit() = runBlocking {
+    fun getNextStudyCardServesTheDueCardBeforeTheNewOne() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        repeat(5) { repository.saveQuestion(question("q$it", setOf("q$it-a"))) }
-        assertEquals(2, repository.getStudyQueue("p1", newLimit = 2).size)
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        // Before q1's interval has passed, the new stream is all there is.
+        val fresh = repository.getNextStudyCard("p1", now = 2000L)
+        assertEquals("q2", fresh?.questionId)
+        assertEquals(com.mcqapp.domain.StudyReason.NEW, fresh?.reason)
+        // Once q1 is overdue it wins, and its risk is visible in the reason.
+        val overdue = repository.getNextStudyCard("p1", now = 90L * 86_400_000L)
+        assertEquals("q1", overdue?.questionId)
+        assertEquals(com.mcqapp.domain.StudyReason.LOW_RECALL_RISK, overdue?.reason)
+    }
+
+    @Test
+    fun theBadgeAndThePullReadTheSameEligibility() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repeat(4) { repository.saveQuestion(question("q$it", setOf("q$it-a"))) }
+        // q0 becomes a due review, q1 a due learning step, q2/q3 stay new.
+        repository.recordStudyReview("p1", "q0", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.AGAIN, now = 1000L)
+        val later = 90L * 86_400_000L
+        val eligibility = repository.getStudyEligibility("p1", now = later)
+        val queue = repository.getStudyQueue("p1", now = later)
+        // Every counted card is served, in the same decomposition.
+        assertEquals(eligibility.total, queue.size)
+        assertEquals(eligibility.learning, queue.count { it.reason == com.mcqapp.domain.StudyReason.LEARNING })
+        assertEquals(eligibility.fresh, queue.count { it.reason == com.mcqapp.domain.StudyReason.NEW })
+        // And the pull starts where the badge says the work is heaviest: the
+        // learning step due right now.
+        assertEquals(queue.first().questionId, repository.getNextStudyCard("p1", now = later)?.questionId)
+        val counts = repository.getStudyCounts("p1", now = later)
+        assertEquals(eligibility.learning + eligibility.due, counts.due)
+        assertEquals(eligibility.fresh, counts.fresh)
     }
 
     @Test
@@ -239,7 +270,8 @@ class RepositoryTest {
         }
         val later = 90L * 86_400_000L
         val queue = repository.getStudyQueue("p1", now = later)
-        assertEquals(6, queue.count { it.reason == com.mcqapp.domain.StudyReason.DUE })
+        // Ninety days overdue, every one of them is a likely-to-be-forgotten pull.
+        assertEquals(6, queue.count { it.reason == com.mcqapp.domain.StudyReason.LOW_RECALL_RISK })
         assertEquals(1, queue.count { it.reason == com.mcqapp.domain.StudyReason.NEW })
         assertEquals(7, queue.size)
         // The badge agrees with that queue, with no waiting remainder.

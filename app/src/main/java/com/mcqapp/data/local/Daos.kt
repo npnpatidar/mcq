@@ -156,15 +156,16 @@ interface QuestionDao {
 
     @Query(
         "SELECT questions.* FROM questions " +
-            "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            // Same sortOrder order as CategoryDao.getByPaper, so a category
-            // reordered in the drawer (or inline in Browse) moves its
-            // questions too — rowid order froze them at insertion. sortOrder
-            // is a dense unique sequence per paper (renumberPaperPreorder), so
-            // no secondary key is needed; title would reorder a category's
-            // questions on a mere rename.
-            "ORDER BY categories.sortOrder, questions.sortOrder, questions.rowid"
+            // Same (sortOrder, rowid) order as the per-category getByCategory,
+            // so the flatMap-of-getByCategory form and this single-query form
+            // agree (RepositoryTest pins that equality). The prior
+            // (categories.sortOrder, title) order broke the agreement: it
+            // grouped by category and was rename-sensitive, while
+            // getByCategory orders by the question's own sortOrder within one
+            // category. Callers that want a category-first grouping use
+            // getByCategoriesChunked, which flatMaps per-category already.
+            "ORDER BY questions.sortOrder, questions.rowid"
     )
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 

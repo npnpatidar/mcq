@@ -62,9 +62,11 @@ class BrowseCategoryFilterTest {
     @Test
     fun aSubtreeSetKeepsDescendantsToo() {
         // A subtree filter (a parent plus its children) keeps every member of
-        // that subtree, matching what the browse dropdown resolves.
+        // that subtree, matching what the browse dropdown resolves. The
+        // result preserves the original list order (q1, q2, q3), not the
+        // set's order.
         assertEquals(
-            listOf("q1", "q3", "q2"),
+            listOf("q1", "q2", "q3"),
             applyCategoryFilter(questions, setOf("chem", "phys")).map { it.id }
         )
     }

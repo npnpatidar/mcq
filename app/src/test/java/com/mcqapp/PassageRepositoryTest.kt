@@ -144,8 +144,8 @@ class PassageRepositoryTest {
         // pointing at a passage that no longer lives in their category and the
         // group renders split in Browse and exports.
         repository.savePassage(Passage(id = pid, categoryId = c2, title = "P"))
-        assertEquals("c2", db.questionDao().getById("q1")!!.categoryId)
-        assertEquals("c2", db.questionDao().getById("q2")!!.categoryId)
+        assertEquals(c2, db.questionDao().getById("q1")!!.categoryId)
+        assertEquals(c2, db.questionDao().getById("q2")!!.categoryId)
         // The group stays together and contiguous under its new category.
         val blocks = repository.buildPassageBlocks(repository.getQuestionsForPaper("p1"))
         assertEquals(1, blocks.size)

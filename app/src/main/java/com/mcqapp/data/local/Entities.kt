@@ -50,7 +50,7 @@ data class CategoryEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("categoryId")]
+    indices = [Index("categoryId"), Index("passageId")]
 )
 data class QuestionEntity(
     @PrimaryKey val id: String,

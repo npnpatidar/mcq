@@ -347,7 +347,6 @@ fun LibraryScreen(
                                 dueCount = dueCountBadge,
                                 freshCount = studyCounts[paper.id]?.fresh ?: 0,
                                 leechCount = leechCountBadge,
-                                waitingCount = studyCounts[paper.id]?.waiting ?: 0,
                                 mistakeCount = mistakeCounts[paper.id] ?: 0,
                                 onBrowse = {
                                     navController.navigate(com.mcqapp.ui.navigation.browseRoute(paper.id))

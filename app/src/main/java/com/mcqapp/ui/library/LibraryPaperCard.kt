@@ -74,8 +74,7 @@ internal fun PaperCard(
     mistakeCount: Int = 0,
     dueCount: Int = 0,
     freshCount: Int = 0,
-    leechCount: Int = 0,
-    waitingCount: Int = 0
+    leechCount: Int = 0
 ) {
     var showDrillDialog by remember { mutableStateOf(false) }
     var drillCountText by remember { mutableStateOf("10") }
@@ -190,18 +189,6 @@ internal fun PaperCard(
                         Text("Mistakes ($mistakeCount)")
                     }
                 }
-            }
-            if (waitingCount > 0) {
-                // The button says what this session will serve; this says
-                // what the daily limits are holding back. Without it a
-                // capped count just looks like the whole backlog. Its own
-                // caption line — inside the button row it wrapped into the
-                // buttons and scrambled their arrangement.
-                Text(
-                    stringResource(R.string.n_more_waiting, waitingCount),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
             if (showDrillDialog) {
                 AlertDialog(

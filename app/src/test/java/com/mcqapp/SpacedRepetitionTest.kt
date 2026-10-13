@@ -787,11 +787,9 @@ class SpacedRepetitionTest {
     }
 
     @Test
-    fun `new limit is configurable through the queue`() {
-        val config = SchedulerConfig(newLimit = 3)
-        val custom = Sm2Scheduler(config)
+    fun `queue honors the new limit parameter`() {
         val ids = (1..10).map { "q$it" }
-        val queue = Study.queue(custom, ids, emptyMap(), now, newLimit = config.newLimit)
+        val queue = Study.queue(sched, ids, emptyMap(), now, newLimit = 3)
         assertEquals(3, queue.size)
     }
 
@@ -813,14 +811,14 @@ class SpacedRepetitionTest {
             firstIntervalDays = 0,
             relearnMs = 1L,
             leechThreshold = 0,
-            newLimit = -5,
+            desiredRetention = 0.5,
             slowSeconds = 0
         ).sanitized()
         assertTrue(broken.minEase <= broken.maxEase)
         assertTrue(broken.firstIntervalDays >= 1)
         assertTrue(broken.relearnMs >= 60_000L)
         assertTrue(broken.leechThreshold >= 1)
-        assertTrue(broken.newLimit >= 0)
+        assertTrue(broken.desiredRetention >= 0.75)
         assertTrue(broken.slowSeconds >= broken.fastSeconds)
     }
 
@@ -976,10 +974,5 @@ class SpacedRepetitionTest {
             sched, ids, dueStates(ids), now, newLimit = -1, reviewLimit = -1
         )
         assertTrue(queue.isEmpty())
-    }
-
-    @Test
-    fun `new cards ignore review limit defaults to off`() {
-        assertFalse(SchedulerConfig().newCardsIgnoreReviewLimit)
     }
 }

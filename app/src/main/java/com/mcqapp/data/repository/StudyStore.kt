@@ -14,14 +14,8 @@ import com.mcqapp.util.Logger
 data class StudyCounts(
     val due: Int = 0,
     val leeches: Int = 0,
-    val fresh: Int = 0,
-    val dueWaiting: Int = 0,
-    val freshWaiting: Int = 0,
-    val newBlockedByReviewLimit: Boolean = false
+    val fresh: Int = 0
 ) {
-    /** Cards the daily limits hold back from the next session. */
-    val waiting: Int get() = dueWaiting + freshWaiting
-
     val isEmpty: Boolean get() = due == 0 && leeches == 0 && fresh == 0
 }
 
@@ -37,6 +31,13 @@ internal class StudyStore(
     private val questions: QuestionStore,
     private val settings: SettingsStore
 ) {
+
+    /** The FSRS scheduler the whole store grades and counts with. */
+    private fun fsrs(config: com.mcqapp.domain.SchedulerConfig) =
+        com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = config
+        )
 
     private fun CardStateEntity.toDomain() = com.mcqapp.domain.CardState(
         questionId = questionId,
@@ -93,28 +94,23 @@ internal class StudyStore(
             config
         )
         val selection = com.mcqapp.domain.Study.selection(
-            com.mcqapp.domain.Sm2Scheduler(config),
+            fsrs(config),
             questionList.map { it.id },
             states,
             now,
-            newLimit ?: config.newLimit,
-            config.reviewLimit,
-            config.newCardsIgnoreReviewLimit
+            // No daily caps: badges and the queue describe every eligible card.
+            // The optional newLimit narrows the stream for a drill or preview.
+            newLimit ?: Int.MAX_VALUE,
+            Int.MAX_VALUE,
+            false
         )
         Logger.i(
             "REPO",
             "getStudyQueue($paperId): ${questionList.size} questions, " +
                 "serving due=${selection.due.size} tricky=${selection.leeches.size} " +
-                "new=${selection.fresh.size}, waiting=${selection.waiting}"
+                "new=${selection.fresh.size}"
         )
         val queue = selection.queue
-        if (selection.dueWaiting > 0 || selection.newBlockedByReviewLimit) {
-            Logger.i(
-                "REPO",
-                "getStudyQueue($paperId): daily limits applied, " +
-                    "${selection.dueWaiting} due held back, ${selection.freshWaiting} new held back"
-            )
-        }
         return if (leechesOnly) com.mcqapp.domain.Study.onlyLeeches(queue) else queue
     }
 
@@ -162,7 +158,7 @@ internal class StudyStore(
         questionInputs: List<StudyInput>,
         config: com.mcqapp.domain.SchedulerConfig
     ): Map<String, com.mcqapp.domain.CardState> {
-        val scheduler = com.mcqapp.domain.Sm2Scheduler(config)
+        val scheduler = fsrs(config)
         val stored = db.cardStateDao().getByPaper(paperId).associate { it.questionId to it }
         val states = mutableMapOf<String, com.mcqapp.domain.CardState>()
         val seeded = mutableListOf<CardStateEntity>()
@@ -211,21 +207,18 @@ internal class StudyStore(
         // The same selection the study session is built from, so the badge can
         // never advertise a card the session then refuses to serve.
         val selection = com.mcqapp.domain.Study.selection(
-            com.mcqapp.domain.Sm2Scheduler(config),
+            fsrs(config),
             inputs.map { it.id },
             states,
             now,
-            config.newLimit,
-            config.reviewLimit,
-            config.newCardsIgnoreReviewLimit
+            Int.MAX_VALUE,
+            Int.MAX_VALUE,
+            false
         )
         return StudyCounts(
             due = selection.due.size,
             leeches = selection.leeches.size,
-            fresh = selection.fresh.size,
-            dueWaiting = selection.dueWaiting,
-            freshWaiting = selection.freshWaiting,
-            newBlockedByReviewLimit = selection.newBlockedByReviewLimit
+            fresh = selection.fresh.size
         )
     }
 
@@ -235,24 +228,48 @@ internal class StudyStore(
         questionId: String
     ): com.mcqapp.domain.CardState? = db.cardStateDao().get(paperId, questionId)?.toDomain()
 
-    /** Applies one grade to a question's card and persists the new schedule. */
+    /**
+     * Applies one grade to a question's card and persists it: the new schedule
+     * and the immutable review_log row are written in one transaction, so a
+     * crash can never leave a review that history does not know about or a log
+     * row the card state disagrees with (spec §6).
+     *
+     * [dwellSeconds] is the time spent on the card, kept for the log and the
+     * future optimizer; null when the caller has no trustworthy measurement.
+     */
     suspend fun recordStudyReview(
         paperId: String,
         questionId: String,
         grade: com.mcqapp.domain.ReviewGrade,
+        dwellSeconds: Long? = null,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.CardState {
         val question = questions.getQuestion(questionId)
-        val scheduler = com.mcqapp.domain.Sm2Scheduler(settings.schedulerConfigNow())
+        val scheduler = fsrs(settings.schedulerConfigNow())
         val existing = db.cardStateDao().get(paperId, questionId)?.toDomain()
-            ?: scheduler.initial(questionId)
-        val next = scheduler.next(existing, grade, now)
-        db.cardStateDao().upsert(
-            next.toEntity(paperId, question?.let { mapper.contentHashOf(it) } ?: "")
-        )
+        val next = scheduler.next(existing ?: scheduler.initial(questionId), grade, now)
+        db.withTransaction {
+            db.cardStateDao().upsert(
+                next.toEntity(paperId, question?.let { mapper.contentHashOf(it) } ?: "")
+            )
+            db.reviewLogDao().insert(
+                com.mcqapp.data.local.ReviewLogEntity(
+                    paperId = paperId,
+                    questionId = questionId,
+                    rating = grade.ordinal + 1,
+                    reviewedAt = now,
+                    elapsedSeconds = dwellSeconds,
+                    stateBefore = existing?.state?.name,
+                    stabilityAfter = next.stability,
+                    difficultyAfter = next.difficulty,
+                    intervalDaysAfter = next.intervalDays
+                )
+            )
+        }
         Logger.i(
             "REPO",
             "recordStudyReview($questionId, $grade): interval=${next.intervalDays}d, " +
+                "state=${next.state}, stability=${next.stability}, " +
                 "reps=${next.reps}, lapses=${next.lapses}, leech=${next.leech}"
         )
         return next

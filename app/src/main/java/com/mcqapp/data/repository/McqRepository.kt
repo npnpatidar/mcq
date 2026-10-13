@@ -287,9 +287,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId: String,
         questionId: String,
         grade: com.mcqapp.domain.ReviewGrade,
+        dwellSeconds: Long? = null,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.CardState =
-        studyStore.recordStudyReview(paperId, questionId, grade, now)
+        studyStore.recordStudyReview(paperId, questionId, grade, dwellSeconds, now)
 
     // --- bookmarks, attempts, mistakes ---
 

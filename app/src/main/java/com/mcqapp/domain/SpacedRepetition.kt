@@ -24,6 +24,15 @@ package com.mcqapp.domain
  */
 enum class CardStateKind { NEW, LEARNING, REVIEW, RELEARNING }
 
+/** How the study loop picks the next card. */
+enum class StudyMode {
+    /** Serve what is due, most forgettable first; new cards only after. */
+    MEMORY_FIRST,
+
+    /** Surface new cards ahead of the due backlog, interleaved. */
+    EXPLORE_NEW
+}
+
 data class CardState(
     val questionId: String,
     val ease: Double = SchedulerConfig().defaultEase,
@@ -152,17 +161,15 @@ data class SchedulerConfig(
     val relearnMs: Long = 10 * 60 * 1000L,
     /** Lapses before a card is flagged leech. Anki: 8 */
     val leechThreshold: Int = 8,
-    /** New cards offered per day. Anki: 20 */
-    val newLimit: Int = 20,
-    /** Reviews offered per day. Anki: 200 */
-    val reviewLimit: Int = 200,
     /**
-     * Anki's "New Cards Ignore Review Limit". Off by default, as in Anki: once the
-     * review limit is reached no new cards are offered, so working through a
-     * backlog cannot add to it. Turning it on restores the old behaviour of
-     * always offering new cards.
+     * Recall probability future intervals target (FSRS), clamped 0.75..0.97.
+     * 0.9 is the FSRS default: at it, a card's interval equals its stability.
      */
-    val newCardsIgnoreReviewLimit: Boolean = false,
+    val desiredRetention: Double = 0.9,
+    /** How the next card is picked: memory first, or new cards explored. */
+    val studyMode: StudyMode = StudyMode.MEMORY_FIRST,
+    /** Whether new cards are ever introduced. Off = review-only sessions. */
+    val introduceNewCards: Boolean = true,
     /**
      * Hour of the day at which a new study day begins, on the device's clock.
      * Anki: 4. A card answered at 23:00 is then due at the next 04:00 rather
@@ -191,8 +198,7 @@ data class SchedulerConfig(
         maxIntervalDays = maxIntervalDays.coerceIn(minimumIntervalDays, 36500),
         relearnMs = relearnMs.coerceIn(60_000L, 24 * 60 * 60 * 1000L),
         leechThreshold = leechThreshold.coerceIn(1, 100),
-        newLimit = newLimit.coerceIn(0, 9999),
-        reviewLimit = reviewLimit.coerceIn(0, 9999),
+        desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
         dayStartHour = dayStartHour.coerceIn(0, 23),
         fastSeconds = fastSeconds.coerceIn(1, 3600),
         slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600)
@@ -385,9 +391,9 @@ object Study {
      * then new cards. Questions absent from [states] are new. Order is stable so
      * a reload mid-session does not reshuffle the deck.
      *
-     * The review limit caps the due cards, matching the setting of the same name
-     * in Settings. It used to be ignored here even though it was persisted and
-     * editable, so a learner who set "50/day" was still served every due card.
+     * The limits are function parameters, not settings: the badge path passes
+     * no cap, so counts describe every eligible card. Only explicit callers
+     * (a drill, a preview) narrow the stream.
      *
      * Two deliberate exceptions to Anki's rules:
      *  - A leech is an explicit drill the learner asked for rather than backlog,

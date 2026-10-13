@@ -545,24 +545,6 @@ private fun AnkiSchedulerSection(
             }
             Spacer(Modifier.height(12.dp))
 
-            Text(stringResource(R.string.daily_limits), style = MaterialTheme.typography.labelLarge)
-            AnkiNumberRow(
-                label = "New cards per day",
-                help = "Unseen cards offered each day",
-                value = config.newLimit,
-                step = 1.0,
-                range = 0f..9999f,
-                onChange = { onChange(config.copy(newLimit = it.toInt())) }
-            )
-            AnkiNumberRow(
-                label = "Reviews per day",
-                help = "Maximum due cards offered each day",
-                value = config.reviewLimit,
-                step = 1.0,
-                range = 0f..9999f,
-                onChange = { onChange(config.copy(reviewLimit = it.toInt())) }
-            )
-            Spacer(Modifier.height(8.dp))
             AnkiNumberRow(
                 label = "Easy answer threshold",
                 help = "Auto-graded Easy below this response time",
@@ -752,25 +734,6 @@ private fun AnkiSchedulerSection(
                 onChange = { onChange(config.copy(againEaseFactor = it.toDouble())) }
             )
 
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("New cards ignore review limit")
-                    Text(
-                        stringResource(R.string.the_review_limit_also_limits_new_cards_so_clearing_a_backlog) +
-                            "Turn this on to keep learning new material even once the review limit " +
-                            "is reached.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                Switch(
-                    checked = config.newCardsIgnoreReviewLimit,
-                    onCheckedChange = { onChange(config.copy(newCardsIgnoreReviewLimit = it)) }
-                )
-            }
             }
 
         }

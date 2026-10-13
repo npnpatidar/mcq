@@ -140,11 +140,17 @@ internal class SettingsStore(private val context: Context) {
 
     // --- Scheduler (Anki-parity) settings ---
     // Stored as doubles keyed by field name so a newly added option defaults
-    // cleanly on an old install instead of reading back as 0.
+    // cleanly on an old install instead of reading back as 0. The old
+    // anki_new_limit / anki_review_limit / anki_new_ignore_review_limit keys
+    // are inert: daily caps are gone, so nothing reads them back.
 
     private fun schedKey(name: String) = doublePreferencesKey("anki_$name")
 
-    private fun schedBoolKey(name: String) = booleanPreferencesKey("anki_$name")
+    // FSRS-era keys, unprefixed: they belong to this app's scheduler, not to
+    // the Anki-parity set above.
+    private val desiredRetentionKey = doublePreferencesKey("fsrs_desired_retention")
+    private val studyModeKey = stringPreferencesKey("study_mode")
+    private val introduceNewCardsKey = booleanPreferencesKey("introduce_new_cards")
 
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
         context.dataStore.data.map { prefs ->
@@ -165,9 +171,11 @@ internal class SettingsStore(private val context: Context) {
                 maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
                 relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
                 leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
-                newLimit = (prefs[schedKey("new_limit")] ?: d.newLimit.toDouble()).toInt(),
-                reviewLimit = (prefs[schedKey("review_limit")] ?: d.reviewLimit.toDouble()).toInt(),
-                newCardsIgnoreReviewLimit = prefs[schedBoolKey("new_ignore_review_limit")] ?: d.newCardsIgnoreReviewLimit,
+                desiredRetention = prefs[desiredRetentionKey] ?: d.desiredRetention,
+                studyMode = prefs[studyModeKey]?.let { stored ->
+                    runCatching { com.mcqapp.domain.StudyMode.valueOf(stored) }.getOrNull()
+                } ?: d.studyMode,
+                introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
                 dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
                 fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
                 slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
@@ -195,9 +203,9 @@ internal class SettingsStore(private val context: Context) {
             prefs[schedKey("max_interval")] = c.maxIntervalDays.toDouble()
             prefs[schedKey("relearn_ms")] = c.relearnMs.toDouble()
             prefs[schedKey("leech_threshold")] = c.leechThreshold.toDouble()
-            prefs[schedKey("new_limit")] = c.newLimit.toDouble()
-            prefs[schedKey("review_limit")] = c.reviewLimit.toDouble()
-            prefs[schedBoolKey("new_ignore_review_limit")] = c.newCardsIgnoreReviewLimit
+            prefs[desiredRetentionKey] = c.desiredRetention
+            prefs[studyModeKey] = c.studyMode.name
+            prefs[introduceNewCardsKey] = c.introduceNewCards
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
@@ -225,14 +233,13 @@ internal class SettingsStore(private val context: Context) {
                         "max_interval" to c.maxIntervalDays.toDouble(),
                         "relearn_ms" to c.relearnMs.toDouble(),
                         "leech_threshold" to c.leechThreshold.toDouble(),
-                        "new_limit" to c.newLimit.toDouble(),
-                        "review_limit" to c.reviewLimit.toDouble(),
                         "day_start_hour" to c.dayStartHour.toDouble(),
                         "fast_seconds" to c.fastSeconds.toDouble(),
                         "slow_seconds" to c.slowSeconds.toDouble()
                     ).forEach { (name, value) -> prefs[schedKey(name)] = value }
-                    // Boolean, so it cannot ride along in the numeric list above.
-                    prefs[schedBoolKey("new_ignore_review_limit")] = c.newCardsIgnoreReviewLimit
+                    prefs[desiredRetentionKey] = c.desiredRetention
+                    prefs[studyModeKey] = c.studyMode.name
+                    prefs[introduceNewCardsKey] = c.introduceNewCards
                 }
         }
     }

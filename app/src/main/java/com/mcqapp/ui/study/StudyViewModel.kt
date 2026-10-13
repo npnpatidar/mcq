@@ -231,7 +231,10 @@ class StudyViewModel(
     ): StudyResult? {
         val schedulerConfig = config ?: return null
         val card = _state.value.states[question.id] ?: return null
-        val scheduler = com.mcqapp.domain.Sm2Scheduler(schedulerConfig)
+        val scheduler = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = schedulerConfig.desiredRetention,
+            config = schedulerConfig
+        )
         val delay = com.mcqapp.domain.Study
             .previewDelays(scheduler, card, now)[grade] ?: return null
         return StudyResult(
@@ -278,7 +281,12 @@ class StudyViewModel(
         _state.update { it.copy(grading = true) }
         viewModelScope.launch {
             try {
-                val next = repository.recordStudyReview(paperId, question.id, proposed)
+                val dwellSeconds =
+                    ((System.currentTimeMillis() - current.questionStartedAt)
+                        .coerceAtLeast(0L)) / 1000L
+                val next = repository.recordStudyReview(
+                    paperId, question.id, proposed, dwellSeconds
+                )
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $proposed (auto), next in ${next.intervalDays}d, " +
@@ -324,7 +332,12 @@ class StudyViewModel(
         _state.update { it.copy(grading = true) }
         viewModelScope.launch {
             try {
-                val next = repository.recordStudyReview(paperId, question.id, grade)
+                val dwellSeconds =
+                    ((System.currentTimeMillis() - current.questionStartedAt)
+                        .coerceAtLeast(0L)) / 1000L
+                val next = repository.recordStudyReview(
+                    paperId, question.id, grade, dwellSeconds
+                )
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $grade, next in ${next.intervalDays}d, " +
@@ -341,6 +354,7 @@ class StudyViewModel(
                         grading = false,
                         index = it.index + 1,
                         reasons = reasons,
+                        questionStartedAt = System.currentTimeMillis(),
                         finished = it.index + 1 >= it.queue.size
                     )
                 }
@@ -364,7 +378,10 @@ class StudyViewModel(
      */
     private fun refreshPreviews() {
         val current = config ?: return
-        val scheduler = com.mcqapp.domain.Sm2Scheduler(current)
+        val scheduler = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = current.desiredRetention,
+            config = current
+        )
         _state.update { state ->
             val card = state.currentQuestion?.id?.let { state.states[it] }
             state.copy(

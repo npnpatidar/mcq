@@ -130,15 +130,13 @@ class StudyCountsInputTest {
     }
 
     /**
-     * The badge has to describe the session the Study button opens, so the
-     * counts are pinned against the queue that the same limits produce.
+     * The badge has to describe the session the Study button opens. With no
+     * daily caps, every eligible card is both counted and served — the badge
+     * can never promise a remainder the queue then withholds.
      */
     @Test
     fun theBadgeAgreesWithTheQueueItAdvertises() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        repository.setSchedulerConfig(
-            com.mcqapp.domain.SchedulerConfig(newLimit = 2, reviewLimit = 3)
-        )
         repeat(6) { repository.saveQuestion(question("q$it", "c1", "Q $it")) }
 
         val counts = repository.getStudyCounts("p1", now = 1_000_000L)
@@ -148,9 +146,8 @@ class StudyCountsInputTest {
             queue.size,
             counts.due + counts.leeches + counts.fresh
         )
-        assertEquals("the new limit must cap the badge", 2, counts.fresh)
-        assertEquals("the rest are reported as waiting", 4, counts.freshWaiting)
-        assertEquals(4, counts.waiting)
+        assertEquals("every new card is counted", 6, counts.fresh)
+        assertEquals("and served", 6, queue.size)
     }
 
     @Test

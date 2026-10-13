@@ -149,13 +149,41 @@ class RepositoryTest {
     fun reviewingAQuestionPersistsItsSchedule() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))
-        val next = repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        val next = repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, dwellSeconds = 5L, now = 1000L
+        )
         assertEquals(1, next.reps)
+        // FSRS S₀(Good) = 1.29 days at the default 0.9 retention → 1 day.
         assertEquals(1, next.intervalDays)
         assertEquals(com.mcqapp.domain.DayBoundary.dueAfter(1000L, 1, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(1000L)), next.dueAt)
         val stored = db.cardStateDao().get("p1", "q1")
         assertEquals(1, stored!!.reps)
-        assertEquals(com.mcqapp.domain.SchedulerConfig().defaultEase, stored.ease, 0.0001)
+        assertEquals(1, stored.reviewCount)
+        assertEquals(com.mcqapp.domain.CardStateKind.REVIEW, stored.cardState)
+        assertTrue(stored.stability > 0.0)
+        // ease mirrors difficulty onto SM-2's scale for export — it is not
+        // SM-2's default any more, and must equal what FSRS derives.
+        val config = repository.schedulerConfigNow()
+        val expectedEase = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = config
+        ).next(
+            com.mcqapp.domain.CardState("q1"), com.mcqapp.domain.ReviewGrade.GOOD, 1000L
+        ).ease
+        assertEquals(expectedEase, stored.ease, 0.0001)
+
+        // The review is logged in the same write: schedule and history can
+        // never disagree.
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 2000L)
+        val logs = db.reviewLogDao().historyForQuestion("q1")
+        assertEquals(2, logs.size)
+        val first = logs.first()
+        assertEquals(3, first.rating)
+        assertEquals(1000L, first.reviewedAt)
+        assertEquals(5L, first.elapsedSeconds!!)
+        assertEquals(1, first.intervalDaysAfter!!)
+        assertEquals("no state exists before a first review", null, first.stateBefore)
+        assertEquals("REVIEW", logs[1].stateBefore)
     }
 
     @Test
@@ -164,7 +192,11 @@ class RepositoryTest {
         // other arithmetic than the grading path it would be a lie the learner
         // acts on, so every grade is checked against the persisted schedule.
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        val scheduler = com.mcqapp.domain.Sm2Scheduler(repository.schedulerConfigNow())
+        val schedulerConfig = repository.schedulerConfigNow()
+        val scheduler = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = schedulerConfig.desiredRetention,
+            config = schedulerConfig
+        )
         val gradedAt = 1_000_000L
         val grades = listOf(
             com.mcqapp.domain.ReviewGrade.AGAIN,
@@ -188,24 +220,18 @@ class RepositoryTest {
     }
 
     @Test
-    fun theQueueAppliesTheDailyLimitsEndToEnd() = runBlocking {
-        // The limits are only useful if the path the study screen actually takes
-        // honours them, not just the pure queue function.
+    fun theQueueServesEveryEligibleCardWithoutCaps() = runBlocking {
+        // Daily limits are gone: the badge and the queue both describe every
+        // eligible card, so nothing is withheld and nothing waits behind a cap.
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
-        repository.setSchedulerConfig(
-            com.mcqapp.domain.SchedulerConfig(newLimit = 2, reviewLimit = 3)
-        )
-        // Six questions plus one never studied, so there is a new card for the
-        // review limit to withhold.
         repeat(7) { repository.saveQuestion(question("q$it", setOf("q$it-a"))) }
 
-        // Nothing studied yet, so the new limit is the only one that bites.
         val fresh = repository.getStudyQueue("p1", now = 1_000_000L)
-        assertEquals(2, fresh.size)
+        assertEquals(7, fresh.size)
         assertTrue(fresh.all { it.reason == com.mcqapp.domain.StudyReason.NEW })
 
-        // Schedule the first six directly, so six are due at once and the review
-        // limit is the constraint rather than the new limit.
+        // Six reviewed, so six become due; the seventh stays new. Both
+        // streams are served in full once the due ones come due.
         repeat(6) { index ->
             repository.recordStudyReview(
                 "p1", "q$index", com.mcqapp.domain.ReviewGrade.GOOD, now = 1_000_000L
@@ -213,28 +239,14 @@ class RepositoryTest {
         }
         val later = 90L * 86_400_000L
         val queue = repository.getStudyQueue("p1", now = later)
-        assertEquals(
-            "the review limit must cap the due cards",
-            3,
-            queue.count { it.reason == com.mcqapp.domain.StudyReason.DUE }
-        )
-        assertTrue(
-            "the unreached new limit alone would offer q6, but the reached " +
-                "review limit withholds it",
-            queue.none { it.reason == com.mcqapp.domain.StudyReason.NEW }
-        )
-
-        // Opting out of the coupling restores new cards even at the cap.
-        repository.setSchedulerConfig(
-            com.mcqapp.domain.SchedulerConfig(
-                newLimit = 2, reviewLimit = 3, newCardsIgnoreReviewLimit = true
-            )
-        )
-        assertEquals(
-            1,
-            repository.getStudyQueue("p1", now = later)
-                .count { it.reason == com.mcqapp.domain.StudyReason.NEW }
-        )
+        assertEquals(6, queue.count { it.reason == com.mcqapp.domain.StudyReason.DUE })
+        assertEquals(1, queue.count { it.reason == com.mcqapp.domain.StudyReason.NEW })
+        assertEquals(7, queue.size)
+        // The badge agrees with that queue, with no waiting remainder.
+        val counts = repository.getStudyCounts("p1", now = later)
+        assertEquals(6, counts.due)
+        assertEquals(1, counts.fresh)
+        assertEquals(0, counts.leeches)
     }
 
     @Test
@@ -270,15 +282,18 @@ class RepositoryTest {
     }
 
     @Test
-    fun aFailedReviewLeavesTheQuestionNewAndNotDue() = runBlocking {
+    fun aFailedReviewLearnsInPlaceWithoutLapsing() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))
         val again = repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.AGAIN, now = 1000L)
-        assertEquals(0, again.reps)
+        assertEquals(0, again.intervalDays)
         assertEquals(0, again.lapses)
-        // Due later today, not due as a day-scheduled card.
+        assertEquals(com.mcqapp.domain.CardStateKind.LEARNING, again.state)
+        // Due again minutes later, not as a day-scheduled card.
         val counts = repository.getStudyCounts("p1", now = 1000L)
         assertEquals(0, counts.due)
+        // Even a failure is history.
+        assertEquals(1, db.reviewLogDao().historyForQuestion("q1").size)
     }
 
     @Test

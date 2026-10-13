@@ -26,6 +26,9 @@ class StringResourceUsageTest {
         if (before.endsWith("Text(") ||
             before.endsWith("contentDescription =") ||
             before.endsWith("label =") ||
+            // AnkiNumberRow renders label and help verbatim into Texts in
+            // its own body, so a call assigned to help is a rendered sink.
+            before.endsWith("help =") ||
             before.endsWith("value =")
         ) return true
         // A fallback branch: the value flows on into a rendered position

@@ -342,7 +342,9 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("study-check").performClick()
         compose.onNodeWithTag("study-next").performClick()
 
-        waitFor("Reviewed 3 this session")
+        // The third card was the last: the header with its counter goes with
+        // the session, so the summary's own tally is what the screen shows now.
+        waitFor("3 reviewed")
     }
 
     /**

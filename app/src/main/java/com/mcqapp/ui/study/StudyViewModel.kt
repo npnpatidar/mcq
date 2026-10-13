@@ -524,10 +524,20 @@ class StudyViewModel(
                         lastResult = null,
                         isGuess = false,
                         questionStartedAt = System.currentTimeMillis(),
-                        breakDismissedAt = 0
+                        breakDismissedAt = 0,
+                        // The stale card must not linger: a restart is a fresh
+                        // pull, and during the gap the loading screen speaks —
+                        // otherwise the old card would be what "Study again"
+                        // shows first, whatever the scheduler now serves.
+                        current = null,
+                        question = null,
+                        passage = null,
+                        previews = emptyMap(),
+                        loading = true
                     )
                 }
                 pullCard()
+                _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
                 Logger.e("STUDY", "restart failed", e)
                 _state.update { it.copy(loadError = "Could not start the session: ${e.message}") }

@@ -34,7 +34,7 @@ class FsrsScheduler(
     private val config: SchedulerConfig = SchedulerConfig(),
     /**
      * The device's UTC offset, injected rather than read so the scheduler
-     * stays deterministic — same trick as [Sm2Scheduler].
+     * stays deterministic.
      */
     private val zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
 ) : Scheduler {
@@ -247,14 +247,18 @@ class FsrsScheduler(
 
     /** Mirror of difficulty on SM-2's 1.3..3.0 ease scale, for export and UI. */
     private fun easeFromDifficulty(difficulty: Double): Double = (
-        config.maxEase - (difficulty - MIN_DIFFICULTY) *
-            (config.maxEase - config.minEase) / (MAX_DIFFICULTY - MIN_DIFFICULTY)
-        ).coerceIn(config.minEase, config.maxEase)
+        EASE_CEIL - (difficulty - MIN_DIFFICULTY) *
+            (EASE_CEIL - EASE_FLOOR) / (MAX_DIFFICULTY - MIN_DIFFICULTY)
+        ).coerceIn(EASE_FLOOR, EASE_CEIL)
 
     companion object {
         const val DAY_MS = DayBoundary.DAY_MS
 
         const val PARAMETER_COUNT = 21
+
+        /** The ease scale difficulty is mirrored onto. Fixed: Anki's bounds. */
+        const val EASE_FLOOR = 1.3
+        const val EASE_CEIL = 3.0
 
         /** The retention the decay curve is anchored to. Fixed, not a setting. */
         const val BENCHMARK_RETENTION = 0.9

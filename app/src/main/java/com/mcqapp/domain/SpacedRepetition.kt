@@ -35,7 +35,8 @@ enum class StudyMode {
 
 data class CardState(
     val questionId: String,
-    val ease: Double = SchedulerConfig().defaultEase,
+    /** Ease on the export scale (1.3..3.0): mirrored from difficulty by FSRS. */
+    val ease: Double = 2.5,
     val intervalDays: Int = 0,
     val dueAt: Long = 0L,
     val reps: Int = 0,
@@ -145,54 +146,16 @@ interface Scheduler {
 }
 
 /**
- * SM-2: the classic single-ease-factor model.
+ * Every tunable number the FSRS scheduler uses, in one place.
  *
- * Intervals are whole days because a question bank is studied over weeks, not
- * seconds, but a failed card still returns later the same day so one sitting
- * can recover it. Ease drops on failures, rises on Easy, and is clamped so a
- * card can never become permanently unlearnable or trivially short. Only a
- * card that already graduated counts a miss as a lapse — a first exposure has
- * no memory to lose.
- *
- * Chosen over FSRS for the first release: it needs no parameter tuning and no
- * optimizer run, so it is correct on day one for banks of any size. FSRS
- * needs ~1k graded reviews per deck before it beats this, and the review log to
- * fit them does not exist yet.
- */
-/**
- * Every tunable number the scheduler uses, in one place.
- *
- * Defaults match the values this app has always used, which are close to Anki's
- * own defaults. They are deliberately not `const val`: a user can change them, so
- * the scheduler is built per-use from a config rather than read from statics.
- * Field names follow Anki's review-options wording so a value read out of Anki
- * lands in the obvious place.
+ * The memory model itself is fixed (the FSRS-6 formulas with the official
+ * unoptimized weights); what remains configurable is the pacing around it —
+ * how hard intervals target recall, when the study day rolls over, how fast a
+ * failed card returns, and where the grade-inference thresholds sit. They are
+ * deliberately not `const val`: a user can change them, so the scheduler is
+ * built per-use from a config rather than read from statics.
  */
 data class SchedulerConfig(
-    /** Ease a new card starts at. Anki: 2.5 */
-    val defaultEase: Double = 2.5,
-    /** Floor for ease, so a card can never become unlearnable. Anki: 1.3 */
-    val minEase: Double = 1.3,
-    /** Ceiling for ease. Anki: 3.0 */
-    val maxEase: Double = 3.0,
-    /** Ease penalty per Again. Anki: 0.20 */
-    val againEaseFactor: Double = 0.20,
-    /** Ease penalty per Hard. Anki: 0.15 */
-    val hardEaseFactor: Double = 0.15,
-    /** Ease bonus per Easy. Anki: 0.15 */
-    val easyEaseFactor: Double = 0.15,
-    /** Interval given to a graduating (first-pass) card on Good. Anki: 1 */
-    val firstIntervalDays: Int = 1,
-    /** Interval for the second review on Good. Anki: 6 */
-    val secondIntervalDays: Int = 6,
-    /** Interval given to a graduating card on Easy. Anki: 4 */
-    val easyFirstIntervalDays: Int = 4,
-    /** Hard multiplies the previous interval by this. Anki: 1.2 */
-    val hardIntervalMultiplier: Double = 1.2,
-    /** Extra factor applied to Easy on top of ease. Anki: 1.3 */
-    val easyBonus: Double = 1.3,
-    /** Floor on any review interval in days. Anki: 1 */
-    val minimumIntervalDays: Int = 1,
     /** Ceiling on any interval in days, ~100 years. Anki: 36500 */
     val maxIntervalDays: Int = 36500,
     /** Delay before a failed card returns, in ms. Anki relearn step: 10 min */
@@ -221,19 +184,7 @@ data class SchedulerConfig(
 ) {
     /** Guards against values that would break scheduling entirely. */
     fun sanitized(): SchedulerConfig = copy(
-        defaultEase = defaultEase.coerceIn(1.3, 5.0),
-        minEase = minEase.coerceIn(1.0, 3.0),
-        maxEase = maxEase.coerceIn(minEase.coerceIn(1.0, 3.0), 5.0),
-        againEaseFactor = againEaseFactor.coerceIn(0.0, 1.0),
-        hardEaseFactor = hardEaseFactor.coerceIn(0.0, 1.0),
-        easyEaseFactor = easyEaseFactor.coerceIn(0.0, 1.0),
-        firstIntervalDays = firstIntervalDays.coerceIn(1, 3650),
-        secondIntervalDays = secondIntervalDays.coerceIn(1, 3650),
-        easyFirstIntervalDays = easyFirstIntervalDays.coerceIn(1, 3650),
-        hardIntervalMultiplier = hardIntervalMultiplier.coerceIn(1.0, 5.0),
-        easyBonus = easyBonus.coerceIn(1.0, 5.0),
-        minimumIntervalDays = minimumIntervalDays.coerceIn(1, 3650),
-        maxIntervalDays = maxIntervalDays.coerceIn(minimumIntervalDays, 36500),
+        maxIntervalDays = maxIntervalDays.coerceIn(1, 36500),
         relearnMs = relearnMs.coerceIn(60_000L, 24 * 60 * 60 * 1000L),
         leechThreshold = leechThreshold.coerceIn(1, 100),
         desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
@@ -241,105 +192,6 @@ data class SchedulerConfig(
         fastSeconds = fastSeconds.coerceIn(1, 3600),
         slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600)
     )
-}
-
-class Sm2Scheduler(
-    private val config: SchedulerConfig = SchedulerConfig(),
-    /**
-     * The device's UTC offset, injected rather than read so the scheduler stays
-     * deterministic: a test can pin a zone and assert exact due instants.
-     */
-    private val zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
-) : Scheduler {
-
-    override val leechThreshold: Int get() = config.leechThreshold
-
-    override fun initial(questionId: String): CardState =
-        CardState(questionId = questionId, ease = config.defaultEase)
-
-    override fun next(state: CardState, grade: ReviewGrade, now: Long): CardState {
-        val hadMemory = state.reps > 0
-        val ease = easeAfter(state.ease, grade)
-        val lapses = if (grade == ReviewGrade.AGAIN && hadMemory) state.lapses + 1 else state.lapses
-        val interval = nextInterval(state, grade, ease)
-        val dueAt = when {
-            // A failed card comes back inside the same sitting, so its delay is
-            // a real elapsed time and must not be snapped to a day boundary.
-            interval <= 0 -> now + config.relearnMs
-            // Whole days are counted from the start of the study day, as in
-            // Anki, rather than from the instant of grading. A 23:00 answer to a
-            // 1-day card is due at 04:00, not 24 hours on.
-            else -> DayBoundary.dueAfter(now, interval, config.dayStartHour, zoneOffset(now))
-        }
-        val reps = if (grade == ReviewGrade.AGAIN) 0 else maxOf(1, state.reps + 1)
-        // Same rule as the FSRS engine: a failed graduated card is relearning,
-        // a failed never-graduated one is still learning, any pass graduates.
-        val kind = when {
-            grade == ReviewGrade.AGAIN && state.state == CardStateKind.REVIEW ->
-                CardStateKind.RELEARNING
-            grade == ReviewGrade.AGAIN && state.state == CardStateKind.RELEARNING ->
-                CardStateKind.RELEARNING
-            grade == ReviewGrade.AGAIN -> CardStateKind.LEARNING
-            else -> CardStateKind.REVIEW
-        }
-        return state.copy(
-            ease = ease,
-            intervalDays = interval.coerceAtLeast(0),
-            dueAt = dueAt,
-            reps = reps,
-            lapses = lapses,
-            leech = lapses >= config.leechThreshold,
-            lastReviewedAt = now,
-            state = kind
-        )
-    }
-
-    private fun easeAfter(ease: Double, grade: ReviewGrade): Double = when (grade) {
-        ReviewGrade.AGAIN -> ease - config.againEaseFactor
-        ReviewGrade.HARD -> ease - config.hardEaseFactor
-        ReviewGrade.GOOD -> ease
-        ReviewGrade.EASY -> ease + config.easyEaseFactor
-    }.coerceIn(config.minEase, config.maxEase)
-
-    /**
-     * New interval in days; 0 means relearning later today. Every growth path
-     * takes the larger of "+1 day" and "multiply", then clamps to the
-     * configured floor and ceiling, so a card can neither stall at 1 day nor
-     * jump to an absurd interval from a single Easy.
-     */
-    private fun nextInterval(state: CardState, grade: ReviewGrade, ease: Double): Int =
-        when (grade) {
-            ReviewGrade.AGAIN -> 0
-            ReviewGrade.HARD ->
-                if (state.intervalDays <= 0) config.firstIntervalDays
-                else grow(state.intervalDays, config.hardIntervalMultiplier)
-            ReviewGrade.GOOD -> when {
-                state.reps <= 0 -> config.firstIntervalDays
-                state.reps == 1 -> config.secondIntervalDays
-                else -> grow(state.intervalDays, ease)
-            }
-            ReviewGrade.EASY ->
-                if (state.reps <= 0) config.easyFirstIntervalDays
-                else grow(state.intervalDays, ease * config.easyBonus)
-        }
-
-    private fun grow(intervalDays: Int, factor: Double): Int =
-        maxOf(intervalDays + 1, (intervalDays * factor).toLong().toInt())
-            .coerceIn(config.minimumIntervalDays, config.maxIntervalDays)
-
-    override fun retention(state: CardState, now: Long): Double {
-        if (state.reps == 0 || state.intervalDays <= 0 || state.dueAt == 0L) return 0.0
-        if (now <= state.dueAt) return 1.0
-        val overdueDays = (now - state.dueAt).toDouble() / DAY_MS
-        val stability = state.intervalDays.toDouble() / state.ease
-        return (1.0 / (1.0 + overdueDays / stability)).coerceIn(0.0, 1.0)
-    }
-
-    override fun reset(state: CardState): CardState = initial(state.questionId)
-
-    companion object {
-        const val DAY_MS = 24 * 60 * 60 * 1000L
-    }
 }
 
 /**
@@ -350,7 +202,7 @@ class Sm2Scheduler(
  */
 object Study {
 
-    const val DAY_MS = Sm2Scheduler.DAY_MS
+    const val DAY_MS = DayBoundary.DAY_MS
 
     /** Correct answers faster than this read as effortless. */
     const val FAST_SECONDS = 8L

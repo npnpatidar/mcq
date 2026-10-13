@@ -2,9 +2,9 @@ package com.mcqapp
 
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.DayBoundary
+import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
-import com.mcqapp.domain.Sm2Scheduler
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -28,8 +28,8 @@ class DayBoundaryTest {
     /** 20:00 UTC — late enough that the next 04:00 boundary is only hours away. */
     private val lateEvening = midnightUtc + 20 * hour
 
-    private fun scheduler(boundaryHour: Int, zoneOffsetMillis: Long = 0L) = Sm2Scheduler(
-        SchedulerConfig(dayStartHour = boundaryHour, relearnMs = 10 * 60 * 1000L),
+    private fun scheduler(boundaryHour: Int, zoneOffsetMillis: Long = 0L) = FsrsScheduler(
+        config = SchedulerConfig(dayStartHour = boundaryHour, relearnMs = 10 * 60 * 1000L),
         zoneOffset = { zoneOffsetMillis }
     )
 
@@ -136,8 +136,9 @@ class DayBoundaryTest {
     fun `the scheduler aligns a graded card to the boundary`() {
         val sched = scheduler(boundaryHour = 4)
         val next = sched.next(CardState("q1"), ReviewGrade.GOOD, lateEvening)
-        assertEquals(1, next.intervalDays)
-        assertEquals(8 * hour, next.dueAt - lateEvening)
+        // FSRS's first Good schedules 2 days out, snapped to the study day.
+        assertEquals(2, next.intervalDays)
+        assertEquals(4 * hour, Math.floorMod(next.dueAt, day))
     }
 
     @Test
@@ -156,9 +157,10 @@ class DayBoundaryTest {
     fun `a midnight boundary is respected by the scheduler`() {
         val sched = scheduler(boundaryHour = 0)
         val next = sched.next(CardState("q1"), ReviewGrade.GOOD, lateEvening)
-        // Next local midnight, which is four hours after an 20:00 answer.
-        assertEquals(midnightUtc + day, next.dueAt)
-        assertEquals(4 * hour, next.dueAt - lateEvening)
+        // Two whole days from the start of the study day: local midnight, so
+        // the due instant sits exactly on a local midnight.
+        assertEquals(midnightUtc + 2 * day, next.dueAt)
+        assertEquals(0L, Math.floorMod(next.dueAt, day))
     }
 
     @Test

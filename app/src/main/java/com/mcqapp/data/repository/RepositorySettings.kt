@@ -138,11 +138,13 @@ internal class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[fontScaleKey] = scale }
     }
 
-    // --- Scheduler (Anki-parity) settings ---
+    // --- Scheduler settings ---
     // Stored as doubles keyed by field name so a newly added option defaults
     // cleanly on an old install instead of reading back as 0. The old
     // anki_new_limit / anki_review_limit / anki_new_ignore_review_limit keys
-    // are inert: daily caps are gone, so nothing reads them back.
+    // are inert: daily caps are gone, so nothing reads them back. The SM-2
+    // ease and graduating-interval keys met the same end when FSRS replaced
+    // that engine.
 
     private fun schedKey(name: String) = doublePreferencesKey("anki_$name")
 
@@ -156,18 +158,6 @@ internal class SettingsStore(private val context: Context) {
         context.dataStore.data.map { prefs ->
             val d = com.mcqapp.domain.SchedulerConfig()
             com.mcqapp.domain.SchedulerConfig(
-                defaultEase = prefs[schedKey("default_ease")] ?: d.defaultEase,
-                minEase = prefs[schedKey("min_ease")] ?: d.minEase,
-                maxEase = prefs[schedKey("max_ease")] ?: d.maxEase,
-                againEaseFactor = prefs[schedKey("again_ease")] ?: d.againEaseFactor,
-                hardEaseFactor = prefs[schedKey("hard_ease")] ?: d.hardEaseFactor,
-                easyEaseFactor = prefs[schedKey("easy_ease")] ?: d.easyEaseFactor,
-                firstIntervalDays = (prefs[schedKey("first_interval")] ?: d.firstIntervalDays.toDouble()).toInt(),
-                secondIntervalDays = (prefs[schedKey("second_interval")] ?: d.secondIntervalDays.toDouble()).toInt(),
-                easyFirstIntervalDays = (prefs[schedKey("easy_first_interval")] ?: d.easyFirstIntervalDays.toDouble()).toInt(),
-                hardIntervalMultiplier = prefs[schedKey("hard_multiplier")] ?: d.hardIntervalMultiplier,
-                easyBonus = prefs[schedKey("easy_bonus")] ?: d.easyBonus,
-                minimumIntervalDays = (prefs[schedKey("min_interval")] ?: d.minimumIntervalDays.toDouble()).toInt(),
                 maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
                 relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
                 leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
@@ -188,18 +178,6 @@ internal class SettingsStore(private val context: Context) {
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
         val c = config.sanitized()
         context.dataStore.edit { prefs ->
-            prefs[schedKey("default_ease")] = c.defaultEase
-            prefs[schedKey("min_ease")] = c.minEase
-            prefs[schedKey("max_ease")] = c.maxEase
-            prefs[schedKey("again_ease")] = c.againEaseFactor
-            prefs[schedKey("hard_ease")] = c.hardEaseFactor
-            prefs[schedKey("easy_ease")] = c.easyEaseFactor
-            prefs[schedKey("first_interval")] = c.firstIntervalDays.toDouble()
-            prefs[schedKey("second_interval")] = c.secondIntervalDays.toDouble()
-            prefs[schedKey("easy_first_interval")] = c.easyFirstIntervalDays.toDouble()
-            prefs[schedKey("hard_multiplier")] = c.hardIntervalMultiplier
-            prefs[schedKey("easy_bonus")] = c.easyBonus
-            prefs[schedKey("min_interval")] = c.minimumIntervalDays.toDouble()
             prefs[schedKey("max_interval")] = c.maxIntervalDays.toDouble()
             prefs[schedKey("relearn_ms")] = c.relearnMs.toDouble()
             prefs[schedKey("leech_threshold")] = c.leechThreshold.toDouble()
@@ -218,18 +196,6 @@ internal class SettingsStore(private val context: Context) {
                 .sanitized()
                 .let { c ->
                     listOf(
-                        "default_ease" to c.defaultEase,
-                        "min_ease" to c.minEase,
-                        "max_ease" to c.maxEase,
-                        "again_ease" to c.againEaseFactor,
-                        "hard_ease" to c.hardEaseFactor,
-                        "easy_ease" to c.easyEaseFactor,
-                        "first_interval" to c.firstIntervalDays.toDouble(),
-                        "second_interval" to c.secondIntervalDays.toDouble(),
-                        "easy_first_interval" to c.easyFirstIntervalDays.toDouble(),
-                        "hard_multiplier" to c.hardIntervalMultiplier,
-                        "easy_bonus" to c.easyBonus,
-                        "min_interval" to c.minimumIntervalDays.toDouble(),
                         "max_interval" to c.maxIntervalDays.toDouble(),
                         "relearn_ms" to c.relearnMs.toDouble(),
                         "leech_threshold" to c.leechThreshold.toDouble(),

@@ -489,13 +489,14 @@ fun SettingsScreen(
 }
 
 /**
- * Anki-parity scheduler settings.
+ * Scheduler settings.
  *
- * Every tunable number the spaced repetition scheduler uses is editable here,
- * using Anki's own review-options wording so a value copied from Anki lands in
- * the obvious place. Defaults are Anki's defaults. The three ease bounds are
- * interdependent, so [SchedulerConfig.sanitized] clamps them rather than the UI
- * rejecting input field by field.
+ * The everyday controls (retention, ranking mode, new cards) sit above; the
+ * collapsed section holds the pacing knobs FSRS reads — the study-day
+ * boundary, the interval ceiling, the relearn delay and the leech threshold —
+ * plus the response-time thresholds that drive automatic grading. They use
+ * Anki's own wording so a value read out of Anki lands in the obvious place;
+ * defaults are Anki's defaults.
  */
 @Composable
 private fun AnkiSchedulerSection(
@@ -653,47 +654,6 @@ private fun AnkiSchedulerSection(
                 )
             }
             if (advancedExpanded) {
-            AnkiNumberRow(
-                label = "Starting ease",
-                help = "Ease a new card begins at",
-                value = config.defaultEase,
-                step = 0.05,
-                range = 1.3f..5.0f,
-                onChange = { onChange(config.copy(defaultEase = it.toDouble())) }
-            )
-            AnkiNumberRow(
-                label = "Minimum ease",
-                help = "Floor, so a card stays learnable",
-                value = config.minEase,
-                step = 0.05,
-                range = 1.0f..3.0f,
-                onChange = { onChange(config.copy(minEase = it.toDouble())) }
-            )
-            AnkiNumberRow(
-                label = "Maximum ease",
-                help = "Ceiling for easy cards",
-                value = config.maxEase,
-                step = 0.05,
-                range = 1.0f..5.0f,
-                onChange = { onChange(config.copy(maxEase = it.toDouble())) }
-            )
-            AnkiNumberRow(
-                label = "Easy bonus",
-                help = "Extra interval factor on Easy",
-                value = config.easyBonus,
-                step = 0.05,
-                range = 1.0f..5.0f,
-                onChange = { onChange(config.copy(easyBonus = it.toDouble())) }
-            )
-            AnkiNumberRow(
-                label = "Hard interval",
-                help = "Multiplier applied on Hard",
-                value = config.hardIntervalMultiplier,
-                step = 0.05,
-                range = 1.0f..5.0f,
-                onChange = { onChange(config.copy(hardIntervalMultiplier = it.toDouble())) }
-            )
-
             Spacer(Modifier.height(12.dp))
             Text(stringResource(R.string.study_day), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
@@ -704,44 +664,6 @@ private fun AnkiSchedulerSection(
                 range = 0f..23f,
                 suffix = "h",
                 onChange = { onChange(config.copy(dayStartHour = it.toInt())) }
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(stringResource(R.string.starting_intervals), style = MaterialTheme.typography.labelLarge)
-            AnkiNumberRow(
-                label = "Easy interval",
-                help = "Days until a new card is reviewed after Easy",
-                value = config.easyFirstIntervalDays,
-                step = 1.0,
-                range = 1f..365f,
-                suffix = "d",
-                onChange = { onChange(config.copy(easyFirstIntervalDays = it.toInt())) }
-            )
-            AnkiNumberRow(
-                label = "Normal interval",
-                help = "Days until a new card is reviewed after Good",
-                value = config.firstIntervalDays,
-                step = 1.0,
-                range = 1f..365f,
-                suffix = "d",
-                onChange = { onChange(config.copy(firstIntervalDays = it.toInt())) }
-            )
-            AnkiNumberRow(
-                label = "Second interval",
-                help = "Days for the second review after Good",
-                value = config.secondIntervalDays,
-                step = 1.0,
-                range = 1f..365f,
-                suffix = "d",
-                onChange = { onChange(config.copy(secondIntervalDays = it.toInt())) }
-            )
-            AnkiNumberRow(
-                label = "Minimum interval",
-                help = "Shortest interval any review can get",
-                value = config.minimumIntervalDays,
-                step = 1.0,
-                range = 1f..365f,
-                suffix = "d",
-                onChange = { onChange(config.copy(minimumIntervalDays = it.toInt())) }
             )
             AnkiNumberRow(
                 label = "Maximum interval",
@@ -771,30 +693,6 @@ private fun AnkiSchedulerSection(
                 step = 1.0,
                 range = 1f..100f,
                 onChange = { onChange(config.copy(leechThreshold = it.toInt())) }
-            )
-            AnkiNumberRow(
-                label = "Easy ease bonus",
-                help = "Ease added on Easy",
-                value = config.easyEaseFactor,
-                step = 0.05,
-                range = 0f..1f,
-                onChange = { onChange(config.copy(easyEaseFactor = it.toDouble())) }
-            )
-            AnkiNumberRow(
-                label = "Hard ease penalty",
-                help = "Ease removed on Hard",
-                value = config.hardEaseFactor,
-                step = 0.05,
-                range = 0f..1f,
-                onChange = { onChange(config.copy(hardEaseFactor = it.toDouble())) }
-            )
-            AnkiNumberRow(
-                label = "Again ease penalty",
-                help = "Ease removed on Again",
-                value = config.againEaseFactor,
-                step = 0.05,
-                range = 0f..1f,
-                onChange = { onChange(config.copy(againEaseFactor = it.toDouble())) }
             )
 
             }

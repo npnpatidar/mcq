@@ -3,9 +3,9 @@ package com.mcqapp
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
+import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
-import com.mcqapp.domain.Sm2Scheduler
 import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyMode
 import com.mcqapp.domain.StudyReason
@@ -18,11 +18,15 @@ import org.junit.Test
 class SpacedRepetitionTest {
 
     private val now = 1_700_000_000_000L
-    private val day = Sm2Scheduler.DAY_MS
+    private val day = DayBoundary.DAY_MS
     private val config = SchedulerConfig()
     // The zone is pinned so the due instants asserted below are exact arithmetic
     // rather than a function of where the suite happens to run.
-    private val sched = Sm2Scheduler(config, zoneOffset = { 0L })
+    private val sched = com.mcqapp.domain.FsrsScheduler(
+        desiredRetention = config.desiredRetention,
+        config = config,
+        zoneOffset = { 0L }
+    )
 
     private fun graduate(
         grades: List<ReviewGrade>,
@@ -31,54 +35,7 @@ class SpacedRepetitionTest {
         sched.next(state, grade, start)
     }
 
-    // --- basic interval progression ---
-
-    @Test
-    fun `new card is new and unscheduled`() {
-        val card = sched.initial("q1")
-        assertTrue(card.isNew)
-        assertFalse(card.isScheduled)
-        assertEquals(0, card.intervalDays)
-        assertEquals(SchedulerConfig().defaultEase, card.ease, 0.0001)
-    }
-
-    @Test
-    fun `good on new card graduates to one day`() {
-        val card = sched.next(sched.initial("q1"), ReviewGrade.GOOD, now)
-        assertEquals(SchedulerConfig().firstIntervalDays, card.intervalDays)
-        // Whole days are counted from the start of the study day, so this is no
-        // longer exactly 24h after grading.
-        assertEquals(DayBoundary.dueAfter(now, 1, zoneOffsetMillis = 0), card.dueAt)
-        assertEquals(1, card.reps)
-    }
-
-    @Test
-    fun `second good graduates to six days`() {
-        val card = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD))
-        assertEquals(SchedulerConfig().secondIntervalDays, card.intervalDays)
-        assertEquals(2, card.reps)
-    }
-
-    @Test
-    fun `third good multiplies by ease`() {
-        val card = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD, ReviewGrade.GOOD))
-        assertEquals(15, card.intervalDays)
-        assertEquals(3, card.reps)
-    }
-
-    @Test
-    fun `easy on new card starts at four days`() {
-        val card = sched.next(sched.initial("q1"), ReviewGrade.EASY, now)
-        assertEquals(SchedulerConfig().easyFirstIntervalDays, card.intervalDays)
-        assertEquals(1, card.reps)
-    }
-
-    @Test
-    fun `intervals grow monotonically on repeated good`() {
-        val intervals = (1..6).map { graduate(List(it) { ReviewGrade.GOOD }).intervalDays }
-        assertEquals(intervals, intervals.sorted())
-        assertTrue(intervals.last() > intervals.first())
-    }
+    // --- graduated state is the ordinary case ---
 
     @Test
     fun `graduated card is scheduled and no longer new`() {
@@ -88,14 +45,6 @@ class SpacedRepetitionTest {
     }
 
     // --- relearning is not a new card ---
-
-    @Test
-    fun `a failed card is relearning rather than new`() {
-        val graduated = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD))
-        val failed = sched.next(graduated, ReviewGrade.AGAIN, now)
-        assertFalse(failed.isNew)
-        assertTrue(failed.isLearning)
-    }
 
     @Test
     fun `a relearning card is hidden until its due time`() {
@@ -136,78 +85,6 @@ class SpacedRepetitionTest {
             introduceNewCards = false
         )
         assertEquals("q1", card?.questionId)
-    }
-
-    // --- failure path ---
-
-    @Test
-    fun `again on a graduated card returns to relearning today`() {
-        val graduated = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD, ReviewGrade.GOOD))
-        val failed = sched.next(graduated, ReviewGrade.AGAIN, now)
-        assertEquals(0, failed.intervalDays)
-        assertEquals(0, failed.reps)
-        assertEquals(now + SchedulerConfig().relearnMs, failed.dueAt)
-        assertEquals(1, failed.lapses)
-    }
-
-    @Test
-    fun `again on a new card is not counted as a lapse`() {
-        val card = sched.next(sched.initial("q1"), ReviewGrade.AGAIN, now)
-        assertEquals(0, card.lapses)
-        assertEquals(0, card.reps)
-    }
-
-    @Test
-    fun `again never drives ease below the floor`() {
-        var card = graduate(listOf(ReviewGrade.GOOD))
-        repeat(10) { card = sched.next(card, ReviewGrade.AGAIN, now) }
-        assertEquals(SchedulerConfig().minEase, card.ease, 0.0001)
-    }
-
-    @Test
-    fun `hard and good recover a lapsed card to one day`() {
-        val lapsed = sched.next(
-            graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD, ReviewGrade.GOOD)),
-            ReviewGrade.AGAIN,
-            now
-        )
-        val hard = sched.next(lapsed, ReviewGrade.HARD, now)
-        val good = sched.next(lapsed, ReviewGrade.GOOD, now)
-        assertEquals(1, hard.intervalDays)
-        assertEquals(1, good.intervalDays)
-        assertTrue("hard must cost more ease than good", hard.ease < good.ease)
-    }
-
-    @Test
-    fun `hard grows more slowly than good`() {
-        val base = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD, ReviewGrade.GOOD))
-        val hard = sched.next(base, ReviewGrade.HARD, now)
-        val good = sched.next(base, ReviewGrade.GOOD, now)
-        assertTrue(hard.intervalDays < good.intervalDays)
-    }
-
-    @Test
-    fun `easy grows fastest and raises ease`() {
-        val base = graduate(listOf(ReviewGrade.GOOD, ReviewGrade.GOOD, ReviewGrade.GOOD))
-        val easy = sched.next(base, ReviewGrade.EASY, now)
-        val good = sched.next(base, ReviewGrade.GOOD, now)
-        assertTrue(easy.intervalDays > good.intervalDays)
-        assertTrue(easy.ease > base.ease)
-    }
-
-    @Test
-    fun `ease is capped at the ceiling`() {
-        var card = graduate(List(20) { ReviewGrade.EASY })
-        repeat(20) { card = sched.next(card, ReviewGrade.EASY, now) }
-        assertEquals(SchedulerConfig().maxEase, card.ease, 0.0001)
-    }
-
-    @Test
-    fun `difficulty means a card still earns growing intervals`() {
-        val mediocre = graduate(List(8) { ReviewGrade.HARD })
-        val strong = graduate(List(8) { ReviewGrade.EASY })
-        assertTrue(mediocre.intervalDays > 0)
-        assertTrue(strong.intervalDays > mediocre.intervalDays)
     }
 
     // --- leeches ---
@@ -272,10 +149,13 @@ class SpacedRepetitionTest {
 
     @Test
     fun `the pull serves a due review before a new card`() {
-        // Due exactly at pull time: full recall, so the plain DUE reason. An
-        // overdue card would already read as LOW_RECALL_RISK instead.
+        // Reviewed yesterday with real stability: recall is still high, so the
+        // plain DUE reason. A card overdue by days would read LOW_RECALL_RISK.
         val states = mapOf(
-            "due1" to CardState(questionId = "due1", intervalDays = 3, dueAt = now, reps = 2)
+            "due1" to CardState(
+                questionId = "due1", intervalDays = 3, dueAt = now, reps = 2,
+                stability = 3.0, lastReviewedAt = now - day
+            )
         )
         val first = Study.selectNext(sched, listOf("new1", "due1"), states, now)
         assertEquals("due1", first?.questionId)
@@ -294,15 +174,17 @@ class SpacedRepetitionTest {
 
     @Test
     fun `reviews rank by recall risk, not by age alone`() {
-        // A small-interval card four days overdue has lost more recall than a
+        // A short-interval card four days overdue has lost more recall than a
         // long-interval card six days overdue, even though the long one became
         // due first. Risk, not age, is what the pull serves.
         val states = mapOf(
             "shallow" to CardState(
-                questionId = "shallow", intervalDays = 2, dueAt = now - 4 * day, reps = 2
+                questionId = "shallow", intervalDays = 2, dueAt = now - 4 * day, reps = 2,
+                stability = 1.0, lastReviewedAt = now - 4 * day
             ),
             "deep" to CardState(
-                questionId = "deep", intervalDays = 30, dueAt = now - 6 * day, reps = 5
+                questionId = "deep", intervalDays = 30, dueAt = now - 6 * day, reps = 5,
+                stability = 12.0, lastReviewedAt = now - 6 * day
             )
         )
         val pools = Study.pools(sched, listOf("deep", "shallow"), states, now)
@@ -312,10 +194,16 @@ class SpacedRepetitionTest {
     @Test
     fun `equal recall risk breaks the tie by oldest due date`() {
         // Both cards sit at exactly the same predicted recall (overdue divided
-        // by interval is equal), so the one that has waited longer goes first.
+        // by stability is equal), so the one that has waited longer goes first.
         val states = mapOf(
-            "a" to CardState(questionId = "a", intervalDays = 2, dueAt = now - 4 * day, reps = 2),
-            "b" to CardState(questionId = "b", intervalDays = 4, dueAt = now - 8 * day, reps = 2)
+            "a" to CardState(
+                questionId = "a", intervalDays = 2, dueAt = now - 4 * day, reps = 2,
+                stability = 1.0, lastReviewedAt = now - 4 * day
+            ),
+            "b" to CardState(
+                questionId = "b", intervalDays = 4, dueAt = now - 8 * day, reps = 2,
+                stability = 2.0, lastReviewedAt = now - 8 * day
+            )
         )
         val pools = Study.pools(sched, listOf("a", "b"), states, now)
         assertEquals(listOf("b", "a"), pools.reviews.map { it.questionId })
@@ -718,56 +606,16 @@ class SpacedRepetitionTest {
     }
 
     // --- configurable parameters ---
-    // The point of SchedulerConfig is that a user can retune the scheduler, so
-    // each test here changes one setting and asserts only that setting's effect.
-
-    @Test
-    fun `starting ease is configurable`() {
-        val custom = Sm2Scheduler(SchedulerConfig(defaultEase = 1.8))
-        assertEquals(1.8, custom.initial("q1").ease, 0.0001)
-    }
-
-    @Test
-    fun `ease penalties are configurable`() {
-        val custom = Sm2Scheduler(
-            SchedulerConfig(againEaseFactor = 0.5, hardEaseFactor = 0.4, easyEaseFactor = 0.3)
-        )
-        val base = custom.initial("q1")
-        assertEquals(2.0, custom.next(base, ReviewGrade.AGAIN, now).ease, 0.0001)
-        assertEquals(2.1, custom.next(base, ReviewGrade.HARD, now).ease, 0.0001)
-        assertEquals(2.8, custom.next(base, ReviewGrade.EASY, now).ease, 0.0001)
-    }
-
-    @Test
-    fun `ease is clamped to the configured bounds`() {
-        val custom = Sm2Scheduler(SchedulerConfig(minEase = 2.0, maxEase = 2.2))
-        var card = custom.initial("q1")
-        repeat(5) { card = custom.next(card, ReviewGrade.AGAIN, now) }
-        assertEquals(2.0, card.ease, 0.0001)
-        repeat(10) { card = custom.next(card, ReviewGrade.EASY, now) }
-        assertEquals(2.2, card.ease, 0.0001)
-    }
-
-    @Test
-    fun `graduating intervals are configurable`() {
-        val custom = Sm2Scheduler(
-            SchedulerConfig(
-                firstIntervalDays = 2,
-                secondIntervalDays = 11,
-                easyFirstIntervalDays = 7
-            )
-        )
-        assertEquals(2, custom.next(custom.initial("q"), ReviewGrade.GOOD, now).intervalDays)
-        assertEquals(7, custom.next(custom.initial("q"), ReviewGrade.EASY, now).intervalDays)
-        val second = custom.next(
-            custom.next(custom.initial("q"), ReviewGrade.GOOD, now), ReviewGrade.GOOD, now
-        )
-        assertEquals(11, second.intervalDays)
-    }
+    // The memory model is fixed; what remains configurable is the pacing
+    // around it, so each test here changes one setting and asserts only that
+    // setting's effect.
 
     @Test
     fun `relearn delay is configurable`() {
-        val custom = Sm2Scheduler(SchedulerConfig(relearnMs = 5 * 60 * 1000L))
+        val custom = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = SchedulerConfig(relearnMs = 5 * 60 * 1000L)
+        )
         val graduated = custom.next(
             custom.next(custom.initial("q"), ReviewGrade.GOOD, now), ReviewGrade.GOOD, now
         )
@@ -777,7 +625,10 @@ class SpacedRepetitionTest {
 
     @Test
     fun `leech threshold is configurable`() {
-        val custom = Sm2Scheduler(SchedulerConfig(leechThreshold = 2))
+        val custom = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = SchedulerConfig(leechThreshold = 2)
+        )
         var card = custom.initial("q1")
         repeat(2) {
             card = custom.next(card, ReviewGrade.GOOD, now)
@@ -788,40 +639,17 @@ class SpacedRepetitionTest {
 
     @Test
     fun `interval is clamped to the configured maximum`() {
-        val custom = Sm2Scheduler(SchedulerConfig(maxIntervalDays = 10, minimumIntervalDays = 1))
-        var card = custom.initial("q1")
-        repeat(8) { card = custom.next(card, ReviewGrade.EASY, now) }
-        assertEquals(10, card.intervalDays)
-    }
-
-    @Test
-    fun `interval is clamped to the configured minimum`() {
-        val custom = Sm2Scheduler(SchedulerConfig(minimumIntervalDays = 5))
-        var card = custom.initial("q1")
-        repeat(6) { card = custom.next(card, ReviewGrade.GOOD, now) }
-        card = custom.next(card, ReviewGrade.GOOD, now)
-        // A minimum above the natural interval must win over interval + 1.
-        assertTrue(card.intervalDays >= 5)
-    }
-
-    @Test
-    fun `hard multiplier is configurable`() {
-        val gentle = Sm2Scheduler(SchedulerConfig(hardIntervalMultiplier = 1.2))
-        val aggressive = Sm2Scheduler(SchedulerConfig(hardIntervalMultiplier = 3.0))
-        val base = gentle.next(gentle.next(gentle.initial("q"), ReviewGrade.GOOD, now), ReviewGrade.GOOD, now)
-        val gentleNext = gentle.next(base, ReviewGrade.HARD, now).intervalDays
-        val aggressiveNext = aggressive.next(base, ReviewGrade.HARD, now).intervalDays
-        assertTrue("3x should beat 1.2x", aggressiveNext > gentleNext)
-    }
-
-    @Test
-    fun `easy bonus is configurable`() {
-        val plain = Sm2Scheduler(SchedulerConfig(easyBonus = 1.0))
-        val boosted = Sm2Scheduler(SchedulerConfig(easyBonus = 2.0))
-        val base = plain.next(plain.next(plain.initial("q"), ReviewGrade.GOOD, now), ReviewGrade.GOOD, now)
-        val plainNext = plain.next(base, ReviewGrade.EASY, now).intervalDays
-        val boostedNext = boosted.next(base, ReviewGrade.EASY, now).intervalDays
-        assertTrue("2x bonus should beat none", boostedNext > plainNext)
+        val custom = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = SchedulerConfig(maxIntervalDays = 10)
+        )
+        // A graduated card with very strong memory: only the ceiling can hold
+        // it back.
+        val strong = CardState(
+            questionId = "q", intervalDays = 100, dueAt = now - day, reps = 5,
+            stability = 100.0, lastReviewedAt = now - day, state = CardStateKind.REVIEW
+        )
+        assertEquals(10, custom.next(strong, ReviewGrade.GOOD, now).intervalDays)
     }
 
     @Test
@@ -837,20 +665,17 @@ class SpacedRepetitionTest {
     @Test
     fun `sanitized repairs values that would break scheduling`() {
         val broken = SchedulerConfig(
-            minEase = 9.0,
-            maxEase = 0.5,
-            firstIntervalDays = 0,
             relearnMs = 1L,
             leechThreshold = 0,
             desiredRetention = 0.5,
-            slowSeconds = 0
+            slowSeconds = 0,
+            maxIntervalDays = 0
         ).sanitized()
-        assertTrue(broken.minEase <= broken.maxEase)
-        assertTrue(broken.firstIntervalDays >= 1)
         assertTrue(broken.relearnMs >= 60_000L)
         assertTrue(broken.leechThreshold >= 1)
         assertTrue(broken.desiredRetention >= 0.75)
         assertTrue(broken.slowSeconds >= broken.fastSeconds)
+        assertTrue(broken.maxIntervalDays >= 1)
     }
 
     @Test

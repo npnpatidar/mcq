@@ -409,6 +409,12 @@ class Importer(
                                     lapses = schedule.lapses,
                                     leech = schedule.leech,
                                     lastReviewedAt = schedule.lastReviewedAt,
+                                    difficulty = schedule.difficulty,
+                                    stability = schedule.stability,
+                                    cardState = runCatching {
+                                        com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
+                                    }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),
+                                    reviewCount = schedule.reviewCount,
                                     contentHash = ContentHash.of(
                                         scaledQuestion.text,
                                         scaledQuestion.options.map { it.text },

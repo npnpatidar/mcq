@@ -99,6 +99,38 @@ class ImportSchedulingTest {
     }
 
     @Test
+    fun aLegacyScheduleImportsWithTheMemoryModelAtDefaults() = runBlocking {
+        // A file from before FSRS carries no memory numbers: the card kind
+        // reads as new and the model starts empty, so the first review begins
+        // fresh rather than inventing a stability the file never had.
+        Importer(db).import(file(), mapOf("q1" to schedule()))
+        val stored = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(com.mcqapp.domain.CardStateKind.NEW, stored.cardState)
+        assertEquals(0.0, stored.stability, 0.0)
+        assertEquals(0.0, stored.difficulty, 0.0)
+        assertEquals(0, stored.reviewCount)
+        // The legacy columns still carry the imported schedule.
+        assertEquals(5, stored.intervalDays)
+        assertEquals(2.6, stored.ease, 0.0001)
+    }
+
+    @Test
+    fun anFsrsScheduleImportsWithItsMemoryModel() = runBlocking {
+        val fsrs = schedule().copy(
+            difficulty = 4.2,
+            stability = 5.0,
+            cardState = "REVIEW",
+            reviewCount = 7
+        )
+        Importer(db).import(file(), mapOf("q1" to fsrs))
+        val stored = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(4.2, stored.difficulty, 0.0001)
+        assertEquals(5.0, stored.stability, 0.0001)
+        assertEquals(com.mcqapp.domain.CardStateKind.REVIEW, stored.cardState)
+        assertEquals(7, stored.reviewCount)
+    }
+
+    @Test
     fun importedScheduleSurvivesAStudySessionLoad() = runBlocking {
         Importer(db).import(file(), mapOf("q1" to schedule()))
 

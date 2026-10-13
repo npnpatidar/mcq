@@ -73,7 +73,11 @@ class Exporter(private val db: AppDatabase) {
                             reps = state.reps,
                             lapses = state.lapses,
                             leech = state.leech,
-                            lastReviewedAt = state.lastReviewedAt
+                            lastReviewedAt = state.lastReviewedAt,
+                            difficulty = state.difficulty,
+                            stability = state.stability,
+                            cardState = state.cardState.name,
+                            reviewCount = state.reviewCount
                         )
                     }
             )

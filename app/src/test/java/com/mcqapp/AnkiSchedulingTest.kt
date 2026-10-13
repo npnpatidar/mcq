@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.data.anki.AnkiScheduling
 import com.mcqapp.data.io.CardScheduleDto
+import com.mcqapp.domain.CardStateKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -21,6 +22,10 @@ class AnkiSchedulingTest {
     // A fixed epoch so the day arithmetic does not depend on when the suite runs.
     private val crt = 1_700_000_000L
 
+    /** The DTO carries the kind by name for the wire; assert it as the enum. */
+    private fun CardScheduleDto.cardStateKind() =
+        com.mcqapp.domain.CardStateKind.valueOf(cardState)
+
     @Test
     fun reviewCardDueInFiveDaysKeepsItsIntervalAndEase() {
         val state = AnkiScheduling.fromAnki(
@@ -39,6 +44,16 @@ class AnkiSchedulingTest {
         assertEquals(7, state.reps)
         assertEquals(1, state.lapses)
         assertEquals(2.5, state.ease, 0.0001)
+        // FSRS conversion: the kind follows Anki's type, the interval doubles
+        // as the stability, and the ease mirrors onto the difficulty scale.
+        assertEquals(CardStateKind.REVIEW, state.cardStateKind())
+        assertEquals(5.0, state.stability, 0.0001)
+        assertEquals(7, state.reviewCount)
+        assertEquals(
+            1.0 + (3.0 - 2.5) / (3.0 - 1.3) * 9.0,
+            state.difficulty,
+            0.0001
+        )
         assertTrue(state.dueAt > crt * 1000L)
         // Five days out, within a day of slack for Anki's 04:00 rollover.
         assertTrue(
@@ -78,8 +93,12 @@ class AnkiSchedulingTest {
             crtSeconds = crt
         )!!
         assertEquals(dueSeconds * 1000L, state.dueAt)
-        // Days are the wrong unit here, so no interval is claimed.
+        // Days are the wrong unit here, so no interval is claimed — and with
+        // no interval there is no memory model to claim either.
         assertEquals(0, state.intervalDays)
+        assertEquals(CardStateKind.LEARNING, state.cardStateKind())
+        assertEquals(0.0, state.stability, 0.0)
+        assertEquals(0.0, state.difficulty, 0.0)
     }
 
     @Test
@@ -95,6 +114,7 @@ class AnkiSchedulingTest {
             crtSeconds = crt
         )!!
         assertEquals(3, state.intervalDays)
+        assertEquals(CardStateKind.RELEARNING, state.cardStateKind())
         assertTrue(state.dueAt in (crt * 1000L + 2 * day)..(crt * 1000L + 4 * day))
     }
 

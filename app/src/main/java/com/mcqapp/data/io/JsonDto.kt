@@ -205,5 +205,15 @@ data class CardScheduleDto(
     val reps: Int = 0,
     val lapses: Int = 0,
     val leech: Boolean = false,
-    val lastReviewedAt: Long = 0L
+    val lastReviewedAt: Long = 0L,
+    /**
+     * The FSRS memory model. A legacy entry without these fields imports with
+     * the card kind at new and no memory numbers, so its first review under
+     * FSRS starts fresh rather than pretending to know a stability it never
+     * carried; the legacy columns above are still written for continuity.
+     */
+    val difficulty: Double = 0.0,
+    val stability: Double = 0.0,
+    val cardState: String = com.mcqapp.domain.CardStateKind.NEW.name,
+    val reviewCount: Int = 0
 )

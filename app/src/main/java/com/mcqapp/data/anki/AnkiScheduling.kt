@@ -110,14 +110,37 @@ object AnkiScheduling {
         } else {
             max(0L, dueAt - intervalDays * DAY_MS).coerceAtMost(nowMillis)
         }
+        // FSRS conversion (spec §6): the card kind follows Anki's own type, the
+        // interval doubles as the stability (at the benchmark retention a
+        // card's interval equals its stability), and the ease mirrors back onto
+        // the 1..10 difficulty scale — an estimate, not a claim.
+        val kind = when {
+            type == TYPE_REVIEW || queue == QUEUE_REVIEW -> com.mcqapp.domain.CardStateKind.REVIEW
+            type == TYPE_RELEARN -> com.mcqapp.domain.CardStateKind.RELEARNING
+            else -> com.mcqapp.domain.CardStateKind.LEARNING
+        }
+        val ease = (factor / 1000.0).coerceIn(MIN_EASE, MAX_EASE)
         return CardScheduleDto(
-            ease = (factor / 1000.0).coerceIn(MIN_EASE, MAX_EASE),
+            ease = ease,
             intervalDays = intervalDays,
             dueAt = dueAt,
             reps = max(0, reps),
             lapses = max(0, lapses),
             leech = lapses >= LEECH_THRESHOLD,
-            lastReviewedAt = inferred
+            lastReviewedAt = inferred,
+            difficulty = if (intervalDays > 0) {
+                (com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY +
+                    (MAX_EASE - ease) / (MAX_EASE - MIN_EASE) * 9.0)
+                    .coerceIn(
+                        com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY,
+                        com.mcqapp.domain.FsrsScheduler.MAX_DIFFICULTY
+                    )
+            } else {
+                0.0
+            },
+            stability = intervalDays.toDouble(),
+            cardState = kind.name,
+            reviewCount = max(0, reps)
         )
     }
 

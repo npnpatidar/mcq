@@ -102,6 +102,25 @@ data class StudyCard(
     val state: CardState
 )
 
+/** What a pull-based session would serve right now, per pool. */
+data class StudyEligibility(
+    /** Learning/relearning steps due now, leeches excluded. */
+    val learning: Int = 0,
+    /** Graduated cards due now, leeches excluded. */
+    val due: Int = 0,
+    /**
+     * Due leeches wherever they sit in the pull order — the tricky drill's
+     * promise. A leech that lapsed back into learning is drilled, not
+     * hidden behind the memory-first ordering.
+     */
+    val leeches: Int = 0,
+    /** Never-studied cards available. */
+    val fresh: Int = 0
+) {
+    /** Everything the main session serves: the badge's contract. */
+    val total: Int get() = learning + due + leeches + fresh
+}
+
 /**
  * A forgetting model: given a card and a grade, what happens next.
  *
@@ -482,25 +501,6 @@ object Study {
             pools.fresh.isNotEmpty() -> pools.fresh.first()
             else -> null
         }
-    }
-
-    /** What a pull-based session would serve right now, per pool. */
-    data class StudyEligibility(
-        /** Learning/relearning steps due now, leeches excluded. */
-        val learning: Int = 0,
-        /** Graduated cards due now, leeches excluded. */
-        val due: Int = 0,
-        /**
-         * Due leeches wherever they sit in the pull order — the tricky drill's
-         * promise. A leech that lapsed back into learning is drilled, not
-         * hidden behind the memory-first ordering.
-         */
-        val leeches: Int = 0,
-        /** Never-studied cards available. */
-        val fresh: Int = 0
-    ) {
-        /** Everything the main session serves: the badge's contract. */
-        val total: Int get() = learning + due + leeches + fresh
     }
 
     /**

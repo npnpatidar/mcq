@@ -165,6 +165,11 @@ class PaperExporter(private val db: AppDatabase) {
                 format.mimeType,
                 AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto), scheduling, passages)
             )
+            ExportFormat.DOCX -> ExportResult(
+                "$base.docx",
+                format.mimeType,
+                DocxPaperWriter.paperToDocxBytes(dto, dto.passages)
+            )
         }
     }
 

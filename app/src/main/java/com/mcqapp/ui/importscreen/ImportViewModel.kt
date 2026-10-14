@@ -373,7 +373,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Logger.i("IMPORTVM", "Converted Word file (${bytes.size} bytes) " +
                     "with ${parsed.warnings.size} docx warnings, title from '$fileName'")
-                loadJsonTextWithWarnings(parsed.json, parsed.warnings, docxPaperTitle(fileName))
+                // A document that names its own paper (Title/Heading 1) wins
+                // over the file name; the preview stays editable either way.
+                loadJsonTextWithWarnings(
+                    parsed.json,
+                    parsed.warnings,
+                    parsed.paperTitle ?: docxPaperTitle(fileName)
+                )
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "Failed to parse Word file", e)
                 _state.update { it.copy(loading = false, error = "Could not parse the Word file: ${e.message}") }

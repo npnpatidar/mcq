@@ -4,7 +4,7 @@ An offline-first Android app for practicing multiple-choice questions: build pap
 recursive categories, import question banks from **Word (.docx)** or **JSON**, take timed
 tests with negative marking and per-question weights, study in practice/strict/mistakes
 modes, review explanations, track mastery over time, keep questions fresh with FSRS-6
-spaced repetition, and export papers as JSON, ZIP, HTML, or PDF.
+spaced repetition, and export papers as JSON, ZIP, HTML, PDF, Word (.docx), or Anki (.apkg).
 
 - **Stack:** Kotlin, Jetpack Compose (Material 3), Room, Navigation-Compose, DataStore, Coil, kotlinx.serialization
 - **Requires:** Android 8.0+ (minSdk 26), targetSdk 36. The version shown in Settings → About is
@@ -253,6 +253,12 @@ One question per block, built from literal marker text at the **start of a line*
 | Explanation | `Exp:` | case-sensitive, trailing colon included. **Optional** — see below |
 | Passage | `Passage:` | optional, case-insensitive. Starts a shared reading context; see [Reading passages](#reading-passages) |
 
+**Headings carry the category tree** (this app's own exports use them): the first `Title` or
+`Heading 1` paragraph names the paper, and each `Heading 2`–`Heading 9` opens a category one
+level below the previous heading — so `Heading 2` is a top-level category, `Heading 3` its
+subcategory, and so on, recursively. A document without headings imports as before
+(one `Uncategorized` category).
+
 The stem, every option and the answer are mandatory. A document missing any of them is
 **rejected in full** with the offending question number, rather than silently losing
 questions — so if one question is broken, nothing imports.
@@ -421,12 +427,37 @@ Check the import preview for that warning before shipping an equation-heavy bank
 
 ### What a .docx import produces
 
-A Word import always creates **one paper** titled `Imported Questions` holding **one category**
-titled `Uncategorized`. Papers, categories, per-question marks, difficulty and tags cannot be
-expressed in a Word document, so every question arrives with `marks` 1, difficulty `medium` and
-no tags. Re-importing the same document merges into that paper by title, so edits update in
-place instead of duplicating. `Passage:` blocks become passages of that category and their
-questions are assigned to them (see [Reading passages](#reading-passages)).
+A Word import creates **one paper** — titled by the document's own first `Title`/`Heading 1`
+line when it has one, otherwise by the file name. Headings become **categories**: `Heading 2`
+opens a top-level category, a deeper heading a subcategory of the one above it, recursively
+(see [the document format](#the-document-format)); questions before the first heading land in
+`Uncategorized`. Per-question marks, difficulty and tags cannot be expressed in a Word
+document, so every question arrives with `marks` 1, difficulty `medium` and no tags.
+Re-importing the same document merges into that paper by title, so edits update in place
+instead of duplicating. `Passage:` blocks become passages of the category they sit in and
+their questions are assigned to them (see [Reading passages](#reading-passages)).
+
+### Export: Word documents (.docx)
+
+Exporting a paper (or a category selection, bookmarks, or ticked questions in Browse) to
+**Word document (.docx)** writes the whole structure as a document Word, Google Docs and
+LibreOffice open natively: the paper title as `Heading 1`, each category as a heading one
+level below its parent (the recursive tree, readable at a glance from the navigation pane),
+each question in the marker grammar above, `Passage:` blocks above their member questions,
+tables as real Word tables, and MathML formulas as native Word equations.
+
+Pictures travel as embedded image files; only data-URI images can be embedded, so questions
+whose images are remote URLs are written without them (a warning is logged). Maths outside
+the fraction / square-root / super- and subscript subset is kept as plain text, also warned
+about.
+
+An export also carries an **invisible payload** — the full paper (ids, marks, difficulty,
+tags, correct answers) in a `docProps/custom.xml` part Word preserves on save. It changes
+nothing about how the document looks or edits; on import the app uses it when it still
+matches the visible text, so re-importing an untouched export recognises every question
+instead of adding duplicates. If the document was edited outside the app (the payload no
+longer matches the body), import falls back to the visible markers — which cannot carry
+marks, difficulty or tags — and says so in the warnings.
 
 ### If a .docx is rejected
 

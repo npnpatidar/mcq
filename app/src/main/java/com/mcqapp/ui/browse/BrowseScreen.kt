@@ -131,6 +131,9 @@ fun BrowseScreen(
     val exportApkgLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.APKG.mimeType)
     ) { uri: android.net.Uri? -> onExportDocument(uri) }
+    val exportDocxLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(com.mcqapp.data.export.ExportFormat.DOCX.mimeType)
+    ) { uri: android.net.Uri? -> onExportDocument(uri) }
 
     fun exportSaver(format: com.mcqapp.data.export.ExportFormat) = when (format) {
         com.mcqapp.data.export.ExportFormat.JSON_INLINE -> exportJsonLauncher
@@ -140,6 +143,7 @@ fun BrowseScreen(
         com.mcqapp.data.export.ExportFormat.PDF, com.mcqapp.data.export.ExportFormat.PDF_ANSWER_KEY ->
             exportPdfLauncher
         com.mcqapp.data.export.ExportFormat.APKG -> exportApkgLauncher
+        com.mcqapp.data.export.ExportFormat.DOCX -> exportDocxLauncher
     }
     var showBulkDialog by remember { mutableStateOf(false) }
     var bulkMarks by remember { mutableStateOf("") }

@@ -17,7 +17,12 @@ import kotlinx.serialization.json.buildJsonObject
  * instead of silently losing questions. The returned JSON feeds
  * straight into `LegacyParser`.
  */
-data class DocxParseResult(val json: String, val warnings: List<String>)
+data class DocxParseResult(
+    val json: String,
+    val warnings: List<String>,
+    /** The document's own paper title (a Title/Heading 1 line), when present. */
+    val paperTitle: String? = null
+)
 
 private const val ZIP_MAGIC_0 = 0x50
 private const val ZIP_MAGIC_1 = 0x4B
@@ -49,40 +54,60 @@ fun isDocxArchive(bytes: ByteArray): Boolean {
 
 fun parseDocx(bytes: ByteArray): DocxParseResult {
     val read = readDocx(bytes)
-    val text = StringBuilder()
-    for (block in read.blocks) {
+    val lines = read.blocks.map { block ->
         when (block) {
-            is DocxBlock.Para -> text.append(block.html).append('\n')
-            is DocxBlock.Table -> {
-                text.append("<table border=\"1\">")
-                for (row in block.rows) {
-                    text.append("<tr>")
-                    for (cell in row) text.append("<td>").append(cell).append("</td>")
-                    text.append("</tr>")
-                }
-                text.append("</table>").append('\n')
-            }
+            is DocxBlock.Para -> DocxLine(block.html, headingLevelOf(block.style))
+            is DocxBlock.Table -> DocxLine(tableHtml(block), null)
         }
     }
+    return if (lines.none { it.heading != null }) {
+        parseFlatDocx(lines.map { it.html }, read.warnings)
+    } else {
+        parseSectionedDocx(lines, read.warnings)
+    }
+}
+
+internal data class DocxLine(val html: String, val heading: Int?)
+
+/**
+ * The paragraph style to a heading level: `Heading1`…`Heading9` (Word's
+ * style ids, with LibreOffice's `Heading_20_1` spelling tolerated) and
+ * `Title` count as level 1. Anything else is ordinary text.
+ */
+internal fun headingLevelOf(style: String?): Int? {
+    if (style == null) return null
+    val trimmed = style.trim()
+    if (trimmed.equals("Title", ignoreCase = true)) return 1
+    val match = Regex("(?i)^heading[ _]?(?:20[ _]?)?(\\d+)$").find(trimmed) ?: return null
+    val level = match.groupValues[1].toIntOrNull() ?: return null
+    return if (level in 1..9) level else null
+}
+
+/** A table block to the HTML line the marker pass understands. */
+internal fun tableHtml(block: DocxBlock.Table): String {
+    val sb = StringBuilder("<table border=\"1\">")
+    for (row in block.rows) {
+        sb.append("<tr>")
+        for (cell in row) sb.append("<td>").append(cell).append("</td>")
+        sb.append("</tr>")
+    }
+    sb.append("</table>")
+    return sb.toString()
+}
+
+/** The original path: no headings, one implicit section, wrapper JSON. */
+private fun parseFlatDocx(texts: List<String>, warnings: List<String>): DocxParseResult {
+    val text = StringBuilder()
+    for (html in texts) text.append(html).append('\n')
     // Collapse blank lines like the pipeline's cleanup: markers must
     // start lines, stray empties are noise.
     val cleaned = text.toString().replace(Regex("\n{2,}"), "\n")
-    val (passages, cleanedQuestions) = extractPassages(cleaned)
-    val questions = extractQuestions(cleanedQuestions)
+    val (passages, cleanedQuestions, anchors) = extractPassages(cleaned)
+    val questions = extractQuestions(cleanedQuestions, anchors)
     val array = buildJsonArray {
         for (q in questions) add(questionJson(q))
     }
-    val passageArray = buildJsonArray {
-        for (p in passages) {
-            add(buildJsonObject {
-                put("id", JsonPrimitive(p.id))
-                put("title", JsonPrimitive(passageTitle(p)))
-                put("elements", buildJsonArray {
-                    for (el in fieldElements(p.bodyHtml)) add(elementJson(el))
-                })
-            })
-        }
-    }
+    val passageArray = passageJsonArray(passages, categoryId = null)
     // Passages ride top-level; the questions JSON stays the array the
     // importer already parses.
     val wrapper = if (passages.isEmpty()) {
@@ -93,7 +118,160 @@ fun parseDocx(bytes: ByteArray): DocxParseResult {
             put("passages", passageArray)
         }.toString()
     }
-    return DocxParseResult(wrapper, read.warnings)
+    return DocxParseResult(wrapper, warnings)
+}
+
+private data class Section(val level: Int?, val titleHtml: String, val lines: MutableList<String>)
+
+/**
+ * Headings to categories: each heading opens a section; its level sets the
+ * category's depth (Heading 2 = top level, Heading 3 = its subcategory, …),
+ * so a recursive tree maps onto nothing but ordinary Word styles. The first
+ * Title/Heading 1 names the paper. Questions and passages join the section
+ * they sit under; anything before the first heading goes to Uncategorized.
+ */
+private fun parseSectionedDocx(lines: List<DocxLine>, warnings: List<String>): DocxParseResult {
+    val sections = mutableListOf<Section>()
+    for (line in lines) {
+        if (line.heading != null) {
+            sections.add(Section(line.heading, line.html, mutableListOf()))
+        } else {
+            if (sections.isEmpty()) sections.add(Section(null, "", mutableListOf()))
+            sections.last().lines.add(line.html)
+        }
+    }
+
+    // Categories as plain records: the questions are RawQuestions (they
+    // become JSON per question via questionJson), so the DTO type does not
+    // fit until LegacyParser sees the file.
+    data class CatOut(val id: String, val title: String, val parentId: String?)
+    val categories = mutableListOf<CatOut>()
+    val stack = ArrayDeque<Pair<String, Int>>()
+    var paperTitle: String? = null
+    var catCounter = 0
+    data class SectionResult(
+        val categoryId: String?,
+        val questions: List<RawQuestion>,
+        val passages: List<RawPassage>
+    )
+
+    val results = sections.mapIndexed { index, section ->
+        var categoryId: String? = null
+        if (section.level != null) {
+            val title = stripTags(section.titleHtml).trim()
+            if (section.level == 1 && paperTitle == null && categories.isEmpty()) {
+                paperTitle = title
+            } else {
+                val depth = if (section.level == 1) 0 else section.level - 2
+                while (stack.isNotEmpty() && stack.last().second >= depth) stack.removeLast()
+                catCounter++
+                val id = "doc-cat-$catCounter"
+                categories.add(
+                    CatOut(
+                        id = id,
+                        title = title.ifBlank { "Category" },
+                        parentId = stack.lastOrNull()?.first
+                    )
+                )
+                stack.addLast(id to depth)
+                categoryId = id
+            }
+        }
+        val cleaned = section.lines.joinToString("\n")
+            .replace(Regex("\n{2,}"), "\n")
+        var sectionQuestions: List<RawQuestion> = emptyList()
+        var sectionPassages: List<RawPassage> = emptyList()
+        if (cleaned.isNotBlank()) {
+            val (passages, rest, anchors) = extractPassages(cleaned)
+            // Passage ids are minted per section ("passage-1"); with several
+            // sections they would collide, so they are qualified with the
+            // section number. One section keeps the bare names, so the flat
+            // path's output shape is unchanged.
+            val idMap = if (sections.size > 1) {
+                passages.mapIndexed { pIndex, p ->
+                    p.id to "passage-${index + 1}-${pIndex + 1}"
+                }.toMap()
+            } else {
+                emptyMap()
+            }
+            sectionPassages = passages.map { it.copy(id = idMap[it.id] ?: it.id) }
+            if (questionSplit.containsMatchIn(rest)) {
+                sectionQuestions = extractQuestions(rest, anchors).map { q ->
+                    if (q.passageId.isEmpty()) q
+                    else q.copy(passageId = idMap[q.passageId] ?: q.passageId)
+                }
+            }
+        }
+        SectionResult(categoryId, sectionQuestions, sectionPassages)
+    }
+
+    val allQuestions = results.flatMap { it.questions }
+    if (allQuestions.isEmpty()) {
+        val anyText = sections.any { s -> s.lines.any { it.isNotBlank() } }
+        throw IllegalArgumentException(
+            if (!anyText) {
+                "No questions found: the document is empty."
+            } else {
+                "No questions found: expected 'N.)' numbered questions with " +
+                    "'(a)..(d)', 'Ans.' and 'Exp:' markers."
+            }
+        )
+    }
+
+    // Questions before any heading (or under the bare title) get their own
+    // section, matching what the flat path builds.
+    val ungrouped = results.filter { it.categoryId == null }.flatMap { it.questions }
+    if (ungrouped.isNotEmpty()) {
+        categories.add(CatOut("doc-cat-ungrouped", "Uncategorized", null))
+    }
+    val paperJson = buildJsonObject {
+        if (paperTitle != null) put("title", JsonPrimitive(paperTitle))
+        put("categories", buildJsonArray {
+            for (category in categories) {
+                val own = if (category.id == "doc-cat-ungrouped") {
+                    ungrouped
+                } else {
+                    results.filter { it.categoryId == category.id }.flatMap { it.questions }
+                }
+                add(buildJsonObject {
+                    put("id", JsonPrimitive(category.id))
+                    put("title", JsonPrimitive(category.title))
+                    category.parentId?.let { put("parentId", JsonPrimitive(it)) }
+                    put("questions", buildJsonArray {
+                        for (q in own) add(questionJson(q))
+                    })
+                })
+            }
+        })
+    }
+    val passageArray = buildJsonArray {
+        for ((index, result) in results.withIndex()) {
+            val categoryId = result.categoryId
+            for (p in result.passages) {
+                add(passageJson(p, categoryId))
+            }
+        }
+    }
+    val wrapper = buildJsonObject {
+        put("version", JsonPrimitive(1))
+        put("papers", buildJsonArray { add(paperJson) })
+        put("passages", passageArray)
+    }
+    return DocxParseResult(wrapper.toString(), warnings, paperTitle)
+}
+
+private fun passageJsonArray(passages: List<RawPassage>, categoryId: String?): kotlinx.serialization.json.JsonArray =
+    buildJsonArray {
+        for (p in passages) add(passageJson(p, categoryId))
+    }
+
+private fun passageJson(p: RawPassage, categoryId: String?): JsonObject = buildJsonObject {
+    put("id", JsonPrimitive(p.id))
+    put("title", JsonPrimitive(passageTitle(p)))
+    categoryId?.let { put("categoryId", JsonPrimitive(it)) }
+    put("elements", buildJsonArray {
+        for (el in fieldElements(p.bodyHtml)) add(elementJson(el))
+    })
 }
 
 /** The one-line title after `Passage:`; blank falls back to a numbered default. */
@@ -162,10 +340,11 @@ private fun isSingleLetter(token: String) = token.length == 1 && token[0] in 'a'
  * found plus the text still to question-split. Each question keeps its
  * membership through the passage id, minted `passage-N` in document order.
  */
-internal fun extractPassages(cleaned: String): Pair<List<RawPassage>, String> {
+internal fun extractPassages(cleaned: String): Triple<List<RawPassage>, String, List<Int>> {
     val matches = passageSplit.findAll(cleaned).toList()
-    if (matches.isEmpty()) return emptyList<RawPassage>() to cleaned
+    if (matches.isEmpty()) return Triple(emptyList<RawPassage>(), cleaned, emptyList())
     val passages = mutableListOf<RawPassage>()
+    val anchors = mutableListOf<Int>()
     val rebuilt = StringBuilder()
     var cursor = 0
     matches.forEachIndexed { index, match ->
@@ -191,16 +370,26 @@ internal fun extractPassages(cleaned: String): Pair<List<RawPassage>, String> {
         val body = cleaned.substring(bodyStart, bodyEnd).trim()
         val id = "passage-${index + 1}"
         passages.add(RawPassage(id = id, titleHtml = titleHtml, bodyHtml = body))
-        // Rebuild the question stream without the passage bodies; the marker
-        // lines stay so extractQuestions finds them and tags the members.
-        rebuilt.append(cleaned.substring(cursor, bodyStart))
+        // Rebuild the question stream without the passage bodies. The marker
+        // line stays as the offset anchor extractQuestions tags members by —
+        // but blanked at its exact length, so the title text never leaks
+        // into the field that precedes the passage (a question's
+        // explanation would otherwise absorb it).
+        anchors.add(match.range.first)
+        rebuilt.append(cleaned.substring(cursor, match.range.first))
+        rebuilt.append(" ".repeat(match.value.length))
+        rebuilt.append(cleaned.substring(match.range.last + 1, bodyStart))
         cursor = bodyEnd
     }
     rebuilt.append(cleaned.substring(cursor))
-    return passages to rebuilt.toString()
+    return Triple(passages, rebuilt.toString(), anchors)
 }
 
-private fun extractQuestions(cleaned: String): List<RawQuestion> {
+private fun extractQuestions(
+    cleaned: String,
+    /** Offsets of the `Passage:` markers, valid in this text (see extractPassages). */
+    passageAnchors: List<Int> = emptyList()
+): List<RawQuestion> {
     val matches = questionSplit.findAll(cleaned).toList()
     if (matches.isEmpty()) {
         if (cleaned.isBlank()) throw IllegalArgumentException("No questions found: the document is empty.")
@@ -212,12 +401,11 @@ private fun extractQuestions(cleaned: String): List<RawQuestion> {
     // Which passage each question belongs to: the last `Passage:` marker at or
     // before the question's own position. Questions before any marker are
     // standalone (passageId "").
-    val passageMarks = passageSplit.findAll(cleaned).toList()
     fun passageIdAt(position: Int): String {
         var active = ""
-        for (mark in passageMarks) {
-            if (mark.range.first <= position) {
-                active = "passage-${passageMarks.indexOf(mark) + 1}"
+        for ((index, anchor) in passageAnchors.withIndex()) {
+            if (anchor <= position) {
+                active = "passage-${index + 1}"
             } else break
         }
         return active
@@ -474,22 +662,11 @@ internal fun docxTextForTest(bytes: ByteArray): String {
     for (block in read.blocks) {
         when (block) {
             is DocxBlock.Para -> text.append(block.html).append('\n')
-            is DocxBlock.Table -> {
-                text.append("<table border=\"1\">")
-                for (row in block.rows) {
-                    text.append("<tr>")
-                    for (cell in row) text.append("<td>").append(cell).append("</td>")
-                    text.append("</tr>")
-                }
-                text.append("</table>").append('\n')
-            }
+            is DocxBlock.Table -> text.append(tableHtml(block)).append('\n')
         }
     }
     return text.toString().replace(Regex("\n{2,}"), "\n")
 }
-
-/** Visible for tests: the passage split without zip/DOM. */
-internal fun extractPassagesForTest(coded: String): Pair<List<RawPassage>, String> = extractPassages(coded)
 
 /** Visible for tests: the raw JSON object for one parsed question. */
 internal fun questionJsonForTest(q: RawQuestion): JsonObject = questionJson(q)

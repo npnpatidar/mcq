@@ -14,7 +14,12 @@ internal const val DRAWING_MAIN_NS = "http://schemas.openxmlformats.org/drawingm
 
 /** Blocks of the document body in order: text lines or tables. */
 internal sealed interface DocxBlock {
-    data class Para(val html: String) : DocxBlock
+    /**
+     * A text line. [style] is the paragraph style id (`Heading1`, `Title`,
+     * …) when the paragraph carries one — what turns Word headings into the
+     * category tree on import.
+     */
+    data class Para(val html: String, val style: String? = null) : DocxBlock
     data class Table(val rows: List<List<String>>) : DocxBlock
 }
 
@@ -47,7 +52,9 @@ internal fun readDocx(bytes: ByteArray): DocxRead {
     val blocks = mutableListOf<DocxBlock>()
     for (child in body.childElements()) {
         when {
-            child.isWord("p") -> reader.paraHtml(child)?.let { blocks.add(DocxBlock.Para(it)) }
+            child.isWord("p") -> reader.paraHtml(child)?.let {
+                blocks.add(DocxBlock.Para(it.html, it.style))
+            }
             child.isWord("tbl") -> blocks.add(DocxBlock.Table(reader.tableRows(child)))
             child.isWord("sectPr") -> Unit
             else -> warnings.add(
@@ -181,8 +188,23 @@ private class BodyReader(
     private val contentTypes: Map<String, String>,
     private val warnings: MutableList<String>
 ) {
+    /** A paragraph read to its HTML line plus its paragraph style, if any. */
+    internal class ParaRead(val html: String, val style: String?)
+
     /** Paragraph to an HTML line, or null when it carries no content. */
-    fun paraHtml(para: Element): String? {
+    fun paraHtml(para: Element): ParaRead? {
+        // The paragraph style rides in w:pPr/w:pStyle and may sit anywhere
+        // among the paragraph's children; scan for it before rendering runs.
+        var style: String? = null
+        for (child in para.childElements()) {
+            if (!child.isWord("pPr")) continue
+            for (prop in child.childElements()) {
+                if (prop.isWord("pStyle")) {
+                    val value = prop.getAttribute("w:val")
+                    if (value.isNotBlank()) style = value
+                }
+            }
+        }
         val sb = StringBuilder()
         var hasContent = false
         for (child in para.childElements()) {
@@ -242,7 +264,7 @@ private class BodyReader(
         if (!hasContent) return null
         // Lines never end with stray spaces (pandoc output doesn't either);
         // leading space is kept as authored.
-        return sb.toString().trimEnd()
+        return ParaRead(sb.toString().trimEnd(), style)
     }
 
     /**
@@ -420,7 +442,7 @@ private class BodyReader(
                 val parts = mutableListOf<String>()
                 for (para in cell.childElements()) {
                     when {
-                        para.isWord("p") -> paraHtml(para)?.let { parts.add(it) }
+                        para.isWord("p") -> paraHtml(para)?.let { parts.add(it.html) }
                         para.isWord("tbl") -> {
                             // Nested tables cannot travel in a cell string:
                             // flatten with spaces.

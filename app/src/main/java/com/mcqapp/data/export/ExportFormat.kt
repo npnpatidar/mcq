@@ -51,5 +51,11 @@ enum class ExportFormat(
         "apkg",
         "Anki deck (.apkg)",
         "Importable with Anki. Each question becomes a flashcard in one deck."
+    ),
+    DOCX(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "docx",
+        "Word document (.docx)",
+        "Opens in Word. Headings carry the category tree; answers and explanations inline. Re-importable."
     )
 }

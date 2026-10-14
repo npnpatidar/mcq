@@ -343,6 +343,9 @@ together.
   a question can; all of it is shown above the members everywhere the passage appears.
 - **Membership** — a question belongs to the passage of the most recent `Passage:` marker
   before it. A second `Passage:` starts a new group; questions after it leave the first one.
+  A bare `Passage:` line — no title, no body — ends the current group without starting a
+  new one; the questions after it are standalone again (the app writes this reset when a
+  standalone question follows a passage's members).
 - **Numbering** — the `N.)` numbers are labels only; members may continue the sequence
   (2, 3, 4…) or restart it — the app renumbers per its own order.
 - **Placement** — a passage lives in the same category as its questions (the import puts all
@@ -454,8 +457,10 @@ about.
 An export also carries an **invisible payload** — the full paper (ids, marks, difficulty,
 tags, correct answers) in a `docProps/custom.xml` part Word preserves on save. It changes
 nothing about how the document looks or edits; on import the app uses it when it still
-matches the visible text, so re-importing an untouched export recognises every question
-instead of adding duplicates. If the document was edited outside the app (the payload no
+matches the visible text — stems, options, answers, explanations, formulas and passages —
+so re-importing an untouched export recognises every question instead of adding duplicates.
+Pictures are not duplicated into the payload (they travel as document media and are
+reattached on import), which keeps the file small enough for Word to like. If the document was edited outside the app (the payload no
 longer matches the body), import falls back to the visible markers — which cannot carry
 marks, difficulty or tags — and says so in the warnings.
 

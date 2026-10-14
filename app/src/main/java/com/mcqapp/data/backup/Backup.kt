@@ -198,33 +198,56 @@ object McqBackupFormat {
     }
 }
 
-/** Collects the live database and settings into backup parts. */
+/** Collects the live database into a backup. */
 class BackupSource(private val db: AppDatabase) {
 
-    suspend fun content(): McqFileDto =
-        com.mcqapp.data.io.Exporter(db).exportAllDto().copy(scheduling = emptyMap())
-
-    suspend fun study(inProgressTest: String?): McqBackupFormat.StudyFile =
-        McqBackupFormat.StudyFile(
-            cardState = db.cardStateDao().getAll().map { it.toRow() },
-            reviewLog = db.reviewLogDao().getAll().map { it.toRow() },
-            paperCreated = db.paperDao().getAll()
-                .map { McqBackupFormat.PaperCreated(it.id, it.createdAt) },
-            inProgressTest = inProgressTest
-        )
-
-    suspend fun manifest(appVersion: String?): McqBackupFormat.Manifest {
-        val papers = db.paperDao().getAll()
-        return McqBackupFormat.Manifest(
+    /**
+     * One snapshot, one transaction: a concurrent study session cannot
+     * slip a review between the content and the study rows, and the
+     * manifest's counts come from the same content the zip carries —
+     * the export is built once, not twice.
+     */
+    suspend fun collect(
+        appVersion: String?,
+        inProgressTest: String?
+    ): McqBackupFormat.Backup {
+        lateinit var content: McqFileDto
+        lateinit var study: McqBackupFormat.StudyFile
+        var papers = 0
+        var attempts = 0
+        var reviews = 0
+        db.withTransaction {
+            content = com.mcqapp.data.io.Exporter(db)
+                .exportAllDto(withScheduling = false)
+            val cardState = db.cardStateDao().getAll()
+            val reviewLog = db.reviewLogDao().getAll()
+            val paperRows = db.paperDao().getAll()
+            study = McqBackupFormat.StudyFile(
+                cardState = cardState.map { it.toRow() },
+                reviewLog = reviewLog.map { it.toRow() },
+                paperCreated = paperRows.map { McqBackupFormat.PaperCreated(it.id, it.createdAt) },
+                inProgressTest = inProgressTest
+            )
+            papers = paperRows.size
+            attempts = db.attemptDao().getAllAttempts().size
+            reviews = reviewLog.size
+        }
+        val manifest = McqBackupFormat.Manifest(
             dbVersion = db.openHelper.readableDatabase.version,
             appVersion = appVersion,
             exportedAt = System.currentTimeMillis(),
-            papers = papers.size,
-            questions = content().papers.sumOf { paper ->
+            papers = papers,
+            questions = content.papers.sumOf { paper ->
                 paper.categories.sumOf { it.questions.size }
             },
-            attempts = db.attemptDao().getAllAttempts().size,
-            reviews = db.reviewLogDao().getAll().size
+            attempts = attempts,
+            reviews = reviews
+        )
+        return McqBackupFormat.Backup(
+            manifest = manifest,
+            content = content,
+            study = study,
+            settings = McqBackupFormat.SettingsFile()
         )
     }
 
@@ -290,14 +313,24 @@ class BackupRestorer(private val db: AppDatabase) {
                 "${backup.study.reviewLog.size} reviews"
         )
         db.withTransaction {
-            // Children before parents, so the foreign keys never see a
-            // dangling child mid-delete.
-            for (table in listOf(
-                "question_results", "review_log", "card_state", "correct_answers",
-                "options", "questions", "passages", "categories", "bookmarks",
-                "attempts", "papers"
-            )) {
-                db.openHelper.writableDatabase.execSQL("DELETE FROM $table")
+            // Every user table, derived from the schema so a future table
+            // cannot silently survive a restore. Room's and Android's own
+            // bookkeeping tables are excluded — wiping those would break
+            // the framework, not the library. Every foreign key in the
+            // schema is ON DELETE CASCADE, so any order is safe.
+            val database = db.openHelper.writableDatabase
+            database.query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' " +
+                    "AND name NOT LIKE 'sqlite_%' " +
+                    "AND name NOT LIKE 'android_%' " +
+                    "AND name NOT LIKE 'room_%'"
+            ).use { cursor ->
+                val tables = buildList {
+                    while (cursor.moveToNext()) add(cursor.getString(0))
+                }
+                for (table in tables) {
+                    database.execSQL("DELETE FROM \"$table\"")
+                }
             }
             // The importer's own nested transaction joins this one: papers,
             // categories, questions, options, correct answers, passages,
@@ -311,16 +344,42 @@ class BackupRestorer(private val db: AppDatabase) {
                 db.paperDao().updateCreatedAt(paper.id, paper.createdAt)
             }
         }
-        applySettings(backup.settings)
-        applyInProgress(backup.study.inProgressTest)
+        // The database restore above is atomic and has committed by now;
+        // a failure in the caller-owned preference stores must not read
+        // as a failed restore — it is reported as a partial one.
+        val partial = mutableListOf<String>()
+        try {
+            applySettings(backup.settings)
+        } catch (e: Exception) {
+            Logger.e("BACKUP", "Settings restore failed", e)
+            partial.add("settings were not restored (${e.message ?: "error"})")
+        }
+        try {
+            applyInProgress(backup.study.inProgressTest)
+        } catch (e: Exception) {
+            Logger.e("BACKUP", "Resume-snapshot restore failed", e)
+            partial.add("the in-progress test was not restored (${e.message ?: "error"})")
+        }
         val attemptNote = if (content.attempts.isNotEmpty()) {
             ", ${content.attempts.size} attempts"
         } else {
             ""
         }
+        val newerAppNote = if (backup.manifest.dbVersion > db.openHelper.readableDatabase.version) {
+            " Note: the backup was taken on a newer app (database v" +
+                "${backup.manifest.dbVersion}, v${db.openHelper.readableDatabase.version} " +
+                "here); its study rows may use fields this version ignores."
+        } else {
+            ""
+        }
+        val partialNote = if (partial.isEmpty()) {
+            ""
+        } else {
+            " The library itself came back; " + partial.joinToString(" and ") + "."
+        }
         return "Restored ${content.papers.size} papers, $questionCount questions" +
             "$attemptNote, ${backup.study.cardState.size} schedules, " +
-            "${backup.study.reviewLog.size} reviews."
+            "${backup.study.reviewLog.size} reviews." + newerAppNote + partialNote
     }
 
     private fun McqBackupFormat.CardStateRow.toEntity() = CardStateEntity(

@@ -21,12 +21,14 @@ class Exporter(private val db: AppDatabase) {
     }
 
     /**
-     * The whole bank as a DTO — the backup zip's `content.json`. Scheduling
-     * is left out: the backup carries `card_state` rows verbatim (per paper,
-     * with their content hashes), which the question-keyed map here cannot
-     * express.
+     * The whole bank as a DTO — the backup zip's `content.json`.
+     *
+     * @param withScheduling the question-keyed review map, for the plain
+     *   JSON export. The backup zip leaves it out ([false]): it carries
+     *   `card_state` rows verbatim (per paper, with their content hashes),
+     *   which this map cannot express, so building it would be waste.
      */
-    suspend fun exportAllDto(): McqFileDto {
+    suspend fun exportAllDto(withScheduling: Boolean = true): McqFileDto {
         Logger.i("EXPORT", "Exporting all papers")
         val papers = db.paperDao().getAll()
         val paperDtos = papers.map { paper -> exportPaperDto(paper) }
@@ -70,24 +72,28 @@ class Exporter(private val db: AppDatabase) {
             attempts = attemptDtos,
             // Review progress travels with the JSON backup, keyed by question
             // id. The full per-paper rows ride in the backup zip's study.json
-            // instead, which is why they are not built here.
-            scheduling = db.cardStateDao().getAll()
-                .filter { it.reps > 0 || it.dueAt > 0L }
-                .associate { state ->
-                    state.questionId to CardScheduleDto(
-                        ease = state.ease,
-                        intervalDays = state.intervalDays,
-                        dueAt = state.dueAt,
-                        reps = state.reps,
-                        lapses = state.lapses,
-                        leech = state.leech,
-                        lastReviewedAt = state.lastReviewedAt,
-                        difficulty = state.difficulty,
-                        stability = state.stability,
-                        cardState = state.cardState.name,
-                        reviewCount = state.reviewCount
-                    )
-                }
+            // instead, which is why they are not built there.
+            scheduling = if (withScheduling) {
+                db.cardStateDao().getAll()
+                    .filter { it.reps > 0 || it.dueAt > 0L }
+                    .associate { state ->
+                        state.questionId to CardScheduleDto(
+                            ease = state.ease,
+                            intervalDays = state.intervalDays,
+                            dueAt = state.dueAt,
+                            reps = state.reps,
+                            lapses = state.lapses,
+                            leech = state.leech,
+                            lastReviewedAt = state.lastReviewedAt,
+                            difficulty = state.difficulty,
+                            stability = state.stability,
+                            cardState = state.cardState.name,
+                            reviewCount = state.reviewCount
+                        )
+                    }
+            } else {
+                emptyMap()
+            }
         )
     }
 

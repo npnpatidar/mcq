@@ -202,12 +202,13 @@ class BackupRestoreRoundTripTest {
     }
 
     private suspend fun buildBackup(settings: McqBackupFormat.SettingsFile = McqBackupFormat.SettingsFile()): ByteArray {
-        val source = BackupSource(db)
+        val backup = BackupSource(db).collect("test-1.0", inProgressTest = null)
+            .copy(settings = settings)
         return McqBackupFormat.write(
-            manifest = source.manifest("test-1.0"),
-            content = source.content(),
-            study = source.study(inProgressTest = null),
-            settings = settings
+            manifest = backup.manifest,
+            content = backup.content,
+            study = backup.study,
+            settings = backup.settings
         )
     }
 

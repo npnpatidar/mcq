@@ -661,6 +661,7 @@ object DocxPaperWriter {
         private val uriToRid = HashMap<String, String>()
         private var mediaCounter = 0
         private var docPrCounter = 0
+        private var warnedWebp = false
 
         /** Inline picture item for a data URI, or null (with a warning). */
         fun embed(src: String?, warnings: MutableList<String>): Pic? {
@@ -672,6 +673,13 @@ object DocxPaperWriter {
                         "Word documents carry their pictures as files."
                 )
                 return null
+            }
+            if (image.mimeType.equals("image/webp", ignoreCase = true) && !warnedWebp) {
+                warnedWebp = true
+                warnings.add(
+                    "A picture is in webp format; older Word versions may not display it — " +
+                        "convert it to PNG for compatibility."
+                )
             }
             val rid = uriToRid.getOrPut(src) {
                 mediaCounter++

@@ -17,6 +17,16 @@ class Exporter(private val db: AppDatabase) {
     private val json = Json { prettyPrint = true }
 
     suspend fun exportAll(): String {
+        return json.encodeToString(McqFileDto.serializer(), exportAllDto())
+    }
+
+    /**
+     * The whole bank as a DTO — the backup zip's `content.json`. Scheduling
+     * is left out: the backup carries `card_state` rows verbatim (per paper,
+     * with their content hashes), which the question-keyed map here cannot
+     * express.
+     */
+    suspend fun exportAllDto(): McqFileDto {
         Logger.i("EXPORT", "Exporting all papers")
         val papers = db.paperDao().getAll()
         val paperDtos = papers.map { paper -> exportPaperDto(paper) }
@@ -52,35 +62,32 @@ class Exporter(private val db: AppDatabase) {
         }
         Logger.i("EXPORT", "Exported ${paperDtos.size} papers, ${bookmarks.size} bookmarks, " +
             "${attemptDtos.size} attempts")
-        return json.encodeToString(
-            McqFileDto.serializer(),
-            McqFileDto(
-                version = 1,
-                papers = paperDtos,
-                bookmarks = bookmarks,
-                passages = db.passageDao().getAll().map { it.toPassageDto() },
-                attempts = attemptDtos,
-                // Review progress travels with the backup. It used to be
-                // dropped, so restoring a backup silently reset every SM-2
-                // schedule, due date and leech flag.
-                scheduling = db.cardStateDao().getAll()
-                    .filter { it.reps > 0 || it.dueAt > 0L }
-                    .associate { state ->
-                        state.questionId to CardScheduleDto(
-                            ease = state.ease,
-                            intervalDays = state.intervalDays,
-                            dueAt = state.dueAt,
-                            reps = state.reps,
-                            lapses = state.lapses,
-                            leech = state.leech,
-                            lastReviewedAt = state.lastReviewedAt,
-                            difficulty = state.difficulty,
-                            stability = state.stability,
-                            cardState = state.cardState.name,
-                            reviewCount = state.reviewCount
-                        )
-                    }
-            )
+        return McqFileDto(
+            version = 1,
+            papers = paperDtos,
+            bookmarks = bookmarks,
+            passages = db.passageDao().getAll().map { it.toPassageDto() },
+            attempts = attemptDtos,
+            // Review progress travels with the JSON backup, keyed by question
+            // id. The full per-paper rows ride in the backup zip's study.json
+            // instead, which is why they are not built here.
+            scheduling = db.cardStateDao().getAll()
+                .filter { it.reps > 0 || it.dueAt > 0L }
+                .associate { state ->
+                    state.questionId to CardScheduleDto(
+                        ease = state.ease,
+                        intervalDays = state.intervalDays,
+                        dueAt = state.dueAt,
+                        reps = state.reps,
+                        lapses = state.lapses,
+                        leech = state.leech,
+                        lastReviewedAt = state.lastReviewedAt,
+                        difficulty = state.difficulty,
+                        stability = state.stability,
+                        cardState = state.cardState.name,
+                        reviewCount = state.reviewCount
+                    )
+                }
         )
     }
 

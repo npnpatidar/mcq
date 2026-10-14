@@ -49,6 +49,12 @@
     <string name="explanation_image">Explanation image</string>
     <string name="export">Export</string>
     <string name="export_all_data_json">Export all data (JSON)</string>
+    <string name="backup_full">Backup (zip)</string>
+    <string name="backup_full_description">Everything — papers, questions, schedules, review history, attempts, bookmarks and settings — in one readable zip. Restores exactly the state it was taken from.</string>
+    <string name="restore_backup">Restore backup</string>
+    <string name="restore_backup_description">Replaces the whole library and all settings with the backup\'s contents. Anything added since the backup is gone.</string>
+    <string name="restore_backup_confirm">This wipes the current library and every setting, then restores the backup. Continue?</string>
+    <string name="restore_replace_everything">Replace everything</string>
     <string name="export_bookmarks">Export bookmarks</string>
     <string name="export_category">Export category</string>
     <string name="export_failed">Export failed</string>

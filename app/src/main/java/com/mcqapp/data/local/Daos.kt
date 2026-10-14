@@ -392,6 +392,9 @@ interface CardStateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: CardStateEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(states: List<CardStateEntity>)
+
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
 
@@ -415,6 +418,13 @@ interface ReviewLogDao {
     /** Appends one graded review; a row is never updated once written. */
     @Insert
     suspend fun insert(log: ReviewLogEntity): Long
+
+    /** Backup restore: rows carry their original ids. */
+    @Insert
+    suspend fun insertAll(logs: List<ReviewLogEntity>)
+
+    @Query("SELECT * FROM review_log ORDER BY id ASC")
+    suspend fun getAll(): List<ReviewLogEntity>
 
     /** One question's review history, oldest first. Exercised by the
      *  repository tests; the optimizer will read it once it lands. */

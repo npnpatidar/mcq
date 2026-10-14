@@ -5,12 +5,17 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.data.backup.BackupRestorer
+import com.mcqapp.data.backup.BackupSource
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
+import com.mcqapp.util.readBounded
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -208,6 +213,76 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Export failed", e)
                 onError("Export failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Writes the full backup zip; heavy parts stay off Main. */
+    fun backupAll(uri: Uri, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    val app = getApplication<Application>()
+                    val appVersion = try {
+                        app.packageManager.getPackageInfo(app.packageName, 0).versionName
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val source = BackupSource(repository.db())
+                    McqBackupFormat.write(
+                        manifest = source.manifest(appVersion),
+                        content = source.content(),
+                        study = source.study(repository.loadTestProgress()),
+                        settings = repository.settingsSnapshot()
+                    )
+                }
+                val outputStream = getApplication<Application>().contentResolver.openOutputStream(uri)
+                if (outputStream == null) {
+                    onError("Could not open file for writing")
+                } else {
+                    outputStream.use { it.write(bytes) }
+                    Logger.i("SETTINGS", "Backup written (${bytes.size} bytes)")
+                }
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Backup failed", e)
+                onError("Backup failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Reads and restores a backup zip. The wipe-and-replace is atomic in
+     * the database; settings flip after. [onDone] reports the summary the
+     * screen shows.
+     */
+    fun restoreBackup(uri: Uri, onError: (String) -> Unit, onDone: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    app.contentResolver.openInputStream(uri)?.use { stream ->
+                        readBounded(stream)
+                    } ?: throw IllegalStateException("Could not read the file.")
+                }
+                val backup = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    McqBackupFormat.read(bytes)
+                }
+                val updateAnswers = repository.updateAnswersOnDuplicate().first()
+                val report = BackupRestorer(repository.db()).restore(
+                    backup,
+                    updateAnswersOnDuplicate = updateAnswers,
+                    applySettings = { repository.settingsRestore(it) },
+                    applyInProgress = { snapshot ->
+                        if (snapshot != null) repository.saveTestProgress(snapshot)
+                        else repository.clearTestProgress()
+                    }
+                )
+                refreshStorage()
+                Logger.i("SETTINGS", "Backup restored: $report")
+                onDone(report)
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Restore failed", e)
+                onError("Restore failed: ${e.message}")
             }
         }
     }

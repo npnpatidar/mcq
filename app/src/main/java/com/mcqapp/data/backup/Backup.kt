@@ -103,9 +103,18 @@ object McqBackupFormat {
     )
 
     @Serializable
+    data class PaperCreated(val id: String, val createdAt: Long)
+
+    @Serializable
     data class StudyFile(
         val cardState: List<CardStateRow> = emptyList(),
         val reviewLog: List<ReviewLogRow> = emptyList(),
+        /**
+         * Paper creation times. The import format has no field for them
+         * (the importer stamps fresh rows), and a restored library must
+         * not look like it was born during the restore.
+         */
+        val paperCreated: List<PaperCreated> = emptyList(),
         val inProgressTest: String? = null
     )
 
@@ -196,6 +205,8 @@ class BackupSource(private val db: AppDatabase) {
         McqBackupFormat.StudyFile(
             cardState = db.cardStateDao().getAll().map { it.toRow() },
             reviewLog = db.reviewLogDao().getAll().map { it.toRow() },
+            paperCreated = db.paperDao().getAll()
+                .map { McqBackupFormat.PaperCreated(it.id, it.createdAt) },
             inProgressTest = inProgressTest
         )
 
@@ -293,6 +304,9 @@ class BackupRestorer(private val db: AppDatabase) {
                 .import(content)
             db.cardStateDao().upsertAll(backup.study.cardState.map { it.toEntity() })
             db.reviewLogDao().insertAll(backup.study.reviewLog.map { it.toEntity() })
+            for (paper in backup.study.paperCreated) {
+                db.paperDao().updateCreatedAt(paper.id, paper.createdAt)
+            }
         }
         applySettings(backup.settings)
         applyInProgress(backup.study.inProgressTest)

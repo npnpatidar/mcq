@@ -36,6 +36,10 @@ interface PaperDao {
     @Query("UPDATE papers SET title = :title, description = :description, durationMinutes = :durationMinutes, negativeMarking = :negativeMarking WHERE id = :id")
     suspend fun updateFields(id: String, title: String, description: String, durationMinutes: Int, negativeMarking: Double)
 
+    /** Backup restore: creation time rides outside the import format. */
+    @Query("UPDATE papers SET createdAt = :createdAt WHERE id = :id")
+    suspend fun updateCreatedAt(id: String, createdAt: Long)
+
     @Query("DELETE FROM papers WHERE id = :id")
     suspend fun deleteById(id: String)
 }

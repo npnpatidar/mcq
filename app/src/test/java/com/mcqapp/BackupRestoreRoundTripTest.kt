@@ -285,7 +285,9 @@ class BackupRestoreRoundTripTest {
             McqBackupFormat.read("not a zip".toByteArray())
             throw AssertionError("expected Invalid")
         } catch (e: McqBackupFormat.Invalid) {
-            assertTrue(e.message!!.contains("zip"))
+            // Garbage unzips to nothing, so the first missing part is what
+            // the reader reports.
+            assertTrue(e.message!!.contains("missing"))
         }
         val entries = mapOf(
             McqBackupFormat.MANIFEST to

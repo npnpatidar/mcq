@@ -116,22 +116,33 @@ private fun preferPayload(
     } catch (_: Exception) {
         return visible
     }
-    fun stale(): DocxParseResult = DocxParseResult(
-        visible.json,
-        warnings + listOf(
-            "The document's hidden question data is out of date (the file was " +
-                "edited outside the app), so marks, difficulty and tags were " +
-                "restored from the visible text only."
-        ),
-        visible.paperTitle
-    )
+    val payloadTitle = payload.papers.firstOrNull()?.title
+    val payloadQuestions = payload.papers
+        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
+    val visibleQuestions = visibleFile.papers
+        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
+    fun stale(reason: String): DocxParseResult {
+        com.mcqapp.util.Logger.w(
+            "DOCX",
+            "payload stale ($reason): payloadQs=${payloadQuestions.size} visibleQs=${visibleQuestions.size} " +
+                "payloadTitle='$payloadTitle' visibleTitle='${visible.paperTitle}'"
+        )
+        return DocxParseResult(
+            visible.json,
+            warnings + listOf(
+                "The document's hidden question data is out of date (the file was " +
+                    "edited outside the app), so marks, difficulty and tags were " +
+                    "restored from the visible text only."
+            ),
+            visible.paperTitle
+        )
+    }
 
     // A renamed title is an edit like any other.
-    val payloadTitle = payload.papers.firstOrNull()?.title
     if (visible.paperTitle != null && !payloadTitle.isNullOrBlank() &&
         normalizeStem(payloadTitle) != normalizeStem(visible.paperTitle)
     ) {
-        return stale()
+        return stale("title")
     }
 
     // Passage texts, order-independent: the visible side may repeat a
@@ -142,15 +153,11 @@ private fun preferPayload(
     if (payload.passages.map { canonPassage(it) }.distinct().sorted() !=
         visibleFile.passages.map { canonPassage(it) }.distinct().sorted()
     ) {
-        return stale()
+        return stale("passages")
     }
     val payloadPassageCanons = payload.passages.associate { it.id to canonPassage(it) }
     val visiblePassageCanons = visibleFile.passages.associate { it.id to canonPassage(it) }
 
-    val payloadQuestions = payload.papers
-        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
-    val visibleQuestions = visibleFile.papers
-        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
     if (payloadQuestions.isEmpty() || visibleQuestions.isEmpty()) return visible
     val payloadCanon = payloadQuestions.map { canonQuestion(it, payloadPassageCanons) }
     val visibleCanon = visibleQuestions.map { canonQuestion(it, visiblePassageCanons) }
@@ -163,7 +170,7 @@ private fun preferPayload(
     for (visibleQuestion in visibleQuestions) {
         val canon = visibleCanon[matched]
         while (pi < payloadCanon.size && payloadCanon[pi] != canon) pi++
-        if (pi == payloadCanon.size) return stale()
+        if (pi == payloadCanon.size) return stale("question ${matched + 1} canon mismatch")
         matchedVisible[pi] = visibleQuestion
         pi++
         matched++
@@ -267,17 +274,9 @@ private fun canonPassage(passage: PassageDto): String =
  * id schemes (original vs. section-qualified) never collide.
  */
 private fun canonQuestion(q: QuestionDto, passageCanons: Map<String, String>): String {
-    val stem = if (q.elements.isNotEmpty()) {
-        canonField(q.elements, q.image)
-    } else {
-        "t:" + normalizeStem(q.text)
-    }
+    val stem = canonText(q.elements, q.image, q.text)
     val options = q.options.take(10).joinToString(",") { option ->
-        if (option.elements.isNotEmpty()) {
-            canonField(option.elements, option.image)
-        } else {
-            "t:" + normalizeStem(option.text)
-        }
+        canonText(option.elements, option.image, option.text)
     }
     val correctIndices = q.options.withIndex()
         .filter { it.value.id in q.correctOptionIds }
@@ -293,17 +292,32 @@ private fun canonQuestion(q: QuestionDto, passageCanons: Map<String, String>): S
     } else {
         correctIndices.joinToString(",")
     }
-    val explanation = if (q.explanationElements.isNotEmpty()) {
-        canonField(q.explanationElements, q.explanationImage)
-    } else {
-        "t:" + normalizeStem(q.explanation)
-    }
+    val explanation = canonText(q.explanationElements, q.explanationImage, q.explanation)
     // Membership as the passage's content canon, not its id: the two
     // sides' id schemes differ (original vs. section-qualified), and a
     // passage spanning sections appears as a per-section copy.
     val membership = if (q.passageId.isNullOrEmpty()) "" else passageCanons[q.passageId] ?: "?"
     return listOf(stem, options, correct, explanation, "P:$membership").joinToString("|")
 }
+
+/**
+ * A blank field canon: the importer stores blank text as one empty
+ * TextElement, so the payload's element list is non-empty and [canonField]
+ * reduces it to ""; the visible parse of a missing marker yields no
+ * elements at all. Fold a plain-text fallback in the same way so both
+ * sides of a blank field canon to "" (or just the image marker) —
+ * otherwise an untouched re-export reads as edited.
+ */
+private fun canonText(
+    elements: List<ContentElement>,
+    scalarImage: String?,
+    text: String
+): String = canonField(
+    elements.ifEmpty {
+        listOfNotNull(text.takeIf { it.isNotBlank() }?.let { ContentElement.TextElement(it) })
+    },
+    scalarImage
+)
 
 /** Restore the image srcs the writer stripped, positionally from the body. */
 private fun graftElements(

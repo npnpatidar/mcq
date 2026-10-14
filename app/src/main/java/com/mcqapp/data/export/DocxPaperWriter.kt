@@ -184,12 +184,12 @@ object DocxPaperWriter {
 
     private fun stripPayloadImages(passage: PassageDto): PassageDto = passage.copy(
         elements = stripElementImages(passage.elements),
-        image = passage.image?.let { "" }
+        image = passage.image?.let { stripScalarSrc(it) }
     )
 
     private fun stripPayloadImages(question: QuestionDto): QuestionDto = question.copy(
         elements = stripElementImages(question.elements),
-        image = question.image?.let { "" },
+        image = question.image?.let { stripScalarSrc(it) },
         options = question.options.map { option ->
             // The payload's `options_elements` shape has no room for an
             // option's text beside its elements, so text-only options fold
@@ -207,20 +207,35 @@ object DocxPaperWriter {
                 )
             }
             val stripped = stripElementImages(base)
-            val elements = if (option.image != null && base.any { it is ContentElement.ImageElement }) {
+            val elements = if (
+                option.image != null && option.image.startsWith("data:") &&
+                base.any { it is ContentElement.ImageElement }
+            ) {
                 stripped + ContentElement.ImageElement("")
             } else {
                 stripped
             }
-            option.copy(elements = elements, image = option.image?.let { "" })
+            option.copy(elements = elements, image = option.image?.let { stripScalarSrc(it) })
         },
         explanationElements = stripElementImages(question.explanationElements),
-        explanationImage = question.explanationImage?.let { "" }
+        explanationImage = question.explanationImage?.let { stripScalarSrc(it) }
     )
+
+    /**
+     * Only embedded data URIs are blanked: a remote URL is a short string
+     * the payload can keep as-is (the body cannot carry it, so the graft
+     * leaves it alone), while base64 bytes are what bloats the property.
+     */
+    private fun stripScalarSrc(src: String): String =
+        if (src.startsWith("data:")) "" else src
 
     private fun stripElementImages(elements: List<ContentElement>): List<ContentElement> =
         elements.map { element ->
-            if (element is ContentElement.ImageElement) element.copy(src = "") else element
+            if (element is ContentElement.ImageElement) {
+                element.copy(src = stripScalarSrc(element.src))
+            } else {
+                element
+            }
         }
 
     private fun questionBlocks(
@@ -257,6 +272,16 @@ object DocxPaperWriter {
                 markerPrefix = "$number.) "
             )
         )
+        // Every stem element can be uncarryable (a remote picture the
+        // body cannot hold); with no stem paragraph the `N.)` marker
+        // never reaches the document and the import would choke.
+        if (out.isEmpty()) {
+            warnings.add(
+                "Question ${question.id} has no content Word can carry; " +
+                    "it was left out."
+            )
+            return out
+        }
 
         val carried = question.options.take(OPTION_LETTERS.size)
         if (carried.size < question.options.size) {

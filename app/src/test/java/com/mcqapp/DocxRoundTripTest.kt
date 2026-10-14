@@ -456,6 +456,41 @@ class DocxRoundTripTest {
         )
     }
 
+    /**
+     * A remote image URL rides only in the payload (the document body
+     * cannot carry it); the strip must keep it and the fingerprint must
+     * not read its absence from the body as an edit.
+     */
+    @Test
+    fun remoteImageUrlSurvivesTheRoundTrip() {
+        val remote = "https://example.com/pic.png"
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-remote",
+            text = "Question with a remote picture",
+            elements = listOf(
+                ContentElement.TextElement("Question with a remote picture"),
+                ContentElement.ImageElement(remote)
+            ),
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(id = "a", text = "x"),
+                com.mcqapp.data.io.OptionDto(id = "b", text = "y")
+            ),
+            correctOptionIds = listOf("a"),
+            marks = 3.0
+        )
+        val paper = PaperDto(id = "p", title = "Remote Paper", questions = listOf(question))
+        val bytes = DocxPaperWriter.paperToDocxBytes(paper)
+        val parsed = parseDocx(bytes)
+        assertTrue(
+            "a remote-only image is not an edit: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        val restored = allQuestions(after).single()
+        assertEquals(remote, restored.elements.filterIsInstance<ContentElement.ImageElement>().single().src)
+        assertEquals(3.0, restored.marks, 0.0)
+    }
+
     private fun readEntry(bytes: ByteArray, entry: String): String {
         java.util.zip.ZipInputStream(bytes.inputStream()).use { input ->
             var e = input.nextEntry

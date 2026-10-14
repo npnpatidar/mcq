@@ -238,14 +238,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         settings = backup.settings
                     )
                 }
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val written = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     val outputStream = app.contentResolver.openOutputStream(uri)
                     if (outputStream == null) {
-                        onError("Could not open file for writing")
+                        -1
                     } else {
                         outputStream.use { it.write(bytes) }
-                        Logger.i("SETTINGS", "Backup written (${bytes.size} bytes)")
+                        bytes.size
                     }
+                }
+                if (written < 0) {
+                    onError("Could not open file for writing")
+                } else {
+                    Logger.i("SETTINGS", "Backup written ($written bytes)")
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)

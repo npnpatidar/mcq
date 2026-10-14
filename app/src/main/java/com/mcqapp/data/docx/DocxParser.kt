@@ -134,12 +134,13 @@ private fun preferPayload(
         return stale()
     }
 
-    // Passage texts, in document order. The visible side may repeat a
+    // Passage texts, order-independent: the visible side may repeat a
     // passage when it spans category sections (the writer re-emits the
-    // block per section so members bind within their section), so
-    // duplicates collapse before the lists are compared.
-    if (payload.passages.map { canonPassage(it) }.distinct() !=
-        visibleFile.passages.map { canonPassage(it) }.distinct()
+    // block per section so members bind within their section), and the
+    // payload's list order is the exporter's, not the document's first-
+    // use order. Membership is matched by content canon, not position.
+    if (payload.passages.map { canonPassage(it) }.distinct().sorted() !=
+        visibleFile.passages.map { canonPassage(it) }.distinct().sorted()
     ) {
         return stale()
     }
@@ -182,8 +183,9 @@ private fun preferPayload(
             questions = graftList(paper.questions)
         )
     }
-    val graftedPassages = payload.passages.mapIndexed { index, passage ->
-        visibleFile.passages.getOrNull(index)?.let { graftPassage(passage, it) } ?: passage
+    val visibleByCanon = visibleFile.passages.associateBy { canonPassage(it) }
+    val graftedPassages = payload.passages.map { passage ->
+        visibleByCanon[canonPassage(passage)]?.let { graftPassage(passage, it) } ?: passage
     }
     val graftedJson = kotlinx.serialization.json.Json.encodeToString(
         McqFileDto.serializer(),
@@ -228,7 +230,10 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
             }
             is ContentElement.ImageElement -> {
                 flushText()
-                parts.add("i")
+                // A remote URL rides only in the payload (the document body
+                // cannot carry it), so it is metadata like marks — not part
+                // of the freshness comparison.
+                if (isGraftableImage(element.src)) parts.add("i")
             }
             is ContentElement.TableElement -> {
                 flushText()
@@ -237,9 +242,17 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
         }
     }
     flushText()
-    if (scalarImage != null) parts.add("i")
+    if (scalarImage != null && isGraftableImage(scalarImage)) parts.add("i")
     return parts.joinToString(",")
 }
+
+/**
+ * Image srcs the document body can carry: embedded data URIs, and the
+ * empty strings the writer strips them to. Remote URLs stay payload-only
+ * metadata and are neither compared nor overwritten.
+ */
+private fun isGraftableImage(src: String): Boolean =
+    src.isEmpty() || src.startsWith("data:")
 
 private fun canonPassage(passage: PassageDto): String =
     normalizeStem(passage.title) + "|" + canonField(passage.elements, passage.image)
@@ -297,10 +310,12 @@ private fun graftElements(
     payloadElements: List<ContentElement>,
     visibleElements: List<ContentElement>
 ): List<ContentElement> {
-    val srcs = visibleElements.filterIsInstance<ContentElement.ImageElement>().map { it.src }
+    val srcs = visibleElements.filterIsInstance<ContentElement.ImageElement>()
+        .map { it.src }
+        .filter { isGraftableImage(it) }
     var next = 0
     return payloadElements.map { element ->
-        if (element is ContentElement.ImageElement) {
+        if (element is ContentElement.ImageElement && isGraftableImage(element.src)) {
             val src = srcs.getOrNull(next)
             next++
             if (src != null) element.copy(src = src) else element
@@ -317,9 +332,7 @@ private fun graftElements(
  */
 private fun graftQuestion(payload: QuestionDto, visible: QuestionDto): QuestionDto = payload.copy(
     elements = graftElements(payload.elements, visible.elements),
-    image = payload.image?.let {
-        visible.elements.filterIsInstance<ContentElement.ImageElement>().lastOrNull()?.src ?: it
-    },
+    image = graftScalarImage(payload.image, visible.elements),
     options = payload.options.mapIndexed { index, option ->
         val visibleOption = visible.options.getOrNull(index)
         option.copy(
@@ -328,25 +341,24 @@ private fun graftQuestion(payload: QuestionDto, visible: QuestionDto): QuestionD
             } else {
                 option.elements
             },
-            image = option.image?.let {
-                visibleOption?.elements?.filterIsInstance<ContentElement.ImageElement>()
-                    ?.lastOrNull()?.src ?: it
-            }
+            image = graftScalarImage(option.image, visibleOption?.elements ?: emptyList())
         )
     },
     explanationElements = graftElements(payload.explanationElements, visible.explanationElements),
-    explanationImage = payload.explanationImage?.let {
-        visible.explanationElements.filterIsInstance<ContentElement.ImageElement>()
-            .lastOrNull()?.src ?: it
-    }
+    explanationImage = graftScalarImage(payload.explanationImage, visible.explanationElements)
 )
 
 private fun graftPassage(payload: PassageDto, visible: PassageDto): PassageDto = payload.copy(
     elements = graftElements(payload.elements, visible.elements),
-    image = payload.image?.let {
-        visible.elements.filterIsInstance<ContentElement.ImageElement>().lastOrNull()?.src ?: it
-    }
+    image = graftScalarImage(payload.image, visible.elements)
 )
+
+/** A stripped (or data-URI) scalar takes the body's last image; a remote URL stays. */
+private fun graftScalarImage(scalar: String?, visibleElements: List<ContentElement>): String? {
+    if (scalar == null || !isGraftableImage(scalar)) return scalar
+    return visibleElements.filterIsInstance<ContentElement.ImageElement>()
+        .lastOrNull { isGraftableImage(it.src) }?.src ?: scalar
+}
 
 /**
  * Stem text for the payload-freshness comparison: entities decoded (the

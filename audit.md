@@ -1,255 +1,152 @@
-# Audit: FSRS-6 pull-based scheduling
+# Code audit: `0.0.19` → `feature/backup-restore`
 
-- **Scope:** everything after release `0.0.18` (tagged at `928ecde`), i.e. the 16 commits
-  on `exp/fsrs-scheduling` in PR #2, plus the local-only `75e598a`.
-- **Date:** 2026-10-13
-- **Diffstat:** 38 files, +2572 / −2409 (was 35 files / +2584 / −1523 before `75e598a`
-  deleted five planning docs).
-- **CI:** green on the pushed tip `a333a9f` (build, ui-test, release-build,
-  wrapper-validation). `75e598a` has never been built by CI.
+- **Date:** 2026-10-14
+- **Range:** `0.0.19..HEAD` — 5 commits, 24 files, ~3,450 insertions
+- **Commits:**
+  - `801c081` feat(export): Word .docx export with categories, maths, images and round trip
+  - `9ada0fa` fix(docx): inline layout, table grid, question spacing and a fidelity payload
+  - `a7cf46d` feat(backup): full backup zip and exact-state restore
+  - `5cea165` fix(backup): preserve paper creation times, read garbage files clearly
+  - `c33735d` fix(backup): empty archives report as unreadable zips, not missing parts
+- **Scope reviewed:** docx export (`DocxPaperWriter`, `MathMlToOmml`, `PaperExporter`, `ExportFormat`, `Exporter`), docx import overhaul (headings, hidden payload — `DocxParser`, `DocxReader`), full backup/restore (`Backup.kt`, `RepositorySettings.kt`, `Daos.kt`, `McqRepository.kt`, `SettingsViewModel`, `SettingsScreen`), import VM title handling, strings, README, and all 5 new test files (~1,284 lines).
 
-## Method
+## 1. Confirmed bug — fix before merge
 
-Static read of the whole diff plus full-file review of the changed layers
-(domain, data, repository, study UI, interop, tests), a cross-check of the ported
-FSRS-6 formulas against the upstream reference implementation, and a numerical
-replay of the app's own claimed reference vectors.
+### 1.1 Passage members after the 2nd passage bind to the wrong passage
 
-**FSRS-6 verification.** Upstream `open-spaced-repetition/py-fsrs` `fsrs/scheduler.py`
-was ported to Python (scratch, not committed) and validated by reproducing py-fsrs's
-own test vectors, then run side by side with a faithful replica of `FsrsScheduler`:
+**Severity:** data corruption on import (regression introduced in `9ada0fa`).
 
-| Check | Result |
-|---|---|
-| py-fsrs port vs its own `test_review_card` | `[0,2,11,46,163,498,0,0,2,4,7,12,21]` — exact |
-| py-fsrs port vs its own `test_memo_state` | `53.626903 / 6.357487` vs expected `53.62691 / 6.3574867` — exact |
-| `FsrsScheduler` vs py-fsrs on the same history | identical to 6 dp (stability and difficulty) |
-| py-fsrs with `learning_steps=()` vs `FsrsScheduler` | divergent only where the ladder was deliberately dropped |
+`extractPassages` records the `anchors` list at each `Passage:` marker using positions in the
+**original cleaned text** (`app/src/main/java/com/mcqapp/data/docx/DocxParser.kt:447`), but it
+returns a **rebuilt** text from which every passage body was removed. `extractQuestions` then
+matches question positions in the rebuilt text against those anchors
+(`DocxParser.kt:473-481`). Every anchor after the first removed body is offset by the
+accumulated removed-body length, so questions belonging to passage 2..N are attributed to an
+earlier passage (or to none).
 
-## Verdict
+**Reproduced empirically** with a scratch JVM test (since removed):
 
-The FSRS-6 engine, the v10 migration, the transactional review write and the pull-based
-ranking are sound and well tested. Two medium-severity issues need fixing before merge:
-`review_log` rows are never cleaned up when a question is deleted, and every card pull
-re-derives the whole paper. A third medium issue is a latent wrong-branch in the engine
-for cards imported from Anki without a review log.
-
----
-
-## Findings
-
-### 1. Medium — `review_log` rows are orphaned when a question is deleted
-
-`app/src/main/java/com/mcqapp/data/repository/QuestionStore.kt:238`, `:251`, `:294`
-(`cardStateDao().deleteByQuestion` / `deleteByQuestionsChunked`)
-
-Deleting a question, bulk-deleting questions, or moving a question across papers all
-remove its `card_state` row. `review_log` has no equivalent: `ReviewLogDao` exposes only
-`insert`, `historyForQuestion` and `countByPaper` (`Daos.kt:413-427`), and its only
-foreign key is `paperId → papers`, so no cascade covers a question deletion.
-
-Consequences:
-
-- Rows accumulate unboundedly for question ids that no longer exist.
-- Question ids are generated with `-copy`-style suffixes (`QuestionStore.kt:258-269`);
-  if an id is ever reused, its history is polluted with reviews of the deleted card.
-- The README states the opposite. `README.md:136-138`: "deleting a paper, or a
-  question, removes its schedule **and its logged reviews**".
-- `review_log` is also not exported or restored by JSON backup / Anki import, so a
-  "full backup" silently discards the immutable history the README calls the roadmap's
-  optimizer input (`README.md:139-141`). That this is local-only is not documented.
-
-Fix: add a `DELETE FROM review_log WHERE questionId = (:ids)` DAO and call it in the
-same `withTransaction` as the three `card_state` deletes, and state the backup
-exclusion in the README.
-
-### 2. Medium — every card pull re-reads and re-hashes the entire paper
-
-`app/src/main/java/com/mcqapp/data/repository/StudyStore.kt:125-147`
-
-`getNextStudyCard` (the path `StudyViewModel.pullCard` runs after **every** grade)
-calls `questions.getQuestionsForPaper(paperId)`, which loads every question with its
-options and answer keys, then computes `mapper.contentHashOf(it)` per question, which
-parses the stem and every option's `elements` JSON.
-
-This is exactly the work that was optimised away for badges in this same release:
-`StudyStore.studyInputs()` (`:186-206`) reads ids and content hashes from the questions
-and options rows only. The pre-release design built the queue once per session; the
-pull design rebuilds it per graded card, so a 30-card sitting on a 500-question paper
-does 30 full-paper loads plus ~15k JSON parses.
-
-Fix: have `getNextStudyCard`/`getStudyQueue` use `studyInputs()` like `getStudyCounts`
-does. The pull only needs question ids, content hashes and card states — it never
-touches option text or the answer key.
-
-### 3. Medium — an Anki-imported review card silently takes the same-day formula
-
-`app/src/main/java/com/mcqapp/domain/Fsrs.kt:73-77` and
-`app/src/main/java/com/mcqapp/data/anki/AnkiScheduling.kt:108-112`
-
-```kotlin
-val elapsedDays = if (state.lastReviewedAt == 0L) 0.0
-                  else (now - state.lastReviewedAt).toDouble() / DAY_MS
+```
+input:  Q1 / Passage: Alpha / body A / Q2 / Passage: Beta / body B / Q3
+expected members: ["", "passage-1", "passage-2"]
+actual members:   ["", "passage-1", "passage-1"]
 ```
 
-`AnkiScheduling.fromAnki` sets `stability = intervalDays.toDouble()` and infers
-`lastReviewedAt = max(0L, dueAt - intervalDays * DAY_MS).coerceAtMost(nowMillis)`. When
-a card is due today with a long interval and the package carries no review log
-(`dueAt - ivl·DAY_MS ≤ 0`), the inferred value is `0` — so the card arrives with
-`stability > 0` **and** `lastReviewedAt == 0`.
+The pre-change code read marker positions from the same rebuilt text it compared against
+(consistent coordinates), so this is a regression, not a pre-existing flaw.
 
-The first post-import review then takes the `elapsedDays < 1.0` branch
-(`shortTermStability`, growth floored at 1.0) instead of the recall formula.
-Numerically confirmed: a card at `S = 30`, `D = 5` graded Good one day later gives
-`S' = 30.000` where the reference gives `32.62`.
+**Test gap:** the round-trip tests cover a single passage only
+(`DocxRoundTripTest`, `DocxPaperWriterTest.passageBlockRidesAboveItsGroup`).
 
-`retention()` (`Fsrs.kt:152-156`) also returns `0.0` for that card, so it is ranked
-`LOW_RECALL_RISK` and sorts ahead of every genuinely-remembered card for as long as
-the bad state persists.
+**Fix options:**
 
-Fix: distinguish "never reviewed" from "reviewed at the epoch". Key the same-day
-shortcut off `hadMemory` (already computed) plus an explicit "no last-review"
-sentinel, rather than treating `lastReviewedAt == 0` as elapsed zero.
+- recompute anchors in rebuilt coordinates (subtract the cumulative removed-body length for
+  each anchor), or
+- blank passage bodies with same-length spaces instead of removing them — coordinates never
+  drift, and the title-leak fix that motivated the blanking is preserved.
 
-### 4. Low-Medium — dead and stale domain contract: `isLearning`, `isNew`, `reps`
+Add a regression test with two passages and a question after the second.
 
-`app/src/main/java/com/mcqapp/domain/SpacedRepetition.kt:62-65`,
-`app/src/main/java/com/mcqapp/domain/Fsrs.kt:136`, `:143`
+## 2. High — silent data loss on re-import
 
-- `CardState.isLearning` (`reps == 0 && dueAt != 0L`) is unreachable: `next()` sets
-  `reps = state.reviewCount + 1` on every grade, so an Again on a new card leaves
-  `reps == 1`, not 0. It has **zero** readers anywhere in the codebase.
-- The `isNew` KDoc still documents the old SM-2 rule: "An 'Again' answer also leaves
-  [reps] at zero…", which the FSRS engine no longer does.
-- `reps` and `reviewCount` are written as two independent expressions
-  (`reps = state.reviewCount + 1`, `reviewCount = state.reviewCount + 1`) that are
-  always equal by construction. No test asserts the mirror invariant, so a future
-  edit can desync them silently.
+### 2.1 Payload freshness check compares stems only
 
-Fix: delete `isLearning` (or give it a real meaning, e.g. `state == LEARNING && dueAt > 0`),
-correct the `isNew` doc, and add a test that `next()` keeps `reps == reviewCount`.
+`preferPayload` (`DocxParser.kt:86-140`) decides between the hidden full-fidelity payload and
+the visible markers by matching **question stem text only**. If the user edits in Word:
 
-### 5. Low — the reference-ladder test overstates parity
+- an **option's text**,
+- the **answer key** (`Ans.` line),
+- the **explanation**, or
+- just the **paper title**,
 
-`app/src/test/java/com/mcqapp/FsrsSchedulerTest.kt:69-98`
+…the stems still match, the payload wins, and the edit is **silently reverted** on import.
+The "hidden question data is out of date" warning only fires when a stem changed.
 
-The comment claims that replaying the reference's history "reproduces the reference's
-difficulty lineage, so every later interval must match it exactly". With
-`learning_steps` removed — the app's deliberate deviation — the reference itself yields
-`[2, 11, 46, 163, 497, 1346, …]`, not `[2, 2, 11, 46, 163, 498]`. The app's asserted
-values are correct **for the app's implementation** (verified by replay), but they are
-not the reference's ladder: the extra leading `2` is the app's immediate graduation and
-the `498` vs `497` shows the histories are not the same.
+Consider comparing the full visible-marker parse against the payload **per question**
+(options + answers, not just stems), so any body edit beyond reflow disables the payload.
 
-Only `canonicalBenchmarkSequenceMatchesTheReferenceValues` (`:43-66`) is a genuine
-vector test, and it passes exactly. Reword the ladder test's comment so it does not
-claim reference parity it does not have.
+**Edge case:** element-only stems (math/image, blank `text`) normalize to `""`, so two
+different such questions can false-match; deleting or inserting one can make an edited file
+pass the freshness check and resurrect stale payload content.
 
-### 6. Low — comment says "rounded", code truncates
+## 3. Medium
 
-`app/src/main/java/com/mcqapp/data/anki/AnkiScheduling.kt:187` vs the KDoc at `:150-156`
+1. **Payload duplicates all images as base64.** The full DTO — including data-URI images —
+   rides in `docProps/custom.xml` (`DocxPaperWriter.kt:53-56`, `customPropsXml` at :742-749)
+   while the same images also ship as `word/media` entries. Image-heavy papers roughly double
+   in size, and a multi-MB `vt:lpwstr` property is unverified against Word's limits (risk:
+   Word may report unreadable content). Consider stripping images from the payload; re-import
+   gets the bytes from `word/media`.
+2. **webp media.** Written as `image/webp` defaults in `[Content_Types].xml`
+   (`DocxPaperWriter.kt:711-718`); older Word builds do not render webp. No warning is emitted.
+3. **Backup assembly is not transactional and not single-pass.** `SettingsViewModel.backupAll`
+   (`SettingsViewModel.kt:221-236`) gathers manifest/content/study/settings in four separate
+   reads; a concurrent study session can produce an inconsistent backup. `BackupSource.manifest`
+   itself calls `content()` (`Backup.kt:223`), so the full export runs twice per backup. Pass
+   one content snapshot into the manifest, or wrap the reads in a read transaction.
+4. **Backup zip written on Main.** `outputStream.use { it.write(bytes) }` runs on the
+   `viewModelScope` (Main) dispatcher (`SettingsViewModel.kt:238-241`) — jank/ANR risk for
+   large backups. Move the write into `withContext(Dispatchers.IO)`.
+5. **Partial-restore reporting.** `applySettings`/`applyInProgress` run after the DB
+   transaction commits (`Backup.kt:314-315`). If settings restore throws, the user sees
+   "Restore failed" although the database was fully wiped and replaced. Report partial success.
+6. **64 MB read cap on restore.** `restoreBackup` reads via `readBounded` with the default
+   `MAX_IMPORT_BYTES` (64 MB). A legitimate backup with inline data-URI images can exceed
+   that, and the error text ("import the bank in parts") does not apply to backups. Consider a
+   backup-specific (larger) limit and message.
 
-```kotlin
-val daysFromExport = ((state.dueAt - startOfDay(crtSeconds * 1000L)).toDouble() / DAY_MS)
-    .toLong().coerceAtLeast(0L).toInt()
-```
+## 4. Low / notes
 
-`toLong()` truncates toward zero; the doc says "Days are rounded, not truncated,
-because Anki's own day boundary rolls over at 04:00". Pre-existing (not in this
-release's diff), but the release touched this function. Either round or fix the
-comment.
+- **Hardcoded wipe-table list.** `BackupRestorer.restore` (`Backup.kt:295-301`) deletes from 11
+  hardcoded table names — complete today, but a future table would silently survive restore.
+  Consider deriving the list from `sqlite_master` or a shared constant. The child-before-parent
+  ordering is redundant: every FK in the schema is `onDelete = CASCADE`.
+- **`manifest.dbVersion` is recorded but never checked.** Restoring a backup taken on a newer
+  DB schema into an older app is not warned about. Content is importer-validated and study
+  rows are fixed-shape, so the risk is mostly theoretical.
+- **Cross-section passage reuse round-trip gap.** The writer spans one `Passage:` block across
+  category sections (`emitPassageAbove`, `DocxPaperWriter.kt:80-98`), but the sectioned parser
+  binds passages within a section only — member questions in a later section lose the passage.
+  Uncommon shape; worth a note or a writer-side re-emit.
+- **Duplicate-content questions on restore.** The importer dedups identical content within one
+  import (`sameContentId`); schedules for the collapsed-away id then dangle (`card_state` /
+  `review_log` have no FK to questions) and are silently dropped. Only reachable with banks
+  containing identical stems.
+- **Wasted scheduling build.** `BackupSource.content()` builds the whole scheduling map and
+  then drops it via `.copy(scheduling = emptyMap())` (`Backup.kt:205`). Trivial cost; skip it.
+- **Leading blank runs.** `ParaBuilder.add` drops a `<w:br/>` at the very start of a paragraph
+  (`DocxPaperWriter.kt:506`), so leading newlines in stored text are lost on export. Minor
+  fidelity, arguably intended.
 
-### 7. Low — unpushed commit, dangling doc references, vanished scratch work
+## 5. What is good
 
-- `75e598a deleted leagcy files` (audit.md, ideas.md, PASSAGE-QUESTIONS.md,
-  SCHEDULING-PARITY.md, SIMPLIFIED-STUDY.md) is local-only; CI never built it. Docs
-  only, so risk is low, but the AGENTS.md rule is to verify before relying on it.
-- Four code comments still cite deleted files:
-  `PassageStore.kt:18` and `PassageBlocks.kt:6`/`PassageBlocksTest.kt:16` cite
-  `PASSAGE-QUESTIONS.md`; `FSRS-PLAN.md:14` and `:322` cite `SCHEDULING-PARITY.md`.
-- `code_review.md`, `test_document/` and `app/src/test/java/com/mcqapp/ScratchBrowseButtonsTest.kt`
-  were present in the working tree at the start of this audit and were removed by a
-  parallel commit mid-audit. If the scratch test was meant to survive, it now exists
-  only as stale class files under `app/build/`.
+- **Restore atomicity is real.** The wipe, the importer (which joins the outer transaction via
+  `db.withTransaction`, `Importer.kt:96`), the verbatim `card_state`/`review_log` writes and
+  the `createdAt` restoration all land in one transaction; a failed restore leaves the library
+  untouched.
+- **Strong round-trip tests.** `BackupRestoreRoundTripTest` asserts a full row-dump fixpoint
+  across every table, the second-backup-is-same-state invariant, manifest counts, and refusal
+  messages for garbage/truncated/foreign archives (including the empty-archive case from
+  `c33735d`).
+- **Bounded, defensive backup reading.** `SafeZip` caps entry count, per-entry size and total
+  expansion with actual-decompressed counts; format id and forward-version checks give clear
+  user-facing errors.
+- **Writer hygiene.** Marker-looking continuation lines are guarded with a leading space,
+  category flattening is cycle-safe, XML is escaped, unknown inline tags stay literal, media
+  entries are deduped and referenced by filename (relationship ids), option-less questions are
+  excluded with a warning instead of producing an unimportable document, and the JPEG header
+  scan handles SOF markers correctly.
+- **`MathMlToOmml` policy.** A clean, symmetric subset with `null`-on-unsupported and a
+  warned plain-text fallback — no silent mangling in either direction.
+- **UI wiring.** Restore requires an explicit confirmation dialog with honest copy
+  ("Anything added since the backup is gone"), strings are user-tested phrasing, launchers
+  follow the existing per-format pattern in all three export screens.
+- **Import title handling.** A document's own `Title`/`Heading 1` now wins over the file name,
+  editable in the preview (`ImportViewModel`).
+- **Docs.** README's import/export and backup sections match the shipped behavior, including
+  the heading→category mapping and the payload's guarantees.
 
-### 8. Low — new settings copy bypasses `strings.xml`
+## 6. Recommendation
 
-`app/src/main/java/com/mcqapp/ui/settings/SettingsScreen.kt:550-611`
-
-"Target retention", "Ranking mode", "Memory first", "Explore new cards", "Introduce
-new cards" and their help texts are literal English strings, while every other screen
-goes through `stringResource`. `strings.xml` kept a string still named
-`sm_2_scheduling_for_study_these_match_anki_s_review_options_` whose value now reads
-"FSRS scheduling for Study". `StringResourceUsageTest` only checks that
-`stringResource` calls are rendered, so it does not catch either.
-
-### 9. Nit — `ReviewLogDao` has two unused reads
-
-`app/src/main/java/com/mcqapp/data/local/Daos.kt:419-427`
-
-`historyForQuestion` and `countByPaper` have no main-source callers; only
-`MigrationTest` calls them. `NoDeadCodeTest` enforces dead-code removal elsewhere in
-the project. Use them (e.g. show a card's review history) or drop them until the
-optimizer lands.
-
----
-
-## Coverage notes
-
-Good and worth keeping:
-
-- `FsrsSchedulerTest` covers initial states for all four ratings, retrievability at
-  `t = 0 / S / 2S`, same-day Hard flooring, lapse→relearn, the stability floor under
-  1000 failures, leech at 8 lapses, the day-boundary snap, the retention ceiling,
-  preview-equals-persist, and the 21-parameter guard.
-- `SpacedRepetitionTest` was fully rewritten around pools: priority order, risk
-  ranking with the oldest-due tie-break, leech handling, explore pacing, toggle-off,
-  and two invariants (badge total == pool size, every question either eligible or not).
-- `MigrationTest` builds a genuine v9 file by replaying the production `Migration`
-  objects, so the fixture cannot drift, and asserts the wipe plus the new columns and
-  `review_log`.
-- Interop tests cover legacy-vs-FSRS schedule import and the Anki kind/stability/
-  difficulty derivation.
-
-Gaps worth adding:
-
-1. An imported Anki card with `stability > 0` and `lastReviewedAt == 0` (finding 3) —
-  a regression test for which branch `next()` takes.
-2. `reps == reviewCount` after every grade (finding 4).
-3. Question deletion removes `review_log` rows (finding 1).
-4. A large-paper session asserts a bounded number of queries (finding 2) — the project
-   already has `CopyQueryCountTest` and `ImportCollisionQueryCountTest` to copy.
-
----
-
-## Disposition — 2026-10-14
-
-All nine findings were re-verified as genuine, then fixed or explicitly dispositioned.
-Pushed `75e598a`, `ce290aa` and five working commits to `origin/exp/fsrs-scheduling`;
-CI run `38453901956` is green on all four jobs (build, ui-test, release-build,
-wrapper-validation). The debug APK was downloaded to this host's download folder
-(`~/Download/app-debug.apk`, sha256 `b40055b8…adeafb9d`) in place of AGENTS.md's
-`/sdcard/Download` path, which this environment does not have.
-
-| Finding | Action | Verification |
-|---|---|---|
-| 1 review_log orphans | `ReviewLogDao` gained `deleteByQuestion`/`deleteByQuestions` (+ a chunked wrapper); `deleteQuestion`, `deleteQuestions` and cross-paper moves sweep the log in the same transaction as the card state. README documents that backups carry schedules but not `review_log` rows. | `RepositoryTest`: single delete, bulk delete and cross-paper move each assert the log empties |
-| 2 pull re-reads the paper | `getNextStudyCard` and `getStudyEligibility` now use the badge's `studyInputs()` path (ids + content hashes; no option text, no answer key). | `StudyPullQueryCountTest` (new): pull SELECT count does not grow with paper size and never queries `correct_answers` |
-| 3 imported card takes the same-day formula | `Fsrs.next`/`retention` read elapsed through one guard: memory without a last-review timestamp means "reviewed ~its interval ago", so the recall formula applies and the card ranks at the retention target; `fromAnki` also floors the inferred last review at `now − interval` instead of fabricating epoch zero. | `FsrsImportGuardTest` (new): the recall branch is taken, retrievability lands on the benchmark, and truly-new cards keep elapsed 0 |
-| 4 dead `isLearning` / stale `isNew` doc | `isLearning` deleted (zero readers); the `isNew` KDoc rewritten for FSRS. | `FsrsImportGuardTest.everyGradeKeepsRepsAndReviewCountMirrored` pins the mirror invariant for every grade |
-| 5 ladder comment overstates parity | Comment reworded to "the app's own ladder, NOT the reference's"; the canonical vector test remains the parity claim. | Static; no behaviour change |
-| 6 "rounded" vs truncation | `toAnki` KDoc now says the day count is exact because schedules anchor to day starts on both sides — no rounding involved. | Static; no behaviour change |
-| 7 unpushed commit + dangling refs | Both local commits are pushed. Comments citing `PASSAGE-QUESTIONS.md` / `SCHEDULING-PARITY.md` rewritten in `PassageStore`, `PassageBlocks`, `PassageBlocksTest`, `FSRS-PLAN.md` and `Tests_Required.md`. The scratch files removed mid-audit stay removed (intentional deletions, nothing to restore). | CI built the pushed tip |
-| 8 settings copy bypasses strings.xml | The FSRS study section's literals (Study header, retention, ranking mode, chips, introduce toggle, easy/hard thresholds, split strings) moved into `strings.xml`; a duplicate `introduce_new_cards` entry an early pass created was caught and removed before it could break AAPT. | `StringResourceUsageTest` green — its rendered-sink list gained `help =` because `AnkiNumberRow` renders label and help into `Text`s verbatim |
-| 9 unused ReviewLogDao reads | Kept (tests exercise `historyForQuestion`/`countByPaper`); KDoc states they are test-exercised pending the optimizer, matching the roadmap. | CI green; `NoDeadCodeTest` unaffected |
-
-In addition, the `Tests_Required.md` gaps landed while fixing these: P1 (five UI tests on
-the pull-session surface), P2 (settings persistence incl. legacy `anki_*` keys and a
-corrupt `study_mode`), P3 (the ViewModel pull flow, the break-strip state rule, and
-guess/change-grade `pendingGrade`), P4 (repo-level mode behaviour), P5 (legacy parser
-FSRS fields) and P6 (review-log history reads). Two non-audit defects surfaced by those
-tests were fixed along the way: Robolectric's JVM-singleton DataStore leaked a scheduler
-config across test classes (both writing test classes now reset in `@After`), and
-`StudyViewModel.restart` left the stale card on screen instead of re-pulling.
-
-**No finding remains open; no blockage remains.**
+Fix **1.1** (confirmed import corruption) and decide on **2.1** (silent loss of user edits)
+before merging. Items 3-6 are cheap follow-ups; the low section is note-level.

@@ -1,6 +1,11 @@
 package com.mcqapp.data.docx
 
 import com.mcqapp.data.io.LegacyParser
+import com.mcqapp.data.io.McqFileDto
+import com.mcqapp.data.io.OptionDto
+import com.mcqapp.data.io.PassageDto
+import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -78,10 +83,22 @@ fun parseDocx(bytes: ByteArray): DocxParseResult {
  * Google Docs stripped the part, or it is from an older app version — is
  * ignored in favour of what the reader can actually see.
  *
- * Matching is by question stem, in order, allowing payload questions the
- * writer left out of the visible body (one with no options cannot be
- * carried by the markers) to be skipped — never the other way round: a
- * visible stem that matches no payload question means the body moved.
+ * Freshness is a full-content fingerprint per question, not just the stem:
+ * option texts, the answer key, explanations, math (as leaf text, so the
+ * OMML round trip cannot cause false staleness), image positions (not
+ * srcs — those are grafted from the body) and passage membership must all
+ * line up, in order, with the paper title and the passage texts as well.
+ * Any visible question the payload does not fingerprint-match means the
+ * body was edited and the payload is stale.
+ *
+ * Matching is a subsequence walk: payload questions the writer left out of
+ * the visible body (one with no options cannot be carried by the markers)
+ * may sit between matches — never the other way round.
+ *
+ * When the payload is fresh it also carries the images: the writer strips
+ * data-URI srcs from the payload (they would double the file), so srcs are
+ * grafted back from the visible body positionally before the payload JSON
+ * is handed on.
  */
 private fun preferPayload(
     payloadJson: String?,
@@ -94,36 +111,242 @@ private fun preferPayload(
     } catch (_: Exception) {
         return visible
     }
-    val payloadStems = payload.papers
-        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
-        .map { normalizeStem(it.text) }
-    val visibleStems = try {
-        LegacyParser.parse(visible.json).papers
-            .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
-            .map { normalizeStem(it.text) }
+    val visibleFile = try {
+        LegacyParser.parse(visible.json)
     } catch (_: Exception) {
         return visible
     }
-    if (payloadStems.isEmpty() || visibleStems.isEmpty()) return visible
-    var payloadIndex = 0
-    for (stem in visibleStems) {
-        while (payloadIndex < payloadStems.size && payloadStems[payloadIndex] != stem) payloadIndex++
-        if (payloadIndex == payloadStems.size) {
-            // A visible stem the payload does not know: the body was edited.
-            return DocxParseResult(
-                visible.json,
-                warnings + listOf(
-                    "The document's hidden question data is out of date (the file was " +
-                        "edited outside the app), so marks, difficulty and tags were " +
-                        "restored from the visible text only."
-                ),
-                visible.paperTitle
-            )
-        }
-        payloadIndex++
+    fun stale(): DocxParseResult = DocxParseResult(
+        visible.json,
+        warnings + listOf(
+            "The document's hidden question data is out of date (the file was " +
+                "edited outside the app), so marks, difficulty and tags were " +
+                "restored from the visible text only."
+        ),
+        visible.paperTitle
+    )
+
+    // A renamed title is an edit like any other.
+    val payloadTitle = payload.papers.firstOrNull()?.title
+    if (visible.paperTitle != null && !payloadTitle.isNullOrBlank() &&
+        normalizeStem(payloadTitle) != normalizeStem(visible.paperTitle)
+    ) {
+        return stale()
     }
-    return DocxParseResult(payloadJson, warnings, payload.papers.firstOrNull()?.title ?: visible.paperTitle)
+
+    // Passage texts, in document order. The visible side may repeat a
+    // passage when it spans category sections (the writer re-emits the
+    // block per section so members bind within their section), so
+    // duplicates collapse before the lists are compared.
+    if (payload.passages.map { canonPassage(it) }.distinct() !=
+        visibleFile.passages.map { canonPassage(it) }.distinct()
+    ) {
+        return stale()
+    }
+    val payloadPassageCanons = payload.passages.associate { it.id to canonPassage(it) }
+    val visiblePassageCanons = visibleFile.passages.associate { it.id to canonPassage(it) }
+
+    val payloadQuestions = payload.papers
+        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
+    val visibleQuestions = visibleFile.papers
+        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
+    if (payloadQuestions.isEmpty() || visibleQuestions.isEmpty()) return visible
+    val payloadCanon = payloadQuestions.map { canonQuestion(it, payloadPassageCanons) }
+    val visibleCanon = visibleQuestions.map { canonQuestion(it, visiblePassageCanons) }
+
+    // Subsequence walk: every visible question must fingerprint-match a
+    // payload question, in order; payload-only questions may sit between.
+    var pi = 0
+    val matchedVisible = mutableMapOf<Int, QuestionDto>()
+    var matched = 0
+    for (visibleQuestion in visibleQuestions) {
+        val canon = visibleCanon[matched]
+        while (pi < payloadCanon.size && payloadCanon[pi] != canon) pi++
+        if (pi == payloadCanon.size) return stale()
+        matchedVisible[pi] = visibleQuestion
+        pi++
+        matched++
+    }
+
+    // Graft image srcs from the body onto the (stripped) payload, in the
+    // same traversal order the fingerprint walk used.
+    var flatIndex = 0
+    fun graftList(questions: List<QuestionDto>): List<QuestionDto> = questions.map { q ->
+        val visibleQuestion = matchedVisible[flatIndex]
+        flatIndex++
+        if (visibleQuestion != null) graftQuestion(q, visibleQuestion) else q
+    }
+    val graftedPapers = payload.papers.map { paper ->
+        paper.copy(
+            categories = paper.categories.map { c -> c.copy(questions = graftList(c.questions)) },
+            questions = graftList(paper.questions)
+        )
+    }
+    val graftedPassages = payload.passages.mapIndexed { index, passage ->
+        visibleFile.passages.getOrNull(index)?.let { graftPassage(passage, it) } ?: passage
+    }
+    val graftedJson = kotlinx.serialization.json.Json.encodeToString(
+        McqFileDto.serializer(),
+        payload.copy(papers = graftedPapers, passages = graftedPassages)
+    )
+    return DocxParseResult(graftedJson, warnings, payloadTitle ?: visible.paperTitle)
 }
+
+/**
+ * Freshness key for one field (stem, option, explanation, passage body):
+ * every element reduced to a content-only canon — text normalized like the
+ * stems, math to its leaf text (the OMML round trip restructures the markup,
+ * so tag shape cannot be compared), images to a bare position marker (the
+ * src is grafted, never compared), tables to their flattened cells. A
+ * non-null legacy scalar image counts as a trailing position marker: the
+ * writer embeds it after the element images, so the visible side has one
+ * more image element than the payload's element list.
+ */
+private fun canonField(elements: List<ContentElement>, scalarImage: String?): String {
+    if (elements.isEmpty() && scalarImage == null) return ""
+    // Consecutive text elements merge: the visible parse splits runs on
+    // markup boundaries the payload's stored elements do not share, so
+    // only the text itself — not its element packing — is compared.
+    val parts = mutableListOf<String>()
+    val text = StringBuilder()
+    fun flushText() {
+        if (text.isNotEmpty()) {
+            parts.add("t:" + normalizeStem(text.toString()))
+            text.clear()
+        }
+    }
+    for (element in elements) {
+        when (element) {
+            is ContentElement.TextElement -> text.append(element.text)
+            is ContentElement.MathElement -> {
+                flushText()
+                parts.add(
+                    "m:" + decodeXmlEntities(element.mathml)
+                        .replace(Regex("<[^>]*>"), "")
+                        .replace(Regex("\\s+"), "")
+                )
+            }
+            is ContentElement.ImageElement -> {
+                flushText()
+                parts.add("i")
+            }
+            is ContentElement.TableElement -> {
+                flushText()
+                parts.add("tbl:" + normalizeStem(element.rows.flatten().joinToString(" ")))
+            }
+        }
+    }
+    flushText()
+    if (scalarImage != null) parts.add("i")
+    return parts.joinToString(",")
+}
+
+private fun canonPassage(passage: PassageDto): String =
+    normalizeStem(passage.title) + "|" + canonField(passage.elements, passage.image)
+
+/**
+ * One question's freshness key. Options are compared by content in order
+ * (ids are derived letters on the visible side and may be arbitrary in the
+ * payload); the answer key by the *indices* of the correct options, capped
+ * at what the marker format can carry, so a payload holding more options
+ * than the ten `(a)`…`(j)` markers does not read as edited. Passage
+ * membership is an index into the file's passage list, so the two sides'
+ * id schemes (original vs. section-qualified) never collide.
+ */
+private fun canonQuestion(q: QuestionDto, passageCanons: Map<String, String>): String {
+    val stem = if (q.elements.isNotEmpty()) {
+        canonField(q.elements, q.image)
+    } else {
+        "t:" + normalizeStem(q.text)
+    }
+    val options = q.options.take(10).joinToString(",") { option ->
+        if (option.elements.isNotEmpty()) {
+            canonField(option.elements, option.image)
+        } else {
+            "t:" + normalizeStem(option.text)
+        }
+    }
+    val correctIndices = q.options.withIndex()
+        .filter { it.value.id in q.correctOptionIds }
+        .map { it.index }
+        .filter { it < 10 }
+        .distinct()
+        .sorted()
+    // The writer resolves an answerless question to its first option (with
+    // a warning), so the visible side always names one; mirror that here
+    // or every untouched export of such a question reads as edited.
+    val correct = if (correctIndices.isEmpty() && q.options.isNotEmpty()) {
+        "0"
+    } else {
+        correctIndices.joinToString(",")
+    }
+    val explanation = if (q.explanationElements.isNotEmpty()) {
+        canonField(q.explanationElements, q.explanationImage)
+    } else {
+        "t:" + normalizeStem(q.explanation)
+    }
+    // Membership as the passage's content canon, not its id: the two
+    // sides' id schemes differ (original vs. section-qualified), and a
+    // passage spanning sections appears as a per-section copy.
+    val membership = if (q.passageId.isNullOrEmpty()) "" else passageCanons[q.passageId] ?: "?"
+    return listOf(stem, options, correct, explanation, "P:$membership").joinToString("|")
+}
+
+/** Restore the image srcs the writer stripped, positionally from the body. */
+private fun graftElements(
+    payloadElements: List<ContentElement>,
+    visibleElements: List<ContentElement>
+): List<ContentElement> {
+    val srcs = visibleElements.filterIsInstance<ContentElement.ImageElement>().map { it.src }
+    var next = 0
+    return payloadElements.map { element ->
+        if (element is ContentElement.ImageElement) {
+            val src = srcs.getOrNull(next)
+            next++
+            if (src != null) element.copy(src = src) else element
+        } else {
+            element
+        }
+    }
+}
+
+/**
+ * The writer embeds a legacy scalar image after the element images, so the
+ * visible side's last image element is the scalar one when the payload had
+ * both (or just the scalar).
+ */
+private fun graftQuestion(payload: QuestionDto, visible: QuestionDto): QuestionDto = payload.copy(
+    elements = graftElements(payload.elements, visible.elements),
+    image = payload.image?.let {
+        visible.elements.filterIsInstance<ContentElement.ImageElement>().lastOrNull()?.src ?: it
+    },
+    options = payload.options.mapIndexed { index, option ->
+        val visibleOption = visible.options.getOrNull(index)
+        option.copy(
+            elements = if (visibleOption != null) {
+                graftElements(option.elements, visibleOption.elements)
+            } else {
+                option.elements
+            },
+            image = option.image?.let {
+                visibleOption?.elements?.filterIsInstance<ContentElement.ImageElement>()
+                    ?.lastOrNull()?.src ?: it
+            }
+        )
+    },
+    explanationElements = graftElements(payload.explanationElements, visible.explanationElements),
+    explanationImage = payload.explanationImage?.let {
+        visible.explanationElements.filterIsInstance<ContentElement.ImageElement>()
+            .lastOrNull()?.src ?: it
+    }
+)
+
+private fun graftPassage(payload: PassageDto, visible: PassageDto): PassageDto = payload.copy(
+    elements = graftElements(payload.elements, visible.elements),
+    image = payload.image?.let {
+        visible.elements.filterIsInstance<ContentElement.ImageElement>().lastOrNull()?.src ?: it
+    }
+)
 
 /**
  * Stem text for the payload-freshness comparison: entities decoded (the
@@ -391,7 +614,7 @@ private val questionSplit = Regex("(?m)^(\\d{1,7}\\.\\))")
  * insensitive match spares authors remembering the exact casing, but a line
  * that merely *contains* "Passage:" mid-sentence is not a marker.
  */
-internal val passageSplit = Regex("(?im)^(Passage:)\\s*(.*)$")
+internal val passageSplit = Regex("(?im)^(Passage:)[ \\t]*(.*)$")
 
 /** Option labels, in order. Ten is plenty for a written paper and bounded on purpose. */
 private val OPTION_LABELS = ('a'..'j').map { it.toString() }
@@ -405,15 +628,24 @@ private val answerSeparator = Regex("\\s*(?:,|;|&|\\band\\b)\\s*", RegexOption.I
 private fun isSingleLetter(token: String) = token.length == 1 && token[0] in 'a'..'z'
 
 /**
+ * One `Passage:` marker's place in the cleaned text: where it starts, and
+ * which passage (index into the extracted list) questions after it belong
+ * to. A bare `Passage:` — no title, no body — is the writer's end-of-
+ * passage reset: it anchors position but names no passage, so the
+ * questions after it are standalone until the next marker.
+ */
+internal data class PassageAnchor(val position: Int, val passageIndex: Int?)
+
+/**
  * Splits the cleaned document on `Passage:` markers and returns the passages
  * found plus the text still to question-split. Each question keeps its
  * membership through the passage id, minted `passage-N` in document order.
  */
-internal fun extractPassages(cleaned: String): Triple<List<RawPassage>, String, List<Int>> {
+internal fun extractPassages(cleaned: String): Triple<List<RawPassage>, String, List<PassageAnchor>> {
     val matches = passageSplit.findAll(cleaned).toList()
     if (matches.isEmpty()) return Triple(emptyList<RawPassage>(), cleaned, emptyList())
     val passages = mutableListOf<RawPassage>()
-    val anchors = mutableListOf<Int>()
+    val anchors = mutableListOf<PassageAnchor>()
     val rebuilt = StringBuilder()
     var cursor = 0
     matches.forEachIndexed { index, match ->
@@ -437,18 +669,28 @@ internal fun extractPassages(cleaned: String): Triple<List<RawPassage>, String, 
             questionBodyEnd ?: cleaned.length
         }
         val body = cleaned.substring(bodyStart, bodyEnd).trim()
-        val id = "passage-${index + 1}"
-        passages.add(RawPassage(id = id, titleHtml = titleHtml, bodyHtml = body))
-        // Rebuild the question stream without the passage bodies. The marker
-        // line stays as the offset anchor extractQuestions tags members by —
-        // but blanked at its exact length, so the title text never leaks
-        // into the field that precedes the passage (a question's
-        // explanation would otherwise absorb it).
-        anchors.add(match.range.first)
+        // Rebuild the question stream by blanking the whole passage block —
+        // marker line and body — in place. Newlines are preserved so the
+        // question markers after it stay line-anchored, and every character
+        // position is kept: the anchors extractQuestions tags members by
+        // must stay valid in the rebuilt text, or members of the second and
+        // later passages bind to the wrong passage. The blanked text is
+        // whitespace-only, which the field parser drops, so the title never
+        // leaks into a preceding question's explanation either.
         rebuilt.append(cleaned.substring(cursor, match.range.first))
-        rebuilt.append(" ".repeat(match.value.length))
-        rebuilt.append(cleaned.substring(match.range.last + 1, bodyStart))
+        for (c in cleaned.substring(match.range.first, bodyEnd)) {
+            rebuilt.append(if (c == '\n') '\n' else ' ')
+        }
         cursor = bodyEnd
+        if (titleHtml.isBlank() && body.isBlank()) {
+            // A bare `Passage:` line: the writer's end-of-passage reset.
+            // No passage is minted; questions after it are standalone.
+            anchors.add(PassageAnchor(position = match.range.first, passageIndex = null))
+        } else {
+            val id = "passage-${passages.size + 1}"
+            passages.add(RawPassage(id = id, titleHtml = titleHtml, bodyHtml = body))
+            anchors.add(PassageAnchor(position = match.range.first, passageIndex = passages.size - 1))
+        }
     }
     rebuilt.append(cleaned.substring(cursor))
     return Triple(passages, rebuilt.toString(), anchors)
@@ -457,7 +699,7 @@ internal fun extractPassages(cleaned: String): Triple<List<RawPassage>, String, 
 private fun extractQuestions(
     cleaned: String,
     /** Offsets of the `Passage:` markers, valid in this text (see extractPassages). */
-    passageAnchors: List<Int> = emptyList()
+    passageAnchors: List<PassageAnchor> = emptyList()
 ): List<RawQuestion> {
     val matches = questionSplit.findAll(cleaned).toList()
     if (matches.isEmpty()) {
@@ -472,10 +714,11 @@ private fun extractQuestions(
     // standalone (passageId "").
     fun passageIdAt(position: Int): String {
         var active = ""
-        for ((index, anchor) in passageAnchors.withIndex()) {
-            if (anchor <= position) {
-                active = "passage-${index + 1}"
-            } else break
+        for (anchor in passageAnchors) {
+            if (anchor.position > position) break
+            // A bare `Passage:` reset clears the binding: the questions
+            // after it are standalone until the next marker.
+            active = anchor.passageIndex?.let { "passage-${it + 1}" } ?: ""
         }
         return active
     }

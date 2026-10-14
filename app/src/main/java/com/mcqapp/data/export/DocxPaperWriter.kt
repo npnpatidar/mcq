@@ -4,13 +4,16 @@ import com.mcqapp.data.docx.decodeXmlEntities
 import com.mcqapp.data.docx.escapeXmlText
 import com.mcqapp.data.docx.mathMlLinearText
 import com.mcqapp.data.docx.mathMlToOmml
+import com.mcqapp.data.docx.PAYLOAD_PROPERTY
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
+import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.Logger
+import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -40,6 +43,18 @@ object DocxPaperWriter {
         val media = MediaPool()
         val body = StringBuilder()
 
+        // The hidden payload: the full paper DTO as a custom document
+        // property. It is invisible in Word (File > Info > Advanced
+        // Properties aside) and survives Word's own saves, so a file the
+        // app wrote and nobody edited re-imports with ids, marks,
+        // difficulty and tags intact instead of duplicating everything the
+        // visible markers cannot carry. The parser falls back to the
+        // markers when the payload no longer matches the visible text.
+        val payload = payloadJsonFormat.encodeToString(
+            McqFileDto.serializer(),
+            McqFileDto(version = 1, papers = listOf(paper), passages = passages)
+        )
+
         body.append(headingPara(1, paper.title.ifBlank { "Paper" }))
         if (paper.description.isNotBlank()) {
             body.append(para(listOf(RunSpec(paper.description, RunFlags()))))
@@ -53,9 +68,13 @@ object DocxPaperWriter {
         }
 
         var number = 0
-        fun emitQuestion(q: QuestionDto) {
+        fun emitQuestion(q: QuestionDto, last: Boolean) {
             number++
             body.append(questionBlocks(q, number, media, warnings).joinToString(""))
+            // Two blank lines between questions: the next question's marker
+            // stays line-anchored either way, and the reader drops blank
+            // paragraphs on re-import.
+            if (!last) body.append("<w:p/><w:p/>")
         }
 
         fun emitPassageAbove(question: QuestionDto, openPassageId: String?): String? {
@@ -67,11 +86,14 @@ object DocxPaperWriter {
         }
 
         var openPassageId: String? = null
-        for (node in flattenCategories(paper.categories)) {
+        val allSections = flattenCategories(paper.categories)
+        val lastSectionQuestionId = allSections.lastOrNull()?.dto?.questions?.lastOrNull()?.id
+        val lastTopLevelId = paper.questions.lastOrNull()?.id
+        for (node in allSections) {
             body.append(headingPara((node.depth + 2).coerceAtMost(9), node.title))
             for (question in node.dto.questions) {
                 openPassageId = emitPassageAbove(question, openPassageId)
-                emitQuestion(question)
+                emitQuestion(question, question.id == lastSectionQuestionId)
             }
         }
         // Top-level questions (the bookmarks/selection export shape). With
@@ -81,13 +103,15 @@ object DocxPaperWriter {
             if (paper.categories.isNotEmpty()) body.append(headingPara(2, "Uncategorized"))
             for (question in paper.questions) {
                 openPassageId = emitPassageAbove(question, openPassageId)
-                emitQuestion(question)
+                emitQuestion(question, question.id == lastTopLevelId)
             }
         }
 
         for (warning in warnings) Logger.w("DOCX", warning)
-        return assembleZip(body.toString(), media)
+        return assembleZip(body.toString(), media, payload)
     }
+
+    private val payloadJsonFormat = Json { encodeDefaults = false }
 
     // ------------------------------------------------------------------
     // Document structure
@@ -304,12 +328,16 @@ object DocxPaperWriter {
         for (item in items) {
             when (item) {
                 is Runs -> {
-                    if (item.breaksParagraph) flush()
+                    // A stacked-layout element starts a new paragraph only
+                    // when the current one already has content — the first
+                    // one must join its marker ("(a) Alpha", never a lone
+                    // "(a)" on its own line).
+                    if (item.breaksParagraph && current.hasContent()) flush()
                     current.add(item.specs)
                 }
                 is Math -> current.addMath(item.omml)
                 is Pic -> {
-                    if (item.breaksParagraph) flush()
+                    if (item.breaksParagraph && current.hasContent()) flush()
                     current.addPicture(item)
                 }
                 is Tbl -> {
@@ -331,17 +359,22 @@ object DocxPaperWriter {
     }
 
     private fun tableXml(rows: List<List<String>>): String {
-        val width = 9360
+        // Auto layout: Word and LibreOffice size columns to their content,
+        // so a two-word table does not stretch across the page. The grid
+        // widths are only hints; the borders cover the inner lines too —
+        // an outline-only table could not be read as a grid.
+        val hint = 9360
         val cols = maxOf(1, rows.maxOfOrNull { it.size } ?: 1)
-        val colWidth = width / cols
-        val border =
-            "<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>" +
-                "<w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>" +
-                "<w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>" +
-                "<w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        val colWidth = hint / cols
+        val border = { tag: String ->
+            "<w:$tag w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
+        }
+        val borders = listOf("top", "left", "bottom", "right", "insideH", "insideV")
+            .joinToString("") { border(it) }
         val sb = StringBuilder()
-        sb.append("<w:tbl><w:tblPr><w:tblW w:w=\"$width\" w:type=\"dxa\"/>")
-        sb.append("<w:tblBorders>$border</w:tblBorders></w:tblPr>")
+        sb.append("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>")
+        sb.append("<w:tblLayout w:type=\"autofit\"/>")
+        sb.append("<w:tblBorders>$borders</w:tblBorders></w:tblPr>")
         sb.append("<w:tblGrid>")
         repeat(cols) { sb.append("<w:gridCol w:w=\"$colWidth\"/>") }
         sb.append("</w:tblGrid>")
@@ -349,7 +382,7 @@ object DocxPaperWriter {
             sb.append("<w:tr>")
             for (c in 0 until cols) {
                 val cell = row.getOrElse(c) { "" }
-                sb.append("<w:tc><w:tcPr><w:tcW w:w=\"$colWidth\" w:type=\"dxa\"/></w:tcPr>")
+                sb.append("<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>")
                 sb.append("<w:p><w:r><w:t xml:space=\"preserve\">")
                 sb.append(escapeXmlText(cell))
                 sb.append("</w:t></w:r></w:p></w:tc>")
@@ -511,9 +544,11 @@ object DocxPaperWriter {
 
         /** The paragraph XML, or null when it would be empty. */
         fun build(): String? {
-            if (runs.isEmpty() && !wroteAnything) return null
+            if (!hasContent()) return null
             return "<w:p>$runs</w:p>"
         }
+
+        fun hasContent(): Boolean = wroteAnything || runs.isNotEmpty()
 
         fun addAndBuild(specs: List<RunSpec>): String {
             add(specs)
@@ -641,7 +676,7 @@ object DocxPaperWriter {
     // Package assembly
     // ------------------------------------------------------------------
 
-    private fun assembleZip(bodyContent: String, media: MediaPool): ByteArray {
+    private fun assembleZip(bodyContent: String, media: MediaPool, payload: String): ByteArray {
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
@@ -649,6 +684,9 @@ object DocxPaperWriter {
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("_rels/.rels"))
             zip.write(rootRelsXml().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("docProps/custom.xml"))
+            zip.write(customPropsXml(payload).toByteArray(Charsets.UTF_8))
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("word/document.xml"))
             zip.write(documentXml(bodyContent).toByteArray(Charsets.UTF_8))
@@ -685,6 +723,7 @@ object DocxPaperWriter {
             defaults +
             "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>" +
             "<Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>" +
+            "<Override PartName=\"/docProps/custom.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.custom-properties+xml\"/>" +
             "</Types>"
     }
 
@@ -692,7 +731,22 @@ object DocxPaperWriter {
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
             "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
             "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
+            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties\" Target=\"docProps/custom.xml\"/>" +
             "</Relationships>"
+
+    /**
+     * The custom-properties part. `pid` must be 2 or above (1 is reserved);
+     * the JSON rides as a plain string. Everything XML-significant in the
+     * JSON — quotes are fine in element text — is escaped.
+     */
+    private fun customPropsXml(payload: String): String =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+            "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/custom-properties\" " +
+            "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">" +
+            "<property fmtid=\"{D5CDD505-2E9C-101B-9397-08002B2CF9AE}\" pid=\"2\" " +
+            "name=\"$PAYLOAD_PROPERTY\"><vt:lpwstr>" +
+            escapeXmlText(payload) +
+            "</vt:lpwstr></property></Properties>"
 
     private fun documentRelsXml(media: MediaPool): String {
         val sb = StringBuilder()

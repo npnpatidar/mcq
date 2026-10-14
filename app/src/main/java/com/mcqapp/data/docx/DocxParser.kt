@@ -1,5 +1,6 @@
 package com.mcqapp.data.docx
 
+import com.mcqapp.data.io.LegacyParser
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -60,12 +61,80 @@ fun parseDocx(bytes: ByteArray): DocxParseResult {
             is DocxBlock.Table -> DocxLine(tableHtml(block), null)
         }
     }
-    return if (lines.none { it.heading != null }) {
+    val visible = if (lines.none { it.heading != null }) {
         parseFlatDocx(lines.map { it.html }, read.warnings)
     } else {
         parseSectionedDocx(lines, read.warnings)
     }
+    return preferPayload(read.payloadJson, visible, read.warnings)
 }
+
+/**
+ * The app's own exports carry a hidden full-fidelity payload (ids, marks,
+ * difficulty, tags — everything the visible markers cannot express). When
+ * it is present **and still describes the visible text**, it wins: an
+ * untouched export re-imports without duplicating a single question. A
+ * payload that disagrees with the body — the file was edited in Word,
+ * Google Docs stripped the part, or it is from an older app version — is
+ * ignored in favour of what the reader can actually see.
+ *
+ * Matching is by question stem, in order, allowing payload questions the
+ * writer left out of the visible body (one with no options cannot be
+ * carried by the markers) to be skipped — never the other way round: a
+ * visible stem that matches no payload question means the body moved.
+ */
+private fun preferPayload(
+    payloadJson: String?,
+    visible: DocxParseResult,
+    warnings: List<String>
+): DocxParseResult {
+    if (payloadJson == null) return visible
+    val payload = try {
+        LegacyParser.parse(payloadJson)
+    } catch (_: Exception) {
+        return visible
+    }
+    val payloadStems = payload.papers
+        .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
+        .map { normalizeStem(it.text) }
+    val visibleStems = try {
+        LegacyParser.parse(visible.json).papers
+            .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
+            .map { normalizeStem(it.text) }
+    } catch (_: Exception) {
+        return visible
+    }
+    if (payloadStems.isEmpty() || visibleStems.isEmpty()) return visible
+    var payloadIndex = 0
+    for (stem in visibleStems) {
+        while (payloadIndex < payloadStems.size && payloadStems[payloadIndex] != stem) payloadIndex++
+        if (payloadIndex == payloadStems.size) {
+            // A visible stem the payload does not know: the body was edited.
+            return DocxParseResult(
+                visible.json,
+                warnings + listOf(
+                    "The document's hidden question data is out of date (the file was " +
+                        "edited outside the app), so marks, difficulty and tags were " +
+                        "restored from the visible text only."
+                ),
+                visible.paperTitle
+            )
+        }
+        payloadIndex++
+    }
+    return DocxParseResult(payloadJson, warnings, payload.papers.firstOrNull()?.title ?: visible.paperTitle)
+}
+
+/**
+ * Stem text for the payload-freshness comparison: entities decoded (the
+ * visible text always decodes them; the payload stores what was authored),
+ * every whitespace removed — the visible side joins stacked text elements
+ * with a newline the payload does not have — and case folded. A freshness
+ * key, not an identity: two stems that differ only in spacing are the same
+ * question for this purpose.
+ */
+private fun normalizeStem(text: String): String =
+    decodeXmlEntities(text).replace(Regex("\\s+"), "").lowercase()
 
 internal data class DocxLine(val html: String, val heading: Int?)
 

@@ -116,18 +116,10 @@ class DocxRoundTripTest {
             }
             return canonical(shape(merged))
         }
-        // A question with no correct option is written as "Ans. a" (the
-        // format refuses answerless questions); fold that in here so the
-        // sample side describes the same document.
-        val correct = if (correctOptionIds.isEmpty() && options.isNotEmpty()) {
-            setOf(options.first().id)
-        } else {
-            correctOptionIds
-        }
         return QuestionShape(
             elements = fold(elements, image),
             options = options.map { option ->
-                OptionShape(fold(option.elements, option.image), option.id in correct)
+                OptionShape(fold(option.elements, option.image), option.id in correctOptionIds)
             },
             explanation = fold(explanationElements, explanationImage)
         )
@@ -181,11 +173,12 @@ class DocxRoundTripTest {
         val after = imported.papers.single()
 
         assertEquals(
-            "every carryable question must survive",
-            carryable(samplePaper).size,
+            "every question must survive — including the ones the visible "
+                + "markers cannot carry (the payload does)",
+            allQuestions(samplePaper).size,
             allQuestions(after).size
         )
-        val before = carryable(samplePaper).map { it.shape() }
+        val before = allQuestions(samplePaper).map { it.shape() }
         val afterShapes = shapes(after)
         val changed = before.indices.filter { before[it] != afterShapes[it] }
         assertEquals(
@@ -198,19 +191,42 @@ class DocxRoundTripTest {
         // The tree: Science above Chemistry and Physics, the rest top level.
         assertEquals(tree(samplePaper), tree(after))
         // Passage groups: same titles above the same members.
-        assertEquals(
-            questionPassageTitles(samplePaper).filterIndexed { i, _ -> allQuestions(samplePaper)[i].options.isNotEmpty() },
-            questionPassageTitles(after)
-        )
+        assertEquals(questionPassageTitles(samplePaper), questionPassageTitles(after))
         // The paper title comes from Heading 1.
         assertEquals(samplePaper.title, after.title)
+    }
+
+    /**
+     * The payload's whole point: everything the visible markers drop —
+     * ids, marks, difficulty, tags, the answerless edge cases — comes back
+     * untouched, so a re-import recognises every question instead of
+     * adding duplicates.
+     */
+    @Test
+    fun payloadPreservesWhatMarkersCannotCarry() {
+        val bytes = export(samplePaper, sampleFile)
+        val after = LegacyParser.parse(parseDocx(bytes).json).papers.single()
+
+        assertEquals(
+            "ids must survive so re-import deduplicates",
+            allQuestions(samplePaper).map { it.id },
+            allQuestions(after).map { it.id }
+        )
+        allQuestions(samplePaper).forEachIndexed { index, q ->
+            val got = allQuestions(after)[index]
+            assertEquals("marks of ${q.id}", q.marks, got.marks, 0.0)
+            assertEquals("difficulty of ${q.id}", q.difficulty, got.difficulty)
+            assertEquals("tags of ${q.id}", q.tags, got.tags)
+            assertEquals("correct of ${q.id}", q.correctOptionIds, got.correctOptionIds)
+        }
     }
 
     @Test
     fun aSecondPassThroughTheFormatChangesNothing() {
         val bytes = export(samplePaper, sampleFile)
-        val passOne = LegacyParser.parse(parseDocx(bytes).json).papers.single()
-        val bytesTwo = export(passOne, sampleFile.copy(passages = passOne.passages))
+        val passOneFile = LegacyParser.parse(parseDocx(bytes).json)
+        val passOne = passOneFile.papers.single()
+        val bytesTwo = export(passOne, passOneFile)
         val passTwo = LegacyParser.parse(parseDocx(bytesTwo).json).papers.single()
 
         val one = shapes(passOne)
@@ -235,12 +251,55 @@ class DocxRoundTripTest {
     @Test
     fun idsAreStableAcrossParses() {
         val bytes = export(samplePaper, sampleFile)
-        val passOne = LegacyParser.parse(parseDocx(bytes).json).papers.single()
-        val passTwo = LegacyParser.parse(parseDocx(export(passOne, sampleFile.copy(passages = passOne.passages))).json)
-            .papers.single()
+        val passOneFile = LegacyParser.parse(parseDocx(bytes).json)
+        val passOne = passOneFile.papers.single()
+        val passTwo = LegacyParser.parse(parseDocx(export(passOne, passOneFile)).json).papers.single()
         assertEquals(
             allQuestions(passOne).map { it.id },
             allQuestions(passTwo).map { it.id }
         )
+    }
+
+    /**
+     * Editing the visible text in Word must not resurrect stale metadata:
+     * a payload that no longer matches the body is ignored, and the
+     * markers (which cannot carry marks, difficulty or tags) take over.
+     */
+    @Test
+    fun editedDocumentFallsBackToVisibleMarkers() {
+        val bytes = export(samplePaper, sampleFile)
+        val tampered = rezip(bytes, "word/document.xml") { xml ->
+            xml.replace("A car starts from rest", "A truck starts from rest")
+        }
+        val parsed = parseDocx(tampered)
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        assertTrue(
+            "the fallback must say why: ${parsed.warnings}",
+            parsed.warnings.any { it.contains("hidden question data") }
+        )
+        // Marker path: the metadata the markers cannot carry is gone, and
+        // the option-less edge case is written out of the visible body.
+        assertEquals(allQuestions(samplePaper).size - 1, allQuestions(after).size)
+        assertEquals(1.0, allQuestions(after)[0].marks, 0.0)
+    }
+
+    private fun rezip(bytes: ByteArray, entry: String, transform: (String) -> String): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipInputStream(bytes.inputStream()).use { input ->
+            java.util.zip.ZipOutputStream(out).use { output ->
+                var e = input.nextEntry
+                while (e != null) {
+                    output.putNextEntry(java.util.zip.ZipEntry(e.name))
+                    if (e.name == entry) {
+                        output.write(transform(input.readBytes().toString(Charsets.UTF_8)).toByteArray())
+                    } else {
+                        output.write(input.readBytes())
+                    }
+                    output.closeEntry()
+                    e = input.nextEntry
+                }
+            }
+        }
+        return out.toByteArray()
     }
 }

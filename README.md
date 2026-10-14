@@ -449,9 +449,15 @@ tables as real Word tables, and MathML formulas as native Word equations.
 Pictures travel as embedded image files; only data-URI images can be embedded, so questions
 whose images are remote URLs are written without them (a warning is logged). Maths outside
 the fraction / square-root / super- and subscript subset is kept as plain text, also warned
-about. Marks, difficulty and tags are not written — this format is for reading and light
-editing; the JSON or backup exports carry everything. A `.docx` this app wrote re-imports
-with its category tree intact (the sections above).
+about.
+
+An export also carries an **invisible payload** — the full paper (ids, marks, difficulty,
+tags, correct answers) in a `docProps/custom.xml` part Word preserves on save. It changes
+nothing about how the document looks or edits; on import the app uses it when it still
+matches the visible text, so re-importing an untouched export recognises every question
+instead of adding duplicates. If the document was edited outside the app (the payload no
+longer matches the body), import falls back to the visible markers — which cannot carry
+marks, difficulty or tags — and says so in the warnings.
 
 ### If a .docx is rejected
 

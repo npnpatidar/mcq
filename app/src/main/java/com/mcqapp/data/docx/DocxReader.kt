@@ -25,7 +25,15 @@ internal sealed interface DocxBlock {
 
 internal class DocxRead(
     val blocks: List<DocxBlock>,
-    val warnings: MutableList<String> = mutableListOf()
+    val warnings: MutableList<String> = mutableListOf(),
+    /**
+     * The raw JSON of the app's hidden payload property (`mcqapp` in
+     * `docProps/custom.xml`), when this file was written by the app's own
+     * exporter. Word keeps the part on save, so an untouched file restores
+     * with full fidelity; Google Docs strips it, and an edited document
+     * falls back to the visible markers (checked by the caller).
+     */
+    val payloadJson: String? = null
 )
 
 /**
@@ -49,6 +57,7 @@ internal fun readDocx(bytes: ByteArray): DocxRead {
     val reader = BodyReader(entries, rels, mimes, warnings)
     val body = doc.documentElement.childElements().firstOrNull { it.isWord("body") }
         ?: throw IllegalArgumentException("Not a Word document: w:body is missing.")
+    val payload = entries["docProps/custom.xml"]?.let { readPayload(it) }
     val blocks = mutableListOf<DocxBlock>()
     for (child in body.childElements()) {
         when {
@@ -63,8 +72,31 @@ internal fun readDocx(bytes: ByteArray): DocxRead {
             )
         }
     }
-    return DocxRead(blocks, warnings)
+    return DocxRead(blocks, warnings, payload)
 }
+
+/**
+ * The `mcqapp` custom property to its JSON value, or null. Unknown or
+ * malformed parts are ignored — a payload is an optimisation, never a
+ * requirement, and a broken one must not block the marker path.
+ */
+private fun readPayload(bytes: ByteArray): String? = try {
+    val doc = parseXml(bytes, "docProps/custom.xml")
+    val properties = doc.documentElement
+    var found: String? = null
+    for (property in properties.childElements()) {
+        if (property.localName != "property") continue
+        if (property.getAttribute("name") != PAYLOAD_PROPERTY) continue
+        for (value in property.childElements()) {
+            if (value.localName == "lpwstr") found = value.textContent
+        }
+    }
+    found?.takeIf { it.isNotBlank() }
+} catch (_: Exception) {
+    null
+}
+
+internal const val PAYLOAD_PROPERTY = "mcqapp"
 
 private fun Element.isWord(local: String) = namespaceURI == WORD_NS && localName == local
 

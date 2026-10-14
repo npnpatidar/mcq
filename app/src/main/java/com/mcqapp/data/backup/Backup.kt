@@ -159,6 +159,9 @@ object McqBackupFormat {
         } catch (e: Exception) {
             throw Invalid("Not a readable zip file: ${e.message}")
         }
+        if (entries.isEmpty()) {
+            throw Invalid("Not a readable zip file: the archive is empty.")
+        }
         fun part(name: String): String =
             entries[name]?.toString(Charsets.UTF_8)
                 ?: throw Invalid("This backup is missing $name — it may be truncated.")

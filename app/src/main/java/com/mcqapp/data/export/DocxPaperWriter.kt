@@ -49,10 +49,16 @@ object DocxPaperWriter {
         // app wrote and nobody edited re-imports with ids, marks,
         // difficulty and tags intact instead of duplicating everything the
         // visible markers cannot carry. The parser falls back to the
-        // markers when the payload no longer matches the visible text.
+        // markers when the payload no longer matches the visible text,
+        // and grafts the image srcs back from the word/media entries the
+        // payload deliberately does not duplicate.
         val payload = payloadJsonFormat.encodeToString(
             McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = listOf(paper), passages = passages)
+            McqFileDto(
+                version = 1,
+                papers = listOf(stripPayloadImages(paper)),
+                passages = passages.map { stripPayloadImages(it) }
+            )
         )
 
         body.append(headingPara(1, paper.title.ifBlank { "Paper" }))
@@ -78,11 +84,25 @@ object DocxPaperWriter {
         }
 
         fun emitPassageAbove(question: QuestionDto, openPassageId: String?): String? {
-            if (question.passageId == openPassageId) return openPassageId
-            passages.firstOrNull { it.id == question.passageId }?.let {
-                body.append(passageBlocks(it, media, warnings).joinToString(""))
+            val wanted = question.passageId
+            if (wanted == openPassageId ||
+                (wanted.isNullOrBlank() && openPassageId.isNullOrBlank())
+            ) {
+                return openPassageId
             }
-            return question.passageId
+            val passage = passages.firstOrNull { it.id == wanted }
+            if (passage != null) {
+                body.append(passageBlocks(passage, media, warnings).joinToString(""))
+            } else if (wanted.isNullOrBlank()) {
+                // A standalone question after a passage's members: a bare
+                // `Passage:` line is the marker grammar's end-of-passage
+                // reset, so the question does not re-bind to the block
+                // above it on re-import.
+                body.append(
+                    "<w:p><w:r><w:t xml:space=\"preserve\">Passage:</w:t></w:r></w:p>"
+                )
+            }
+            return wanted
         }
 
         var openPassageId: String? = null
@@ -91,6 +111,10 @@ object DocxPaperWriter {
         val lastTopLevelId = paper.questions.lastOrNull()?.id
         for (node in allSections) {
             body.append(headingPara((node.depth + 2).coerceAtMost(9), node.title))
+            // Reset per section: the sectioned parser binds passages within
+            // a section only, so a passage shared with a later section is
+            // re-emitted above its members there instead of silently lost.
+            openPassageId = null
             for (question in node.dto.questions) {
                 openPassageId = emitPassageAbove(question, openPassageId)
                 emitQuestion(question, question.id == lastSectionQuestionId)
@@ -101,6 +125,7 @@ object DocxPaperWriter {
         // silently join the last one.
         if (paper.questions.isNotEmpty()) {
             if (paper.categories.isNotEmpty()) body.append(headingPara(2, "Uncategorized"))
+            openPassageId = null
             for (question in paper.questions) {
                 openPassageId = emitPassageAbove(question, openPassageId)
                 emitQuestion(question, question.id == lastTopLevelId)
@@ -142,6 +167,77 @@ object DocxPaperWriter {
         return out
     }
 
+    /**
+     * Image srcs stripped from the hidden payload: the same bytes ship as
+     * `word/media` entries, and a payload full of base64 doubles the file
+     * (a multi-MB `vt:lpwstr` property is also unverified against Word's
+     * limits). Stripped srcs become empty strings — not nulls — so the
+     * parser's freshness fingerprint still sees the image *positions* and
+     * grafts the real srcs back from the body on re-import.
+     */
+    private fun stripPayloadImages(paper: PaperDto): PaperDto = paper.copy(
+        categories = paper.categories.map { category ->
+            category.copy(questions = category.questions.map { stripPayloadImages(it) })
+        },
+        questions = paper.questions.map { stripPayloadImages(it) }
+    )
+
+    private fun stripPayloadImages(passage: PassageDto): PassageDto = passage.copy(
+        elements = stripElementImages(passage.elements),
+        image = passage.image?.let { stripScalarSrc(it) }
+    )
+
+    private fun stripPayloadImages(question: QuestionDto): QuestionDto = question.copy(
+        elements = stripElementImages(question.elements),
+        image = question.image?.let { stripScalarSrc(it) },
+        options = question.options.map { option ->
+            // The payload's `options_elements` shape has no room for an
+            // option's text beside its elements, so text-only options fold
+            // their text into an element — the same fallback the visible
+            // body uses. An option cannot carry a scalar image beside
+            // element images either (the serializer drops it), so when
+            // both exist the stripped scalar rides along as an extra
+            // position marker instead.
+            val base = if (option.elements.isNotEmpty()) {
+                option.elements
+            } else {
+                listOfNotNull(
+                    option.text.takeIf { it.isNotBlank() }
+                        ?.let { ContentElement.TextElement(it) }
+                )
+            }
+            val stripped = stripElementImages(base)
+            val elements = if (
+                option.image != null && option.image.startsWith("data:") &&
+                base.any { it is ContentElement.ImageElement }
+            ) {
+                stripped + ContentElement.ImageElement("")
+            } else {
+                stripped
+            }
+            option.copy(elements = elements, image = option.image?.let { stripScalarSrc(it) })
+        },
+        explanationElements = stripElementImages(question.explanationElements),
+        explanationImage = question.explanationImage?.let { stripScalarSrc(it) }
+    )
+
+    /**
+     * Only embedded data URIs are blanked: a remote URL is a short string
+     * the payload can keep as-is (the body cannot carry it, so the graft
+     * leaves it alone), while base64 bytes are what bloats the property.
+     */
+    private fun stripScalarSrc(src: String): String =
+        if (src.startsWith("data:")) "" else src
+
+    private fun stripElementImages(elements: List<ContentElement>): List<ContentElement> =
+        elements.map { element ->
+            if (element is ContentElement.ImageElement) {
+                element.copy(src = stripScalarSrc(element.src))
+            } else {
+                element
+            }
+        }
+
     private fun questionBlocks(
         question: QuestionDto,
         number: Int,
@@ -176,6 +272,16 @@ object DocxPaperWriter {
                 markerPrefix = "$number.) "
             )
         )
+        // Every stem element can be uncarryable (a remote picture the
+        // body cannot hold); with no stem paragraph the `N.)` marker
+        // never reaches the document and the import would choke.
+        if (out.isEmpty()) {
+            warnings.add(
+                "Question ${question.id} has no content Word can carry; " +
+                    "it was left out."
+            )
+            return out
+        }
 
         val carried = question.options.take(OPTION_LETTERS.size)
         if (carried.size < question.options.size) {
@@ -580,6 +686,7 @@ object DocxPaperWriter {
         private val uriToRid = HashMap<String, String>()
         private var mediaCounter = 0
         private var docPrCounter = 0
+        private var warnedWebp = false
 
         /** Inline picture item for a data URI, or null (with a warning). */
         fun embed(src: String?, warnings: MutableList<String>): Pic? {
@@ -591,6 +698,13 @@ object DocxPaperWriter {
                         "Word documents carry their pictures as files."
                 )
                 return null
+            }
+            if (image.mimeType.equals("image/webp", ignoreCase = true) && !warnedWebp) {
+                warnedWebp = true
+                warnings.add(
+                    "A picture is in webp format; older Word versions may not display it — " +
+                        "convert it to PNG for compatibility."
+                )
             }
             val rid = uriToRid.getOrPut(src) {
                 mediaCounter++

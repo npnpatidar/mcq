@@ -9,6 +9,7 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -261,6 +262,75 @@ class DocxRoundTripTest {
     }
 
     /**
+     * Passage membership after more than one passage: the question stream
+     * the parser walks has passage bodies blanked in place, so each
+     * question must bind to the passage whose block precedes it — a member
+     * of the second passage must not drift onto the first.
+     */
+    @Test
+    fun twoPassagesBindTheirMembers() {
+        fun member(id: String, passageId: String) = com.mcqapp.data.io.QuestionDto(
+            id = id,
+            text = "Question $id",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(id = "a", text = "x"),
+                com.mcqapp.data.io.OptionDto(id = "b", text = "y")
+            ),
+            correctOptionIds = listOf("a"),
+            passageId = passageId
+        )
+        val paper = PaperDto(
+            id = "p",
+            title = "Passage Paper",
+            categories = listOf(
+                // Members of two passages, then a standalone question after
+                // the last passage, then a second category (section) that
+                // reuses passage-1.
+                com.mcqapp.data.io.CategoryDto(
+                    id = "c1",
+                    title = "First",
+                    questions = listOf(
+                        member("q-a1", "passage-1"),
+                        member("q-a2", "passage-1"),
+                        member("q-b1", "passage-2"),
+                        member("q-solo", "")
+                    )
+                ),
+                com.mcqapp.data.io.CategoryDto(
+                    id = "c2",
+                    title = "Second",
+                    questions = listOf(member("q-a3", "passage-1"))
+                )
+            )
+        )
+        val passages = listOf(
+            com.mcqapp.data.io.PassageDto(
+                id = "passage-1",
+                title = "Alpha",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Body alpha."))
+            ),
+            com.mcqapp.data.io.PassageDto(
+                id = "passage-2",
+                title = "Beta",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Body beta."))
+            )
+        )
+        val bytes = DocxPaperWriter.paperToDocxBytes(paper, passages)
+        val parsed = parseDocx(bytes)
+        // An untouched export carries the payload, so the original ids and
+        // passage ids come straight back.
+        val afterFile = LegacyParser.parse(parsed.json)
+        val after = afterFile.papers.single()
+        val byStem = allQuestions(after).associateBy { it.text.trim() }
+        val titles = afterFile.passages.associate { it.id to it.title }
+        assertEquals("Alpha", titles[byStem.getValue("Question q-a1").passageId])
+        assertEquals("Alpha", titles[byStem.getValue("Question q-a2").passageId])
+        assertEquals("Beta", titles[byStem.getValue("Question q-b1").passageId])
+        assertEquals("Alpha", titles[byStem.getValue("Question q-a3").passageId])
+        assertNull(byStem.getValue("Question q-solo").passageId)
+    }
+
+    /**
      * Editing the visible text in Word must not resurrect stale metadata:
      * a payload that no longer matches the body is ignored, and the
      * markers (which cannot carry marks, difficulty or tags) take over.
@@ -281,6 +351,155 @@ class DocxRoundTripTest {
         // the option-less edge case is written out of the visible body.
         assertEquals(allQuestions(samplePaper).size - 1, allQuestions(after).size)
         assertEquals(1.0, allQuestions(after)[0].marks, 0.0)
+    }
+
+    /**
+     * 2.1: an option edited in Word is an edit like any other — the stems
+     * still match, but the full-content fingerprint must notice the option
+     * text changed and refuse the stale payload.
+     */
+    @Test
+    fun optionEditFallsBackToVisibleMarkers() {
+        val bytes = export(samplePaper, sampleFile)
+        val tampered = rezip(bytes, "word/document.xml") { xml ->
+            xml.replace(
+                "A gas has a fixed volume but no fixed shape.",
+                "A liquid has a fixed volume but no fixed shape."
+            )
+        }
+        val parsed = parseDocx(tampered)
+        assertTrue(
+            "the fallback must say why: ${parsed.warnings}",
+            parsed.warnings.any { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        val first = allQuestions(after).first()
+        assertTrue(
+            "the edited option text must survive",
+            first.options.any { option ->
+                option.elements.any { element ->
+                    element is ContentElement.TextElement &&
+                        element.text.contains("A liquid has a fixed volume")
+                }
+            }
+        )
+        // Metadata the markers cannot carry is gone with the payload.
+        assertEquals(1.0, first.marks, 0.0)
+    }
+
+    /**
+     * 2.1: the answer key is visible text (`Ans. b, c`); editing it must
+     * disable the payload, or the edit is silently reverted on import.
+     */
+    @Test
+    fun answerKeyEditFallsBackToVisibleMarkers() {
+        val bytes = export(samplePaper, sampleFile)
+        val tampered = rezip(bytes, "word/document.xml") { xml ->
+            xml.replace("Ans. b, c", "Ans. a")
+        }
+        val parsed = parseDocx(tampered)
+        assertTrue(
+            "the fallback must say why: ${parsed.warnings}",
+            parsed.warnings.any { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        assertEquals(listOf("a"), allQuestions(after).first().correctOptionIds)
+    }
+
+    /**
+     * 2.1: renaming the paper in Word is an edit too — the payload's title
+     * must not silently win over the visible one.
+     */
+    @Test
+    fun titleEditFallsBackToVisibleMarkers() {
+        val bytes = export(samplePaper, sampleFile)
+        val tampered = rezip(bytes, "word/document.xml") { xml ->
+            xml.replace("Sample Bank", "Renamed Bank")
+        }
+        val parsed = parseDocx(tampered)
+        assertTrue(
+            "the fallback must say why: ${parsed.warnings}",
+            parsed.warnings.any { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json)
+        assertEquals("Renamed Bank — English + हिन्दी", after.papers.single().title)
+        assertEquals("Renamed Bank — English + हिन्दी", parsed.paperTitle)
+    }
+
+    /**
+     * 3.1: the hidden payload must not duplicate the images as base64 (the
+     * same bytes ship as word/media entries, and a multi-MB property risks
+     * Word reporting unreadable content). An untouched re-import still
+     * grafts the real srcs back from the body.
+     */
+    @Test
+    fun untouchedPayloadOmitsImageBytesButReimportGraftsThem() {
+        val bytes = export(samplePaper, sampleFile)
+        val custom = readEntry(bytes, "docProps/custom.xml")
+        assertTrue(
+            "the payload must carry no base64 image bytes",
+            !custom.contains("data:image")
+        )
+        val parsed = parseDocx(bytes)
+        assertTrue(
+            "an untouched export must stay fresh: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json)
+        val images = after.papers.flatMap { allQuestions(it) }
+            .flatMap { q -> q.elements + q.explanationElements + q.options.flatMap { it.elements } }
+            .filterIsInstance<ContentElement.ImageElement>()
+        assertTrue("the sample carries pictures", images.isNotEmpty())
+        assertTrue(
+            "grafted srcs must be real bytes",
+            images.all { it.src.startsWith("data:image") }
+        )
+    }
+
+    /**
+     * A remote image URL rides only in the payload (the document body
+     * cannot carry it); the strip must keep it and the fingerprint must
+     * not read its absence from the body as an edit.
+     */
+    @Test
+    fun remoteImageUrlSurvivesTheRoundTrip() {
+        val remote = "https://example.com/pic.png"
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-remote",
+            text = "Question with a remote picture",
+            elements = listOf(
+                ContentElement.TextElement("Question with a remote picture"),
+                ContentElement.ImageElement(remote)
+            ),
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(id = "a", text = "x"),
+                com.mcqapp.data.io.OptionDto(id = "b", text = "y")
+            ),
+            correctOptionIds = listOf("a"),
+            marks = 3.0
+        )
+        val paper = PaperDto(id = "p", title = "Remote Paper", questions = listOf(question))
+        val bytes = DocxPaperWriter.paperToDocxBytes(paper)
+        val parsed = parseDocx(bytes)
+        assertTrue(
+            "a remote-only image is not an edit: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        val restored = allQuestions(after).single()
+        assertEquals(remote, restored.elements.filterIsInstance<ContentElement.ImageElement>().single().src)
+        assertEquals(3.0, restored.marks, 0.0)
+    }
+
+    private fun readEntry(bytes: ByteArray, entry: String): String {
+        java.util.zip.ZipInputStream(bytes.inputStream()).use { input ->
+            var e = input.nextEntry
+            while (e != null) {
+                if (e.name == entry) return input.readBytes().toString(Charsets.UTF_8)
+                e = input.nextEntry
+            }
+        }
+        error("entry $entry not found")
     }
 
     private fun rezip(bytes: ByteArray, entry: String, transform: (String) -> String): ByteArray {

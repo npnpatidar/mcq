@@ -5,12 +5,17 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.data.backup.BackupRestorer
+import com.mcqapp.data.backup.BackupSource
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
+import com.mcqapp.util.readBounded
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -208,6 +213,92 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Export failed", e)
                 onError("Export failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Writes the full backup zip; assembly and the file write stay off Main. */
+    fun backupAll(uri: Uri, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    val appVersion = try {
+                        app.packageManager.getPackageInfo(app.packageName, 0).versionName
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val backup = BackupSource(repository.db())
+                        .collect(appVersion, repository.loadTestProgress())
+                        .copy(settings = repository.settingsSnapshot())
+                    McqBackupFormat.write(
+                        manifest = backup.manifest,
+                        content = backup.content,
+                        study = backup.study,
+                        settings = backup.settings
+                    )
+                }
+                val written = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val outputStream = app.contentResolver.openOutputStream(uri)
+                    if (outputStream == null) {
+                        -1
+                    } else {
+                        outputStream.use { it.write(bytes) }
+                        bytes.size
+                    }
+                }
+                if (written < 0) {
+                    onError("Could not open file for writing")
+                } else {
+                    Logger.i("SETTINGS", "Backup written ($written bytes)")
+                }
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Backup failed", e)
+                onError("Backup failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Reads and restores a backup zip. The wipe-and-replace is atomic in
+     * the database; settings flip after. [onDone] reports the summary the
+     * screen shows.
+     */
+    fun restoreBackup(uri: Uri, onError: (String) -> Unit, onDone: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                // A backup legitimately holds inline data-URI images, so it
+                // gets the zip expansion cap rather than the 64 MB bank
+                // import limit — and a message that talks about backups.
+                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    app.contentResolver.openInputStream(uri)?.use { stream ->
+                        readBounded(stream, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES)
+                    } ?: throw IllegalStateException("Could not read the file.")
+                }
+                val backup = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    McqBackupFormat.read(bytes)
+                }
+                val updateAnswers = repository.updateAnswersOnDuplicate().first()
+                val report = BackupRestorer(repository.db()).restore(
+                    backup,
+                    updateAnswersOnDuplicate = updateAnswers,
+                    applySettings = { repository.settingsRestore(it) },
+                    applyInProgress = { snapshot ->
+                        if (snapshot != null) repository.saveTestProgress(snapshot)
+                        else repository.clearTestProgress()
+                    }
+                )
+                refreshStorage()
+                Logger.i("SETTINGS", "Backup restored: $report")
+                onDone(report)
+            } catch (e: com.mcqapp.util.ImportTooLargeException) {
+                Logger.e("SETTINGS", "Restore failed", e)
+                val limitMb = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)
+                onError("That backup is over the $limitMb MB restore limit — it may be corrupt.")
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Restore failed", e)
+                onError("Restore failed: ${e.message}")
             }
         }
     }

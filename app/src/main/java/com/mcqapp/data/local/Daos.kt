@@ -36,6 +36,10 @@ interface PaperDao {
     @Query("UPDATE papers SET title = :title, description = :description, durationMinutes = :durationMinutes, negativeMarking = :negativeMarking WHERE id = :id")
     suspend fun updateFields(id: String, title: String, description: String, durationMinutes: Int, negativeMarking: Double)
 
+    /** Backup restore: creation time rides outside the import format. */
+    @Query("UPDATE papers SET createdAt = :createdAt WHERE id = :id")
+    suspend fun updateCreatedAt(id: String, createdAt: Long)
+
     @Query("DELETE FROM papers WHERE id = :id")
     suspend fun deleteById(id: String)
 }
@@ -392,6 +396,9 @@ interface CardStateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: CardStateEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(states: List<CardStateEntity>)
+
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
 
@@ -415,6 +422,13 @@ interface ReviewLogDao {
     /** Appends one graded review; a row is never updated once written. */
     @Insert
     suspend fun insert(log: ReviewLogEntity): Long
+
+    /** Backup restore: rows carry their original ids. */
+    @Insert
+    suspend fun insertAll(logs: List<ReviewLogEntity>)
+
+    @Query("SELECT * FROM review_log ORDER BY id ASC")
+    suspend fun getAll(): List<ReviewLogEntity>
 
     /** One question's review history, oldest first. Exercised by the
      *  repository tests; the optimizer will read it once it lands. */

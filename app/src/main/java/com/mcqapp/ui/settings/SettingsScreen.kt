@@ -89,6 +89,25 @@ fun SettingsScreen(
             viewModel.exportAll(it) { error -> exportError = error }
         }
     }
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri?.let {
+            viewModel.backupAll(it) { error -> exportError = error }
+        }
+    }
+    var showRestoreConfirm by remember { mutableStateOf(false) }
+    var restoreDone by remember { mutableStateOf<String?>(null) }
+    var restoreUri by remember { mutableStateOf<Uri?>(null) }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        // The picked uri rides in state; the confirmation reads it.
+        if (uri != null) {
+            restoreUri = uri
+            showRestoreConfirm = true
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -422,6 +441,30 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(8.dp))
                     Button(
+                        onClick = { backupLauncher.launch("mcqapp-backup.zip") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.backup_full))
+                    }
+                    Text(
+                        stringResource(R.string.backup_full_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.restore_backup))
+                    }
+                    Text(
+                        stringResource(R.string.restore_backup_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
                         onClick = {
                             val path = com.mcqapp.util.Logger.logFilePath()
                             if (path != null) {
@@ -476,6 +519,44 @@ fun SettingsScreen(
         }
     }
 
+    if (showRestoreConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showRestoreConfirm = false },
+            title = { Text(stringResource(R.string.restore_backup)) },
+            text = {
+                Text(stringResource(R.string.restore_backup_confirm))
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showRestoreConfirm = false
+                    restoreUri?.let { uri ->
+                        viewModel.restoreBackup(
+                            uri,
+                            onError = { error -> exportError = error },
+                            onDone = { report -> restoreDone = report }
+                        )
+                    }
+                }) { Text(stringResource(R.string.restore_replace_everything)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showRestoreConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+    restoreDone?.let { report ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { restoreDone = null },
+            title = { Text(stringResource(R.string.restore_backup)) },
+            text = { Text(report) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { restoreDone = null }) {
+                    Text(stringResource(R.string.ok))
+                }
+            }
+        )
+    }
     exportError?.let { error ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { exportError = null },

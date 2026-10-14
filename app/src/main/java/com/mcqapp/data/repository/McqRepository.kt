@@ -83,6 +83,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun loadTestProgress(): String? = settings.loadTestProgress()
     suspend fun clearTestProgress() = settings.clearTestProgress()
 
+    /** Every preference, typed, for the backup's settings.json. */
+    suspend fun settingsSnapshot() = settings.snapshot()
+
+    /** Full replace of every preference from a backup. */
+    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) =
+        settings.restore(snapshot)
+
     // --- search & storage (no collaborator: they span everything) ---
 
     /** Cross-paper search with paper provenance attached. */

@@ -1,16 +1,26 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 
 // Internal, not private: RepositorySettingsTest seeds the same file directly to
 // prove legacy keys are inert and that corrupt values fall back to defaults.
@@ -233,6 +243,67 @@ internal class SettingsStore(private val context: Context) {
         if (snapshot == null || snapshot.paperId == paperId) {
             Logger.i("REPO", "Discarding in-progress snapshot for $paperId")
             clearTestProgress()
+        }
+    }
+
+    // --- Backup: every preference, generically ---
+
+    /**
+     * Every stored preference with its type, for the backup's settings.json.
+     * Keyed by name rather than typed keys so a newly added preference
+     * rides along without this file changing; unknown value types are left
+     * out rather than half-captured.
+     */
+    suspend fun snapshot(): McqBackupFormat.SettingsFile {
+        val prefs = context.dataStore.data.first().asMap()
+        val out = LinkedHashMap<String, McqBackupFormat.PreferenceEntry>()
+        for ((key, value) in prefs) {
+            val entry = when (value) {
+                is Boolean -> McqBackupFormat.PreferenceEntry("boolean", JsonPrimitive(value))
+                is Double -> McqBackupFormat.PreferenceEntry("double", JsonPrimitive(value))
+                is Float -> McqBackupFormat.PreferenceEntry("float", JsonPrimitive(value))
+                is Int -> McqBackupFormat.PreferenceEntry("int", JsonPrimitive(value))
+                is Long -> McqBackupFormat.PreferenceEntry("long", JsonPrimitive(value))
+                is String -> McqBackupFormat.PreferenceEntry("string", JsonPrimitive(value))
+                else -> continue
+            }
+            out[key.name] = entry
+        }
+        return McqBackupFormat.SettingsFile(out)
+    }
+
+    /**
+     * Replaces every preference with the backup's values: the restore is a
+     * full replace, so a setting changed since the backup does not survive
+     * it. Values that fail to decode keep their current (about to be
+     * cleared) state out — a malformed entry is skipped, never fatal.
+     */
+    suspend fun restore(settings: McqBackupFormat.SettingsFile) {
+        context.dataStore.edit { prefs ->
+            prefs.clear()
+            for ((name, entry) in settings.preferences) {
+                val value = entry.value
+                when (entry.type) {
+                    "boolean" -> (value as? JsonPrimitive)?.booleanOrNull?.let {
+                        prefs[booleanPreferencesKey(name)] = it
+                    }
+                    "double" -> (value as? JsonPrimitive)?.doubleOrNull?.let {
+                        prefs[doublePreferencesKey(name)] = it
+                    }
+                    "float" -> (value as? JsonPrimitive)?.floatOrNull?.let {
+                        prefs[floatPreferencesKey(name)] = it
+                    }
+                    "int" -> (value as? JsonPrimitive)?.intOrNull?.let {
+                        prefs[intPreferencesKey(name)] = it
+                    }
+                    "long" -> (value as? JsonPrimitive)?.longOrNull?.let {
+                        prefs[longPreferencesKey(name)] = it
+                    }
+                    "string" -> (value as? JsonPrimitive)?.let {
+                        prefs[stringPreferencesKey(name)] = it.content
+                    }
+                }
+            }
         }
     }
 }

@@ -17,6 +17,18 @@ class Exporter(private val db: AppDatabase) {
     private val json = Json { prettyPrint = true }
 
     suspend fun exportAll(): String {
+        return json.encodeToString(McqFileDto.serializer(), exportAllDto())
+    }
+
+    /**
+     * The whole bank as a DTO — the backup zip's `content.json`.
+     *
+     * @param withScheduling the question-keyed review map, for the plain
+     *   JSON export. The backup zip leaves it out ([false]): it carries
+     *   `card_state` rows verbatim (per paper, with their content hashes),
+     *   which this map cannot express, so building it would be waste.
+     */
+    suspend fun exportAllDto(withScheduling: Boolean = true): McqFileDto {
         Logger.i("EXPORT", "Exporting all papers")
         val papers = db.paperDao().getAll()
         val paperDtos = papers.map { paper -> exportPaperDto(paper) }
@@ -52,18 +64,17 @@ class Exporter(private val db: AppDatabase) {
         }
         Logger.i("EXPORT", "Exported ${paperDtos.size} papers, ${bookmarks.size} bookmarks, " +
             "${attemptDtos.size} attempts")
-        return json.encodeToString(
-            McqFileDto.serializer(),
-            McqFileDto(
-                version = 1,
-                papers = paperDtos,
-                bookmarks = bookmarks,
-                passages = db.passageDao().getAll().map { it.toPassageDto() },
-                attempts = attemptDtos,
-                // Review progress travels with the backup. It used to be
-                // dropped, so restoring a backup silently reset every SM-2
-                // schedule, due date and leech flag.
-                scheduling = db.cardStateDao().getAll()
+        return McqFileDto(
+            version = 1,
+            papers = paperDtos,
+            bookmarks = bookmarks,
+            passages = db.passageDao().getAll().map { it.toPassageDto() },
+            attempts = attemptDtos,
+            // Review progress travels with the JSON backup, keyed by question
+            // id. The full per-paper rows ride in the backup zip's study.json
+            // instead, which is why they are not built there.
+            scheduling = if (withScheduling) {
+                db.cardStateDao().getAll()
                     .filter { it.reps > 0 || it.dueAt > 0L }
                     .associate { state ->
                         state.questionId to CardScheduleDto(
@@ -80,7 +91,9 @@ class Exporter(private val db: AppDatabase) {
                             reviewCount = state.reviewCount
                         )
                     }
-            )
+            } else {
+                emptyMap()
+            }
         )
     }
 

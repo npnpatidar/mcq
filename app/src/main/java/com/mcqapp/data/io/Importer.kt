@@ -89,8 +89,9 @@ class Importer(
 
         // Image preparation (Bitmap decode/scale/compress) runs BEFORE the
         // transaction: it is pure CPU work that must not hold the database
-        // write lock. The scaled twins mirror the originals 1:1 — hashes and
-        // identity still read the original DTOs, only stored bytes shrink.
+        // write lock. The scaled twins mirror the originals 1:1 — identity
+        // reads the scaled DTOs (the bytes that get stored, and the bytes a
+        // re-imported export carries back), only the work order differs.
         val scaledPapers = file.withDownscaledImages().papers
 
         db.withTransaction {
@@ -269,7 +270,11 @@ class Importer(
 
                     categoryDto.questions.forEachIndexed { questionIndex, questionDto ->
                         val scaledQuestion = scaledCategory.questions[questionIndex]
-                        val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image }, questionDto.passageId)
+                        // Hash the scaled twin: its images are the bytes this
+                        // import actually stores, so a later re-import of an
+                        // export (which carries the stored bytes) hashes the
+                        // same and deduplicates instead of updating.
+                        val contentHash = ContentHash.of(scaledQuestion)
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
                             "textLength=${questionDto.text.length}")

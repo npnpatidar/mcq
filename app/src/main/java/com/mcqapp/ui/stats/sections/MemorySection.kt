@@ -27,6 +27,7 @@ import com.mcqapp.ui.stats.charts.LineChart
 import com.mcqapp.ui.stats.charts.LineSeries
 import com.mcqapp.ui.stats.charts.StackedBarChart
 import com.mcqapp.ui.stats.charts.formatCount
+import com.mcqapp.ui.stats.charts.formatPct
 import java.util.Locale
 
 /**

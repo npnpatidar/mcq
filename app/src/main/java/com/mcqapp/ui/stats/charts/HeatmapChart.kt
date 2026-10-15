@@ -60,7 +60,7 @@ internal fun HeatmapChart(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(14.dp + 7 * cell + 6 * gap)
+                .height(14.dp + cell * 7 + gap * 6)
                 .pointerInput(days, gap, cell) {
                     detectTapGestures { tap ->
                         val cellPx = cell.toPx()

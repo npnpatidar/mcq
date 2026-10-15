@@ -21,7 +21,7 @@ import com.mcqapp.R
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.ReviewGrade
 import java.time.Instant
-import java.time.ZoneOffset
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -59,7 +59,7 @@ internal fun CardInfoSheet(detail: StatsViewModel.CardDetail, onDismiss: () -> U
                 StatLine(R.string.stats_interval_label, "${state.intervalDays} d")
                 val dueLabel = when {
                     state.dueAt == 0L -> stringResource(R.string.stats_never)
-                    else -> Instant.ofEpochMilli(state.dueAt).atOffset(ZoneOffset.UTC)
+                    else -> Instant.ofEpochMilli(state.dueAt).atZone(ZoneId.systemDefault())
                         .format(dateTimeFormat)
                 }
                 StatLine(R.string.stats_due_label, dueLabel)
@@ -104,7 +104,7 @@ private fun HistoryRow(entry: com.mcqapp.domain.stats.ReviewHistoryEntry, format
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                Instant.ofEpochMilli(entry.reviewedAt).atOffset(ZoneOffset.UTC).format(format),
+                Instant.ofEpochMilli(entry.reviewedAt).atZone(ZoneId.systemDefault()).format(format),
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall
             )

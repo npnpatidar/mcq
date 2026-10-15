@@ -132,8 +132,16 @@ private fun ReviewsPerDayCard(bundle: StatsBundle) {
         title = { ChartTitle(R.string.stats_reviews_per_day) }
     ) {
         val colors = seriesColors()
+        val cumul = mutableListOf<Double>()
+        var running = 0.0
+        bundle.reviewsPerDay.forEach { point ->
+            running += point.total.toDouble()
+            cumul.add(running)
+        }
         StackedBarChart(
             points = bundle.reviewsPerDay,
+            overlay = cumul,
+            overlayLabel = { it.roundToInt().toString() },
             emptyText = { ChartEmpty(R.string.stats_no_data) }
         )
         Row(

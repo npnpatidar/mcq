@@ -100,14 +100,26 @@ internal fun LineChart(
         // Fills first so strokes draw on top.
         series.forEach { s ->
             if (!s.fill) return@forEach
-            val indices = s.values.indices.filter { s.values[it] != null }
-            if (indices.isEmpty()) return@forEach
-            val fillPath = Path()
-            fillPath.moveTo(xFor(indices.first()), topPad + plotHeight)
-            indices.forEach { i -> fillPath.lineTo(xFor(i), yFor(s.values[i]!!)) }
-            fillPath.lineTo(xFor(indices.last()), topPad + plotHeight)
-            fillPath.close()
-            drawPath(fillPath, s.color.copy(alpha = 0.16f))
+            // Split into contiguous non-null runs; the fill must not bridge gaps.
+            val runs = mutableListOf<MutableList<Int>>()
+            var current: MutableList<Int>? = null
+            s.values.indices.forEach { i ->
+                if (s.values[i] != null) {
+                    current = (current ?: mutableListOf()).apply { add(i) }
+                } else {
+                    if (current != null) { runs.add(current!!); current = null }
+                }
+            }
+            if (current != null) runs.add(current!!)
+            runs.forEach { run ->
+                if (run.isEmpty()) return@forEach
+                val fillPath = Path()
+                fillPath.moveTo(xFor(run.first()), topPad + plotHeight)
+                run.forEach { i -> fillPath.lineTo(xFor(i), yFor(s.values[i]!!)) }
+                fillPath.lineTo(xFor(run.last()), topPad + plotHeight)
+                fillPath.close()
+                drawPath(fillPath, s.color.copy(alpha = 0.16f))
+            }
         }
 
         // Polylines, breaking at null gaps.

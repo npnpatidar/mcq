@@ -23,6 +23,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mcqapp.domain.stats.StackedPoint
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -86,7 +87,7 @@ internal fun StackedBarChart(
                     val left = leftPad(density)
                     val plotWidth = size.width - left - rightPad(density)
                     val slot = plotWidth / points.size
-                    val index = ((tap.x - left) / slot).toInt()
+                    val index = floor((tap.x - left) / slot).toInt()
                     selected = if (index in points.indices) index else -1
                 }
             }

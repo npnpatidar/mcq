@@ -154,6 +154,34 @@ class StatsAggregatorTest {
     // --- true retention --------------------------------------------------------
 
     @Test
+    fun firstExposureIsExcludedFromTrueRetention() {
+        val reviews = listOf(
+            review("q1", rating = 3, reviewedAt = now - hour, stateBefore = CardStateKind.NEW,
+                intervalBeforeDays = null),
+            review("q2", rating = 1, reviewedAt = now - hour, stateBefore = CardStateKind.REVIEW,
+                intervalBeforeDays = 30)
+        )
+        val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.ALL)
+        val today = bundle.retentionTable.first { it.label == "today" }
+        assertEquals(1, today.allReviews)
+        assertEquals(0, today.allPasses)
+        assertEquals(0.0, bundle.kpis.retention!!, 1e-9)
+    }
+
+    @Test
+    fun sameDayRelearnStepIsExcludedFromTrueRetention() {
+        val reviews = listOf(
+            review("q1", rating = 3, reviewedAt = now - hour, stateBefore = CardStateKind.RELEARNING,
+                intervalBeforeDays = 0),
+            review("q2", rating = 3, reviewedAt = now - hour, stateBefore = CardStateKind.REVIEW,
+                intervalBeforeDays = 30)
+        )
+        val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.ALL)
+        val today = bundle.retentionTable.first { it.label == "today" }
+        assertEquals(1, today.allReviews)
+    }
+
+    @Test
     fun trueRetentionCountsOnlyTheFirstReviewPerCardPerStudyDay() {
         val reviews = listOf(
             review("q1", rating = 3, reviewedAt = now - 2 * hour, intervalBeforeDays = 30),

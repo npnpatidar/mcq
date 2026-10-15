@@ -102,14 +102,12 @@ rule (interval ≥ 21d *at review time*) without storing anything new.
 - **Stability histogram** (+ median/mean)
 - **Difficulty histogram** (1–10)
 - **Retrievability distribution** + estimated total knowledge
-- **Memory growth**: avg stability by review-number cohort + stability of
-  reviews over calendar time
-- **Interval distribution** histogram + cumulative % (Anki's Review Intervals)
+- **Memory growth**: avg interval by review-number cohort + interval of
+   reviews over calendar time
+- **Interval distribution** histogram + cumulative % overlay
 
 ### 5. Cards
 - **State donut**: new/learning/relearning/young/mature + total, leech callout
-- **Overdue age** breakdown
-- **Per-paper card counts** (global scope)
 
 ## Chart toolkit (hand-rolled Compose Canvas)
 

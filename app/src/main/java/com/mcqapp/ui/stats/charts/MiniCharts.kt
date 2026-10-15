@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -75,12 +76,12 @@ internal fun CalibrationChart(
     val labelColor = axisLabelColor()
     val primary = MaterialTheme.colorScheme.primary
     val textMeasurer = rememberTextMeasurer()
-    Canvas(modifier = modifier.fillMaxWidth()) {
+    Canvas(modifier = modifier.fillMaxWidth().height(220.dp)) {
         val side = minOf(size.width, 240.dp.toPx())
         val leftPad = (size.width - side).coerceAtLeast(0f) / 2f
         val bottomPad = 18.dp.toPx()
         val plot = side - 8.dp.toPx()
-        val origin = Offset(leftPad + 4.dp.toPx(), bottomPad + 0f)
+        val origin = Offset(leftPad + 4.dp.toPx(), size.height - bottomPad)
 
         // Frame and diagonal.
         drawLine(grid, origin, origin + Offset(plot, 0f), 1f)

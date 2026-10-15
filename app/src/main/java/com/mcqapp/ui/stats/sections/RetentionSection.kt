@@ -78,6 +78,7 @@ private fun TrendCard(bundle: StatsBundle) {
             ),
             fixedMax = 1.0,
             referenceLine = trend.desiredRetention,
+            yLabel = { formatPct(it) },
             emptyText = { ChartEmpty(R.string.stats_no_data) }
         )
         Row(

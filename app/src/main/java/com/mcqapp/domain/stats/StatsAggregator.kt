@@ -154,8 +154,10 @@ object StatsAggregator {
     /**
      * Anki's true-retention rule: only the first review of each card on each
      * study day counts, Again is a fail, and maturity is the interval the card
-     * carried into the review. Returns the pass/review counts of the
-     * qualifying reviews inside the window.
+     * carried into the review. Learning-step rows and first exposures (which
+     * carried no whole-day interval) are excluded, mirroring Anki's
+     * `last_interval >= 1` / `last_interval <= -86400` check. Returns the
+     * pass/review counts of the qualifying reviews inside the window.
      */
     private fun firstOfDayReviews(
         reviews: List<ReplayReview>,
@@ -166,6 +168,7 @@ object StatsAggregator {
     ): List<ReplayReview> =
         reviews
             .filter { it.reviewedAt >= windowStart && it.reviewedAt < windowEnd }
+            .filter { (it.intervalBeforeDays ?: 0) >= 1 }     // Anki: prev interval >= 1 day
             .groupBy { it.questionId to studyEpochDay(it.reviewedAt, cfg, zone) }
             .mapNotNull { (_, rows) -> rows.minByOrNull { it.reviewedAt } }
 
@@ -518,7 +521,10 @@ object StatsAggregator {
     private fun answerButtons(inRange: List<ReplayReview>): AnswerButtonsData {
         data class Counts(var again: Int = 0, var hard: Int = 0, var good: Int = 0, var easy: Int = 0)
         val byKind = mutableMapOf<AnswerButtonsData.Kind, Counts>()
-        inRange.forEach { review ->
+        // Rows whose pre-state is unknown (seeded history) cannot be
+        // classified honestly; they are left out of this chart rather than
+        // being lumped into "Learning".
+        inRange.filter { it.kind != null }.forEach { review ->
             val kind = when {
                 review.kind == ReplayReview.ReviewKind.RELEARNING ->
                     AnswerButtonsData.Kind.RELEARNING
@@ -717,10 +723,13 @@ object StatsAggregator {
         val cappedNumbers = 15
         val byNumber = HashMap<Int, MutableList<Double>>()
         inScope.groupBy { it.questionId }.forEach { (_, rows) ->
-            rows.sortedBy { it.reviewedAt }.forEachIndexed { index, row ->
-                val interval = row.intervalDaysAfter ?: return@forEachIndexed
-                val number = (index + 1).coerceAtMost(cappedNumbers)
-                byNumber.getOrPut(number) { mutableListOf() }.add(interval.toDouble())
+            val contrib = rows.sortedBy { it.reviewedAt }
+                .mapNotNull { row -> row.intervalDaysAfter?.let { row to it } }
+            var number = 0
+            contrib.forEach { (_, interval) ->
+                number += 1
+                val n = number.coerceAtMost(cappedNumbers)
+                byNumber.getOrPut(n) { mutableListOf() }.add(interval.toDouble())
             }
         }
         val points = (1..cappedNumbers).map { number ->

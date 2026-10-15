@@ -120,6 +120,13 @@ private fun IntervalCard(bundle: StatsBundle) {
             ChartEmpty(R.string.stats_no_data)
             return@ChartCard
         }
+        val total = bundle.intervals.bins.sumOf { it.count }
+        val cumul = mutableListOf<Double>()
+        var running = 0.0
+        bundle.intervals.bins.forEach { bin ->
+            running += bin.count.toDouble()
+            cumul.add(if (total == 0) 0.0 else running / total)
+        }
         StackedBarChart(
             points = bundle.intervals.bins.map { bin ->
                 com.mcqapp.domain.stats.StackedPoint(
@@ -128,7 +135,10 @@ private fun IntervalCard(bundle: StatsBundle) {
                     total = bin.count
                 )
             },
-            segmentCount = 1
+            segmentCount = 1,
+            overlay = cumul,
+            overlayMax = 1.0,
+            overlayLabel = { formatPct(it) }
         )
         SummaryLine(bundle.intervals)
     }

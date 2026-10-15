@@ -55,7 +55,18 @@ object ContentHash {
         of(
             dto.text,
             dto.options.map { it.text },
-            dto.options.map { optionImageSrcs(it.elements, it.image).joinToString(",") },
+            dto.options.map { option ->
+                val srcs = option.elements.filterIsInstance<ContentElement.ImageElement>()
+                    .map { it.src }
+                if (srcs.isEmpty()) {
+                    // Exactly what the raw scalar list rendered (Kotlin
+                    // joinToString spells a null element "null"), so hashes
+                    // stored by earlier versions still match.
+                    option.image ?: "null"
+                } else {
+                    (srcs + listOfNotNull(option.image)).joinToString(",")
+                }
+            },
             dto.passageId
         )
 

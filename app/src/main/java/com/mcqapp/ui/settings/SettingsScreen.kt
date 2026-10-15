@@ -61,6 +61,7 @@ import com.mcqapp.BuildConfig
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
 import com.mcqapp.R
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -689,11 +690,18 @@ private fun AnkiSchedulerSection(
                     if (optimizing) {
                         val running = fsrsOptimizeState as FsrsOptimizeState.Running
                         Text(
-                            stringResource(
-                                R.string.optimizing_fsrs,
-                                running.step,
-                                running.total
-                            )
+                            // The schedule size lands with the fit's first
+                            // progress report; until then there is no honest
+                            // denominator to show.
+                            if (running.total == 0) {
+                                stringResource(R.string.optimizing_fsrs_start)
+                            } else {
+                                stringResource(
+                                    R.string.optimizing_fsrs,
+                                    running.step,
+                                    running.total
+                                )
+                            }
                         )
                     } else {
                         Text(stringResource(R.string.optimize_fsrs_parameters))
@@ -719,8 +727,9 @@ private fun AnkiSchedulerSection(
                         stringResource(
                             R.string.optimize_fsrs_done,
                             state.result.predictions,
-                            String.format(java.util.Locale.US, "%.4f", state.result.lossBefore),
-                            String.format(java.util.Locale.US, "%.4f", state.result.lossAfter)
+                            state.result.cards,
+                            String.format(Locale.US, "%.4f", state.result.lossBefore),
+                            String.format(Locale.US, "%.4f", state.result.lossAfter)
                         ),
                         style = MaterialTheme.typography.bodySmall
                     )

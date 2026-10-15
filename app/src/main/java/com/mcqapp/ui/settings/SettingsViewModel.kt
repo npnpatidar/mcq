@@ -10,8 +10,10 @@ import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.util.Logger
 import com.mcqapp.util.readBounded
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +27,7 @@ import kotlinx.coroutines.launch
 sealed interface FsrsOptimizeState {
     data object Idle : FsrsOptimizeState
     data class Running(val step: Int, val total: Int) : FsrsOptimizeState
-    data class Done(val result: com.mcqapp.domain.FsrsFitResult) : FsrsOptimizeState
+    data class Done(val result: FsrsFitResult) : FsrsOptimizeState
     data class Failed(val message: String) : FsrsOptimizeState
 }
 
@@ -221,6 +223,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     _fsrsOptimize.value = FsrsOptimizeState.Running(step, total)
                 }
                 _fsrsOptimize.value = FsrsOptimizeState.Done(result)
+            } catch (e: CancellationException) {
+                // Leaving Settings cancels the fit; nothing was persisted
+                // (the tuner writes only after a successful fit), so let the
+                // cancellation propagate instead of logging it as a failure
+                // and showing a JobCancellationException to the learner.
+                throw e
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "FSRS optimize failed", e)
                 _fsrsOptimize.value = FsrsOptimizeState.Failed(

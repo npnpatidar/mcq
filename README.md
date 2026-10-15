@@ -144,7 +144,8 @@ their question is).
 the 21 FSRS-6 weights to your own `review_log` the way Anki's Optimize does — same
 recipe as the official reference trainer (open-spaced-repetition/fsrs-rs): closed-form
 initial stabilities, recency-weighted log loss, Adam on a cosine-annealed schedule, L2
-toward the defaults. It unlocks at 1000 logged reviews (below that the defaults predict
+toward the starting weights (the fitted initial stabilities plus the official defaults).
+It unlocks at 1000 logged reviews (below that the defaults predict
 better than a fit on noise), runs entirely on-device, and only changes how *future*
 intervals are computed — existing schedules are never touched. *Restore defaults* drops
 the fitted set. Imported cards whose pre-import history is unknown train from their

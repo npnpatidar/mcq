@@ -5,6 +5,7 @@ import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.FsrsOptimizer
+import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.FsrsTrainingCard
 import com.mcqapp.domain.FsrsTrainingReview
 import com.mcqapp.util.Logger
@@ -26,9 +27,15 @@ internal class FsrsTuner(
     fun observeReviewCount() = db.reviewLogDao().observeCount()
 
     /**
-     * Fits the 21 weights to the full review log and stores them. Runs the
-     * fit on the optimizer's own dispatcher; [onProgress] fires after each
-     * Adam step and cancelling the caller stops between steps.
+     * Fits the 21 weights to the full review log and stores them. The fit
+     * itself runs on Dispatchers.Default (inside [FsrsOptimizer.fit]);
+     * [onProgress] fires after each Adam step and cancelling the caller stops
+     * between steps.
+     *
+     * The weights are persisted even when a re-fit's loss lands above the
+     * learner's current set (Anki persists regardless); the Settings done
+     * line labels the comparison against the current weights, so a regression
+     * is visible rather than silent.
      *
      * @throws com.mcqapp.domain.FsrsFitInsufficientData when the log is too
      *   thin to fit anything.
@@ -37,9 +44,10 @@ internal class FsrsTuner(
         val cards = buildFsrsTrainingCards(db.reviewLogDao().getAll())
         val current = settings.schedulerConfigNow().fsrsParameters
         val result = FsrsOptimizer.fit(cards, current, onProgress)
-        settings.setSchedulerConfig(
-            settings.schedulerConfigNow().copy(fsrsParameters = result.parameters)
-        )
+        // A single-key DataStore edit: no read-modify-write of the whole
+        // config, so a racing pacing slider write cannot clobber the fit (or
+        // the fit cannot clobber it).
+        settings.setFsrsParameters(result.parameters)
         Logger.i(
             "TUNER",
             "FSRS optimized on ${result.predictions} predictions " +
@@ -51,10 +59,7 @@ internal class FsrsTuner(
 
     /** Drops fitted weights; scheduling returns to the official defaults. */
     suspend fun restoreDefaults() {
-        settings.setSchedulerConfig(
-            settings.schedulerConfigNow()
-                .copy(fsrsParameters = com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
-        )
+        settings.setFsrsParameters(FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
         Logger.i("TUNER", "FSRS parameters restored to defaults")
     }
 

@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.cos
@@ -98,7 +99,10 @@ class FsrsFitInsufficientData(message: String) : IllegalStateException(message)
  *    shuffle uses Kotlin's PRNG rather than the reference's StdRng, so fitted
  *    weights are close to the reference's but not bit-identical.
  *  - Imported cards replay from their stored post-review memory (a seed)
- *    instead of an unknown earlier history; the reference has no seeds.
+ *    instead of an unknown earlier history; the reference has no seeds. One
+ *    consequence: the outlier filter is fitted on first-exposure cards only,
+ *    but its bucket decisions also drop a seeded card whose first logged gap
+ *    shares a removed bucket — a bucket its data never contributed to.
  *  - With no first-exposure cards at all (a purely imported library) w0..w3
  *    keep the defaults instead of failing, since seeded replays cannot train
  *    them anyway.
@@ -161,8 +165,10 @@ object FsrsOptimizer {
      * [FsrsFitResult.lossBefore] — training starts from the official recipe,
      * not from the weights the user happens to have.
      *
-     * Runs on [Dispatchers.Default] internally; [onProgress] fires after each
-     * Adam step and the coroutine's cancellation stops between steps.
+     * Runs on [Dispatchers.Default] internally; [onProgress] first reports
+     * the schedule size as 0/total, then fires after each Adam step, and the
+     * coroutine's cancellation stops between steps and inside the gradient
+     * fan-out.
      *
      * @throws FsrsFitInsufficientData when fewer than
      *   [MIN_ITEMS_FOR_DEFAULTS] inter-day prefixes exist.
@@ -176,6 +182,20 @@ object FsrsOptimizer {
         require(currentParameters.size == FsrsScheduler.PARAMETER_COUNT) {
             "FSRS-6 needs ${FsrsScheduler.PARAMETER_COUNT} parameters, got ${currentParameters.size}"
         }
+        // The whole recipe — grouping the log, both full-log loss replays,
+        // and every Adam step — runs on Dispatchers.Default so a heavy
+        // library's fit cannot jank the settings UI. [onProgress] writes a
+        // StateFlow, which is safe from any thread.
+        return withContext(Dispatchers.Default) {
+            doFit(cards, currentParameters, onProgress)
+        }
+    }
+
+    private suspend fun doFit(
+        cards: List<FsrsTrainingCard>,
+        currentParameters: List<Double>,
+        onProgress: (Int, Int) -> Unit
+    ): FsrsFitResult {
         val prepared = cards.map { prepare(it) }
 
         // Surviving inter-day prefixes, keyed like the reference's trainset:
@@ -190,6 +210,9 @@ object FsrsOptimizer {
         )
         val trainItems = ArrayList<ItemRef>()
         prepared.forEachIndexed { cardIndex, card ->
+            // Seeded cards are filtered on buckets their own data never
+            // populated (the reference has no seeds) — documented in the
+            // class deviations list above.
             val cardRemoved = card.firstInterday >= 0 &&
                 card.deltas[card.firstInterday] in removed[card.ratings[0]]
             if (!cardRemoved) {
@@ -248,6 +271,32 @@ object FsrsOptimizer {
         val lossTerms = trainItems.filter { it.pos + 1 <= MAX_SEQ_LEN }
         val totalSize = lossTerms.size
         val groupedTerms = groupTerms(lossTerms, prepared, weightByCard)
+
+        // Batch membership mirrors the reference's FSRS-6 builder exactly:
+        // items sorted by the length of the sequence they end, then chunked
+        // (fsrs-rs `build_fsrs6_batches` sorts by review count and chunks
+        // when no card ids exist — FSRS-6 never has them). Nothing in the
+        // membership is random; only batch *order* is reshuffled each epoch,
+        // from the seeded PRNG, the way the reference reshuffles its order
+        // with StdRng.
+        val batches = lossTerms
+            .sortedBy { it.pos + 1 }
+            .chunked(BATCH_SIZE)
+            .map { chunk -> groupTerms(chunk, prepared, weightByCard) }
+        val totalSteps = batches.size * EPOCHS
+        // The reference's FSRS-6 schedule length: (total/batch + 1) * epochs.
+        // That is a floor+1 estimate, so it overshoots the real step count
+        // whenever the trainset divides evenly into batches and the cosine
+        // never quite reaches 0. FSRS-7 in the reference anneals over the
+        // actual batch count instead; FSRS-6 deliberately keeps the estimate,
+        // and so do we.
+        val iterations = (totalSize / BATCH_SIZE + 1) * EPOCHS
+
+        // Publish the schedule size before the first (whole-log) replay so
+        // the button shows 0/total immediately instead of 0/0 while the
+        // baseline loss is measured.
+        onProgress(0, totalSteps)
+
         val lossBefore = evaluateAll(currentParameters.toDoubleArray(), prepared, groupedTerms)
 
         // The reference returns the initialized weights untouched when the
@@ -267,13 +316,6 @@ object FsrsOptimizer {
                 steps = 0
             )
         }
-
-        val batches = lossTerms
-            .sortedBy { it.pos + 1 }
-            .chunked(BATCH_SIZE)
-            .map { chunk -> groupTerms(chunk, prepared, weightByCard) }
-        val totalSteps = batches.size * EPOCHS
-        val iterations = (totalSize / BATCH_SIZE + 1) * EPOCHS
 
         val weights = initialParameters.toDoubleArray()
         val target = weights.clone()
@@ -605,7 +647,8 @@ object FsrsOptimizer {
     /**
      * Central-difference gradient of the batch loss plus the L2 term. The 42
      * evaluations are independent, so they fan out across the default
-     * dispatcher.
+     * dispatcher. Each evaluation checks for cancellation so a cancelled fit
+     * stops inside this fan-out instead of after several more replays.
      */
     private suspend fun gradient(
         weights: DoubleArray,
@@ -617,13 +660,17 @@ object FsrsOptimizer {
         val chunks = (weights.indices).chunked(6)
         val parts = chunks.map { chunk ->
             async(Dispatchers.Default) {
-                chunk.map { index ->
+                val results = ArrayList<Pair<Int, Double>>(chunk.size)
+                for (index in chunk) {
                     val step = FD_STEP * (1.0 + abs(weights[index]))
                     val up = weights.copyOf().also { it[index] += step }
                     val down = weights.copyOf().also { it[index] -= step }
-                    index to (evaluateBatch(up, prepared, batch) - evaluateBatch(down, prepared, batch)) /
-                        (2.0 * step)
+                    results += index to
+                        ((evaluateBatch(up, prepared, batch) - evaluateBatch(down, prepared, batch)) /
+                            (2.0 * step))
+                    coroutineContext.ensureActive()
                 }
+                results
             }
         }.awaitAll()
         val gradient = DoubleArray(weights.size)

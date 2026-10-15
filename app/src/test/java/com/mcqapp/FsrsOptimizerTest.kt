@@ -7,6 +7,8 @@ import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.FsrsTrainingCard
 import com.mcqapp.domain.FsrsTrainingReview
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -191,8 +193,9 @@ class FsrsOptimizerTest {
                     value <= FsrsOptimizer.UPPER_BOUNDS[index] + 1e-9
             )
         }
-        // The progress channel reports every step exactly once, in order.
-        assertEquals((1..result.steps).toList(), progress.map { it.first })
+        // The progress channel opens with the schedule size (0/total), then
+        // reports every step exactly once, in order.
+        assertEquals((0..result.steps).toList(), progress.map { it.first })
         assertTrue(progress.all { it.second == result.steps })
     }
 
@@ -205,6 +208,29 @@ class FsrsOptimizerTest {
         assertEquals(first.parameters, second.parameters)
         assertEquals(first.lossAfter, second.lossAfter, 0.0)
         assertEquals(first.steps, second.steps)
+    }
+
+    /**
+     * Cancelling mid-fit — what navigating away from Settings does — stops
+     * it at the next step boundary instead of grinding to the end, and the
+     * cancellation propagates rather than reading as a fit failure.
+     */
+    @Test
+    fun cancellingTheFitStopsItBetweenSteps() = runBlocking {
+        val cards = syntheticCards(count = 80)
+        var progressed = 0
+        val job = launch {
+            FsrsOptimizer.fit(cards, FsrsScheduler.DEFAULT_FSRS_PARAMETERS) { step, _ ->
+                progressed += 1
+                // Cancel from inside the first real Adam step (step 0 is the
+                // initial schedule-size report), as leaving the screen would.
+                if (step >= 1) this@launch.cancel()
+            }
+        }
+        job.join()
+        assertTrue(job.isCancelled)
+        // The schedule report plus the first step's callback — then it stopped.
+        assertEquals(2, progressed)
     }
 
     /** The reference returns defaults below 8 trainset items; we say so. */

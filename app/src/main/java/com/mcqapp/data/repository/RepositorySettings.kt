@@ -214,6 +214,21 @@ internal class SettingsStore(private val context: Context) {
     }
 
     /**
+     * Writes only the fitted weights, in one DataStore edit. Callers that
+     * change nothing else use this instead of a whole-config round trip: a
+     * read-modify-write across two suspensions could race a concurrent write
+     * and hand back a stale copy of the pacing knobs.
+     */
+    suspend fun setFsrsParameters(parameters: List<Double>) {
+        val weights = com.mcqapp.domain.SchedulerConfig(fsrsParameters = parameters)
+            .sanitized()
+            .fsrsParameters
+        context.dataStore.edit { prefs ->
+            prefs[fsrsParametersKey] = weights.joinToString(",")
+        }
+    }
+
+    /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
      * left alone: they are the learner's own history, and Settings offers a
      * separate "Restore defaults" for dropping them.

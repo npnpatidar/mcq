@@ -226,4 +226,21 @@ class RepositorySettingsTest {
         assertEquals(0.9, config.desiredRetention, 0.0001)
         assertEquals(fitted, config.fsrsParameters)
     }
+
+    /**
+     * The optimizer persists through a single-key edit, never a whole-config
+     * round trip — so writing weights alone must leave the pacing knobs
+     * exactly as they were, and a pacing write must not be needed to store
+     * a fit.
+     */
+    @Test
+    fun writingWeightsAloneLeavesPacingUntouched() = runBlocking {
+        val store = store()
+        store.setSchedulerConfig(SchedulerConfig(desiredRetention = 0.95))
+        val fitted = SchedulerConfig().fsrsParameters.toMutableList().also { it[0] = 0.5 }
+        store.setFsrsParameters(fitted)
+        val config = store.schedulerConfigNow()
+        assertEquals(0.95, config.desiredRetention, 0.0001)
+        assertEquals(fitted, config.fsrsParameters)
+    }
 }

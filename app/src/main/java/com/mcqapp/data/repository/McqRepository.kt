@@ -3,6 +3,7 @@ package com.mcqapp.data.repository
 import android.content.Context
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.parseContentElements
@@ -92,7 +93,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     suspend fun optimizeFsrsParameters(
         onProgress: (Int, Int) -> Unit = { _, _ -> }
-    ): com.mcqapp.domain.FsrsFitResult = fsrsTuner.optimize(onProgress)
+    ): FsrsFitResult = fsrsTuner.optimize(onProgress)
 
     /** Drops fitted weights; scheduling returns to the official defaults. */
     suspend fun restoreFsrsDefaults() = fsrsTuner.restoreDefaults()

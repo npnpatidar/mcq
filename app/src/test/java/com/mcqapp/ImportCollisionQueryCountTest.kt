@@ -37,6 +37,7 @@ class ImportCollisionQueryCountTest {
     private lateinit var db: AppDatabase
     private lateinit var appContext: Context
     private val selects = AtomicInteger()
+    private val maxBindVars = AtomicInteger()
 
     @Before
     fun setUp() {
@@ -46,6 +47,9 @@ class ImportCollisionQueryCountTest {
             .setQueryCallback(
                 RoomDatabase.QueryCallback { sql, _ ->
                     if (sql.trimStart().startsWith("SELECT")) selects.incrementAndGet()
+                    maxBindVars.updateAndGet { current ->
+                        maxOf(current, sql.count { it == '?' })
+                    }
                 },
                 { it.run() }
             )
@@ -95,6 +99,7 @@ class ImportCollisionQueryCountTest {
     private fun fresh() {
         db.close()
         selects.set(0)
+        maxBindVars.set(0)
         setUp()
     }
 
@@ -160,5 +165,28 @@ class ImportCollisionQueryCountTest {
         assertEquals(0, report.newQuestions)
         assertEquals(2, report.duplicateQuestions)
         assertEquals(2, questionsInPaper().size)
+    }
+
+    /**
+     * The same-id prefetch (`sameIdRows`) reads every id in the file in one
+     * statement. A real 168k-question bank reached 166,588 bind variables and
+     * the import aborted with "too many SQL variables" — the limit is 999 up
+     * to API 30 and 32,766 after, so no device accepts it. The prefetch is
+     * chunked now, so no statement issued by a re-import — the path that
+     * triggers it — may bind more than SQLite's oldest-supported 999.
+     */
+    @Test
+    fun aLargeReimportBindsWithinTheSqliteVariableLimit() {
+        fresh()
+        runImport(bank(1_100, "1556", Variant.TABLE_DIFFERS))
+        maxBindVars.set(0)
+
+        runImport(bank(1_100, "1556", Variant.TABLE_DIFFERS))
+
+        assertTrue(
+            "a statement bound ${maxBindVars.get()} variables during re-import, " +
+                "past SQLite's 999-variable limit",
+            maxBindVars.get() <= 999
+        )
     }
 }

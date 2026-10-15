@@ -253,7 +253,7 @@ internal class QuestionStore(
             }
             // The log has no FK to questions, so it is swept in the same bulk
             // form rather than per id — the log must not outlive its card.
-            if (questionIds.isNotEmpty()) db.reviewLogDao().deleteByQuestions(questionIds)
+            if (questionIds.isNotEmpty()) db.reviewLogDao().deleteByQuestionsChunked(questionIds)
             if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
         }
     }

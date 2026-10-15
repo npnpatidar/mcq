@@ -42,6 +42,12 @@ suspend fun BookmarkDao.countForQuestionsChunked(questionIds: Collection<String>
 suspend fun CategoryDao.getByIdsChunked(ids: List<String>): List<CategoryEntity> =
     ids.chunks().flatMap { getByIds(it) }
 
+suspend fun PassageDao.getByIdsChunked(ids: List<String>): List<PassageEntity> =
+    ids.chunks().flatMap { getByIds(it) }
+
+suspend fun PaperDao.getByIdsChunked(ids: List<String>): List<PaperEntity> =
+    ids.chunks().flatMap { getByIds(it) }
+
 suspend fun QuestionDao.getIdCategoriesByIdsChunked(ids: List<String>): List<QuestionCategoryRow> =
     ids.chunks().flatMap { getIdCategoriesByIds(it) }
 

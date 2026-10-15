@@ -61,22 +61,24 @@ internal class HistoryStore(
     /** Category title per category id, in one query instead of one per id. */
     private suspend fun categoryTitlesOf(categoryIds: Set<String>): Map<String, String> {
         if (categoryIds.isEmpty()) return emptyMap()
-        return db.categoryDao().getByIds(categoryIds.toList())
+        return db.categoryDao().getByIdsChunked(categoryIds.toList())
             .associate { it.id to it.title }
     }
 
     /** Owning paper id per category id, in one query instead of one per id. */
     private suspend fun categoryPaperIdsOf(categoryIds: Set<String>): Map<String, String> {
         if (categoryIds.isEmpty()) return emptyMap()
-        return db.categoryDao().getByIds(categoryIds.toList()).associate { it.id to it.paperId }
+        return db.categoryDao().getByIdsChunked(categoryIds.toList())
+            .associate { it.id to it.paperId }
     }
 
     /** Owning paper's title per category id, in two queries instead of two per id. */
     private suspend fun paperTitlesForCategories(categoryIds: Set<String>): Map<String, String> {
         if (categoryIds.isEmpty()) return emptyMap()
-        val categories = db.categoryDao().getByIds(categoryIds.toList())
-        val papers = db.paperDao().getByIds(categories.map { it.paperId }.toSet().toList())
-            .associateBy { it.id }
+        val categories = db.categoryDao().getByIdsChunked(categoryIds.toList())
+        val papers = db.paperDao().getByIdsChunked(
+            categories.map { it.paperId }.toSet().toList()
+        ).associateBy { it.id }
         return categories.mapNotNull { category ->
             papers[category.paperId]?.let { category.id to it.title }
         }.toMap()

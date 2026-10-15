@@ -3,6 +3,7 @@ package com.mcqapp.data.repository
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.PassageEntity
+import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
@@ -33,7 +34,7 @@ internal class PassageStore(
 
     suspend fun getPassagesByIds(ids: List<String>): List<Passage> {
         if (ids.isEmpty()) return emptyList()
-        return db.passageDao().getByIds(ids).map { mapper.toPassage(it) }
+        return db.passageDao().getByIdsChunked(ids).map { mapper.toPassage(it) }
     }
 
     suspend fun getPassagesForPaper(paperId: String): List<Passage> {

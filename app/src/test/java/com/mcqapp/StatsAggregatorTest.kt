@@ -204,9 +204,9 @@ class StatsAggregatorTest {
         val yesterday = todayStart - day + 2 * hour
         val weekAgo = todayStart - 3 * day + 2 * hour
         val reviews = listOf(
-            review("q1", rating = 3, reviewedAt = now - hour),
-            review("q1", rating = 3, reviewedAt = yesterday),
-            review("q2", rating = 1, reviewedAt = weekAgo)
+            review("q1", rating = 3, reviewedAt = now - hour, intervalBeforeDays = 30),
+            review("q1", rating = 3, reviewedAt = yesterday, intervalBeforeDays = 30),
+            review("q2", rating = 1, reviewedAt = weekAgo, intervalBeforeDays = 5)
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.ALL)
         val labels = bundle.retentionTable.map { it.label }
@@ -234,8 +234,8 @@ class StatsAggregatorTest {
     fun rangeSlicesHistoryGraphsButNotTodayOrTable() {
         val old = todayStart - 60 * day
         val reviews = listOf(
-            review("q1", rating = 3, reviewedAt = now - hour),
-            review("q1", rating = 3, reviewedAt = old)
+            review("q1", rating = 3, reviewedAt = now - hour, intervalBeforeDays = 30),
+            review("q1", rating = 3, reviewedAt = old, intervalBeforeDays = 30)
         )
         val week = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(1, week.kpis.reviews)

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -50,6 +51,7 @@ internal fun DrawerContent(
     papers: List<Paper>,
     onCloseDrawer: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenStats: () -> Unit,
     onOpenBookmarks: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenPassages: () -> Unit,
@@ -82,6 +84,22 @@ internal fun DrawerContent(
                     Icon(Icons.Default.History, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Text(stringResource(R.string.history))
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onCloseDrawer()
+                            onOpenStats()
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.QueryStats, contentDescription = null)
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(R.string.stats))
                 }
             }
             item {

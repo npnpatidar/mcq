@@ -274,6 +274,10 @@ interface QuestionDao {
     @Query("SELECT id, categoryId FROM questions WHERE id IN (:ids)")
     suspend fun getIdCategoriesByIds(ids: List<String>): List<QuestionCategoryRow>
 
+    /** Every question's category, for statistics grouping; nothing else loaded. */
+    @Query("SELECT id, categoryId FROM questions")
+    suspend fun getAllIdCategories(): List<QuestionCategoryRow>
+
     @Query("UPDATE questions SET categoryId = :categoryId WHERE id IN (:ids)")
     suspend fun updateCategory(ids: List<String>, categoryId: String): Int
 

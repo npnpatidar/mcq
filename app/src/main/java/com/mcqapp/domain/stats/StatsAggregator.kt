@@ -95,7 +95,8 @@ object StatsAggregator {
             intervals = intervalDistribution(cards),
             memoryGrowth = memoryGrowth(inScope, cfg, zone),
             cardCounts = cardCounts(cards),
-            weakest = weakest(inRange, cards)
+            weakest = weakest(inRange, cards),
+            leeches = leeches(inScope, cards)
         )
     }
 
@@ -584,7 +585,7 @@ object StatsAggregator {
             ResponseTimeData.GradeStat(
                 grade = grade,
                 reviews = rows.size,
-                avgSeconds = if (rows.isEmpty()) null else rows.sumOf { it.second }.average()
+                avgSeconds = if (rows.isEmpty()) null else rows.map { it.second }.average()
             )
         }
         val windowStart = rangeStart ?: inRange.minOfOrNull { it.reviewedAt }
@@ -601,7 +602,7 @@ object StatsAggregator {
                 val rows = grouped[b.key].orEmpty()
                 SeriesPoint(
                     label = b.label,
-                    value = if (rows.isEmpty()) null else rows.sumOf { it.second }.average(),
+                    value = if (rows.isEmpty()) null else rows.map { it.second }.average(),
                     count = rows.size
                 )
             }
@@ -617,7 +618,7 @@ object StatsAggregator {
                 reviews = all.size,
                 lapses = all.count { !it.passed },
                 againRate = if (all.isEmpty()) 0.0 else all.count { !it.passed }.toDouble() / all.size,
-                avgSeconds = rows.sumOf { it.second }.average(),
+                avgSeconds = rows.map { it.second }.average(),
                 lastReviewedAt = all.maxOf { it.reviewedAt },
                 leech = leechByQuestion.containsKey(questionId)
             )
@@ -797,6 +798,31 @@ object StatsAggregator {
             .sortedWith(compareBy({ -it.againRate }, { -it.lapses }))
             .take(15)
     }
+
+    /**
+     * The flagged leeches with their lifetime figures (all history, not the
+     * selected range: a leech is a property of the card, not of the window).
+     */
+    private fun leeches(
+        inScope: List<ReplayReview>,
+        cards: List<CardSnapshot>
+    ): List<WeakCard> =
+        cards.filter { it.state.leech }.mapNotNull { snapshot ->
+            val rows = inScope.filter { it.questionId == snapshot.state.questionId }
+            if (rows.isEmpty()) return@mapNotNull null
+            val lapses = rows.count { !it.passed }
+            val timed = rows.mapNotNull { it.elapsedSeconds }
+            WeakCard(
+                paperId = snapshot.paperId,
+                questionId = snapshot.state.questionId,
+                reviews = rows.size,
+                lapses = lapses,
+                againRate = lapses.toDouble() / rows.size,
+                avgSeconds = if (timed.isEmpty()) null else timed.average(),
+                lastReviewedAt = rows.maxOf { it.reviewedAt },
+                leech = true
+            )
+        }.sortedByDescending { it.lapses }.take(15)
 
     // --- day and bucket arithmetic -------------------------------------------
 

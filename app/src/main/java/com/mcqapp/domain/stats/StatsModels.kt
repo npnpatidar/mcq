@@ -68,6 +68,21 @@ data class ReplayReview(
 /** A card's current schedule, tagged with its paper so stats can scope it. */
 data class CardSnapshot(val paperId: String, val state: CardState)
 
+/**
+ * One logged review, for the per-card drill-down history. The raw log row in
+ * a domain shape: no replay enrichment, just what was recorded.
+ */
+data class ReviewHistoryEntry(
+    /** 1=Again, 2=Hard, 3=Good, 4=Easy. */
+    val rating: Int,
+    val reviewedAt: Long,
+    val elapsedSeconds: Long?,
+    val stateBefore: CardStateKind?,
+    val stabilityAfter: Double?,
+    val difficultyAfter: Double?,
+    val intervalDaysAfter: Int?
+)
+
 /** Chartable single-value point; [value] null draws a gap, [count] backs tooltips. */
 data class SeriesPoint(val label: String, val value: Double?, val count: Int = 0)
 
@@ -320,5 +335,6 @@ data class StatsBundle(
     val intervals: Distribution,
     val memoryGrowth: MemoryGrowthData,
     val cardCounts: CardCountsData,
-    val weakest: List<WeakCard>
+    val weakest: List<WeakCard>,
+    val leeches: List<WeakCard>
 )

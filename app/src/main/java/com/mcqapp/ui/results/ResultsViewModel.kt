@@ -43,6 +43,9 @@ class ResultsViewModel(
     private val _state = MutableStateFlow(ResultsUiState())
     val state: StateFlow<ResultsUiState> = _state.asStateFlow()
 
+    /** Monotonic load counter so a stale in-flight load cannot overwrite a newer result. */
+    private var loadGeneration = 0
+
     init {
         reload()
         viewModelScope.launch {
@@ -54,24 +57,29 @@ class ResultsViewModel(
 
     /** Loads the attempt. Exposed so a failed load can be retried. */
     fun reload() {
+        val generation = ++loadGeneration
         viewModelScope.launch {
             try {
                 _state.update { it.copy(loading = true, loadError = null) }
                 val attempt = repository.getAttempt(attemptId)
                 val results = repository.getAttemptResults(attemptId)
                 Logger.i("RESULTVM", "Loaded attempt '${attempt?.title}' with ${results.size} results")
-                _state.value = ResultsUiState(
-                    loading = false,
-                    attempt = attempt,
-                    results = results,
-                    bookmarked = _state.value.bookmarked
-                )
+                _state.update {
+                    if (generation != loadGeneration) it
+                    else ResultsUiState(
+                        loading = false,
+                        attempt = attempt,
+                        results = results,
+                        bookmarked = it.bookmarked
+                    )
+                }
             } catch (e: Exception) {
                 // Same defect A6 fixed for the test and study screens: leaving
                 // `loading` true showed "Loading…" forever with no retry.
                 Logger.e("RESULTVM", "Failed to load attempt $attemptId", e)
                 _state.update {
-                    it.copy(loading = false, loadError = "Could not load this result: ${e.message}")
+                    if (generation != loadGeneration) it
+                    else it.copy(loading = false, loadError = "Could not load this result: ${e.message}")
                 }
             }
         }

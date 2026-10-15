@@ -19,7 +19,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.stats.CardCountsData
+import com.mcqapp.domain.stats.OverdueAgeData
+import com.mcqapp.domain.stats.PaperCardCounts
 import com.mcqapp.domain.stats.StatsBundle
+import com.mcqapp.domain.stats.StackedPoint
 import com.mcqapp.domain.stats.WeakCard
 import com.mcqapp.ui.stats.WeakCardRow
 import com.mcqapp.ui.stats.charts.ChartCard
@@ -28,7 +31,10 @@ import com.mcqapp.ui.stats.charts.ChartSubtitle
 import com.mcqapp.ui.stats.charts.ChartTitle
 import com.mcqapp.ui.stats.charts.DonutChart
 import com.mcqapp.ui.stats.charts.LegendDot
+import com.mcqapp.ui.stats.charts.MeterBar
+import com.mcqapp.ui.stats.charts.StackedBarChart
 import com.mcqapp.ui.stats.charts.seriesColors
+import java.util.Locale
 
 /**
  * Tab 5: the collection's current shape — the state donut with its legend and
@@ -46,6 +52,10 @@ internal fun CardsSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item { CardCountsCard(bundle.cardCounts) }
+        item { OverdueAgeCard(bundle.overdueAge) }
+        if (bundle.paperCounts.isNotEmpty()) {
+            item { PaperCountsCard(bundle.paperCounts) }
+        }
         if (bundle.leeches.isNotEmpty()) {
             item { LeechesCard(bundle, questionText, onOpenCard) }
         }
@@ -127,6 +137,97 @@ private fun CountLegendRow(color: androidx.compose.ui.graphics.Color, @androidx.
     }
 }
 
+@Composable
+private fun OverdueAgeCard(data: OverdueAgeData) {
+    ChartCard(
+        testTag = "stats-overdue-age",
+        title = { ChartTitle(R.string.stats_overdue_age) },
+        subtitle = { ChartSubtitle(R.string.stats_overdue_age_help) }
+    ) {
+        if (data.overdue == 0) {
+            ChartEmpty(R.string.stats_no_data)
+            return@ChartCard
+        }
+        StackedBarChart(
+            points = data.bins.map { bin ->
+                StackedPoint(bin.label, listOf(bin.count.toDouble()), bin.count)
+            },
+            segmentCount = 1
+        )
+        SummaryLine(data)
+    }
+}
+
+@Composable
+private fun SummaryLine(data: OverdueAgeData) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            stringResource(
+                R.string.stats_overdue_mean,
+                data.meanAgeDays?.let { oneDecimal(it) } ?: "—"
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            stringResource(R.string.stats_overdue_oldest, data.oldestAgeDays ?: 0),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun oneDecimal(value: Double): String =
+    String.format(Locale.ENGLISH, "%.1f", value)
+
+@Composable
+private fun PaperCountsCard(counts: List<PaperCardCounts>) {
+    ChartCard(
+        testTag = "stats-paper-counts",
+        title = { ChartTitle(R.string.stats_paper_card_counts) },
+        subtitle = { ChartSubtitle(R.string.stats_paper_card_counts_help) }
+    ) {
+        if (counts.isEmpty()) {
+            ChartEmpty(R.string.stats_no_data)
+            return@ChartCard
+        }
+        val maxTotal = counts.maxOf { it.total }.coerceAtLeast(1)
+        counts.forEach { paper ->
+            PaperCountRow(paper, maxTotal)
+        }
+    }
+}
+
+@Composable
+private fun PaperCountRow(paper: PaperCardCounts, maxTotal: Int) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            Text(
+                paper.label,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                paper.total.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        MeterBar(
+            fraction = paper.total.toDouble() / maxTotal.toDouble(),
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+@Composable
 @Composable
 private fun LeechesCard(
     bundle: StatsBundle,

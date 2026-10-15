@@ -95,6 +95,8 @@ object StatsAggregator {
             intervals = intervalDistribution(cards),
             memoryGrowth = memoryGrowth(inScope, cfg, zone),
             cardCounts = cardCounts(cards),
+            overdueAge = overdueAge(cards, input.now),
+            paperCounts = if (scopePaperId == null) paperCounts(cards, input) else emptyList(),
             weakest = weakest(inRange, cards),
             leeches = leeches(inScope, cards)
         )
@@ -723,13 +725,15 @@ object StatsAggregator {
         val cappedNumbers = 15
         val byNumber = HashMap<Int, MutableList<Double>>()
         inScope.groupBy { it.questionId }.forEach { (_, rows) ->
-            val contrib = rows.sortedBy { it.reviewedAt }
-                .mapNotNull { row -> row.intervalDaysAfter?.let { row to it } }
+            // Number only rows that contribute: a seeded first row without a
+            // stability estimate must not shift every later cohort down.
+            val contributing = rows.sortedBy { it.reviewedAt }
+                .mapNotNull { row -> row.stabilityAfter?.let { row to it } }
             var number = 0
-            contrib.forEach { (_, interval) ->
+            contributing.forEach { (_, stability) ->
                 number += 1
                 val n = number.coerceAtMost(cappedNumbers)
-                byNumber.getOrPut(n) { mutableListOf() }.add(interval.toDouble())
+                byNumber.getOrPut(n) { mutableListOf() }.add(stability)
             }
         }
         val points = (1..cappedNumbers).map { number ->
@@ -741,7 +745,7 @@ object StatsAggregator {
             )
         }
         val monthly = inScope
-            .filter { it.intervalDaysAfter != null }
+            .filter { it.stabilityAfter != null }
             .groupBy {
                 val day = LocalDate.ofEpochDay(studyEpochDay(it.reviewedAt, cfg, zone))
                 day.year * 12L + day.monthValue - 1
@@ -752,7 +756,7 @@ object StatsAggregator {
                 .withDayOfMonth(1)
             SeriesPoint(
                 label = first.format(DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH)),
-                value = rows.mapNotNull { it.intervalDaysAfter }.average(),
+                value = rows.mapNotNull { it.stabilityAfter }.average(),
                 count = rows.size
             )
         }
@@ -781,6 +785,68 @@ object StatsAggregator {
         }
         return CardCountsData(fresh, learning, relearning, young, mature, leeches)
     }
+
+    // --- overdue age ------------------------------------------------------------
+
+    /**
+     * How stale the scheduled backlog is: overdue cards (past due, not new)
+     * bucketed by whole-day age at [now].
+     */
+    private fun overdueAge(cards: List<CardSnapshot>, now: Long): OverdueAgeData {
+        val bins: List<Triple<String, Int, Int?>> = listOf(
+            Triple("<1d", 0, 1),
+            Triple("1–2d", 1, 2),
+            Triple("2–4d", 2, 4),
+            Triple("4–7d", 4, 7),
+            Triple("1–2w", 7, 14),
+            Triple("2w+", 14, null)
+        )
+        val counts = IntArray(bins.size)
+        val overdue = cards.filter {
+            it.state.dueAt != 0L && it.state.state != CardStateKind.NEW && it.state.dueAt < now
+        }
+        var ageSum = 0.0
+        var oldest = 0
+        overdue.forEach { card ->
+            val age = floor((now - card.state.dueAt).toDouble() / DayBoundary.DAY_MS).toInt()
+                .coerceAtLeast(0)
+            ageSum += age
+            oldest = maxOf(oldest, age)
+            val index = bins.indexOfFirst { (_, from, to) ->
+                age >= from && (to == null || age < to)
+            }
+            if (index >= 0) counts[index]++
+        }
+        return OverdueAgeData(
+            bins = bins.mapIndexed { i, (label, from, to) ->
+                OverdueAgeData.OverdueAgeBin(label, from, to, counts[i])
+            },
+            overdue = overdue.size,
+            meanAgeDays = if (overdue.isEmpty()) null else ageSum / overdue.size,
+            oldestAgeDays = if (overdue.isEmpty()) null else oldest
+        )
+    }
+
+    // --- per-paper card counts ---------------------------------------------------
+
+    /** Card counts per paper, biggest collection first, for cross-paper comparison. */
+    private fun paperCounts(
+        cards: List<CardSnapshot>,
+        input: Input
+    ): List<PaperCardCounts> =
+        cards.groupBy { it.paperId }.map { (paperId, rows) ->
+            val counts = cardCounts(rows)
+            PaperCardCounts(
+                paperId = paperId,
+                label = input.paperTitleOf[paperId] ?: paperId,
+                total = counts.total,
+                fresh = counts.fresh,
+                learning = counts.learning,
+                relearning = counts.relearning,
+                young = counts.young,
+                mature = counts.mature
+            )
+        }.sortedWith(compareByDescending<PaperCardCounts> { it.total }.thenBy { it.label })
 
     // --- weakest cards -------------------------------------------------------
 

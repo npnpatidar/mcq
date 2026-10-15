@@ -208,10 +208,41 @@ data class Distribution(
     data class Bin(val label: String, val from: Double, val to: Double, val count: Int)
 }
 
-/** How memory deepened: mean interval by review number and by calendar month. */
+/** How memory deepened: mean stability by review number and by calendar month. */
 data class MemoryGrowthData(
     val byReviewNumber: List<SeriesPoint>,
     val overTime: List<SeriesPoint>
+)
+
+/**
+ * How stale the scheduled backlog is: cards past due bucketed by age in
+ * whole days. [bins] covers the full overdue set, [overdue] is their total.
+ */
+data class OverdueAgeData(
+    val bins: List<OverdueAgeBin>,
+    val overdue: Int,
+    val meanAgeDays: Double?,
+    val oldestAgeDays: Int?
+) {
+    data class OverdueAgeBin(
+        val label: String,
+        val fromDays: Int,
+        /** Exclusive upper bound in days; null for the open-ended last bin. */
+        val toDays: Int?,
+        val count: Int
+    )
+}
+
+/** Card counts for one paper, for the cross-paper comparison table. */
+data class PaperCardCounts(
+    val paperId: String,
+    val label: String,
+    val total: Int,
+    val fresh: Int,
+    val learning: Int,
+    val relearning: Int,
+    val young: Int,
+    val mature: Int
 )
 
 /** The current shape of the collection, Anki's Card Counts. */
@@ -335,6 +366,9 @@ data class StatsBundle(
     val intervals: Distribution,
     val memoryGrowth: MemoryGrowthData,
     val cardCounts: CardCountsData,
+    val overdueAge: OverdueAgeData,
+    /** Per-paper card counts; empty when the view is scoped to one paper. */
+    val paperCounts: List<PaperCardCounts>,
     val weakest: List<WeakCard>,
     val leeches: List<WeakCard>
 )

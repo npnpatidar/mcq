@@ -31,6 +31,7 @@ class StatsAggregatorTest {
         paperId: String = "p1",
         elapsedSeconds: Long? = 10L,
         stateBefore: CardStateKind? = CardStateKind.NEW,
+        stabilityAfter: Double? = 5.0,
         intervalBeforeDays: Int? = null,
         intervalDaysAfter: Int? = null,
         predictedRetention: Double? = null
@@ -41,7 +42,7 @@ class StatsAggregatorTest {
         reviewedAt = reviewedAt,
         elapsedSeconds = elapsedSeconds,
         stateBefore = stateBefore,
-        stabilityAfter = 5.0,
+        stabilityAfter = stabilityAfter,
         difficultyAfter = 5.0,
         intervalDaysAfter = intervalDaysAfter,
         predictedRetention = predictedRetention,
@@ -372,6 +373,45 @@ class StatsAggregatorTest {
     }
 
     @Test
+    fun overdueAgeBucketsPastDueScheduledCardsAndSkipsNew() {
+        val cards = listOf(
+            card("q1", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = now - 6 * hour),
+            card("q2", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = now - 8 * day),
+            card("q3", state = CardStateKind.NEW, dueAt = now - 30 * day)
+        )
+        val bundle = StatsAggregator.build(input(cards = cards), null, StatsAggregator.Range.ALL)
+        val overdue = bundle.overdueAge
+        assertEquals(2, overdue.overdue)
+        assertEquals(listOf("<1d", "1–2d", "2–4d", "4–7d", "1–2w", "2w+"), overdue.bins.map { it.label })
+        assertEquals(1, overdue.bins.first { it.label == "<1d" }.count)
+        assertEquals(1, overdue.bins.first { it.label == "2w+" }.count)
+        assertEquals(8, overdue.oldestAgeDays)
+    }
+
+    @Test
+    fun paperCountsComparePapersButHideWhenScoped() {
+        val cards = listOf(
+            card("q1", paperId = "p1", state = CardStateKind.REVIEW, intervalDays = 10),
+            card("q2", paperId = "p1", state = CardStateKind.NEW),
+            card("q3", paperId = "p2", state = CardStateKind.REVIEW, intervalDays = 30),
+            card("q4", paperId = "p2", state = CardStateKind.REVIEW, intervalDays = 5),
+            card("q5", paperId = "p2", state = CardStateKind.LEARNING, dueAt = now)
+        )
+        val bundle = StatsAggregator.build(input(cards = cards), null, StatsAggregator.Range.ALL)
+        val papers = bundle.paperCounts
+        assertEquals(listOf("p2", "p1"), papers.map { it.paperId })
+        assertEquals("Paper Two", papers[0].label)
+        assertEquals(3, papers[0].total)
+        assertEquals(1, papers[0].mature)
+        assertEquals(1, papers[0].learning)
+        assertEquals(2, papers[1].total)
+        assertEquals(1, papers[1].fresh)
+
+        val scoped = StatsAggregator.build(input(cards = cards), "p1", StatsAggregator.Range.ALL)
+        assertTrue(scoped.paperCounts.isEmpty())
+    }
+
+    @Test
     fun stabilityDistributionBinsLandInMatchingBuckets() {
         val cards = listOf(
             card("q1", state = CardStateKind.REVIEW, stability = 0.5, intervalDays = 1),
@@ -503,9 +543,11 @@ class StatsAggregatorTest {
     fun memoryGrowthAveragesStabilityByReviewNumber() {
         val base = todayStart - 10 * day
         val reviews = listOf(
-            review("q1", rating = 3, reviewedAt = base, intervalDaysAfter = 1),
-            review("q1", rating = 3, reviewedAt = base + day, intervalDaysAfter = 4),
-            review("q2", rating = 3, reviewedAt = base, intervalDaysAfter = 2)
+            review("q1", rating = 3, reviewedAt = base, stabilityAfter = 1.0),
+            review("q1", rating = 3, reviewedAt = base + day, stabilityAfter = 4.0),
+            // A row without a stability estimate must not consume a cohort.
+            review("q1", rating = 3, reviewedAt = base + 2 * day, stabilityAfter = null, intervalDaysAfter = 3),
+            review("q2", rating = 3, reviewedAt = base, stabilityAfter = 2.0)
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.ALL)
         val first = bundle.memoryGrowth.byReviewNumber.first { it.label == "1" }
@@ -513,7 +555,7 @@ class StatsAggregatorTest {
         assertEquals(2, first.count)
         val second = bundle.memoryGrowth.byReviewNumber.first { it.label == "2" }
         assertEquals(4.0, second.value!!, 1e-9)
-        // No card has a third review in this fixture.
+        // No card has a third stability-bearing review in this fixture.
         assertNull(bundle.memoryGrowth.byReviewNumber[2].value)
     }
 

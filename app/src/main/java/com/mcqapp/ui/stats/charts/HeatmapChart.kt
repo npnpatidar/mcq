@@ -56,19 +56,16 @@ internal fun HeatmapChart(
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val gap = 2.dp
-        val cell = (maxWidth - gap * (weeks - 1)) / weeks
+        val cell = ChartGeometry.heatmapCell(maxWidth, gap, weeks)
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(14.dp + cell * 7 + gap * 6)
+                .height(ChartGeometry.heatmapHeight(14.dp, cell, gap))
                 .pointerInput(days, gap, cell) {
                     detectTapGestures { tap ->
-                        val cellPx = cell.toPx()
-                        val gapPx = gap.toPx()
-                        val pitch = cellPx + gapPx
+                        val pitch = ChartGeometry.pitch(cell.toPx(), gap.toPx())
                         val topOffset = 14.dp.toPx()
-                        val col = (tap.x / pitch).toInt()
-                        val row = ((tap.y - topOffset) / pitch).toInt()
+                        val (col, row) = ChartGeometry.heatmapCellAt(tap.x, tap.y, topOffset, pitch)
                         val index = col * 7 + row
                         selected = if (index in days.indices) index else -1
                     }

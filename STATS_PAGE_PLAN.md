@@ -90,8 +90,7 @@ rule (interval ≥ 21d *at review time*) without storing anything new.
 ### 3. Workload
 - **Forecast**: next 30 days due-bars by card state + cumulative overdue line +
   Anki daily load (Σ 1/I)
-- **Reviews/day**: stacked bars by stateBefore + cumulative line
-  (answer-buttons grouping toggle)
+- **Reviews/day**: stacked bars by stateBefore
 - **Review time/day** bars
 - **Answer buttons**: Again/Hard/Good/Easy × card type + % correct
 - **Hourly breakdown**: counts + success-rate line
@@ -102,12 +101,14 @@ rule (interval ≥ 21d *at review time*) without storing anything new.
 - **Stability histogram** (+ median/mean)
 - **Difficulty histogram** (1–10)
 - **Retrievability distribution** + estimated total knowledge
-- **Memory growth**: avg interval by review-number cohort + interval of
+- **Memory growth**: avg stability by review-number cohort + stability of
    reviews over calendar time
 - **Interval distribution** histogram + cumulative % overlay
 
 ### 5. Cards
 - **State donut**: new/learning/relearning/young/mature + total, leech callout
+- **Overdue age**: past-due scheduled cards bucketed by age in days
+- **Per-paper card counts**: cross-paper comparison, all-papers scope only
 
 ## Chart toolkit (hand-rolled Compose Canvas)
 
@@ -123,8 +124,8 @@ rule (interval ≥ 21d *at review time*) without storing anything new.
 - Shared: `ChartCard` wrapper, tick/nice-number helpers, tap tooltips,
   empty states ("Not enough data yet"), `Modifier.testTag` on every chart
 
-Pure geometry helpers (tick computation, bin edges, label sparsening) kept as
-pure functions for JVM tests.
+Pure geometry helpers (tick computation, bin edges, label sparsening,
+heatmap/tap grid geometry) kept as pure functions for JVM tests.
 
 ## Constraints honored
 

@@ -23,13 +23,14 @@ import kotlin.math.pow
  *
  * Pure and deterministic: no clock, no randomness, no Android types.
  *
- * @param parameters the 21 FSRS-6 weights, in the reference order. The
- *   defaults are the official unoptimized set; the optimizer is out of scope.
+ * @param parameters the 21 FSRS-6 weights, in the reference order. Null — the
+ *   default — takes [SchedulerConfig.fsrsParameters], so a fitted set from the
+ *   optimizer flows into every scheduler without each call site changing.
  * @param desiredRetention the recall probability intervals target, 0..1.
  *   0.9 is the FSRS default: with it, a card's interval equals its stability.
  */
 class FsrsScheduler(
-    parameters: List<Double> = DEFAULT_FSRS_PARAMETERS,
+    parameters: List<Double>? = null,
     val desiredRetention: Double = DEFAULT_DESIRED_RETENTION,
     private val config: SchedulerConfig = SchedulerConfig(),
     /**
@@ -39,7 +40,7 @@ class FsrsScheduler(
     private val zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
 ) : Scheduler {
 
-    private val w: DoubleArray = parameters.toDoubleArray()
+    private val w: DoubleArray = (parameters ?: config.fsrsParameters).toDoubleArray()
 
     init {
         require(w.size == PARAMETER_COUNT) {

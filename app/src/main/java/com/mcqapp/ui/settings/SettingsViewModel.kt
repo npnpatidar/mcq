@@ -18,6 +18,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+/**
+ * The FSRS optimizer's progress on the settings screen: idle, mid-fit with a
+ * step count, the finished fit, or a failure the learner should see.
+ */
+sealed interface FsrsOptimizeState {
+    data object Idle : FsrsOptimizeState
+    data class Running(val step: Int, val total: Int) : FsrsOptimizeState
+    data class Done(val result: com.mcqapp.domain.FsrsFitResult) : FsrsOptimizeState
+    data class Failed(val message: String) : FsrsOptimizeState
+}
+
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
 
@@ -180,6 +191,54 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun resetSchedulerConfig() {
         _schedulerConfig.value = com.mcqapp.domain.SchedulerConfig().sanitized()
         viewModelScope.launch { repository.resetSchedulerConfig() }
+    }
+
+    // --- FSRS parameter optimization ---
+
+    private val _fsrsReviewCount = MutableStateFlow(0)
+    val fsrsReviewCount: StateFlow<Int> = _fsrsReviewCount.asStateFlow()
+
+    private val _fsrsOptimize = MutableStateFlow<FsrsOptimizeState>(FsrsOptimizeState.Idle)
+    val fsrsOptimize: StateFlow<FsrsOptimizeState> = _fsrsOptimize.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.fsrsReviewCount().collect { _fsrsReviewCount.value = it }
+        }
+    }
+
+    /**
+     * Runs the fit; the scheduler config flow delivers the stored weights
+     * back through [schedulerConfig] once the tuner persists them, so the
+     * screen never applies them by hand.
+     */
+    fun optimizeFsrsParameters() {
+        if (_fsrsOptimize.value is FsrsOptimizeState.Running) return
+        _fsrsOptimize.value = FsrsOptimizeState.Running(step = 0, total = 0)
+        viewModelScope.launch {
+            try {
+                val result = repository.optimizeFsrsParameters { step, total ->
+                    _fsrsOptimize.value = FsrsOptimizeState.Running(step, total)
+                }
+                _fsrsOptimize.value = FsrsOptimizeState.Done(result)
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "FSRS optimize failed", e)
+                _fsrsOptimize.value = FsrsOptimizeState.Failed(
+                    e.message ?: "Optimization failed"
+                )
+            }
+        }
+    }
+
+    fun dismissFsrsOptimize() {
+        _fsrsOptimize.value = FsrsOptimizeState.Idle
+    }
+
+    fun restoreFsrsDefaults() {
+        viewModelScope.launch {
+            repository.restoreFsrsDefaults()
+            _fsrsOptimize.value = FsrsOptimizeState.Idle
+        }
     }
 
     private val _storage = MutableStateFlow<com.mcqapp.domain.StorageInfo.Report?>(null)

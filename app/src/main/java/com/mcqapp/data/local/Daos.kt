@@ -430,15 +430,21 @@ interface ReviewLogDao {
     @Query("SELECT * FROM review_log ORDER BY id ASC")
     suspend fun getAll(): List<ReviewLogEntity>
 
-    /** One question's review history, oldest first. Exercised by the
-     *  repository tests; the optimizer will read it once it lands. */
+    /** One question's review history, oldest first. */
     @Query("SELECT * FROM review_log WHERE questionId = :questionId ORDER BY reviewedAt ASC, id ASC")
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>
 
-    /** How many reviews a paper has logged; the future optimizer's gauge.
-     *  Counted by the repository tests pending that optimizer. */
+    /** How many reviews a paper has logged. */
     @Query("SELECT COUNT(*) FROM review_log WHERE paperId = :paperId")
     suspend fun countByPaper(paperId: String): Int
+
+    /**
+     * How many reviews exist across every paper, observed: the optimizer's
+     * unlock gauge, so the settings button lights up as history accumulates
+     * without the screen polling.
+     */
+    @Query("SELECT COUNT(*) FROM review_log")
+    fun observeCount(): Flow<Int>
 
     /**
      * Removes one question's logged reviews. The log is immutable per review,

@@ -46,6 +46,12 @@ class RepositorySettingsTest {
         // pinned by the first accessor: a config written for one test would
         // silently drive every later test in the run. Re-assert a blank slate.
         store().resetSchedulerConfig()
+        // Fitted weights ride a separate key that resetSchedulerConfig
+        // deliberately leaves alone; clear it here or one test's fit would
+        // leak into every later assertion in the run.
+        ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
+            it.remove(stringPreferencesKey("fsrs_parameters"))
+        }
     }
 
     @Test
@@ -179,5 +185,43 @@ class RepositorySettingsTest {
         val config = store.schedulerConfigNow()
         assertEquals(SchedulerConfig().sanitized(), config)
         assertTrue(config.introduceNewCards)
+    }
+
+    // --- optimized weights ---
+
+    /** Fitted weights persist as their own setting, independent of pacing. */
+    @Test
+    fun fittedFsrsParametersSurviveARoundTrip() = runBlocking {
+        val store = store()
+        val fitted = SchedulerConfig().fsrsParameters.toMutableList().also {
+            it[0] = 0.5
+            it[20] = 0.2
+        }
+        store.setSchedulerConfig(SchedulerConfig(fsrsParameters = fitted))
+        assertEquals(fitted, store.schedulerConfigNow().fsrsParameters)
+    }
+
+    /** A torn CSV write falls back to the official defaults, not to garbage. */
+    @Test
+    fun malformedFsrsParametersFallBackToDefaults() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it[stringPreferencesKey("fsrs_parameters")] = "1,2,3" }
+        assertEquals(SchedulerConfig().fsrsParameters, store().schedulerConfigNow().fsrsParameters)
+    }
+
+    /**
+     * Resetting pacing restores the documented scheduler defaults but must
+     * not throw away a fit the user asked to keep — the optimizer's own
+     * "Restore defaults" button is what clears the weights.
+     */
+    @Test
+    fun resettingPacingLeavesFittedWeightsAlone() = runBlocking {
+        val store = store()
+        val fitted = SchedulerConfig().fsrsParameters.toMutableList().also { it[0] = 0.5 }
+        store.setSchedulerConfig(SchedulerConfig(fsrsParameters = fitted, desiredRetention = 0.95))
+        store.resetSchedulerConfig()
+        val config = store.schedulerConfigNow()
+        assertEquals(0.9, config.desiredRetention, 0.0001)
+        assertEquals(fitted, config.fsrsParameters)
     }
 }

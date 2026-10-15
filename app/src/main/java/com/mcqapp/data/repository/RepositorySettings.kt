@@ -166,6 +166,11 @@ internal class SettingsStore(private val context: Context) {
     private val studyModeKey = stringPreferencesKey("study_mode")
     private val introduceNewCardsKey = booleanPreferencesKey("introduce_new_cards")
 
+    // CSV of the 21 weights rather than 21 numeric keys: the set is written
+    // and read as one value, and a malformed list (wrong length, junk
+    // tokens) falls back to the defaults in SchedulerConfig.sanitized.
+    private val fsrsParametersKey = stringPreferencesKey("fsrs_parameters")
+
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
         context.dataStore.data.map { prefs ->
             val d = com.mcqapp.domain.SchedulerConfig()
@@ -180,7 +185,12 @@ internal class SettingsStore(private val context: Context) {
                 introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
                 dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
                 fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
-                slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
+                slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong(),
+                fsrsParameters = prefs[fsrsParametersKey]?.let { stored ->
+                    stored.split(',')
+                        .mapNotNull { token -> token.toDoubleOrNull() }
+                        .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
+                } ?: d.fsrsParameters
             ).sanitized()
         }
 
@@ -199,9 +209,15 @@ internal class SettingsStore(private val context: Context) {
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
+            prefs[fsrsParametersKey] = c.fsrsParameters.joinToString(",")
         }
     }
 
+    /**
+     * Resets the pacing knobs only. The fitted FSRS weights are deliberately
+     * left alone: they are the learner's own history, and Settings offers a
+     * separate "Restore defaults" for dropping them.
+     */
     suspend fun resetSchedulerConfig() {
         context.dataStore.edit { prefs ->
             com.mcqapp.domain.SchedulerConfig()

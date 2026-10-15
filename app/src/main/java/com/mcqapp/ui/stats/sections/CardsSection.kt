@@ -228,7 +228,6 @@ private fun PaperCountRow(paper: PaperCardCounts, maxTotal: Int) {
 }
 
 @Composable
-@Composable
 private fun LeechesCard(
     bundle: StatsBundle,
     questionText: Map<String, String>,

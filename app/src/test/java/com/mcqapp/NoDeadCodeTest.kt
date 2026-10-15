@@ -50,7 +50,7 @@ class NoDeadCodeTest {
         val importer = sourceOf("Importer.kt")
         assertTrue(
             "the import path scales the whole file",
-            importer.contains("file.withDownscaledImages().papers")
+            importer.contains("file.withDownscaledImages()")
         )
         assertFalse(
             "Importer.kt still declares the paper-level duplicate",

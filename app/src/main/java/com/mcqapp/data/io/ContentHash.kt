@@ -37,8 +37,38 @@ object ContentHash {
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * An option's picture, wherever it sits: the structured `options_elements`
+     * payload shape has no separate image field, so the writer folds the
+     * picture in as a trailing image element, while the database and the
+     * editor shapes keep it in the scalar. Both render identically, so
+     * duplicate detection reads them positionally — element srcs first, then
+     * the scalar. Without this, an option whose picture moved between the
+     * two shapes on an export → re-import cycle hashes differently and the
+     * question reports as updated forever.
+     */
+    private fun optionImageSrcs(elements: List<ContentElement>, scalar: String?): List<String> =
+        elements.filterIsInstance<ContentElement.ImageElement>().map { it.src } +
+            listOfNotNull(scalar)
+
     fun of(dto: QuestionDto): String =
-        of(dto.text, dto.options.map { it.text }, dto.options.map { it.image }, dto.passageId)
+        of(
+            dto.text,
+            dto.options.map { it.text },
+            dto.options.map { option ->
+                val srcs = option.elements.filterIsInstance<ContentElement.ImageElement>()
+                    .map { it.src }
+                if (srcs.isEmpty()) {
+                    // Exactly what the raw scalar list rendered (Kotlin
+                    // joinToString spells a null element "null"), so hashes
+                    // stored by earlier versions still match.
+                    option.image ?: "null"
+                } else {
+                    (srcs + listOfNotNull(option.image)).joinToString(",")
+                }
+            },
+            dto.passageId
+        )
 
     /**
      * Whether [dto] is *genuinely* the same question as the stored row and its
@@ -64,10 +94,14 @@ object ContentHash {
         if (stored.image != dto.image) return false
         if (storedOptions.size != dto.options.size) return false
         return storedOptions.zip(dto.options).all { (option, incoming) ->
-            option.image == incoming.image &&
-                option.text.parseContentElements(json) == incoming.elements.ifEmpty {
-                    listOf(ContentElement.TextElement(incoming.text))
-                }
+            val storedOptionElements = option.text.parseContentElements(json)
+            val incomingOptionElements = incoming.elements.ifEmpty {
+                listOf(ContentElement.TextElement(incoming.text))
+            }
+            optionImageSrcs(storedOptionElements, option.image) ==
+                optionImageSrcs(incomingOptionElements, incoming.image) &&
+                storedOptionElements.filterNot { it is ContentElement.ImageElement } ==
+                    incomingOptionElements.filterNot { it is ContentElement.ImageElement }
         }
     }
 
@@ -81,8 +115,11 @@ object ContentHash {
         if (a.image != b.image) return false
         if (a.options.size != b.options.size) return false
         return a.options.zip(b.options).all { (first, second) ->
-            first.image == second.image &&
-                (first.elements.isEmpty() || second.elements.isEmpty() || first.elements == second.elements)
+            optionImageSrcs(first.elements, first.image) ==
+                optionImageSrcs(second.elements, second.image) &&
+                (first.elements.isEmpty() || second.elements.isEmpty() ||
+                    first.elements.filterNot { it is ContentElement.ImageElement } ==
+                        second.elements.filterNot { it is ContentElement.ImageElement })
         }
     }
 

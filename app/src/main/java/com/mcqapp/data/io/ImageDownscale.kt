@@ -14,8 +14,9 @@ import java.io.ByteArrayOutputStream
  * stays PNG, anything else becomes JPEG). Anything unparseable passes
  * through untouched: downscaling must never break an import.
  *
- * NOTE: the import duplicate hash is computed on the ORIGINAL bytes (see
- * Importer), so re-importing the same file still matches as Duplicate.
+ * NOTE: images at or below [maxDimension] pass through byte-identical, so
+ * the duplicate hash (computed on the scaled DTO, see Importer) still
+ * matches across re-imports of the same file.
  */
 object ImageDownscale {
 

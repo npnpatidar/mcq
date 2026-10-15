@@ -101,6 +101,20 @@ class DeviceExportedFileTest {
             allQuestions(after).map { it.id }
         )
         assertEquals("paper id must come from the payload", paper.id, after.id)
+
+        // The id-less question's option picture rides the structured
+        // options_elements shape as a trailing element; the scalar field has
+        // no room for it. Duplicate detection must read the picture
+        // positionally (element srcs, then the scalar) or the content hash
+        // changes and every export → re-import cycle reports the question
+        // as updated.
+        val original = allQuestions(paper).single { q -> q.options.any { o -> o.image != null } }
+        val reimported = allQuestions(after).single { it.id == original.id }
+        assertEquals(
+            "content hash must be stable across the round trip",
+            com.mcqapp.data.io.ContentHash.of(original),
+            com.mcqapp.data.io.ContentHash.of(reimported)
+        )
     }
 
     /**

@@ -89,9 +89,12 @@ class Importer(
 
         // Image preparation (Bitmap decode/scale/compress) runs BEFORE the
         // transaction: it is pure CPU work that must not hold the database
-        // write lock. The scaled twins mirror the originals 1:1 — hashes and
-        // identity still read the original DTOs, only stored bytes shrink.
-        val scaledPapers = file.withDownscaledImages().papers
+        // write lock. The scaled twins mirror the originals 1:1 — identity
+        // reads the scaled DTOs (the bytes that get stored, and the bytes a
+        // re-imported export carries back), only the work order differs.
+        val scaledFile = file.withDownscaledImages()
+        scaledForHashes = scaledFile
+        val scaledPapers = scaledFile.papers
 
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
@@ -269,7 +272,11 @@ class Importer(
 
                     categoryDto.questions.forEachIndexed { questionIndex, questionDto ->
                         val scaledQuestion = scaledCategory.questions[questionIndex]
-                        val contentHash = ContentHash.of(questionDto.text, questionDto.options.map { it.text }, questionDto.options.map { it.image }, questionDto.passageId)
+                        // Hash the scaled twin: its images are the bytes this
+                        // import actually stores, so a later re-import of an
+                        // export (which carries the stored bytes) hashes the
+                        // same and deduplicates instead of updating.
+                        val contentHash = ContentHash.of(scaledQuestion)
                         Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
                             "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
                             "textLength=${questionDto.text.length}")
@@ -571,22 +578,20 @@ class Importer(
     )
 
     /**
-     * Every content hash this import could produce, from the parsed DTOs. The
-     * question loop keys on the unscaled DTO while the row written is the
-     * scaled one, so the hash is taken the same way here.
+     * Every content hash this import could produce, from the scaled DTOs —
+     * the same inputs the question loop hashes (and the row stores), so the
+     * collision prefetch and the per-question lookup always agree.
      */
-    private fun importHashes(): Set<String> = importedFile?.papers.orEmpty()
+    private fun importHashes(): Set<String> = scaledForHashes?.papers.orEmpty()
         .flatMap { paper ->
             paper.categories.flatMap { it.questions } + paper.topLevelQuestions()
         }
         .mapTo(mutableSetOf()) { question ->
-            ContentHash.of(
-                question.text,
-                question.options.map { it.text },
-                question.options.map { it.image },
-                question.passageId
-            )
+            ContentHash.of(question)
         }
+
+    /** The scaled twin of [importedFile], for [importHashes]. */
+    private var scaledForHashes: McqFileDto? = null
 
     /** The file being imported, kept so collision candidates can be gathered. */
     private var importedFile: McqFileDto? = null

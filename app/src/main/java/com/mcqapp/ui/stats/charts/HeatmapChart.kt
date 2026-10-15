@@ -66,8 +66,8 @@ internal fun HeatmapChart(
                         val pitch = ChartGeometry.pitch(cell.toPx(), gap.toPx())
                         val topOffset = 14.dp.toPx()
                         val (col, row) = ChartGeometry.heatmapCellAt(tap.x, tap.y, topOffset, pitch)
-                        val index = col * 7 + row
-                        selected = if (index in days.indices) index else -1
+                        val index = ChartGeometry.heatmapIndex(col, row)
+                        selected = if (index != null && index in days.indices) index else -1
                     }
                 }
         ) {

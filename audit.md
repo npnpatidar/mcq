@@ -399,37 +399,38 @@ doesn't churn working code:
 
 ---
 
-## 4. Fix verification — commits `7622406`..`b9cbe44` (verified, approved)
+## 4. Fix verification — commits `7622406`..`af79808` (verified, approved)
 
-Verified against CI run `38771069114` (branch `feat/stats-page`, green: build,
-unit, Robolectric UI, release; `StatsAggregatorTest` now 28/28 including the
-two new retention-rule tests). Each finding was re-checked against the diff
+Verified against CI run `38780015015` (branch `feat/stats-page`, green: build,
+Robolectric UI, release; `StatsAggregatorTest` 30/30, new
+`StatsChartGeometryTest` 3/3). Each finding was re-checked against the diff
 of `b5ee9dd..HEAD`.
 
 | ID  | Verdict | Notes |
 |-----|---------|-------|
-| F1  | ✅ Approved | `HeatmapChart` now wraps in `BoxWithConstraints`, computes `cell` from `maxWidth`, canvas height `14.dp + cell*7 + gap*6` — exact grid height, renders |
-| F2  | ✅ Approved | `CalibrationChart` gets `.height(220.dp)`; origin moved to `size.height - bottomPad` — axes, diagonal and points are on-canvas |
-| F3  | ✅ Approved | Tap handler reuses the same `cell`/`gap`/`pitch` as the draw block; column/row mapping now matches the drawn geometry |
-| F4  | ✅ Approved | `.filter { (it.intervalBeforeDays ?: 0) >= 1 }` added inside `firstOfDayReviews`, so all four consumers (table, KPI, weekday, trend) inherit it; KDoc updated; two new tests pin the rule (first exposure excluded, same-day relearn step excluded) and existing fixtures were adjusted to carry intervals |
-| F5  | ✅ Approved | `answerButtons` filters `kind != null` with an honest KDoc; no more silent "Learning" inflation |
-| F6  | ✅ Approved | `TrendCard` passes `yLabel = { formatPct(it) }` — 0.25/0.75 ticks now read 25%/75% |
-| F7  | ✅ Approved | `CardInfoSheet` (due + history) and `HeatmapChart.dayDate` use `ZoneId.systemDefault()`; heatmap tooltip/month labels now name the local day |
-| F8  | ✅ Approved | `StackedBarChart` tap index uses `floor(...)` — gutter taps no longer select bar 0 |
-| F9  | ✅ Approved | `LineChart` fill split into contiguous non-null runs; fills no longer bridge null gaps |
-| F10 | ✅ Approved | `memoryGrowth` numbering counts only rows with an interval (`contrib` pairing) — no more cohort shift |
-| F11 | ⚠️ Partial, coder's call | Cumulative line + interval CDF implemented; overdue-age and per-paper counts de-scoped from the plan; memoryGrowth kept on intervals (plan amended); geometry tests still absent while plan line 149 still promises them. See the F11 verdict table above |
+| F1  | ✅ Approved | `HeatmapChart` computes `cell` from `maxWidth` and sizes the canvas to the exact grid height (`ChartGeometry.heatmapHeight`) — renders |
+| F2  | ✅ Approved | `CalibrationChart` gets `.height(220.dp)`; origin at `size.height - bottomPad` — axes, diagonal and points are on-canvas |
+| F3  | ✅ Approved | Tap and draw share the same geometry via pure `ChartGeometry` helpers; column/row mapping matches the drawn grid |
+| F4  | ✅ Approved | `.filter { (it.intervalBeforeDays ?: 0) >= 1 }` inside `firstOfDayReviews`; all four consumers inherit it; two tests pin the rule (first exposure excluded, same-day relearn step excluded) |
+| F5  | ✅ Approved | `answerButtons` filters `kind != null`; no more silent "Learning" inflation |
+| F6  | ✅ Approved | `TrendCard` passes `yLabel = { formatPct(it) }` — ticks read 25%/75% |
+| F7  | ✅ Approved | `CardInfoSheet` and `HeatmapChart.dayDate` use `ZoneId.systemDefault()` |
+| F8  | ✅ Approved | `ChartGeometry.barIndexAt` floors — gutter taps no longer select bar 0 |
+| F9  | ✅ Approved | `LineChart` fill split into contiguous non-null runs |
+| F10 | ✅ Approved | `memoryGrowth` numbers only contributing rows; re-pinned for `stabilityAfter` by test |
+| F11 | ✅ Completed | Overdue-age bins + per-paper counts implemented and tested (scope-gated); reviews/day line and grouping toggle dropped with the plan amended; `memoryGrowth` switched to `stabilityAfter` (both series, strings and tests); `ChartGeometry` extracted with 3 JVM tests satisfying the plan's geometry-test promise |
 
-Two residual nits spotted during verification (non-blocking, same class as
-fixed bugs):
+One residual defect found in this round — **fixed in place** (applied on top
+of `af79808`, uncommitted at audit time):
 
-1. `HeatmapChart` tap row uses `.toInt()` truncation: taps in the month-label
-   strip (`y < topOffset`) select row 0 of the tapped column — the same
-   truncation-vs-floor issue F8 fixed in `StackedBarChart`. Use `floor` there
-   too.
-2. The new reviews/day cumulative overlay line has no legend entry (the
-   forecast card labels its cumulative line; this one is unlabelled grey).
-   Add a legend entry or accept the ambiguity.
+- ~~`HeatmapChart` still admits label-strip taps for columns ≥ 1.~~
+  The composite-index guard moved into a pure, tested helper:
+  `ChartGeometry.heatmapIndex(col, row)` returns null for a negative row, the
+  composable selects only on a non-null in-bounds index, and
+  `heatmapLabelStripTapsNeverFoldIntoAnotherColumn` pins the regression
+  (col 1 / row −1 must not resolve to the previous column's last cell).
+  Verified locally on the JVM (`StatsChartGeometryTest` 4/4).
 
-Both are cosmetic; the release-blocking and statistics-correctness findings
-are resolved.
+The previous legend nit is moot: the reviews/day cumulative overlay was
+removed with the F11 disposition. Nothing else remains; the audit is closed
+pending the CI run for this last change.

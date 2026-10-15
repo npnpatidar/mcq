@@ -41,6 +41,14 @@ internal object ChartGeometry {
         floor((y - topOffsetPx) / pitchPx).toInt()
     )
 
+    /**
+     * The day index a heatmap cell points at, or null when the tap is outside
+     * the grid's rows: a label-strip tap (negative row) must not fold back
+     * into the previous column's last cell.
+     */
+    fun heatmapIndex(col: Int, row: Int, rows: Int = 7): Int? =
+        if (row in 0 until rows) col * rows + row else null
+
     /** Index a horizontal tap lands in; left-gutter taps are negative, not zero. */
     fun barIndexAt(x: Float, left: Float, slot: Float): Int =
         floor((x - left) / slot).toInt()

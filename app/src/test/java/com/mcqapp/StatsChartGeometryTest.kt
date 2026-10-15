@@ -3,6 +3,7 @@ package com.mcqapp
 import androidx.compose.ui.unit.dp
 import com.mcqapp.ui.stats.charts.ChartGeometry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -44,5 +45,17 @@ class StatsChartGeometryTest {
         assertEquals(-1, ChartGeometry.barIndexAt(x = -4.9f, left = 0f, slot = 10f))
         assertEquals(0, ChartGeometry.barIndexAt(x = 1f, left = 0f, slot = 10f))
         assertEquals(1, ChartGeometry.barIndexAt(x = 14.9f, left = 0f, slot = 10f))
+    }
+
+    @Test
+    fun heatmapLabelStripTapsNeverFoldIntoAnotherColumn() {
+        // col*7 + row with row = -1 would land on the previous column's last
+        // cell ((c-1)*7 + 6); the guard must reject it instead.
+        assertNull(ChartGeometry.heatmapIndex(col = 1, row = -1))
+        assertNull(ChartGeometry.heatmapIndex(col = 0, row = -1))
+        assertNull(ChartGeometry.heatmapIndex(col = 3, row = 7))
+        assertEquals(0, ChartGeometry.heatmapIndex(col = 0, row = 0))
+        assertEquals(6, ChartGeometry.heatmapIndex(col = 0, row = 6))
+        assertEquals(14, ChartGeometry.heatmapIndex(col = 2, row = 0))
     }
 }

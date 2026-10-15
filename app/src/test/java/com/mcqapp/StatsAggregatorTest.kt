@@ -377,15 +377,17 @@ class StatsAggregatorTest {
         val cards = listOf(
             card("q1", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = now - 6 * hour),
             card("q2", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = now - 8 * day),
+            card("q4", state = CardStateKind.REVIEW, intervalDays = 30, dueAt = now - 20 * day),
             card("q3", state = CardStateKind.NEW, dueAt = now - 30 * day)
         )
         val bundle = StatsAggregator.build(input(cards = cards), null, StatsAggregator.Range.ALL)
         val overdue = bundle.overdueAge
-        assertEquals(2, overdue.overdue)
+        assertEquals(3, overdue.overdue)
         assertEquals(listOf("<1d", "1–2d", "2–4d", "4–7d", "1–2w", "2w+"), overdue.bins.map { it.label })
         assertEquals(1, overdue.bins.first { it.label == "<1d" }.count)
+        assertEquals(1, overdue.bins.first { it.label == "1–2w" }.count)
         assertEquals(1, overdue.bins.first { it.label == "2w+" }.count)
-        assertEquals(8, overdue.oldestAgeDays)
+        assertEquals(20, overdue.oldestAgeDays)
     }
 
     @Test

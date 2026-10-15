@@ -8,6 +8,9 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.toContentJson
+import com.mcqapp.domain.textContent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -520,5 +523,71 @@ class DocxRoundTripTest {
             }
         }
         return out.toByteArray()
+    }
+
+    /**
+     * The payload must stay fresh on an untouched export — if this fails,
+     * every re-import duplicates the whole paper.
+     */
+    @Test
+    fun untouchedExportKeepsPayloadFresh() {
+        val bytes = export(samplePaper, sampleFile)
+        val parsed = parseDocx(bytes)
+        assertTrue(
+            "untouched export must not warn about stale payload: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        assertEquals(
+            "ids must survive so re-import deduplicates",
+            allQuestions(samplePaper).map { it.id },
+            allQuestions(after).map { it.id }
+        )
+    }
+
+    /**
+     * The device export path rebuilds every DTO from the database: each
+     * element list was stored as JSON and parsed back. That round trip must
+     * not make the payload go stale — otherwise re-import duplicates the
+     * whole paper.
+     */
+    @Test
+    fun payloadSurvivesTheDatabaseRoundTrip() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        fun rt(elements: List<ContentElement>): List<ContentElement> =
+            elements.toContentJson(json).parseContentElements(json)
+        fun rtQuestion(q: com.mcqapp.data.io.QuestionDto) = q.copy(
+            text = rt(q.elements).textContent,
+            elements = rt(q.elements),
+            explanation = rt(q.explanationElements).textContent,
+            explanationElements = rt(q.explanationElements),
+            options = q.options.map { o ->
+                o.copy(
+                    text = rt(o.elements).textContent,
+                    elements = rt(o.elements)
+                )
+            }
+        )
+        val rtPaper = samplePaper.copy(
+            categories = samplePaper.categories.map { c ->
+                c.copy(questions = c.questions.map { rtQuestion(it) })
+            },
+            questions = samplePaper.questions.map { rtQuestion(it) }
+        )
+        val rtPassages = sampleFile.passages.map { p ->
+            p.copy(elements = rt(p.elements))
+        }
+        val bytes = DocxPaperWriter.paperToDocxBytes(rtPaper, rtPassages)
+        val parsed = parseDocx(bytes)
+        assertTrue(
+            "db round-tripped export must not warn about stale payload: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = LegacyParser.parse(parsed.json).papers.single()
+        assertEquals(
+            "ids must survive so re-import deduplicates",
+            allQuestions(rtPaper).map { it.id },
+            allQuestions(after).map { it.id }
+        )
     }
 }

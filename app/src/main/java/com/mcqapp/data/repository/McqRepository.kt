@@ -3,6 +3,7 @@ package com.mcqapp.data.repository
 import android.content.Context
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.parseContentElements
@@ -33,6 +34,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val paperStore = PaperStore(db, questionStore, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
+    private val fsrsTuner = FsrsTuner(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -78,6 +80,23 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) =
         settings.setSchedulerConfig(config)
     suspend fun resetSchedulerConfig() = settings.resetSchedulerConfig()
+
+    // --- FSRS parameter optimization ---
+
+    /** Reviews logged across every paper: the optimizer's unlock gauge. */
+    fun fsrsReviewCount(): Flow<Int> = fsrsTuner.observeReviewCount()
+
+    /**
+     * Fits the 21 weights to the whole review log and stores them; nothing
+     * else is touched. @throws com.mcqapp.domain.FsrsFitInsufficientData
+     * when the log is too thin to fit.
+     */
+    suspend fun optimizeFsrsParameters(
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ): FsrsFitResult = fsrsTuner.optimize(onProgress)
+
+    /** Drops fitted weights; scheduling returns to the official defaults. */
+    suspend fun restoreFsrsDefaults() = fsrsTuner.restoreDefaults()
 
     suspend fun saveTestProgress(json: String) = settings.saveTestProgress(json)
     suspend fun loadTestProgress(): String? = settings.loadTestProgress()

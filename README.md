@@ -138,11 +138,19 @@ everything else. A card belongs to a paper, so deleting a paper, or a question, 
 its schedule and its logged reviews; moving a question to another paper starts it fresh.
 One documented gap: JSON backups and Anki packages carry the schedules but *not* the
 `review_log` rows — the log is a local-only history (its rows are still cleaned up when
-their question is), pending the optimizer that will read it.
+their question is).
 
-**Roadmap.** The FSRS weights are the official unoptimized set; an optimizer that fits
-them to your own `review_log` is the natural next step, and the log is already being
-kept for it.
+**Optimized weights.** Settings → Spaced repetition → *Optimize FSRS parameters* fits
+the 21 FSRS-6 weights to your own `review_log` the way Anki's Optimize does — same
+recipe as the official reference trainer (open-spaced-repetition/fsrs-rs): closed-form
+initial stabilities, recency-weighted log loss, Adam on a cosine-annealed schedule, L2
+toward the starting weights (the fitted initial stabilities plus the official defaults).
+It unlocks at 1000 logged reviews (below that the defaults predict
+better than a fit on noise), runs entirely on-device, and only changes how *future*
+intervals are computed — existing schedules are never touched. *Restore defaults* drops
+the fitted set. Imported cards whose pre-import history is unknown train from their
+stored memory state; a library with no first exposures at all keeps the default initial
+stabilities.
 
 ## Taking a test
 

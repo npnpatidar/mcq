@@ -3,6 +3,7 @@ package com.mcqapp
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
+import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
@@ -683,4 +684,43 @@ class SpacedRepetitionTest {
         assertEquals(SchedulerConfig(), SchedulerConfig().sanitized())
     }
 
+    // --- fitted weights ride the config into the scheduler ---
+
+    /** A corrupt weight list must never break scheduling. */
+    @Test
+    fun `sanitized falls back to defaults for malformed weights`() {
+        assertEquals(
+            FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+            SchedulerConfig(fsrsParameters = listOf(1.0)).sanitized().fsrsParameters
+        )
+        assertEquals(
+            FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+            SchedulerConfig(fsrsParameters = List(FsrsScheduler.PARAMETER_COUNT) { Double.NaN })
+                .sanitized().fsrsParameters
+        )
+    }
+
+    /** Well-formed lists are clipped into the official FSRS-6 bounds. */
+    @Test
+    fun `sanitized clips weights into the official bounds`() {
+        val clipped = SchedulerConfig(fsrsParameters = List(21) { 1_000_000.0 })
+            .sanitized().fsrsParameters
+        clipped.forEachIndexed { index, value ->
+            assertTrue(value <= FsrsOptimizer.UPPER_BOUNDS[index] + 1e-9)
+            assertTrue(value >= FsrsOptimizer.LOWER_BOUNDS[index] - 1e-9)
+        }
+        assertEquals(FsrsOptimizer.UPPER_BOUNDS[4], clipped[4], 1e-12)
+    }
+
+    /** With no explicit weights the scheduler reads the config's — fitted or default. */
+    @Test
+    fun `scheduler takes fitted weights from the config`() {
+        val custom = SchedulerConfig().fsrsParameters.toMutableList().also { it[0] = 0.5 }
+        val fitted = FsrsScheduler(
+            config = SchedulerConfig(fsrsParameters = custom),
+            zoneOffset = { 0L }
+        )
+        val card = fitted.next(fitted.initial("q1"), ReviewGrade.AGAIN, now)
+        assertEquals(0.5, card.stability, 1e-9)
+    }
 }

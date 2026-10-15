@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -54,10 +56,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.io.Exporter
+import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.BuildConfig
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
 import com.mcqapp.R
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,6 +81,8 @@ fun SettingsScreen(
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
     val loadRemoteImages by viewModel.loadRemoteImages.collectAsStateWithLifecycle()
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
+    val fsrsReviewCount by viewModel.fsrsReviewCount.collectAsStateWithLifecycle()
+    val fsrsOptimize by viewModel.fsrsOptimize.collectAsStateWithLifecycle()
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -343,7 +349,12 @@ fun SettingsScreen(
                 onChange = { viewModel.updateSchedulerConfig(it) },
                 onReset = { viewModel.resetSchedulerConfig() },
                 simplifiedStudy = simplifiedStudy,
-                onSimplifiedChange = { viewModel.setSimplifiedStudy(it) }
+                onSimplifiedChange = { viewModel.setSimplifiedStudy(it) },
+                fsrsReviewCount = fsrsReviewCount,
+                fsrsOptimizeState = fsrsOptimize,
+                onOptimizeFsrs = { viewModel.optimizeFsrsParameters() },
+                onDismissFsrsOptimize = { viewModel.dismissFsrsOptimize() },
+                onRestoreFsrsDefaults = { viewModel.restoreFsrsDefaults() }
             )
 
             Spacer(Modifier.height(12.dp))
@@ -585,7 +596,12 @@ private fun AnkiSchedulerSection(
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
-    onSimplifiedChange: (Boolean) -> Unit
+    onSimplifiedChange: (Boolean) -> Unit,
+    fsrsReviewCount: Int,
+    fsrsOptimizeState: FsrsOptimizeState,
+    onOptimizeFsrs: () -> Unit,
+    onDismissFsrsOptimize: () -> Unit,
+    onRestoreFsrsDefaults: () -> Unit
 ) {
     // Collapsed by default: the tuning knobs underneath are for Anki
     // veterans, and an open wall of numbers is what made this screen feel
@@ -644,6 +660,100 @@ private fun AnkiSchedulerSection(
                 stringResource(R.string.target_retention_help),
                 style = MaterialTheme.typography.bodySmall
             )
+            Spacer(Modifier.height(12.dp))
+
+            // --- optimizer: Anki's "Optimize FSRS parameters" button ---
+
+            Text(
+                stringResource(R.string.optimize_fsrs_parameters),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                stringResource(
+                    R.string.optimize_fsrs_parameters_help,
+                    FsrsOptimizer.MIN_REVIEWS
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(4.dp))
+            val optimizing = fsrsOptimizeState is FsrsOptimizeState.Running
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onOptimizeFsrs,
+                    enabled = fsrsReviewCount >= FsrsOptimizer.MIN_REVIEWS && !optimizing,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (optimizing) {
+                        val running = fsrsOptimizeState as FsrsOptimizeState.Running
+                        Text(
+                            // The schedule size lands with the fit's first
+                            // progress report; until then there is no honest
+                            // denominator to show.
+                            if (running.total == 0) {
+                                stringResource(R.string.optimizing_fsrs_start)
+                            } else {
+                                stringResource(
+                                    R.string.optimizing_fsrs,
+                                    running.step,
+                                    running.total
+                                )
+                            }
+                        )
+                    } else {
+                        Text(stringResource(R.string.optimize_fsrs_parameters))
+                    }
+                }
+                if (optimizing) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                }
+            }
+            if (!optimizing && fsrsReviewCount < FsrsOptimizer.MIN_REVIEWS) {
+                Text(
+                    stringResource(
+                        R.string.optimize_fsrs_needs_reviews,
+                        fsrsReviewCount,
+                        FsrsOptimizer.MIN_REVIEWS
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            when (val state = fsrsOptimizeState) {
+                is FsrsOptimizeState.Done -> {
+                    Text(
+                        stringResource(
+                            R.string.optimize_fsrs_done,
+                            state.result.predictions,
+                            state.result.cards,
+                            String.format(Locale.US, "%.4f", state.result.lossBefore),
+                            String.format(Locale.US, "%.4f", state.result.lossAfter)
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row {
+                        TextButton(onClick = onRestoreFsrsDefaults) {
+                            Text(stringResource(R.string.restore_defaults))
+                        }
+                        TextButton(onClick = onDismissFsrsOptimize) {
+                            Text(stringResource(R.string.ok))
+                        }
+                    }
+                }
+                is FsrsOptimizeState.Failed -> {
+                    Text(
+                        stringResource(R.string.optimize_fsrs_failed, state.message),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    TextButton(onClick = onDismissFsrsOptimize) {
+                        Text(stringResource(R.string.ok))
+                    }
+                }
+                else -> Unit
+            }
             Spacer(Modifier.height(12.dp))
             Text(stringResource(R.string.ranking_mode), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(4.dp))

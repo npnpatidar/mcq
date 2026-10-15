@@ -262,6 +262,24 @@ class RepositoryTest {
         assertEquals(3, db.reviewLogDao().countByPaper("p1"))
     }
 
+    /**
+     * The optimizer's unlock gauge reads the same append-only log: every
+     * graded review across every paper counts, new exposures included, and
+     * the flow reports the live total.
+     */
+    @Test
+    fun theOptimizerGaugeCountsEveryLoggedReview() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a")))
+        assertEquals(0, repository.fsrsReviewCount().first())
+
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q2", com.mcqapp.domain.ReviewGrade.AGAIN, now = 2000L)
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 3000L)
+        assertEquals(3, repository.fsrsReviewCount().first())
+    }
+
     @Test
     fun theBadgeAndThePullReadTheSameEligibility() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")

@@ -236,6 +236,14 @@
     <string name="study_section">Study</string>
     <string name="target_retention">Target retention</string>
     <string name="target_retention_help">How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.</string>
+    <string name="optimize_fsrs_parameters">Optimize FSRS parameters</string>
+    <string name="optimize_fsrs_parameters_help">Fits the scheduling weights to your own review history, the way Anki\'s Optimize does. Unlocks after %1$d reviews.</string>
+    <string name="optimize_fsrs_needs_reviews">Reviews logged: %1$d of %2$d needed.</string>
+    <string name="optimizing_fsrs">Optimizing… %1$d/%2$d</string>
+    <string name="optimizing_fsrs_start">Optimizing…</string>
+    <string name="optimize_fsrs_done">Fitted on %1$d review points from %2$d cards. Log loss vs your current weights: %3$s → %4$s.</string>
+    <string name="optimize_fsrs_failed">Optimization failed: %1$s</string>
+    <string name="restore_defaults">Restore defaults</string>
     <string name="ranking_mode">Ranking mode</string>
     <string name="memory_first">Memory first</string>
     <string name="explore_new_cards">Explore new cards</string>

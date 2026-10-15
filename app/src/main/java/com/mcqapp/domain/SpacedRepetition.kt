@@ -177,7 +177,16 @@ data class SchedulerConfig(
     /** Correct answer faster than this (seconds) infers Easy from history. */
     val fastSeconds: Long = 8L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
-    val slowSeconds: Long = 30L
+    val slowSeconds: Long = 30L,
+    /**
+     * The 21 FSRS-6 weights scheduling runs on, in reference order. Defaults
+     * to the official unoptimized set; "Optimize FSRS parameters" in Settings
+     * replaces them with [FsrsOptimizer]'s fit to this learner's own review
+     * history. A malformed list (wrong length, non-finite values) falls back
+     * to the defaults in [sanitized], so a corrupt preference can never break
+     * scheduling; well-formed lists are clipped to the official bounds.
+     */
+    val fsrsParameters: List<Double> = FsrsScheduler.DEFAULT_FSRS_PARAMETERS
 ) {
     /** Guards against values that would break scheduling entirely. */
     fun sanitized(): SchedulerConfig = copy(
@@ -187,7 +196,13 @@ data class SchedulerConfig(
         desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
         dayStartHour = dayStartHour.coerceIn(0, 23),
         fastSeconds = fastSeconds.coerceIn(1, 3600),
-        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600)
+        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600),
+        fsrsParameters = fsrsParameters
+            .takeIf { list ->
+                list.size == FsrsScheduler.PARAMETER_COUNT && list.all { it.isFinite() }
+            }
+            ?.let { FsrsOptimizer.clip(it) }
+            ?: FsrsScheduler.DEFAULT_FSRS_PARAMETERS
     )
 }
 

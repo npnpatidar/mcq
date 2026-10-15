@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.stats.AnswerButtonsData
+import com.mcqapp.domain.stats.StackedPoint
 import com.mcqapp.domain.stats.StatsBundle
 import com.mcqapp.domain.stats.WeakCard
 import com.mcqapp.ui.stats.WeakCardRow
@@ -286,7 +287,9 @@ private fun ResponseTimeCard(
         )
         Spacer(Modifier.height(4.dp))
         StackedBarChart(
-            points = response.histogram,
+            points = response.histogram.map { point ->
+                StackedPoint(point.label, listOf(point.value ?: 0.0), point.count)
+            },
             segmentCount = 1
         )
         Spacer(Modifier.height(12.dp))

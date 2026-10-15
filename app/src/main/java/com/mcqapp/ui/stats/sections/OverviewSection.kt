@@ -32,6 +32,7 @@ import com.mcqapp.ui.stats.charts.ChartSubtitle
 import com.mcqapp.ui.stats.charts.ChartTitle
 import com.mcqapp.ui.stats.charts.HeatmapChart
 import com.mcqapp.ui.stats.charts.formatPct
+import kotlin.math.roundToInt
 
 /**
  * Tab 1: the today strip, headline KPIs, the true-retention table, the

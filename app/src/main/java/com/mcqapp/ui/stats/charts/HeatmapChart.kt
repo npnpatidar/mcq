@@ -44,6 +44,7 @@ internal fun HeatmapChart(
     val strong = MaterialTheme.colorScheme.primary
     val labelColor = axisLabelColor()
     val tooltipBg = MaterialTheme.colorScheme.surface
+    val tooltipText = MaterialTheme.colorScheme.onSurface
     var selected by remember(days) { mutableIntStateOf(-1) }
 
     val weeks = (days.size + 6) / 7
@@ -88,7 +89,7 @@ internal fun HeatmapChart(
         days.forEachIndexed { index, day ->
             val col = index / 7
             val row = index % 7
-            val intensity = (day.reviews.toFloat() / maxReviews.coerceAtMost(4f)).coerceIn(0f, 1f)
+            val intensity = (day.reviews.toFloat() / maxReviews.coerceAtMost(4)).coerceIn(0f, 1f)
             val color = if (day.reviews == 0) emptyColor else lerp(strong.copy(alpha = 0.35f), strong, intensity)
             drawRoundRect(
                 color = color,
@@ -102,7 +103,7 @@ internal fun HeatmapChart(
             val day = days[selected]
             val text = textMeasurer.measure(
                 dayDate(day).format(dateFmt) + " · " + tooltipCount(day.reviews),
-                TextStyle(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
+                TextStyle(fontSize = 10.sp, color = tooltipText)
             )
             val boxWidth = text.size.width + 16.dp.toPx()
             val boxHeight = text.size.height + 10.dp.toPx()

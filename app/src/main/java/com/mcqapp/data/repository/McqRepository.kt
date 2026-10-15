@@ -107,7 +107,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * card's schedule and the grouping titles. The stats ViewModel slices this
      * in memory per range and paper scope.
      */
-    suspend fun statsRawData(): StatsStore.RawData = statsStore.load()
+    internal suspend fun statsRawData(): StatsStore.RawData = statsStore.load()
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =

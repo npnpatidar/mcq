@@ -144,7 +144,7 @@ internal fun StackedBarChart(
             val path = Path()
             var started = false
             points.indices.forEach { index ->
-                val value = overlay!![index] ?: return@forEachIndexed
+                val value = overlay!![index] ?: return@forEach
                 val x = leftPad + index * slot + slot / 2f
                 val y = topPad + plotHeight * (1f - (value / overlayCeiling).toFloat())
                 if (started) {

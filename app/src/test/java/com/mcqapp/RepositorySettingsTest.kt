@@ -41,16 +41,18 @@ class RepositorySettingsTest {
         SettingsStore(ApplicationProvider.getApplicationContext<Context>())
 
     @After
-    fun restoreDefaults() = runBlocking {
+    fun restoreDefaults() {
         // The DataStore singleton is JVM-wide under Robolectric with the file
         // pinned by the first accessor: a config written for one test would
         // silently drive every later test in the run. Re-assert a blank slate.
-        store().resetSchedulerConfig()
-        // Fitted weights ride a separate key that resetSchedulerConfig
-        // deliberately leaves alone; clear it here or one test's fit would
-        // leak into every later assertion in the run.
-        ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
-            it.remove(stringPreferencesKey("fsrs_parameters"))
+        runBlocking {
+            store().resetSchedulerConfig()
+            // Fitted weights ride a separate key that resetSchedulerConfig
+            // deliberately leaves alone; clear it here or one test's fit would
+            // leak into every later assertion in the run.
+            ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
+                it.remove(stringPreferencesKey("fsrs_parameters"))
+            }
         }
     }
 

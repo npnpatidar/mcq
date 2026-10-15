@@ -69,7 +69,7 @@ object StatsAggregator {
         val kpiRetention = trueRetention(inRange, todayStart, tomorrowStart, rangeStart, cfg, zone)
 
         return StatsBundle(
-            today = today(inScope, cards, todayStart, tomorrowStart, todayDay, cfg, zone),
+            today = today(inScope, cards, todayStart, tomorrowStart, todayDay, input.now, cfg, zone),
             kpis = kpis(inRange, cards, kpiRetention, heatmap, input, cfg, zone),
             retentionTable = retentionTable(inScope, todayStart, tomorrowStart, cfg, zone),
             heatmap = heatmap,
@@ -81,7 +81,7 @@ object StatsAggregator {
             ),
             retentionTrend = retentionTrend(inRange, rangeStart, todayDay, input, cfg, zone),
             calibration = calibration(inRange),
-            groupRetention = groupRetention(inRange, input, scopePaperId, todayStart, cfg, zone),
+            groupRetention = groupRetention(inRange, input, scopePaperId),
             weekdayRetention = weekdayRetention(inRange, todayStart, cfg, zone),
             forecast = forecast(cards, todayStart, todayDay),
             reviewsPerDay = reviewsPerDay(inRange, rangeStart, todayDay, cfg, zone),
@@ -108,6 +108,7 @@ object StatsAggregator {
         todayStart: Long,
         tomorrowStart: Long,
         todayDay: Long,
+        now: Long,
         cfg: SchedulerConfig,
         zone: Long
     ): TodayStats {
@@ -136,12 +137,14 @@ object StatsAggregator {
             unknown = unknown,
             introduced = todays.count { it.stateBefore == CardStateKind.NEW },
             dueNow = cards.count {
+                // Scheduled for this study day; overdue cards live in the
+                // backlog instead of being double-counted here.
                 it.state.dueAt != 0L && it.state.state != CardStateKind.NEW &&
-                    it.state.dueAt < tomorrowStart
+                    it.state.dueAt >= todayStart && it.state.dueAt < tomorrowStart
             },
             backlog = cards.count {
                 it.state.dueAt != 0L && it.state.state != CardStateKind.NEW &&
-                    it.state.dueAt < todayStart
+                    it.state.dueAt < now
             }
         )
     }
@@ -331,18 +334,17 @@ object StatsAggregator {
 
     // --- group / weekday retention -----------------------------------------
 
+    /**
+     * Per-paper (or per-category when scoped to one paper) pass rate over the
+     * range: every review counts, so a card's re-answer same day still moves
+     * the number. The true-retention rule is the retention table's job.
+     */
     private fun groupRetention(
         inRange: List<ReplayReview>,
         input: Input,
-        scopePaperId: String?,
-        todayStart: Long,
-        cfg: SchedulerConfig,
-        zone: Long
+        scopePaperId: String?
     ): List<GroupRetention> {
-        val qualifying = firstOfDayReviews(
-            inRange, Long.MIN_VALUE / 2, Long.MAX_VALUE / 2, cfg, zone
-        )
-        val grouped = qualifying.groupBy {
+        val grouped = inRange.groupBy {
             if (scopePaperId == null) it.paperId else it.questionId
         }
         return grouped.map { (_, rows) ->
@@ -642,7 +644,7 @@ object StatsAggregator {
             edges = listOf(1.0, 3.0, 7.0, 14.0, 21.0, 45.0, 90.0, 180.0, 365.0),
             labels = listOf(
                 "<1d", "1–3d", "3–7d", "1–2w", "2–3w", "3w–1.5m",
-                "1.5–3m", "3–6m", "6m–1y", ">1y"
+                "1.5–3m", "90–180d", "6m–1y", ">1y"
             )
         )
 
@@ -716,9 +718,9 @@ object StatsAggregator {
         val byNumber = HashMap<Int, MutableList<Double>>()
         inScope.groupBy { it.questionId }.forEach { (_, rows) ->
             rows.sortedBy { it.reviewedAt }.forEachIndexed { index, row ->
-                val stability = row.stabilityAfter ?: return@forEachIndexed
+                val interval = row.intervalDaysAfter ?: return@forEachIndexed
                 val number = (index + 1).coerceAtMost(cappedNumbers)
-                byNumber.getOrPut(number) { mutableListOf() }.add(stability)
+                byNumber.getOrPut(number) { mutableListOf() }.add(interval.toDouble())
             }
         }
         val points = (1..cappedNumbers).map { number ->
@@ -730,7 +732,7 @@ object StatsAggregator {
             )
         }
         val monthly = inScope
-            .filter { it.stabilityAfter != null }
+            .filter { it.intervalDaysAfter != null }
             .groupBy {
                 val day = LocalDate.ofEpochDay(studyEpochDay(it.reviewedAt, cfg, zone))
                 day.year * 12L + day.monthValue - 1
@@ -741,7 +743,7 @@ object StatsAggregator {
                 .withDayOfMonth(1)
             SeriesPoint(
                 label = first.format(DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH)),
-                value = rows.mapNotNull { it.stabilityAfter }.average(),
+                value = rows.mapNotNull { it.intervalDaysAfter }.average(),
                 count = rows.size
             )
         }

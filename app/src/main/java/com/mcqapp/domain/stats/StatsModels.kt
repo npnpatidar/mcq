@@ -208,7 +208,7 @@ data class Distribution(
     data class Bin(val label: String, val from: Double, val to: Double, val count: Int)
 }
 
-/** How memory deepened: mean stability by review number and by calendar month. */
+/** How memory deepened: mean interval by review number and by calendar month. */
 data class MemoryGrowthData(
     val byReviewNumber: List<SeriesPoint>,
     val overTime: List<SeriesPoint>

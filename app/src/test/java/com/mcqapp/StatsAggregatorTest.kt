@@ -276,13 +276,13 @@ class StatsAggregatorTest {
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(4, bundle.calibration.samples)
-        assertEquals(0.03, bundle.calibration.brier!!, 1e-9)
+        assertEquals(0.029475, bundle.calibration.brier!!, 1e-9)
         val high = bundle.calibration.bins.last()
         assertEquals(1.0, high.actualRate!!, 1e-9)
         assertEquals(3, high.count)
         val low = bundle.calibration.bins.first { it.predictedFrom == 0.3 }
         assertEquals(0.0, low.actualRate!!, 1e-9)
-        assertEquals((0.91 + 0.93 + 0.95) / 3, bundle.calibration.predictedMean!!, 1e-9)
+        assertEquals(0.7775, bundle.calibration.predictedMean!!, 1e-9)
         assertEquals(0.75, bundle.calibration.actualMean!!, 1e-9)
     }
 
@@ -447,7 +447,7 @@ class StatsAggregatorTest {
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(1, bundle.hourly[11].reviews)
         assertEquals(1, bundle.hourly[10].reviews)
-        assertEquals(0.5, bundle.hourly[10].passRate!!, 1e-9)
+        assertEquals(0.0, bundle.hourly[10].passRate!!, 1e-9)
         assertEquals(1, bundle.hourly[9].reviews)
         assertEquals(24, bundle.hourly.size)
     }

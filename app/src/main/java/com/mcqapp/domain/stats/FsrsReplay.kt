@@ -60,17 +60,29 @@ object FsrsReplay {
             var state: CardState? = null
             var previousInterval: Int? = null
             ordered.forEachIndexed { index, row ->
-                predicted[row.id] = state?.let { scheduler.retention(it, row.reviewedAt) }
+                val pre = state
+                // Only a graduated card carries a knowable recall prediction:
+                // learning-step rows have short-term memory, not a schedule.
+                predicted[row.id] = pre
+                    ?.takeIf {
+                        it.state == CardStateKind.REVIEW || it.state == CardStateKind.RELEARNING
+                    }
+                    ?.takeIf { it.stability > 0.0 }
+                    ?.let { scheduler.retention(it, row.reviewedAt) }
                 intervalBefore[row.id] = previousInterval
-                state = when {
-                    index == 0 && seeded -> seedState(row)
-                    else -> scheduler.next(
-                        state ?: scheduler.initial(row.questionId),
+                val post = if (index == 0 && seeded) {
+                    seedState(row)
+                } else {
+                    scheduler.next(
+                        pre ?: scheduler.initial(row.questionId),
                         gradeOf(row.rating),
                         row.reviewedAt
                     )
                 }
-                previousInterval = row.intervalDaysAfter
+                state = post
+                // The next row was carrying this state's interval, not whatever
+                // the log recorded — replay recovers what the scheduler decided.
+                previousInterval = post.intervalDays
             }
         }
         return reviews.map { row ->

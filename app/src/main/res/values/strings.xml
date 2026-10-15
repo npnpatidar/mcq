@@ -350,7 +350,7 @@
     <string name="stats_calibration_empty">Calibration needs reviews of cards that already had a memory state.</string>
     <string name="stats_calibration_summary">Predicted %1$s vs actual %2$s over %3$d reviews · Brier score %4$s (lower is better)</string>
     <string name="stats_by_group">Retention by paper</string>
-    <string name="stats_by_group_help">True retention per paper; weakest first.</string>
+    <string name="stats_by_group_help">Share of reviews answered correctly; weakest first.</string>
     <string name="stats_by_weekday">Retention by weekday</string>
     <string name="weekday_mon">Mon</string>
     <string name="weekday_tue">Tue</string>
@@ -391,9 +391,9 @@
     <string name="stats_mean_value">Mean %1$s</string>
     <string name="stats_median_value">Median %1$s</string>
     <string name="stats_memory_growth">Memory growth</string>
-    <string name="stats_memory_growth_help">Average stability after the n-th review of a card, and by month.</string>
-    <string name="stats_by_review_number">Mean stability by review number</string>
-    <string name="stats_over_time">Mean stability by month</string>
+    <string name="stats_memory_growth_help">Average scheduled interval after the n-th review of a card, and by month.</string>
+    <string name="stats_by_review_number">Mean interval by review number</string>
+    <string name="stats_over_time">Mean interval by month</string>
     <string name="stats_card_counts">Card counts</string>
     <string name="stats_total">Total</string>
     <string name="stats_new_cards">New</string>

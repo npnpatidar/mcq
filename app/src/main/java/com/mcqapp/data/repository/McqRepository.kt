@@ -2,6 +2,7 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
@@ -137,7 +138,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // Passage context rides into the post-filter so the DAO's passage
         // union survives it: a member found through its passage's text or
         // title must not be vetoed because that text is not on the question.
-        val passageBodies = db.passageDao().getByIds(
+        val passageBodies = db.passageDao().getByIdsChunked(
             prefiltered.mapNotNull { it.passageId }.distinct()
         ).associate { passage ->
             passage.id to (passage.title + "\n" + passage.text.parseContentElements(mapper.json).searchableText)

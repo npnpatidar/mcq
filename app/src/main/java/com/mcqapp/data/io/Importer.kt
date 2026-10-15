@@ -652,7 +652,7 @@ class Importer(
             return none
         }
         val idList = ids.toList()
-        val entities = db.questionDao().getByIds(idList).associateBy { it.id }
+        val entities = db.questionDao().getByIdsChunked(idList).associateBy { it.id }
         val correct = db.correctAnswerDao().getForQuestionsChunked(idList)
             .groupBy({ it.questionId }, { it.optionId })
         val rows: Map<String, Pair<com.mcqapp.data.local.QuestionEntity, Set<String>>> =

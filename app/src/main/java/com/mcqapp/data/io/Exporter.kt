@@ -6,6 +6,7 @@ import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
@@ -105,7 +106,7 @@ class Exporter(private val db: AppDatabase) {
     /** Domain passages by id, for the apkg writer and other callers. */
     suspend fun getPassagesByIds(ids: List<String>): List<com.mcqapp.domain.Passage> {
         if (ids.isEmpty()) return emptyList()
-        return db.passageDao().getByIds(ids).map { entity ->
+        return db.passageDao().getByIdsChunked(ids).map { entity ->
             val elements = entity.text.parseContentElements(json)
             com.mcqapp.domain.Passage(
                 id = entity.id,
@@ -154,9 +155,9 @@ class Exporter(private val db: AppDatabase) {
             .mapNotNull { it.passageId }
             .toSet()
         if (memberIds.isEmpty()) return emptyList()
-        // getByIds fetches just the needed rows; getAll() read every passage
+        // getByIdsChunked fetches just the needed rows; getAll() read every passage
         // (and decoded its JSON) once per exported paper.
-        return db.passageDao().getByIds(memberIds.toList())
+        return db.passageDao().getByIdsChunked(memberIds.toList())
             .map { it.toPassageDto() }
     }
 

@@ -8,7 +8,11 @@ import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.BookmarkEntity
+import com.mcqapp.data.local.PassageEntity
+import com.mcqapp.data.local.PaperEntity
+import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.local.countForQuestionsChunked
+import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
@@ -96,6 +100,40 @@ class ChunkedQueriesTest {
         assertEquals(700, db.bookmarkDao().countForQuestionsChunked(ids))
         db.bookmarkDao().removeAllChunked(ids)
         assertEquals(0, db.bookmarkDao().countForQuestionsChunked(ids))
+    }
+
+    @Test
+    fun `passage lookup survives several chunks`() = runBlocking {
+        val passageIds = ids.map { "pg-$it" }
+        passageIds.forEach { id ->
+            db.passageDao().upsert(
+                PassageEntity(id = id, categoryId = "c1", title = "P $id", text = "T $id")
+            )
+        }
+        val found = db.passageDao().getByIdsChunked(passageIds)
+        assertEquals(ids.size, found.size)
+        assertEquals(passageIds.toSet(), found.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `paper lookup survives several chunks`() = runBlocking {
+        val paperIds = ids.map { "pp-$it" }
+        paperIds.forEach { db.paperDao().upsert(PaperEntity(id = it, title = "Paper $it")) }
+        val found = db.paperDao().getByIdsChunked(paperIds)
+        assertEquals(ids.size, found.size)
+        assertEquals(paperIds.toSet(), found.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `review log sweep survives several chunks`() = runBlocking {
+        db.reviewLogDao().insertAll(
+            ids.map {
+                ReviewLogEntity(paperId = "p1", questionId = it, rating = 3, reviewedAt = 0L)
+            }
+        )
+        assertEquals(ids.size, db.reviewLogDao().getAll().size)
+        db.reviewLogDao().deleteByQuestionsChunked(ids)
+        assertEquals(0, db.reviewLogDao().getAll().size)
     }
 
     @Test

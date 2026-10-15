@@ -36,6 +36,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
     private val fsrsTuner = FsrsTuner(db, settings)
+    private val statsStore = StatsStore(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -98,6 +99,19 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Drops fitted weights; scheduling returns to the official defaults. */
     suspend fun restoreFsrsDefaults() = fsrsTuner.restoreDefaults()
+
+    // --- statistics ---
+
+    /**
+     * The whole statistics input in one read: the replayed review log, every
+     * card's schedule and the grouping titles. The stats ViewModel slices this
+     * in memory per range and paper scope.
+     */
+    internal suspend fun statsRawData(): StatsStore.RawData = statsStore.load()
+
+    /** One question's logged reviews, oldest first, for the drill-down sheet. */
+    suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =
+        statsStore.reviewHistory(questionId)
 
     suspend fun saveTestProgress(json: String) = settings.saveTestProgress(json)
     suspend fun loadTestProgress(): String? = settings.loadTestProgress()

@@ -239,6 +239,10 @@ fun LibraryScreen(
                         scope.launch { drawerState.close() }
                         navController.navigate("history")
                     },
+                    onOpenStats = {
+                        scope.launch { drawerState.close() }
+                        navController.navigate("stats")
+                    },
                     onOpenBookmarks = {
                         scope.launch { drawerState.close() }
                         navController.navigate("bookmarks")

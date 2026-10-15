@@ -99,6 +99,10 @@ fun McqNavHost(repository: McqRepository) {
         composable("history") {
             HistoryScreen(repository = repository, navController = navController)
         }
+        composable("stats") {
+            Logger.i("NAV", "stats screen")
+            com.mcqapp.ui.stats.StatsScreen(repository = repository, navController = navController)
+        }
         composable(
             route = "browse/{paperId}?focus={focus}",
             arguments = listOf(

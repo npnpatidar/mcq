@@ -71,6 +71,22 @@ class ResultsViewModelTest {
     }
 
     @Test
+    fun aStaleInitialLoadCannotWipeTheFailedReloadError() {
+        // The constructor's load may still be in flight when the database is
+        // closed and reload() starts. A stale success from that first load
+        // must not clear the newer failure's error.
+        val viewModel = ResultsViewModel(app, 4242L)
+        app.repository.db().close()
+        viewModel.reload()
+
+        assertTrue("loading must not stay true", awaitIdle { !viewModel.state.value.loading })
+        assertNotNull(
+            "the failed reload's error must survive a stale initial load",
+            viewModel.state.value.loadError
+        )
+    }
+
+    @Test
     fun theStateCarriesNoErrorBeforeAnythingIsLoaded() {
         val viewModel = ResultsViewModel(app, 1L)
         assertNull(viewModel.state.value.loadError)

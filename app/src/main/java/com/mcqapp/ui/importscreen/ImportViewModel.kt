@@ -6,12 +6,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.io.ImportOverrides
+import com.mcqapp.data.io.ImportRunJournal
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.SharedPrefsImportRunJournal
 import com.mcqapp.data.io.StreamingImporter
+import com.mcqapp.data.io.interruptedImportNotice
 import com.mcqapp.data.io.scanImportPreview
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
@@ -298,6 +301,8 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     private val repository: McqRepository = (application as McqApplication).repository
 
+    private val importJournal: ImportRunJournal = SharedPrefsImportRunJournal(application)
+
     private val _state = MutableStateFlow(ImportUiState())
     val state: StateFlow<ImportUiState> = _state.asStateFlow()
 
@@ -441,7 +446,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 withContext(Dispatchers.Default) {
                     if (bytes.size > JSON_STREAM_THRESHOLD_BYTES) {
-                        loadLargeJson { ByteArrayInputStream(bytes) }
+                        loadLargeJson({ ByteArrayInputStream(bytes) }, fp)
                     } else {
                         streamSource = null
                         parseAndLoad(parse = {
@@ -475,10 +480,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             loadedDirectFp = key
             try {
                 withContext(Dispatchers.Default) {
-                    loadLargeJson {
-                        resolver.openInputStream(uri)
-                            ?: throw java.io.IOException("Could not open $uri")
-                    }
+                    loadLargeJson(
+                        open = {
+                            resolver.openInputStream(uri)
+                                ?: throw java.io.IOException("Could not open $uri")
+                        },
+                        sourceKey = key
+                    )
                 }
             } catch (e: Exception) {
                 loadedDirectFp = null
@@ -493,7 +501,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      * a sample of questions and the counts; the import re-opens the same source
      * and streams it, applying the paper-level edits made here.
      */
-    private suspend fun loadLargeJson(open: () -> InputStream) {
+    private suspend fun loadLargeJson(open: () -> InputStream, sourceKey: String) {
         val preview = scanImportPreview(open, PREVIEW_SAMPLE_SIZE)
         if (preview.isBackup) {
             // Backups carry other papers and review progress the bounded
@@ -515,6 +523,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             }
             return
         }
+        // An earlier streaming import of this same file that never finished.
+        val interruptedNotice = interruptedImportNotice(
+            importJournal.current(), sourceKey, preview.totalQuestions
+        )
+        if (interruptedNotice != null) {
+            Logger.w("IMPORTVM", "unfinished previous import: $interruptedNotice")
+        }
         val sampleQuestions = preview.sample.map { it.dto }
         _state.value = ImportUiState(
             loading = false,
@@ -524,7 +539,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarking = header.negativeMarking,
             categoryName = preview.effectiveCategoryTitle,
             questions = sampleQuestions,
-            parseWarnings = preview.warnings,
+            parseWarnings = listOfNotNull(interruptedNotice) + preview.warnings,
             originalFile = null,
             totalQuestionCount = preview.totalQuestions,
             previewTruncated = sampleQuestions.size < preview.totalQuestions,
@@ -699,9 +714,11 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val source = streamSource
         if (source != null) {
             if (s.paperTitle.isBlank()) return
+            val runKey = loadedDirectFp ?: s.paperTitle
             _state.update {
                 it.copy(importing = true, importDone = false, importReport = null, importedQuestions = 0)
             }
+            importJournal.begin(runKey, s.totalQuestionCount, System.currentTimeMillis())
             viewModelScope.launch {
                 try {
                     val currentIds = s.questions.mapTo(HashSet()) { it.id }
@@ -727,15 +744,27 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                             updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
                             overrides = overrides
                         ).import(source) { seen ->
+                            importJournal.progress(seen)
                             _state.update { it.copy(importedQuestions = seen) }
                         }
                     }
+                    // Finished: the journal's job is done.
+                    importJournal.clear()
                     Logger.i("IMPORTVM", "Imported (streamed): ${report.newQuestions} new, " +
                         "${report.updatedQuestions} updated, ${report.duplicateQuestions} duplicates")
                     _state.update { it.copy(importing = false, importDone = true, importReport = report) }
                 } catch (e: Exception) {
+                    // The run is left in the journal: a retry is safe and the
+                    // preview will say how far the interrupted one got.
                     Logger.e("IMPORTVM", "Streaming import failed", e)
-                    _state.update { it.copy(importing = false, error = "Import failed: ${e.message}") }
+                    val written = importJournal.current()?.questionsSeen ?: 0
+                    val partial = if (written > 0) {
+                        " $written questions may already have been added; " +
+                            "running the import again is safe."
+                    } else {
+                        ""
+                    }
+                    _state.update { it.copy(importing = false, error = "Import failed: ${e.message}.$partial") }
                 }
             }
             return

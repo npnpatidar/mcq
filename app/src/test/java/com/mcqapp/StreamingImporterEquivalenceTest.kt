@@ -1,0 +1,211 @@
+package com.mcqapp
+
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.data.io.Importer
+import com.mcqapp.data.io.LegacyParser
+import com.mcqapp.data.io.McqFileDto
+import com.mcqapp.data.io.StreamingImporter
+import com.mcqapp.data.local.AppDatabase
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.io.ByteArrayInputStream
+
+/**
+ * The streaming importer must leave the database in exactly the state the
+ * whole-file importer would, otherwise the two paths disagree about what is a
+ * duplicate, where a passage lives, or how questions are ordered. Each test
+ * imports the same bytes through both and diffs the resulting tables row by
+ * row, ignoring only the columns that legitimately vary between two runs
+ * (creation timestamps and autoincrement ids).
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class StreamingImporterEquivalenceTest {
+
+    private lateinit var wholeFileDb: AppDatabase
+    private lateinit var streamingDb: AppDatabase
+
+    @Before
+    fun setup() {
+        wholeFileDb = newDb()
+        streamingDb = newDb()
+    }
+
+    @After
+    fun teardown() {
+        wholeFileDb.close()
+        streamingDb.close()
+    }
+
+    private fun newDb(): AppDatabase {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+    }
+
+    private suspend fun wholeFileImport(
+        db: AppDatabase,
+        json: String,
+        updateAnswers: Boolean = false,
+        times: Int = 1
+    ) {
+        val file: McqFileDto = LegacyParser.parse(ByteArrayInputStream(json.toByteArray()))
+        repeat(times) { Importer(db, updateAnswersOnDuplicate = updateAnswers).import(file) }
+    }
+
+    private suspend fun streamingImport(
+        db: AppDatabase,
+        json: String,
+        updateAnswers: Boolean = false,
+        times: Int = 1,
+        batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE
+    ) {
+        val importer = StreamingImporter(db, updateAnswersOnDuplicate = updateAnswers, batchSize = batchSize)
+        repeat(times) {
+            importer.import { ByteArrayInputStream(json.toByteArray()) }
+        }
+    }
+
+    private suspend fun assertSameState() {
+        assertEquals(dump(wholeFileDb), dump(streamingDb))
+    }
+
+    /** Every row of every import-relevant table, order-independent. */
+    private fun dump(db: AppDatabase): List<String> {
+        val sd = db.openHelper.writableDatabase
+        val tables = listOf(
+            "papers", "categories", "questions", "options", "correct_answers",
+            "passages", "bookmarks", "attempts", "question_results", "question_stats"
+        )
+        val out = mutableListOf<String>()
+        for (table in tables) {
+            sd.query("SELECT * FROM $table").use { cursor ->
+                val columns = cursor.columnNames
+                while (cursor.moveToNext()) {
+                    val cells = columns.indices.mapNotNull { i ->
+                        val name = columns[i]
+                        val volatile = name == "createdAt" ||
+                            (table == "attempts" && name == "id") ||
+                            (table == "question_results" && name == "id")
+                        if (volatile) null else "$name=${cursor.getString(i)}"
+                    }
+                    out += "$table: " + cells.joinToString(",")
+                }
+            }
+        }
+        return out.sorted()
+    }
+
+    private val richBank = """
+    {
+      "version": 2,
+      "papers": [
+        {
+          "id": "p1",
+          "title": "Paper",
+          "description": "d",
+          "duration": 45,
+          "negative": 0.25,
+          "categories": [
+            {"id": "a", "title": "A", "questions": [
+              {"id": "q1", "text": "One", "options": ["x", "y"], "correctOptionIds": ["x"], "passageId": "ps1"},
+              {"id": "q2", "text": "Two", "options": ["x", "y"], "correctOptionIds": ["y"], "difficulty": "hard", "marks": 3, "tags": ["t1", "t2"]}
+            ]},
+            {"id": "b", "title": "B", "questions": [
+              {"id": "q3", "text": "Three", "options": ["x", "y"], "correctOptionIds": ["x"], "passageId": "ps1"}
+            ]},
+            {"id": "c", "title": "C"}
+          ],
+          "questions": [
+            {"id": "root1", "text": "Root", "options": ["x", "y"], "correctOptionIds": ["x"]}
+          ]
+        }
+      ],
+      "passages": [
+        {"id": "ps1", "title": "Passage", "text": "Body"}
+      ],
+      "bookmarks": ["q1", "q2"],
+      "attempts": [
+        {"paperId": "p1", "title": "Attempt", "totalQuestions": 1, "correctCount": 1,
+         "results": [{"questionId": "q1", "text": "One", "optionsJson": "[]",
+                      "correctOptionIds": "x", "selectedOptionIds": "x", "isCorrect": true}]}
+      ]
+    }
+    """.trimIndent()
+
+    @Test
+    fun aFreshRichImportMatches() = runBlocking {
+        wholeFileImport(wholeFileDb, richBank)
+        streamingImport(streamingDb, richBank)
+        assertSameState()
+    }
+
+    @Test
+    fun splitAcrossManyBatchesMatches() = runBlocking {
+        val n = 11
+        val questions = (1..n).joinToString(",") {
+            """{"id":"q$it","text":"Q$it","options":["a","b"],"correctOptionIds":["a"]}"""
+        }
+        val json = """{"papers":[{"id":"p","title":"P","categories":[{"id":"c","title":"C","questions":[$questions]}]}]}"""
+        wholeFileImport(wholeFileDb, json)
+        streamingImport(streamingDb, json, batchSize = 1)
+        assertSameState()
+    }
+
+    @Test
+    fun reimportingAnIdenticalBankMatches() = runBlocking {
+        wholeFileImport(wholeFileDb, richBank, times = 2)
+        streamingImport(streamingDb, richBank, times = 2)
+        assertSameState()
+        // Reports are data classes; the second pass is the interesting one.
+        val wholeReport = Importer(wholeFileDb).import(
+            LegacyParser.parse(ByteArrayInputStream(richBank.toByteArray()))
+        )
+        val streamReport = StreamingImporter(streamingDb)
+            .import { ByteArrayInputStream(richBank.toByteArray()) }
+        assertEquals(wholeReport, streamReport)
+        assertSameState()
+    }
+
+    @Test
+    fun aChangedAnswerKeyRefreshesIdentically() = runBlocking {
+        val corrected = richBank.replace(
+            """{"id": "q1", "text": "One", "options": ["x", "y"], "correctOptionIds": ["x"], "passageId": "ps1"}""",
+            """{"id": "q1", "text": "One", "options": ["x", "y"], "correctOptionIds": ["y"], "passageId": "ps1"}"""
+        )
+        wholeFileImport(wholeFileDb, richBank)
+        wholeFileImport(wholeFileDb, corrected, updateAnswers = true)
+        streamingImport(streamingDb, richBank)
+        streamingImport(streamingDb, corrected, updateAnswers = true)
+        assertSameState()
+    }
+
+    @Test
+    fun aChangedQuestionBodyUpdatesIdentically() = runBlocking {
+        val changed = richBank.replace("\"text\": \"Three\"", "\"text\": \"Three (edited)\"")
+        wholeFileImport(wholeFileDb, richBank)
+        wholeFileImport(wholeFileDb, changed)
+        streamingImport(streamingDb, richBank)
+        streamingImport(streamingDb, changed)
+        assertSameState()
+    }
+
+    @Test
+    fun aSecondPaperToTheSameLibraryMatches() = runBlocking {
+        val second = """{"papers":[{"id":"p2","title":"Second","categories":[{"id":"z","title":"Z","questions":[{"id":"z1","text":"Zed","options":["a","b"],"correctOptionIds":["a"]}]}]}]}"""
+        wholeFileImport(wholeFileDb, richBank)
+        wholeFileImport(wholeFileDb, second)
+        streamingImport(streamingDb, richBank)
+        streamingImport(streamingDb, second)
+        assertSameState()
+    }
+}

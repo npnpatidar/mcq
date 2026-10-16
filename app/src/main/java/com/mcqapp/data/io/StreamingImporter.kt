@@ -343,6 +343,13 @@ class StreamingImporter(
             questions.forEachIndexed { index, dto ->
                 val scaledQuestion = scaled[index]
                 val contentHash = hashes[index]
+                // Record the passage before any duplicate/refresh decision: the
+                // whole-file importer writes passages while scanning a
+                // category's questions, so even an all-duplicate category still
+                // files its passage under this category.
+                dto.passageId?.let { passageId ->
+                    paperPassageRecords.putIfAbsent(passageId, currentCategoryId!!)
+                }
                 val inExisting = contentHash in dbHashes || contentHash in batchWritten
 
                 if (inExisting && updateAnswersOnDuplicate) {

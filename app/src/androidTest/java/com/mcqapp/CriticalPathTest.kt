@@ -69,11 +69,11 @@ class CriticalPathTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         // Library -> start the seeded paper (drawer holds a duplicate title).
-        // The tag assert proves layout is done, so the adjacent Start click
+        // The tag assert proves layout is done, so the adjacent Test click
         // needs no scroll synchronization.
         waitFor("UITest Paper")
         compose.onNodeWithTag("paper-title-uitest-paper").assertIsDisplayed()
-        compose.onNodeWithText("Start", substring = false).performClick()
+        compose.onNodeWithText("Test", substring = false).performClick()
 
         // Q1 correct, Q2 skipped, Q3 wrong. Options live in the
         // scrolling column; Next/Submit sit in the fixed footer.

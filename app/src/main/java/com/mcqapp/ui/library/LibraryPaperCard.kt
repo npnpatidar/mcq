@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -129,18 +130,15 @@ internal fun PaperCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(onClick = {
-                    Logger.i("LIB", "Start paper: paperId=${paper.id}")
-                    onStart()
-                }) {
+                Button(
+                    onClick = onStudy,
+                    modifier = Modifier.testTag("paper-study-${paper.id}"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.start))
-                }
-                OutlinedButton(
-                    onClick = onStudy,
-                    modifier = Modifier.testTag("paper-study-${paper.id}")
-                ) {
                     Text(
                         when {
                             dueCount > 0 && freshCount > 0 -> "Study ($dueCount due, $freshCount new)"
@@ -149,6 +147,9 @@ internal fun PaperCard(
                             else -> "Study"
                         }
                     )
+                }
+                Button(onClick = onStart) {
+                    Text(stringResource(R.string.test_action))
                 }
                 if (leechCount > 0) {
                     // Used to run the identical handler as "Study", so the

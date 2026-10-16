@@ -47,6 +47,10 @@ data class TestUiState(
     val drillRequested: Int = 0,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
+    /** Whether the per-question clock currently accrues time. */
+    val dwellActive: Boolean = false,
+    /** Whether the learner paused the per-question clock by tapping it. */
+    val dwellPausedByUser: Boolean = false,
     val timeWarning: String? = null,
     val bookmarked: Set<String> = emptySet(),
     /** Passages for this session's questions, keyed by id, for the header card. */
@@ -182,6 +186,7 @@ class TestViewModel(
                 startTimestamp = System.currentTimeMillis()
                 lastNavMillis = startTimestamp
                 dwellCommitted.clear()
+                _state.update { it.copy(dwellActive = drilled.isNotEmpty()) }
                 startDwellTicker()
                 if (totalSeconds > 0) startTimer()
             } catch (e: Exception) {
@@ -245,6 +250,7 @@ class TestViewModel(
         dwellJob = viewModelScope.launch {
             while (true) {
                 delay(1000)
+                if (!_state.value.dwellActive) continue
                 if (_state.value.submitted) break
                 publishDwell(System.currentTimeMillis())
             }
@@ -259,10 +265,14 @@ class TestViewModel(
     private fun publishDwell(now: Long) {
         val current = _state.value
         val question = current.currentQuestion ?: return
-        val total = (dwellCommitted[question.id] ?: 0L) + (now - lastNavMillis) / 1000
+        val segment =
+            if (current.dwellActive) (now - lastNavMillis).coerceAtLeast(0L) / 1000 else 0L
+        val total = (dwellCommitted[question.id] ?: 0L) + segment
         if (_liveDwell.value != total) _liveDwell.value = total
         if (current.dwellSeconds[question.id] == total) return
-        _state.update { it.copy(dwellSeconds = it.dwellSeconds + (question.id to total)) }
+        _state.update {
+            it.copy(dwellSeconds = it.dwellSeconds + (question.id to total))
+        }
     }
 
     /** Banks time on the question being left, so the next visit starts from it. */
@@ -270,11 +280,61 @@ class TestViewModel(
         val current = _state.value
         val question = current.currentQuestion ?: return
         val now = System.currentTimeMillis()
-        val banked = (dwellCommitted[question.id] ?: 0L) + (now - lastNavMillis) / 1000
+        val segment =
+            if (current.dwellActive) (now - lastNavMillis).coerceAtLeast(0L) / 1000 else 0L
+        val banked = (dwellCommitted[question.id] ?: 0L) + segment
         dwellCommitted[question.id] = banked
         lastNavMillis = now
         if (_liveDwell.value != banked) _liveDwell.value = banked
         _state.update { it.copy(dwellSeconds = it.dwellSeconds + (question.id to banked)) }
+    }
+
+    /**
+     * Turns dwell accrual on or off. Pausing banks the active segment, so a
+     * resume starts from zero rather than charging the pause duration.
+     */
+    private fun setDwellActive(active: Boolean) {
+        val current = _state.value
+        if (active == current.dwellActive) return
+        if (active) {
+            if (!dwellShouldRun(current)) return
+            val now = System.currentTimeMillis()
+            lastNavMillis = now
+            _state.update { it.copy(dwellActive = true) }
+            publishDwell(now)
+        } else {
+            if (current.dwellActive) flushDwell()
+            _state.update { it.copy(dwellActive = false) }
+            publishDwell(System.currentTimeMillis())
+        }
+    }
+
+    private fun dwellShouldRun(state: TestUiState): Boolean =
+        !state.submitted && state.currentQuestion != null && !state.loading
+
+    /** Backgrounding pauses dwell but never turns a deliberate pause off. */
+    fun onAppBackgrounded() {
+        setDwellActive(false)
+    }
+
+    fun onAppForegrounded() {
+        if (!_state.value.dwellPausedByUser) setDwellActive(true)
+    }
+
+    /** Called when a dialog or question palette covers the question body. */
+    fun setQuestionVisible(visible: Boolean) {
+        if (visible && !_state.value.dwellPausedByUser) {
+            setDwellActive(true)
+        } else {
+            setDwellActive(false)
+        }
+    }
+
+    /** The tap-to-pause control on the question clock. */
+    fun toggleDwellPause() {
+        val paused = !_state.value.dwellPausedByUser
+        _state.update { it.copy(dwellPausedByUser = paused) }
+        setDwellActive(!paused)
     }
 
     fun toggleOption(optionId: String) {
@@ -353,6 +413,7 @@ class TestViewModel(
             "remaining=${snapshot.remainingSeconds}s")
         timerJob?.cancel()
         dwellJob?.cancel()
+        setDwellActive(false)
         flushDwell()
         // Read after the flush: the state read before it predates the last
         // question's dwell, which then saved as zero.

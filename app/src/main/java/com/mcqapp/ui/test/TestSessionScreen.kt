@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,7 +57,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.Alignment
@@ -66,6 +69,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mcqapp.ui.theme.verdictColors
@@ -109,6 +113,20 @@ fun TestSessionScreen(
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> viewModel.onAppBackgrounded()
+                Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(state.attemptId) {
         state.attemptId?.let { id ->
@@ -178,6 +196,20 @@ fun TestSessionScreen(
                 ) { Text(stringResource(R.string.go_back)) }
             }
         )
+    }
+
+    val ungradedBlocking = !state.loading && ungradedTotal > 0 && !ungradedDismissed
+    val questionVisible =
+        !state.loading &&
+            state.loadError == null &&
+            state.currentQuestion != null &&
+            !showPalette &&
+            !showSubmitDialog &&
+            !showAnswerReview &&
+            resumeOffer == null &&
+            !ungradedBlocking
+    LaunchedEffect(questionVisible) {
+        viewModel.setQuestionVisible(questionVisible)
     }
 
     Scaffold(
@@ -378,7 +410,9 @@ fun TestSessionScreen(
                     index = state.currentIndex,
                     total = state.questions.size,
                     marks = question.marks,
-                    liveDwell = viewModel.liveDwell
+                    liveDwell = viewModel.liveDwell,
+                    dwellActive = state.dwellActive,
+                    onToggleDwellPause = { viewModel.toggleDwellPause() }
                 )
                 val practice = ExamMode.effectivePractice(state.practiceMode, state.strictMode)
                 if (practice) {
@@ -656,7 +690,7 @@ private fun formatMarks(marks: Double): String =
     }
 
 /**
- * The "Question 2 of 10 · 1 mark · 0:07 here" line.
+ * The "Question 2 of 10 · 1 mark · 0:07 here" control.
  *
  * Collects the dwell flow itself so the once-a-second tick is confined to
  * this composable. `dwellSeconds` also arrives as a parameter for
@@ -668,19 +702,38 @@ private fun QuestionHeader(
     total: Int,
     marks: Double,
     liveDwell: StateFlow<Long>? = null,
-    dwellSeconds: Long = 0L
+    dwellSeconds: Long = 0L,
+    dwellActive: Boolean = true,
+    onToggleDwellPause: () -> Unit = {}
 ) {
     val live by (liveDwell ?: MutableStateFlow(dwellSeconds))
         .collectAsStateWithLifecycle()
-    Text(
-        questionProgressLabel(
-            index = index,
-            total = total,
-            marks = marks,
-            dwellSeconds = live
-        ),
-        style = MaterialTheme.typography.labelMedium
+    // `semantics {}` is not composable: accessibility strings come from
+    // Resources; the visible clock text renders via stringResource.
+    val resources = LocalContext.current.resources
+    val progressLabel = questionProgressLabel(
+        index = index,
+        total = total,
+        marks = marks,
+        dwellSeconds = live
     )
+    TextButton(
+        onClick = onToggleDwellPause,
+        modifier = Modifier
+            .height(48.dp)
+            .testTag("test-question-clock")
+            .semantics {
+                contentDescription = resources.getString(R.string.question_clock)
+                stateDescription = if (dwellActive) resources.getString(R.string.clock_running)
+                else resources.getString(R.string.clock_paused)
+            }
+    ) {
+        Text(
+            progressLabel + if (dwellActive) ""
+            else " · ${stringResource(R.string.clock_paused)}",
+            style = MaterialTheme.typography.labelMedium
+        )
+    }
 }
 
 /**

@@ -12,6 +12,8 @@ import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
@@ -65,8 +67,12 @@ data class StudyUiState(
      * reveal and reset on every advance, so it can never be set retroactively.
      */
     val isGuess: Boolean = false,
-    /** When the on-screen question was first shown, for the dwell ladder. */
+    /** When the active question-clock segment started. */
     val questionStartedAt: Long = 0L,
+    /** Time already banked for the card on screen, excluding the current segment. */
+    val questionElapsedSeconds: Long = 0L,
+    /** Whether the question clock is running and should be shown as live. */
+    val clockRunning: Boolean = false,
     /** The grade Check proposed; Next persists it. Null until checked. */
     val pendingGrade: ReviewGrade? = null,
     /** What the last check decided, for the result card. */
@@ -92,6 +98,18 @@ data class StudyUiState(
     val isCurrentRevealed: Boolean get() = revealed
 
     /**
+     * Total active seconds on the card on screen: banked time plus the current
+     * segment while the clock is running.
+     */
+    val dwellSeconds: Long
+        get() = questionElapsedSeconds +
+            if (clockRunning) {
+                (System.currentTimeMillis() - questionStartedAt).coerceAtLeast(0L) / 1000L
+            } else {
+                0L
+            }
+
+    /**
      * Suggested after every ten reviews. Dismissible, never blocking, and it
      * returns only at the next multiple of ten.
      */
@@ -110,8 +128,16 @@ class StudyViewModel(
     private val _state = MutableStateFlow(StudyUiState())
     val state: StateFlow<StudyUiState> = _state.asStateFlow()
 
+    /** Seconds spent on the question on screen, published once per second. */
+    private val _liveDwell = MutableStateFlow(0L)
+    val liveDwell: StateFlow<Long> = _liveDwell.asStateFlow()
+
+    private var dwellJob: Job? = null
+    private var clockPausedByUser = false
+
     init {
         load()
+        startDwellTicker()
     }
 
     /** Read once per session, for the button previews. */
@@ -195,6 +221,7 @@ class StudyViewModel(
             val passage = question.passageId?.let { pid ->
                 repository.getPassagesByIds(listOf(pid)).firstOrNull()
             }
+            val now = System.currentTimeMillis()
             _state.update {
                 it.copy(
                     current = card,
@@ -206,12 +233,16 @@ class StudyViewModel(
                     pendingGrade = null,
                     lastResult = null,
                     isGuess = false,
-                    questionStartedAt = System.currentTimeMillis(),
+                    questionStartedAt = now,
+                    questionElapsedSeconds = 0L,
+                    clockRunning = true,
                     reviewsSinceNew = if (card.reason == StudyReason.NEW) 0 else it.reviewsSinceNew + 1,
                     finished = false
                 )
             }
+            clockPausedByUser = false
             refreshPreviews()
+            publishDwell()
             return
         }
     }
@@ -241,6 +272,9 @@ class StudyViewModel(
                 grading = false,
                 pendingGrade = null,
                 lastResult = null,
+                questionStartedAt = 0L,
+                questionElapsedSeconds = 0L,
+                clockRunning = false,
                 finished = true,
                 emptyReason = if (it.reviewed > 0) {
                     ""
@@ -270,8 +304,83 @@ class StudyViewModel(
 
     fun reveal() {
         if (_state.value.revealed) return
+        pauseQuestionClock()
         Logger.d("STUDY", "reveal question=${_state.value.question?.id}")
         _state.update { it.copy(revealed = true) }
+    }
+
+    /**
+     * Banks the active clock segment and stops it. Safe to call repeatedly.
+     */
+    fun pauseQuestionClock() {
+        val current = _state.value
+        if (!current.clockRunning) return
+        val now = System.currentTimeMillis()
+        val elapsed = current.questionElapsedSeconds +
+            ((now - current.questionStartedAt).coerceAtLeast(0L) / 1000L)
+        _state.update {
+            it.copy(
+                questionStartedAt = now,
+                questionElapsedSeconds = elapsed,
+                clockRunning = false
+            )
+        }
+        publishDwell()
+    }
+
+    /**
+     * Starts a new active clock segment, unless the clock is already running,
+     * the learner paused it deliberately, or the card is not answerable.
+     */
+    fun resumeQuestionClock() {
+        val current = _state.value
+        if (current.clockRunning || clockPausedByUser) return
+        if (!clockCanRun(current)) return
+        val now = System.currentTimeMillis()
+        _state.update { it.copy(questionStartedAt = now, clockRunning = true) }
+        publishDwell()
+    }
+
+    fun toggleQuestionClock() {
+        val current = _state.value
+        if (current.revealed) return
+        if (current.clockRunning) {
+            clockPausedByUser = true
+            pauseQuestionClock()
+        } else {
+            clockPausedByUser = false
+            resumeQuestionClock()
+        }
+    }
+
+    /** Backgrounding never turns a deliberate pause into a resume. */
+    fun onAppBackgrounded() {
+        pauseQuestionClock()
+    }
+
+    fun onAppForegrounded() {
+        if (!clockPausedByUser) resumeQuestionClock()
+    }
+
+    private fun clockCanRun(state: StudyUiState): Boolean =
+        !state.loading &&
+            state.loadError == null &&
+            !state.finished &&
+            !state.revealed &&
+            state.question != null
+
+    private fun startDwellTicker() {
+        dwellJob?.cancel()
+        dwellJob = viewModelScope.launch {
+            while (true) {
+                delay(1000L)
+                publishDwell()
+            }
+        }
+    }
+
+    private fun publishDwell() {
+        _liveDwell.value = _state.value.dwellSeconds
     }
 
     /**
@@ -294,26 +403,36 @@ class StudyViewModel(
         val current = _state.value
         val question = current.question ?: return
         if (!current.simplified || current.revealed || current.grading) return
-        val now = System.currentTimeMillis()
-        val dwellSeconds = ((now - current.questionStartedAt).coerceAtLeast(0L)) / 1000L
-        val selection = current.selection
+        pauseQuestionClock()
+        val paused = _state.value
+        val dwellSeconds = paused.questionElapsedSeconds
+        val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
         val grade = com.mcqapp.domain.Study.autoGrade(
             correctOptionIds = question.correctOptionIds,
-            selection = selection,
+            selection = paused.selection,
             dwellSeconds = dwellSeconds,
-            isGuess = current.isGuess,
-            config = config ?: com.mcqapp.domain.SchedulerConfig()
+            isGuess = paused.isGuess,
+            config = schedulerConfig,
+            fastSeconds = com.mcqapp.domain.Study.easyThresholdSeconds(
+                config = schedulerConfig,
+                question = question,
+                passage = paused.passage
+            )
         )
         _state.update {
             it.copy(
                 revealed = true,
                 pendingGrade = grade,
                 lastResult = buildResult(
-                    question, selection, grade, current.isGuess, dwellSeconds, now
+                    question, paused.selection, grade, paused.isGuess, dwellSeconds,
+                    System.currentTimeMillis()
                 )
             )
         }
-        Logger.d("STUDY", "checked ${question.id} -> $grade (guess=${current.isGuess}, dwell=${dwellSeconds}s)")
+        Logger.d(
+            "STUDY",
+            "checked ${question.id} -> $grade (guess=${paused.isGuess}, dwell=${dwellSeconds}s)"
+        )
     }
 
     private fun buildResult(
@@ -347,7 +466,7 @@ class StudyViewModel(
         val question = current.question ?: return
         if (!current.simplified || !current.revealed || current.pendingGrade == null) return
         val now = System.currentTimeMillis()
-        val dwellSeconds = ((now - current.questionStartedAt).coerceAtLeast(0L)) / 1000L
+        val dwellSeconds = current.questionElapsedSeconds
         _state.update {
             it.copy(
                 pendingGrade = grade,
@@ -375,11 +494,10 @@ class StudyViewModel(
         if (!current.simplified || !current.revealed) return
         if (current.grading) return
         _state.update { it.copy(grading = true) }
+        pauseQuestionClock()
+        val dwellSeconds = _state.value.questionElapsedSeconds
         viewModelScope.launch {
             try {
-                val dwellSeconds =
-                    ((System.currentTimeMillis() - current.questionStartedAt)
-                        .coerceAtLeast(0L)) / 1000L
                 val next = repository.recordStudyReview(
                     paperId, question.id, proposed, dwellSeconds
                 )
@@ -409,11 +527,10 @@ class StudyViewModel(
         // would otherwise persist two reviews for the same question.
         if (current.grading) return
         _state.update { it.copy(grading = true) }
+        pauseQuestionClock()
+        val dwellSeconds = _state.value.questionElapsedSeconds
         viewModelScope.launch {
             try {
-                val dwellSeconds =
-                    ((System.currentTimeMillis() - current.questionStartedAt)
-                        .coerceAtLeast(0L)) / 1000L
                 val next = repository.recordStudyReview(
                     paperId, question.id, grade, dwellSeconds
                 )
@@ -447,6 +564,7 @@ class StudyViewModel(
      * the scheduler put it — due when it is due.
      */
     fun stop() {
+        pauseQuestionClock()
         _state.update { it.copy(finished = true, emptyReason = "") }
     }
 
@@ -523,7 +641,9 @@ class StudyViewModel(
                         pendingGrade = null,
                         lastResult = null,
                         isGuess = false,
-                        questionStartedAt = System.currentTimeMillis(),
+                        questionStartedAt = 0L,
+                        questionElapsedSeconds = 0L,
+                        clockRunning = false,
                         breakDismissedAt = 0,
                         // The stale card must not linger: a restart is a fresh
                         // pull, and during the gap the loading screen speaks —
@@ -537,6 +657,7 @@ class StudyViewModel(
                     )
                 }
                 pullCard()
+                clockPausedByUser = false
                 _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
                 Logger.e("STUDY", "restart failed", e)

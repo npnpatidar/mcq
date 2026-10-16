@@ -9,6 +9,7 @@ import com.mcqapp.ui.study.StudyViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -178,18 +179,18 @@ class StudyViewModelPullTest {
     }
 
     @Test
-    fun aGuessedCardIsProposedHardAndChangeGradeEditsTheProposalBeforeItPersists() {
+    fun aGuessedCardIsProposedAgainAndChangeGradeEditsTheProposalBeforeItPersists() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
         assertTrue(awaitCondition { viewModel.state.value.current != null })
 
-        // A declared guess that turns out right is HARD: the learner did not
-        // know it, so the interval must stay short. The proposal is not yet a
+        // A declared guess that turns out right is Again: FSRS records the
+        // absence of recall, not the lucky match. The proposal is not yet a
         // review — only Next persists.
         viewModel.setGuess(true)
         viewModel.toggleOption("q1-a")
         viewModel.check()
-        assertEquals(ReviewGrade.HARD, viewModel.state.value.pendingGrade)
+        assertEquals(ReviewGrade.AGAIN, viewModel.state.value.pendingGrade)
         assertEquals(true, viewModel.state.value.lastResult?.wasGuess)
 
         viewModel.next()
@@ -197,7 +198,7 @@ class StudyViewModelPullTest {
             viewModel.state.value.current?.questionId == "q2"
         })
         runBlocking {
-            assertEquals(2, repository.db().reviewLogDao()
+            assertEquals(ReviewGrade.AGAIN.ordinal + 1, repository.db().reviewLogDao()
                 .historyForQuestion("q1").last().rating)
         }
 
@@ -217,5 +218,36 @@ class StudyViewModelPullTest {
             assertEquals(4, repository.db().reviewLogDao()
                 .historyForQuestion("q2").last().rating)
         }
+    }
+
+    @Test
+    fun revealingAQuestionFreezesItsClockAndTheNextCardRestartsIt() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue(viewModel.state.value.clockRunning)
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        assertTrue(viewModel.state.value.revealed)
+        assertFalse(viewModel.state.value.clockRunning)
+
+        viewModel.next()
+        assertTrue(awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+        assertTrue(viewModel.state.value.clockRunning)
+        assertEquals(0L, viewModel.state.value.questionElapsedSeconds)
+    }
+
+    @Test
+    fun tappingTheQuestionClockPausesAndResumesIt() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+
+        viewModel.toggleQuestionClock()
+        assertFalse(viewModel.state.value.clockRunning)
+
+        viewModel.toggleQuestionClock()
+        assertTrue(viewModel.state.value.clockRunning)
     }
 }

@@ -1,5 +1,7 @@
 package com.mcqapp.domain
 
+import kotlin.math.ceil
+
 /**
  * Spaced repetition scheduling for a single question, Anki-style.
  *
@@ -174,7 +176,10 @@ data class SchedulerConfig(
      * than 24 hours later.
      */
     val dayStartHour: Int = DayBoundary.DEFAULT_DAY_START_HOUR,
-    /** Correct answer faster than this (seconds) infers Easy from history. */
+    /**
+     * Minimum correct-answer seconds that still infers Easy. Long questions
+     * receive reading time on top of this floor.
+     */
     val fastSeconds: Long = 8L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
     val slowSeconds: Long = 30L,
@@ -247,10 +252,11 @@ object Study {
         isCorrect: Boolean,
         dwellSeconds: Long,
         skipped: Boolean = false,
-        config: SchedulerConfig = SchedulerConfig()
+        config: SchedulerConfig = SchedulerConfig(),
+        fastSeconds: Long = config.fastSeconds
     ): ReviewGrade {
         if (skipped || !isCorrect) return ReviewGrade.AGAIN
-        if (dwellSeconds in 1 until config.fastSeconds) return ReviewGrade.EASY
+        if (dwellSeconds in 1 until fastSeconds) return ReviewGrade.EASY
         if (dwellSeconds >= config.slowSeconds) return ReviewGrade.HARD
         return ReviewGrade.GOOD
     }
@@ -262,9 +268,8 @@ object Study {
      * Correctness is exact match: for a multi-correct question any subset or
      * superset of the key is wrong, which is how an exam with negative marking
      * scores it. An empty selection is a skip. A declared guess that happens
-     * to be right is HARD rather than GOOD: the learner did not know it, so
-     * the interval must stay short — but reps still advance and no lapse is
-     * counted, because producing the right answer is not a failure.
+     * to be right is Again: the learner did not know it, so FSRS treats it as
+     * a failed recall even though the chosen answer matched.
      *
      * Deliberation time on a random pick carries no information, so a guess
      * bypasses the dwell ladder entirely.
@@ -274,12 +279,50 @@ object Study {
         selection: Set<String>,
         dwellSeconds: Long,
         isGuess: Boolean,
-        config: SchedulerConfig = SchedulerConfig()
+        config: SchedulerConfig = SchedulerConfig(),
+        fastSeconds: Long = config.fastSeconds
     ): ReviewGrade {
         if (selection.isEmpty()) return ReviewGrade.AGAIN
         if (selection != correctOptionIds) return ReviewGrade.AGAIN
-        if (isGuess) return ReviewGrade.HARD
-        return inferGrade(isCorrect = true, dwellSeconds = dwellSeconds, config = config)
+        if (isGuess) return ReviewGrade.AGAIN
+        return inferGrade(
+            isCorrect = true,
+            dwellSeconds = dwellSeconds,
+            config = config,
+            fastSeconds = fastSeconds
+        )
+    }
+
+    /** Assumed comfortable reading speed, in visible characters per second. */
+    private const val READ_CHARS_PER_SECOND = 20.0
+
+    /** Reading time added per image in the stem, options, or passage. */
+    private const val IMAGE_SECONDS = 3L
+
+    /**
+     * The Easy threshold for one card: the configured minimum plus the time
+     * needed to read the visible material. Counts the stem, every option, and
+     * the passage title/body because the learner must read all of it before
+     * answering.
+     */
+    fun easyThresholdSeconds(
+        config: SchedulerConfig,
+        question: Question,
+        passage: Passage?
+    ): Long {
+        val readableLength =
+            question.elements.searchableText.length +
+                question.options.sumOf { it.elements.searchableText.length } +
+                (passage?.elements?.searchableText?.length ?: 0) +
+                (passage?.title?.length ?: 0)
+        val imageCount =
+            (if (question.image != null) 1 else 0) +
+                question.options.count { it.image != null } +
+                (if (passage?.image != null) 1 else 0)
+        val readingBonus = ceil(
+            (readableLength / READ_CHARS_PER_SECOND) + (imageCount * IMAGE_SECONDS).toDouble()
+        ).toLong()
+        return config.fastSeconds + readingBonus
     }
 
     /** Every card eligible right now, split into the pull order's pools. */

@@ -2,9 +2,13 @@ package com.mcqapp
 
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.domain.FsrsScheduler
+import com.mcqapp.domain.Passage
+import com.mcqapp.domain.Question
+import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.Study
@@ -433,11 +437,11 @@ class SpacedRepetitionTest {
     }
 
     @Test
-    fun `a correct guess is Hard at any dwell`() {
+    fun `a correct guess is Again at any dwell`() {
         listOf(0L, 1L, 7L, 15L, 120L).forEach { dwell ->
             assertEquals(
                 "a guessed answer must not ride the dwell ladder (dwell=$dwell)",
-                ReviewGrade.HARD,
+                ReviewGrade.AGAIN,
                 Study.autoGrade(setOf("a"), setOf("a"), dwell, isGuess = true, config = autoConfig)
             )
         }
@@ -487,11 +491,72 @@ class SpacedRepetitionTest {
     }
 
     @Test
-    fun `a correct guess on a multi-correct key is still Hard`() {
+    fun `a correct guess on a multi-correct key is still Again`() {
         assertEquals(
-            ReviewGrade.HARD,
+            ReviewGrade.AGAIN,
             Study.autoGrade(
                 setOf("a", "c"), setOf("a", "c"), 2, isGuess = true, config = autoConfig
+            )
+        )
+    }
+
+    @Test
+    fun `easyThresholdCountsQuestionOptionsAndPassage`() {
+        val question = Question(
+            id = "q1",
+            categoryId = "c1",
+            elements = listOf(ContentElement.TextElement("x".repeat(100))),
+            options = listOf(QuestionOption("a", "y".repeat(100))),
+            correctOptionIds = setOf("a")
+        )
+        val passage = Passage(
+            id = "p1",
+            categoryId = "c1",
+            title = "t".repeat(50),
+            elements = listOf(ContentElement.TextElement("z".repeat(50)))
+        )
+
+        assertEquals(23L, Study.easyThresholdSeconds(autoConfig, question, passage))
+    }
+
+    @Test
+    fun `easyThresholdAddsSecondsForImages`() {
+        val question = Question(
+            id = "q1",
+            categoryId = "c1",
+            text = "x".repeat(40),
+            image = "question.png",
+            options = listOf(
+                QuestionOption("a", "Alpha", image = "option.png")
+            ),
+            correctOptionIds = setOf("a")
+        )
+        val passage = Passage(
+            id = "p1",
+            categoryId = "c1",
+            title = "Passage",
+            elements = emptyList(),
+            image = "passage.png"
+        )
+
+        assertEquals(20L, Study.easyThresholdSeconds(autoConfig, question, passage))
+    }
+
+    @Test
+    fun `autoGradeUsesTheLengthAdjustedEasyThreshold`() {
+        val threshold = 20L
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(
+                setOf("a"), setOf("a"), 19L, isGuess = false,
+                config = autoConfig, fastSeconds = threshold
+            )
+        )
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.autoGrade(
+                setOf("a"), setOf("a"), 20L, isGuess = false,
+                config = autoConfig, fastSeconds = threshold
             )
         )
     }

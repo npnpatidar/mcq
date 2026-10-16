@@ -93,6 +93,63 @@ class StudyAndSelectionUiTest {
         }
     }
 
+    @Test
+    fun studyHeaderStaysVisibleWhenTheQuestionScrolls() {
+        seedPaper(
+            "ui-study-sticky", "UIStudy Sticky", "ui-study-sticky-cat",
+            Question(
+                id = "ui-study-sticky-q",
+                categoryId = "ui-study-sticky-cat",
+                text = "Long question ${"very long ".repeat(30)}",
+                options = (1..10).map { index ->
+                    QuestionOption("ui-study-sticky-q-$index", "Option $index")
+                },
+                correctOptionIds = setOf("ui-study-sticky-q-1")
+            )
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-title-ui-study-sticky").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-study-sticky").performClick()
+
+        waitFor("Check")
+        compose.onNodeWithText("Option 10", substring = false).performScrollTo()
+
+        compose.onNodeWithTag("study-paper-title").assertIsDisplayed()
+        compose.onNodeWithTag("study-done").assertIsDisplayed()
+        compose.onNodeWithTag("study-question-clock").assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingTheStudyQuestionClockPausesIt() {
+        seedPaper(
+            "ui-study-clock", "UIStudy Clock", "ui-study-clock-cat",
+            single("ui-study-clock-q", "ui-study-clock-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-study-ui-study-clock").performClick()
+        waitFor("Check")
+
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.onNodeWithText("Paused", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingTheTestQuestionClockPausesIt() {
+        seedPaper(
+            "ui-test-clock", "UITest Clock", "ui-test-clock-cat",
+            single("ui-test-clock-q", "ui-test-clock-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithText("Test", substring = false).performClick()
+        waitFor("Question 1 of")
+
+        compose.onNodeWithTag("test-question-clock").performClick()
+        compose.onNodeWithText("Paused", substring = true).assertIsDisplayed()
+    }
+
     /**
      * A multi-correct question is marked with a square and a single-answer one
      * with a circle, mirroring the checkbox and radio button the test screen

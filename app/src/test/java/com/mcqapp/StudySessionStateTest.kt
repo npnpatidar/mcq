@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import com.mcqapp.ui.study.StudyUiState
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,5 +31,14 @@ class StudySessionStateTest {
         assertTrue(StudyUiState(reviewed = 20, breakDismissedAt = 10).showBreakStrip)
         // ...and dismissing there silences it again until the one after.
         assertFalse(StudyUiState(reviewed = 20, breakDismissedAt = 20).showBreakStrip)
+    }
+
+    @Test
+    fun aPausedQuestionClockOnlyAddsBankedTime() {
+        val paused = StudyUiState(
+            questionElapsedSeconds = 4L,
+            clockRunning = false
+        )
+        assertEquals(4L, paused.dwellSeconds)
     }
 }

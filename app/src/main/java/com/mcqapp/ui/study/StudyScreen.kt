@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -42,21 +44,27 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.StudyReason
@@ -89,17 +97,38 @@ fun StudyScreen(
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> viewModel.onAppBackgrounded()
+                Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val showStudyHeader =
+        !state.loading && state.loadError == null && !state.finished
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.study)) },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                }
-            )
+            if (showStudyHeader) {
+                StudyStickyHeader(
+                    state = state,
+                    liveDwell = liveDwell,
+                    onBack = { navController.popBackStack() },
+                    onStop = { viewModel.stop() },
+                    onDismissBreak = { viewModel.dismissBreak() },
+                    onToggleClock = { viewModel.toggleQuestionClock() }
+                )
+            } else {
+                BackOnlyBar(onBack = { navController.popBackStack() })
+            }
         }
     ) { padding ->
         Box(
@@ -122,8 +151,7 @@ fun StudyScreen(
                 )
                 else -> StudyBody(
                     state = state,
-                    viewModel = viewModel,
-                    onStop = { viewModel.stop() }
+                    viewModel = viewModel
                 )
             }
         }
@@ -133,8 +161,7 @@ fun StudyScreen(
 @Composable
 private fun StudyBody(
     state: StudyUiState,
-    viewModel: StudyViewModel,
-    onStop: () -> Unit
+    viewModel: StudyViewModel
 ) {
     val question = state.question ?: return
     if (state.simplified) {
@@ -146,8 +173,7 @@ private fun StudyBody(
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
-            ) {
-                StudyHeader(state, onStop, onDismissBreak = { viewModel.dismissBreak() })
+                ) {
                 Spacer(Modifier.height(12.dp))
                 QuestionCard(
                     question = question,
@@ -173,8 +199,7 @@ private fun StudyBody(
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
-            ) {
-                StudyHeader(state, onStop, onDismissBreak = { viewModel.dismissBreak() })
+                ) {
                 Spacer(Modifier.height(12.dp))
                 QuestionCard(
                     question = question,
@@ -320,7 +345,7 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
                 )
             } else if (result.wasGuess) {
                 Text(
-                    stringResource(R.string.guessed_right_marked_hard),
+                    stringResource(R.string.guessed_right_marked_again),
                     style = MaterialTheme.typography.bodySmall
                 )
             } else {
@@ -339,42 +364,112 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StudyHeader(
-    state: StudyUiState,
-    onStop: () -> Unit,
-    onDismissBreak: () -> Unit
-) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                state.paperTitle,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f)
-            )
-            // A voluntary stopping point, always visible. Stopping shows the
-            // session summary; it never blocks or judges mid-session.
-            TextButton(onClick = onStop) {
-                Text(stringResource(R.string.done_for_now))
+private fun BackOnlyBar(onBack: () -> Unit) {
+    TopAppBar(
+        title = {},
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.back)
+                )
             }
         }
-        // No denominator and no progress bar: a pull-based session has no
-        // fixed length, only what has been done so far.
-        Text(
-            stringResource(R.string.reviewed_this_session, state.reviewed),
-            style = MaterialTheme.typography.labelMedium
-        )
-        if (state.showBreakStrip) {
-            Spacer(Modifier.height(8.dp))
+    )
+}
+
+@Composable
+private fun StudyStickyHeader(
+    state: StudyUiState,
+    liveDwell: Long,
+    onBack: () -> Unit,
+    onStop: () -> Unit,
+    onDismissBreak: () -> Unit,
+    onToggleClock: () -> Unit
+) {
+    // `semantics {}` is not composable, so the accessibility strings come
+    // from Resources (the OverviewSection tooltip pattern); the clock text
+    // itself renders via stringResource inside its Text.
+    val resources = LocalContext.current.resources
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.back)
+                    )
+                }
                 Text(
-                    stringResource(R.string.break_suggestion, state.reviewed),
-                    style = MaterialTheme.typography.bodySmall,
+                    state.paperTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("study-paper-title")
+                )
+                TextButton(
+                    onClick = onStop,
+                    modifier = Modifier.testTag("study-done")
+                ) {
+                    Text(stringResource(R.string.done_for_now))
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    stringResource(R.string.reviewed_this_session, state.reviewed),
+                    style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onDismissBreak) {
-                    Text(stringResource(R.string.dismiss))
+                TextButton(
+                    onClick = onToggleClock,
+                    enabled = !state.revealed,
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("study-question-clock")
+                        .semantics {
+                            contentDescription = resources.getString(R.string.question_clock)
+                            stateDescription =
+                                if (state.clockRunning) resources.getString(R.string.clock_running)
+                                else resources.getString(R.string.clock_paused)
+                        }
+                ) {
+                    Icon(Icons.Default.Timer, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        Dwell.format(liveDwell) +
+                            if (state.clockRunning) ""
+                            else " · ${stringResource(R.string.clock_paused)}"
+                    )
+                }
+            }
+            if (state.showBreakStrip) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.break_suggestion, state.reviewed),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onDismissBreak) {
+                        Text(stringResource(R.string.dismiss))
+                    }
                 }
             }
         }
@@ -447,7 +542,7 @@ private fun QuestionCard(
             }
             // Bumped a step: the stem is the primary reading text and was set
             // small relative to the option markers around it.
-            ContentElements(question.elements, textStyle = MaterialTheme.typography.titleLarge)
+            ContentElements(question.elements, textStyle = MaterialTheme.typography.bodyLarge)
             QuestionImage(
                 src = question.image,
                 contentDescription = stringResource(R.string.question_image),

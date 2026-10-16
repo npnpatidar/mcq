@@ -277,48 +277,56 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 val existing = repository.db().questionDao().getAll()
                 // Hashing tens of thousands of questions blocks Main: classify off-thread.
                 val questions = _state.value.questions
+                var matchedCount = 0
                 val (dups, changed) = withContext(Dispatchers.Default) {
                     val hashes = existing.map { it.contentHash }.toHashSet()
                     val ids = existing.map { it.id }.toHashSet()
                     val byId = existing.associateBy { it.id }
-                    val correctById = if (questions.isEmpty()) {
-                        emptyMap()
-                    } else {
-                        repository.db().correctAnswerDao()
-                            .getForQuestionsChunked(questions.map { it.id })
-                            .groupBy({ it.questionId }, { it.optionId })
-                    }
                     val d = HashSet<String>()
                     val c = HashSet<String>()
-                    // Every candidate a hash matched, so a collision between two
-                    // genuinely different questions can be told apart here and
-                    // in the Importer, which must agree.
-                    val storedOptionsByQuestion = repository.db().optionDao()
-                        .getForQuestionsChunked(questions.map { it.id })
-                        .groupBy { it.questionId }
-                    questions.forEach { q ->
-                        val hash = com.mcqapp.data.io.ContentHash.of(q)
-                        val sameContent = byId[q.id]?.let { stored ->
-                            com.mcqapp.data.io.ContentHash.sameQuestionContent(
-                                stored,
-                                storedOptionsByQuestion[q.id].orEmpty(),
-                                q
-                            )
-                        } == true
-                        if (hash in hashes && (sameContent || q.id in byId)) {
-                            // The hash ignores the answer key and metadata: the
-                            // same id with a fixed key reads as changed, exactly
-                            // as the Importer will treat it.
-                            val changedAnswer = byId[q.id]?.let { stored ->
-                                com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
+                    // Only questions whose hash already exists, or whose id
+                    // already exists, ever read the stored rows. Fetching the
+                    // stored options and answer keys for the whole preview —
+                    // 169k ids, three quarters of a million option rows — is
+                    // what made a big import OOM while the dedup classification
+                    // itself is cheap.
+                    val hashed = questions.map { q ->
+                        q to com.mcqapp.data.io.ContentHash.of(q)
+                    }
+                    val interesting = hashed
+                        .filter { (q, hash) -> q.id in byId || hash in hashes }
+                        .map { it.first.id }
+                    matchedCount = interesting.size
+                    if (interesting.isNotEmpty()) {
+                        val correctById = repository.db().correctAnswerDao()
+                            .getForQuestionsChunked(interesting)
+                            .groupBy({ it.questionId }, { it.optionId })
+                        val storedOptionsByQuestion = repository.db().optionDao()
+                            .getForQuestionsChunked(interesting)
+                            .groupBy { it.questionId }
+                        hashed.forEach { (q, hash) ->
+                            val sameContent = byId[q.id]?.let { stored ->
+                                com.mcqapp.data.io.ContentHash.sameQuestionContent(
                                     stored,
-                                    correctById[q.id].orEmpty().toSet(),
+                                    storedOptionsByQuestion[q.id].orEmpty(),
                                     q
                                 )
                             } == true
-                            if (changedAnswer) c.add(q.id) else d.add(q.id)
-                        } else if (q.id in ids) {
-                            c.add(q.id)
+                            if (hash in hashes && (sameContent || q.id in byId)) {
+                                // The hash ignores the answer key and metadata: the
+                                // same id with a fixed key reads as changed, exactly
+                                // as the Importer will treat it.
+                                val changedAnswer = byId[q.id]?.let { stored ->
+                                    com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
+                                        stored,
+                                        correctById[q.id].orEmpty().toSet(),
+                                        q
+                                    )
+                                } == true
+                                if (changedAnswer) c.add(q.id) else d.add(q.id)
+                            } else if (q.id in ids) {
+                                c.add(q.id)
+                            }
                         }
                     }
                     d to c
@@ -326,7 +334,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 _state.update { it.copy(duplicateIds = dups, changedIds = changed) }
                 Logger.d("IMPORTVM", "refreshDuplicates: ${questions.size} preview = " +
                     "${questions.size - dups.size - changed.size} new, ${changed.size} changed, " +
-                    "${dups.size} duplicates")
+                    "${dups.size} duplicates; stored rows fetched for $matchedCount")
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "refreshDuplicates failed", e)
             }

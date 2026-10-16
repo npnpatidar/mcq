@@ -269,13 +269,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun exportAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val json = Exporter(repository.db()).exportAll()
+                // Streamed: the whole bank never lives in memory as a String.
                 val outputStream = getApplication<Application>().contentResolver.openOutputStream(uri)
                 if (outputStream == null) {
                     onError("Could not open file for writing")
                 } else {
-                    outputStream.use { it.write(json.toByteArray()) }
-                    Logger.i("SETTINGS", "Exported all data (${json.length} chars)")
+                    outputStream.use { out ->
+                        Exporter(repository.db()).exportAllTo(
+                            java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
+                        )
+                    }
+                    Logger.i("SETTINGS", "Exported all data (streamed)")
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Export failed", e)
@@ -284,40 +288,64 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Writes the full backup zip; assembly and the file write stay off Main. */
+    /** Writes the full backup zip; every entry streams, nothing is held whole. */
     fun backupAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     val appVersion = try {
                         app.packageManager.getPackageInfo(app.packageName, 0).versionName
                     } catch (_: Exception) {
                         null
                     }
-                    val backup = BackupSource(repository.db())
-                        .collect(appVersion, repository.loadTestProgress())
-                        .copy(settings = repository.settingsSnapshot())
-                    McqBackupFormat.write(
-                        manifest = backup.manifest,
-                        content = backup.content,
-                        study = backup.study,
-                        settings = backup.settings
-                    )
-                }
-                val written = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val outputStream = app.contentResolver.openOutputStream(uri)
-                    if (outputStream == null) {
-                        -1
-                    } else {
-                        outputStream.use { it.write(bytes) }
-                        bytes.size
+                    val db = repository.db()
+                    val paperRows = db.paperDao().getAll()
+                    val paperCreated = paperRows.map {
+                        McqBackupFormat.PaperCreated(it.id, it.createdAt)
                     }
-                }
-                if (written < 0) {
-                    onError("Could not open file for writing")
-                } else {
-                    Logger.i("SETTINGS", "Backup written ($written bytes)")
+                    val cardState = db.cardStateDao().getAll()
+                    val reviewLog = db.reviewLogDao().getAll()
+                    val inProgressTest = repository.loadTestProgress()
+                    val manifest = McqBackupFormat.Manifest(
+                        dbVersion = db.openHelper.readableDatabase.version,
+                        appVersion = appVersion,
+                        exportedAt = System.currentTimeMillis(),
+                        papers = paperRows.size,
+                        questions = db.questionDao().countQuestions(),
+                        attempts = db.attemptDao().getAllAttempts().size,
+                        reviews = reviewLog.size
+                    )
+                    val settings = McqBackupFormat.SettingsFile(
+                        preferences = repository.settingsSnapshot().preferences
+                    )
+                    val output = app.contentResolver.openOutputStream(uri)
+                    if (output == null) {
+                        onError("Could not open file for writing")
+                        return@withContext
+                    }
+                    output.use { out ->
+                        McqBackupFormat.writeTo(
+                            output = out,
+                            manifest = manifest,
+                            content = { w ->
+                                com.mcqapp.data.io.Exporter(db).exportAllTo(w)
+                            },
+                            study = { w ->
+                                McqBackupFormat.writeStudyRows(
+                                    w, cardState, reviewLog, paperCreated, inProgressTest,
+                                    toStateRow = { entity ->
+                                        McqBackupFormat.stateRow(
+                                            entity
+                                        )
+                                    },
+                                    toLogRow = { entity -> McqBackupFormat.logRow(entity) }
+                                )
+                            },
+                            settings = settings
+                        )
+                    }
+                    Logger.i("SETTINGS", "Backup written (streamed)")
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)

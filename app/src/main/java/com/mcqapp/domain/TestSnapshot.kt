@@ -1,5 +1,7 @@
 package com.mcqapp.domain
 
+import com.mcqapp.data.local.QuestionRef
+
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -42,6 +44,16 @@ data class TestSnapshot(
          * means the paper changed too much — start fresh instead.
          */
         fun reorder(loaded: List<Question>, savedIds: List<String>): List<Question> {
+            if (savedIds.isEmpty()) return loaded
+            val byId = loaded.associateBy { it.id }
+            val ordered = savedIds.mapNotNull { byId[it] }
+            if (ordered.isEmpty()) return emptyList()
+            val seen = ordered.map { it.id }.toHashSet()
+            return ordered + loaded.filter { it.id !in seen }
+        }
+
+        /** The same reorder over the session's lightweight refs. */
+        fun reorderRefs(loaded: List<QuestionRef>, savedIds: List<String>): List<QuestionRef> {
             if (savedIds.isEmpty()) return loaded
             val byId = loaded.associateBy { it.id }
             val ordered = savedIds.mapNotNull { byId[it] }

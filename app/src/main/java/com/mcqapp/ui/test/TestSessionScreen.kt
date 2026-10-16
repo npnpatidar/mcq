@@ -138,11 +138,9 @@ fun TestSessionScreen(
 
     var showPalette by remember { mutableStateOf(false) }
     var showSubmitDialog by remember { mutableStateOf(false) }
-    var showAnswerReview by remember { mutableStateOf(false) }
+    
     var ungradedDismissed by remember { mutableStateOf(false) }
-    val ungradedTotal = remember(state.questions) {
-        state.questions.count { it.correctOptionIds.isEmpty() }
-    }
+    val ungradedTotal = state.ungradedTotal
     val resumeOffer = state.resumeOffer
     if (resumeOffer != null) {
         val answered = resumeOffer.selections.count { it.value.isNotEmpty() }
@@ -205,7 +203,7 @@ fun TestSessionScreen(
             state.currentQuestion != null &&
             !showPalette &&
             !showSubmitDialog &&
-            !showAnswerReview &&
+            !state.reviewOpen &&
             resumeOffer == null &&
             !ungradedBlocking
     LaunchedEffect(questionVisible) {
@@ -408,7 +406,7 @@ fun TestSessionScreen(
                 // including every image.
                 QuestionHeader(
                     index = state.currentIndex,
-                    total = state.questions.size,
+                    total = state.questionCount,
                     marks = question.marks,
                     liveDwell = viewModel.liveDwell,
                     dwellActive = state.dwellActive,
@@ -438,18 +436,18 @@ fun TestSessionScreen(
                 }
                 if (state.isDrill) {
                     Text(
-                        "Drill — ${state.questions.size} questions on the clock",
+                        "Drill — ${state.questionCount} questions on the clock",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
-                    if (state.drillRequested > 0 && state.questions.size > state.drillRequested) {
+                    if (state.drillRequested > 0 && state.questionCount > state.drillRequested) {
                         // A passage block crossed the requested cut (D1):
                         // whole blocks are shown rather than splitting one.
                         Text(
                             stringResource(
                                 R.string.drill_overshoot_shown,
                                 state.drillRequested,
-                                state.questions.size
+                                state.questionCount
                             ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.tertiary
@@ -529,15 +527,15 @@ fun TestSessionScreen(
                 }
                 if (ExamMode.canOpenPalette(state.strictMode)) {
                     TextButton(onClick = { showPalette = !showPalette }) {
-                        Text("${state.answeredCount}/${state.questions.size} answered")
+                        Text("${state.answeredCount}/${state.questionCount} answered")
                     }
                 } else {
                     Text(
-                        "${state.currentIndex + 1}/${state.questions.size}",
+                        "${state.currentIndex + 1}/${state.questionCount}",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
-                if (state.currentIndex < state.questions.size - 1) {
+                if (state.currentIndex < state.questionCount - 1) {
                     Button(onClick = { viewModel.next() }) { Text(stringResource(R.string.next)) }
                 } else {
                     Button(onClick = { showSubmitDialog = true }) { Text(stringResource(R.string.submit)) }
@@ -573,17 +571,17 @@ fun TestSessionScreen(
     if (showSubmitDialog) {
         val slowest = state.dwellSeconds.maxByOrNull { it.value }
         val slowestIndex = slowest?.let { entry ->
-            state.questions.indexOfFirst { it.id == entry.key }.takeIf { it >= 0 }
+            state.refs.indexOfFirst { it.id == entry.key }.takeIf { it >= 0 }
         }
         val summary = SubmitSummary.Summary(
             answered = state.answeredCount,
-            total = state.questions.size,
+            total = state.questionCount,
             flagged = state.flagged.size,
             ungraded = ungradedTotal,
             slowestQuestion = slowestIndex?.plus(1),
             slowestSeconds = slowest?.value ?: 0L
         )
-        val firstFlagged = state.questions.indexOfFirst { it.id in state.flagged }
+        val firstFlagged = state.refs.indexOfFirst { it.id in state.flagged }
         AlertDialog(
             onDismissRequest = { showSubmitDialog = false },
             title = { Text(stringResource(R.string.submit_test)) },
@@ -592,7 +590,7 @@ fun TestSessionScreen(
                     Text(SubmitSummary.lines(summary).joinToString("\n"))
                     TextButton(onClick = {
                         showSubmitDialog = false
-                        showAnswerReview = true
+                        viewModel.openAnswerReview()
                     }) {
                         Text(stringResource(R.string.review_answers))
                     }
@@ -620,21 +618,21 @@ fun TestSessionScreen(
         )
     }
 
-    if (showAnswerReview) {
-        val reviewRows = remember(state.questions, state.selections, state.flagged) {
-            AnswerReview.rows(state.questions, state.selections, state.flagged)
-        }
+    if (state.reviewOpen) {
+        // Rows come from the ViewModel: built per question batch so a huge
+        // paper never loads its whole content for the dialog.
+        val reviewRows = state.reviewRows
         AlertDialog(
-            onDismissRequest = { showAnswerReview = false },
+            onDismissRequest = { viewModel.dismissAnswerReview() },
             title = { Text(stringResource(R.string.your_answers)) },
             text = {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
-                    items(reviewRows, key = { it.questionId }) { row ->
+                    items(state.reviewRows, key = { it.questionId }) { row ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    showAnswerReview = false
+                                    viewModel.dismissAnswerReview()
                                     viewModel.goTo(row.number - 1)
                                 }
                                 .padding(vertical = 6.dp),
@@ -671,12 +669,12 @@ fun TestSessionScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    showAnswerReview = false
+                    viewModel.dismissAnswerReview()
                     showSubmitDialog = true
                 }) { Text(stringResource(R.string.back_to_submit)) }
             },
             dismissButton = {
-                TextButton(onClick = { showAnswerReview = false }) { Text(stringResource(R.string.close)) }
+                TextButton(onClick = { viewModel.dismissAnswerReview() }) { Text(stringResource(R.string.close)) }
             }
         )
     }
@@ -888,10 +886,10 @@ private fun QuestionPalette(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 // Count + key avoids boxing an Int on every composition.
-                items(count = state.questions.size, key = { state.questions[it].id }) { index ->
-                    val question = state.questions[index]
-                    val answered = state.selections[question.id]?.isNotEmpty() == true
-                    val flagged = question.id in state.flagged
+                items(count = state.questionCount, key = { state.refs[it].id }) { index ->
+                    val ref = state.refs[index]
+                    val answered = state.selections[ref.id]?.isNotEmpty() == true
+                    val flagged = ref.id in state.flagged
                     val current = index == state.currentIndex
                     val palette = verdictColors()
                     val bg = when {

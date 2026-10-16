@@ -126,8 +126,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
             try {
-                val json = Exporter(repository.db()).exportAll()
-                writeUri(uri, json)
+                // Streamed: the whole bank never lives in memory as a String.
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                    Exporter(repository.db()).exportAllTo(
+                        java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
+                    )
+                } ?: throw IllegalStateException("Could not open output stream")
                 _exportError.value = null
             } catch (e: Exception) {
                 _exportError.value = "Export failed: ${e.message}"

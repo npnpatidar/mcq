@@ -4,7 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.domain.AnswerReview
 import com.mcqapp.domain.AutoAdvance
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
@@ -27,7 +30,18 @@ data class TestUiState(
     val loading: Boolean = true,
     val loadError: String? = null,
     val paper: Paper? = null,
-    val questions: List<Question> = emptyList(),
+    /**
+     * The session's ordered questions as refs — ids, passage membership and
+     * preview text. Content is resolved per question on navigation, so the
+     * list itself is tens of megabytes even for a 169k-question paper.
+     */
+    val refs: List<QuestionRef> = emptyList(),
+    /** The question on screen, resolved by id from its ref. */
+    val current: Question? = null,
+    /** The passage the resolved question belongs to, when it has one. */
+    val currentPassage: com.mcqapp.domain.Passage? = null,
+    /** Questions with no answer key — excluded from scoring entirely. */
+    val ungradedTotal: Int = 0,
     val currentIndex: Int = 0,
     val selections: Map<String, Set<String>> = emptyMap(),
     val revealed: Set<String> = emptySet(),
@@ -53,16 +67,16 @@ data class TestUiState(
     val dwellPausedByUser: Boolean = false,
     val timeWarning: String? = null,
     val bookmarked: Set<String> = emptySet(),
-    /** Passages for this session's questions, keyed by id, for the header card. */
-    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
+    /** Rows for the pre-submit review sheet, built per batch on open. */
+    val reviewRows: List<AnswerReview.Row> = emptyList(),
+    val reviewOpen: Boolean = false
 ) {
-    val currentQuestion: Question? get() = questions.getOrNull(currentIndex)
+    /** The question on screen. */
+    val currentQuestion: Question? get() = current
 
-    /** The passage the question on screen belongs to, or null when standalone. */
-    val currentPassage: com.mcqapp.domain.Passage?
-        get() = currentQuestion?.passageId?.let { passages[it] }
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
-    val isCurrentRevealed: Boolean get() = currentQuestion?.id in revealed
+    val isCurrentRevealed: Boolean get() = current?.id in revealed
+    val questionCount: Int get() = refs.size
 }
 
 class TestViewModel(
@@ -92,6 +106,13 @@ class TestViewModel(
 
     private var timerJob: Job? = null
     private var dwellJob: Job? = null
+    /** Seed for the per-question option shuffle; 0 when options stay put. */
+    private var optionShuffleSeed: Long = 0L
+
+    private companion object {
+        /** Questions resolved per batch while building the review sheet. */
+        const val REVIEW_BATCH = 500
+    }
     private var startTimestamp: Long = 0
     private var lastNavMillis: Long = 0
 
@@ -120,36 +141,40 @@ class TestViewModel(
                 Logger.d("TESTVM", "Loading paper $paperId")
                 val paper = repository.getPaper(paperId)
                 Logger.d("TESTVM", "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}")
-                val questions = if (mistakesOnly) {
-                    repository.getMistakenQuestions(paperId)
+                // Scheduling-and-preview columns only: the session orders ids,
+                // never content (see loadQuestionRefs).
+                val refs = if (mistakesOnly) {
+                    repository.getMistakenQuestionRefs(paperId)
                 } else if (categoryIds.isEmpty()) {
-                    repository.getQuestionsForPaper(paperId)
+                    repository.getQuestionRefsForPaper(paperId)
                 } else {
-                    repository.getQuestionsForCategories(categoryIds)
+                    repository.getQuestionRefsForCategories(categoryIds)
                 }
-                Logger.i("TESTVM", "Loaded ${questions.size} questions, duration=${paper?.durationMinutes}min" +
+                Logger.i("TESTVM", "Loaded ${refs.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesOnly) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
                 val seed = Random.nextLong()
-                // Block-aware: passage members move as one block, so a
-                // comprehension set is never split by the shuffle.
-                val ordered = com.mcqapp.domain.PassageBlocks
-                    .shuffleAttempt(questions, seed, shuffleQ, shuffleO)
                 if (shuffleQ || shuffleO) {
                     Logger.i("TESTVM", "Shuffled attempt: seed=$seed, " +
                         "questions=$shuffleQ, options=$shuffleO")
                 }
                 val isDrill = drillCount > 0
+                // Block-aware: passage members move as one block, so a
+                // comprehension set is never split by the shuffle or the cut.
+                val shuffled = com.mcqapp.domain.PassageBlocks
+                    .shuffleAttempt(refs, seed, shuffleQ) { it.passageId }
                 val drilled = if (isDrill) {
-                    val seed = Random.nextLong()
-                    Logger.i("TESTVM", "Drill: sampling $drillCount of ${ordered.size}, seed=$seed")
+                    val sampleSeed = Random.nextLong()
+                    Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffled.size}, seed=$sampleSeed")
                     // Whole blocks are taken, so the result may overshoot the
                     // requested count when a passage does not fit the cut.
-                    com.mcqapp.domain.PassageBlocks.sample(ordered, drillCount, seed)
+                    com.mcqapp.domain.PassageBlocks
+                        .sample(shuffled, drillCount, sampleSeed) { it.passageId }
                 } else {
-                    ordered
+                    shuffled
                 }
+                optionShuffleSeed = if (shuffleO) seed else 0L
                 // Saturating conversion: drillMinutes and durationMinutes both
                 // originate in files, and minutes * 60 could overflow.
                 val totalSeconds = com.mcqapp.domain.ExamTiming.secondsFrom(
@@ -161,17 +186,16 @@ class TestViewModel(
                 val advance = repository.autoAdvance().first()
                 if (practice && !strict) Logger.i("TESTVM", "Practice mode on: live feedback enabled")
                 if (strict) Logger.i("TESTVM", "Strict exam mode on: aids hidden")
-                // Context for the session's passage members; a session without
-                // passages pays one empty-list read and no query at all.
-                val passages = repository.getPassagesByIds(
-                    drilled.mapNotNull { it.passageId }.distinct()
-                ).associateBy { it.id }
+                // The session orders refs; the question on screen is resolved
+                // by id when it is reached, so a 169k-question paper never
+                // holds every question's content at once.
+                val ungradedTotal = repository.countUngraded(drilled.map { it.id })
                 _state.update {
                     it.copy(
                         loading = false,
                         paper = paper,
-                        questions = drilled,
-                        passages = passages,
+                        refs = drilled,
+                        ungradedTotal = ungradedTotal,
                         totalSeconds = totalSeconds,
                         remainingSeconds = totalSeconds,
                         practiceMode = practice,
@@ -187,6 +211,7 @@ class TestViewModel(
                 lastNavMillis = startTimestamp
                 dwellCommitted.clear()
                 _state.update { it.copy(dwellActive = drilled.isNotEmpty()) }
+                resolveCurrent()
                 startDwellTicker()
                 if (totalSeconds > 0) startTimer()
             } catch (e: Exception) {
@@ -357,7 +382,7 @@ class TestViewModel(
             current.autoAdvance,
             question.isMultiCorrect,
             current.currentIndex,
-            current.questions.size
+            current.questionCount
         )?.let { goTo(it) }
     }
 
@@ -392,24 +417,89 @@ class TestViewModel(
     }
 
     fun goTo(index: Int) {
-        val questions = _state.value.questions
-        if (index in questions.indices) {
+        if (index in _state.value.refs.indices) {
             flushDwell()
             _state.update { it.copy(currentIndex = index) }
             // The header reads the live value, so it has to follow the
             // question rather than keep showing the one just left.
             publishDwell(System.currentTimeMillis())
+            resolveCurrent()
             persistProgress()
         }
+    }
+
+    /**
+     * Resolves the question on screen from its ref. Sessions hold refs only —
+     * a full paper of 169k questions cannot fit in memory as content — so the
+     * body, its options and its passage are read when the index changes.
+     */
+    private fun resolveCurrent() {
+        val state = _state.value
+        val ref = state.refs.getOrNull(state.currentIndex)
+        if (ref == null) {
+            _state.update { it.copy(current = null, currentPassage = null) }
+            return
+        }
+        viewModelScope.launch {
+            val loaded = repository.getQuestion(ref.id)?.let { applyOptionShuffle(it) }
+            val passage = loaded?.passageId?.let { pid ->
+                repository.getPassagesByIds(listOf(pid)).firstOrNull()
+            }
+            // A navigation that raced this read wins: only publish what is
+            // still on screen.
+            if (_state.value.refs.getOrNull(_state.value.currentIndex)?.id != ref.id) return@launch
+            _state.update { it.copy(current = loaded, currentPassage = passage) }
+            publishDwell(System.currentTimeMillis())
+        }
+    }
+
+    /** Per-question, seed-stable option order (the old one-stream shuffle). */
+    private fun applyOptionShuffle(question: Question): Question {
+        val seed = optionShuffleSeed
+        if (seed == 0L) return question
+        return question.copy(
+            options = question.options.shuffled(Random(seed xor question.id.hashCode().toLong()))
+        )
     }
 
     fun next() = goTo(_state.value.currentIndex + 1)
     fun previous() = goTo(_state.value.currentIndex - 1)
 
+    /**
+     * Opens the pre-submit review sheet. The rows are built in question
+     * batches, never from one full-paper load: each batch's questions are
+     * dropped as soon as its rows exist.
+     */
+    fun openAnswerReview() {
+        if (_state.value.reviewOpen) return
+        _state.update { it.copy(reviewOpen = true, reviewRows = emptyList()) }
+        viewModelScope.launch {
+            val state = _state.value
+            val rows = mutableListOf<AnswerReview.Row>()
+            var index = 0
+            for (batch in state.refs.map { it.id }.chunked(REVIEW_BATCH)) {
+                val entities = repository.db().questionDao().getByIdsChunked(batch)
+                    .associateBy { it.id }
+                val ordered = batch.mapNotNull { entities[it] }
+                rows += AnswerReview.rows(
+                    questions = repository.questionsOf(ordered),
+                    selections = state.selections,
+                    flagged = state.flagged
+                ).map { it.copy(number = index + it.number) }
+                index += ordered.size
+                _state.update { it.copy(reviewRows = rows.toList()) }
+            }
+        }
+    }
+
+    fun dismissAnswerReview() {
+        _state.update { it.copy(reviewOpen = false) }
+    }
+
     fun submit() {
         val snapshot = _state.value
-        if (snapshot.submitted || snapshot.saving || snapshot.questions.isEmpty()) return
-        Logger.i("TESTVM", "submit() called: answered=${snapshot.answeredCount}/${snapshot.questions.size}, " +
+        if (snapshot.submitted || snapshot.saving || snapshot.questionCount == 0) return
+        Logger.i("TESTVM", "submit() called: answered=${snapshot.answeredCount}/${snapshot.questionCount}, " +
             "remaining=${snapshot.remainingSeconds}s")
         timerJob?.cancel()
         dwellJob?.cancel()
@@ -430,10 +520,10 @@ class TestViewModel(
             // would lose the whole exam on a storage error or process death.
             val outcome = com.mcqapp.domain.submitAttempt(
                 save = {
-                    repository.saveAttempt(
+                    repository.saveAttemptStreamed(
                         paperId = paperId,
                         paperTitle = current.paper?.title ?: "Test",
-                        questions = current.questions,
+                        questionIdsInOrder = current.refs.map { it.id },
                         selections = current.selections,
                         negativeMarking = current.paper?.negativeMarking ?: 0.0,
                         durationSeconds = durationSeconds,
@@ -480,7 +570,7 @@ class TestViewModel(
             repository.clearTestProgress()
             return
         }
-        val ordered = TestSnapshot.reorder(_state.value.questions, saved.questionIds)
+        val ordered = TestSnapshot.reorderRefs(_state.value.refs, saved.questionIds)
         if (ordered.isEmpty()) {
             repository.clearTestProgress()
             return
@@ -492,7 +582,7 @@ class TestViewModel(
 
     fun resume() {
         val saved = _state.value.resumeOffer ?: return
-        val ordered = TestSnapshot.reorder(_state.value.questions, saved.questionIds)
+        val ordered = TestSnapshot.reorderRefs(_state.value.refs, saved.questionIds)
         if (ordered.isEmpty()) {
             discardResume()
             return
@@ -501,7 +591,7 @@ class TestViewModel(
             "answered=${saved.selections.size}")
         _state.update {
             it.copy(
-                questions = ordered,
+                refs = ordered,
                 selections = saved.selections.mapValues { e -> e.value.toSet() },
                 revealed = saved.revealed,
                 flagged = saved.flagged,
@@ -521,6 +611,7 @@ class TestViewModel(
         dwellCommitted.clear()
         dwellCommitted.putAll(saved.dwellSeconds)
         startDwellTicker()
+        resolveCurrent()
         if (saved.totalSeconds > 0 && saved.remainingSeconds > 0) startTimer()
     }
 
@@ -533,11 +624,11 @@ class TestViewModel(
     /** Best-effort snapshot after every discrete change (never on timer ticks). */
     private fun persistProgress() {
         val current = _state.value
-        if (current.loading || current.questions.isEmpty() || current.submitted) return
+        if (current.loading || current.questionCount == 0 || current.submitted) return
         val snapshot = TestSnapshot(
             paperId = paperId,
             categoryIds = categoryIds,
-            questionIds = current.questions.map { it.id },
+            questionIds = current.refs.map { it.id },
             selections = current.selections.mapValues { e -> e.value.toList() },
             revealed = current.revealed,
             flagged = current.flagged,

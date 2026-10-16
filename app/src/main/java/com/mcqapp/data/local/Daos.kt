@@ -179,6 +179,54 @@ interface QuestionDao {
     )
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 
+    /**
+     * The scheduling-relevant columns only — no text, elements, image or
+     * options. Lists that order a paper (study pools, test sessions, the
+     * browse list) work off these; the question body is fetched by id for
+     * the one row on screen, so a 169k-question paper never materialises
+     * its full rows anywhere.
+     *
+     * Same (sortOrder, title) order as [getByCategories].
+     */
+    @Query(
+        "SELECT questions.id, questions.categoryId, questions.passageId, " +
+            "questions.contentHash, questions.text, questions.explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun getRefsByCategories(categoryIds: List<String>): List<QuestionRef>
+
+    /** Observation variant of [getRefsByCategories]: list surfaces re-emit. */
+    @Query(
+        "SELECT questions.id, questions.categoryId, questions.passageId, " +
+            "questions.contentHash, questions.text, questions.explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    fun observeRefsByCategories(categoryIds: List<String>): kotlinx.coroutines.flow.Flow<List<QuestionRef>>
+
+    @Query(
+        "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions WHERE id IN (:ids)"
+    )
+    suspend fun getRefsByIds(ids: List<String>): List<QuestionRef>
+
+    @Query(
+        "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions WHERE id = :id"
+    )
+    suspend fun getRefById(id: String): QuestionRef?
+
     @Query("SELECT * FROM questions WHERE id = :id")
     fun observeById(id: String): Flow<QuestionEntity?>
 
@@ -190,6 +238,9 @@ interface QuestionDao {
 
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
     fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
+
+    @Query("SELECT COUNT(*) FROM questions")
+    suspend fun countQuestions(): Int
 
     /** One-shot form of [observeCategoryCounts], for a single paper read. */
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
@@ -379,6 +430,9 @@ interface CorrectAnswerDao {
     @Query("SELECT * FROM correct_answers WHERE questionId IN (:questionIds)")
     suspend fun getForQuestions(questionIds: List<String>): List<CorrectAnswerEntity>
 
+    @Query("SELECT DISTINCT questionId FROM correct_answers WHERE questionId IN (:questionIds)")
+    suspend fun getQuestionIdsWithKeys(questionIds: List<String>): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(answers: List<CorrectAnswerEntity>)
 
@@ -393,6 +447,9 @@ interface CardStateDao {
 
     @Query("SELECT * FROM card_state")
     suspend fun getAll(): List<CardStateEntity>
+
+    @Query("SELECT COUNT(*) FROM card_state")
+    suspend fun countAll(): Int
 
     @Query("SELECT * FROM card_state WHERE paperId = :paperId AND questionId = :questionId")
     suspend fun get(paperId: String, questionId: String): CardStateEntity?
@@ -497,6 +554,24 @@ interface AttemptDao {
     @Insert
     suspend fun insertResults(results: List<QuestionResultEntity>)
 
+    /**
+     * Folds the streamed tallies into the header row after every batch is
+     * written, so a multi-batch attempt reports the same counts as the
+     * single-batch save.
+     */
+    @Query(
+        "UPDATE attempts SET correctCount = :correct, wrongCount = :wrong, " +
+            "skippedCount = :skipped, score = :score, maxScore = :maxScore WHERE id = :id"
+    )
+    suspend fun updateTally(
+        id: Long,
+        correct: Int,
+        wrong: Int,
+        skipped: Int,
+        score: Double,
+        maxScore: Double
+    )
+
     @Query("SELECT * FROM attempts ORDER BY finishedAt DESC")
     fun observeAll(): Flow<List<AttemptEntity>>
 
@@ -552,6 +627,22 @@ interface AttemptDao {
 
 /** One row of [QuestionDao.getMatchesByContentHashes]. */
 data class ContentHashMatch(val id: String, val contentHash: String)
+
+/**
+ * A question's scheduling-and-list columns, with the flattened stem for
+ * previews. Never carries elements, images or options, so a whole paper of
+ * these is tens of megabytes rather than hundreds.
+ */
+data class QuestionRef(
+    val id: String,
+    val categoryId: String,
+    val passageId: String? = null,
+    val contentHash: String = "",
+    /** Flattened stem: the preview a list row shows without loading content. */
+    val text: String = "",
+    val explanation: String = "",
+    val answerKeyCount: Int = 0
+)
 
 /**
  * One row of [AttemptDao.getLatestStandings]: a question's latest graded

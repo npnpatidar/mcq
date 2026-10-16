@@ -11,7 +11,11 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import java.io.OutputStream
 
 class Exporter(private val db: AppDatabase) {
 
@@ -19,6 +23,99 @@ class Exporter(private val db: AppDatabase) {
 
     suspend fun exportAll(): String {
         return json.encodeToString(McqFileDto.serializer(), exportAllDto())
+    }
+
+    /**
+     * Writes the whole bank to [output] without ever holding it: papers and
+     * categories are serialised one at a time straight from the database, so
+     * peak memory is a single category's questions (~a hundred), not the
+     * 200 MB graph plus the ~50 MB String the in-memory encode needed. The
+     * output is the same schema, just compact — the importer parses either.
+     */
+    suspend fun exportAllTo(writer: java.io.BufferedWriter) {
+        Logger.i("EXPORT", "Streaming export of all papers")
+        writer.write("{\"version\":1,\"papers\":[")
+        val papers = db.paperDao().getAll()
+        papers.forEachIndexed { pIndex, paper ->
+            if (pIndex > 0) writer.write(",")
+            val categories = db.categoryDao().getByPaper(paper.id)
+            writer.write(
+                "{\"id\":${JsonPrimitive(paper.id).toString()}," +
+                    "\"title\":${JsonPrimitive(paper.title)}," +
+                    "\"description\":${JsonPrimitive(paper.description)}," +
+                    "\"durationMinutes\":${paper.durationMinutes}," +
+                    "\"negativeMarking\":${paper.negativeMarking}," +
+                    "\"categories\":["
+            )
+            categories.forEachIndexed { cIndex, category ->
+                if (cIndex > 0) writer.write(",")
+                writer.write(json.encodeToString(CategoryDto.serializer(), exportCategoryDto(category)))
+            }
+            writer.write("],\"questions\":[],\"passages\":[")
+            // Passages referenced by this paper's members, discovered while
+            // the categories streamed past.
+            val members = categories.flatMap { cat ->
+                db.questionDao().getRefsByCategories(listOf(cat.id)).mapNotNull { it.passageId }
+            }.distinct()
+            db.passageDao().getByIdsChunked(members).forEachIndexed { pIdx, passage ->
+                if (pIdx > 0) writer.write(",")
+                writer.write(json.encodeToString(PassageDto.serializer(), passage.toPassageDto()))
+            }
+            writer.write("]}")
+        }
+        writer.write("],\"bookmarks\":")
+        writer.write(
+            json.encodeToString(
+                ListSerializer(String.serializer()),
+                db.bookmarkDao().getAll()
+            )
+        )
+        writer.write(",\"attempts\":[")
+        val attempts = db.attemptDao().getAllAttempts()
+        attempts.forEachIndexed { aIndex, attempt ->
+            if (aIndex > 0) writer.write(",")
+            val results = db.attemptDao().getResults(attempt.id)
+            writer.write(
+                json.encodeToString(
+                    AttemptDto.serializer(),
+                    AttemptDto(
+                        paperId = attempt.paperId,
+                        title = attempt.title,
+                        totalQuestions = attempt.totalQuestions,
+                        correctCount = attempt.correctCount,
+                        wrongCount = attempt.wrongCount,
+                        skippedCount = attempt.skippedCount,
+                        score = attempt.score,
+                        maxScore = attempt.maxScore,
+                        durationSeconds = attempt.durationSeconds,
+                        finishedAt = attempt.finishedAt,
+                        results = results.map { r ->
+                            AttemptResultDto(
+                                questionId = r.questionId,
+                                categoryTitle = r.categoryTitle,
+                                text = r.text,
+                                optionsJson = r.optionsJson,
+                                correctOptionIds = r.correctOptionIds,
+                                selectedOptionIds = r.selectedOptionIds,
+                                isCorrect = r.isCorrect,
+                                explanation = r.explanation,
+                                explanationImage = r.explanationImage,
+                                dwellSeconds = r.dwellSeconds
+                            )
+                        }
+                    )
+                )
+            )
+        }
+        writer.write("],\"warnings\":[],\"scheduling\":{},\"passages\":[")
+        val allPassages = db.passageDao().getAll()
+        allPassages.forEachIndexed { pIndex, passage ->
+            if (pIndex > 0) writer.write(",")
+            writer.write(json.encodeToString(PassageDto.serializer(), passage.toPassageDto()))
+        }
+        writer.write("]}")
+        writer.flush()
+        Logger.i("EXPORT", "Streamed ${papers.size} papers, ${allPassages.size} passages")
     }
 
     /**

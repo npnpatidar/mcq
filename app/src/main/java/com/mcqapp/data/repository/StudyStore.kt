@@ -5,6 +5,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.getRefsByCategoriesChunked
 import com.mcqapp.data.io.ContentHash
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
@@ -184,27 +185,16 @@ internal class StudyStore(
 
     /**
      * Ids and content hashes for a paper's questions, nested categories
-     * included, from the questions and options rows alone.
+     * included. The hash is read from the question row's own column, which
+     * every save keeps current, so no option or element is ever loaded: a
+     * 169k-question paper has three quarters of a million option rows, and
+     * materialising them to re-derive a stored value is what used to OOM.
      */
     private suspend fun studyInputs(paperId: String): List<StudyInput> {
         val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
         if (categoryIds.isEmpty()) return emptyList()
-        val questionEntities = db.questionDao().getByCategoriesChunked(categoryIds)
-        if (questionEntities.isEmpty()) return emptyList()
-        val optionsByQuestion = db.optionDao()
-            .getForQuestionsChunked(questionEntities.map { it.id })
-            .groupBy { it.questionId }
-        return questionEntities.map { entity ->
-            val options = optionsByQuestion[entity.id].orEmpty()
-            StudyInput(
-                id = entity.id,
-                contentHash = ContentHash.of(
-                    entity.text.parseContentElements(mapper.json).textContent,
-                    options.map { it.text.parseContentElements(mapper.json).textContent },
-                    options.map { it.image },
-                    entity.passageId
-                )
-            )
+        return db.questionDao().getRefsByCategoriesChunked(categoryIds).map { ref ->
+            StudyInput(id = ref.id, contentHash = ref.contentHash)
         }
     }
 

@@ -6,6 +6,7 @@ import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.BookmarkEntity
 import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getRefsByIdsChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
@@ -98,25 +99,30 @@ internal class HistoryStore(
         }
     }
 
-    suspend fun saveAttempt(
-        paperId: String,
-        paperTitle: String,
-        questions: List<Question>,
-        selections: Map<String, Set<String>>,
-        negativeMarking: Double,
-        durationSeconds: Long,
-        finishedAt: Long,
-        dwellSeconds: Map<String, Long> = emptyMap()
-    ): Long {
+    /** Running score tallies for the per-question loop below. */
+    private class Tally {
         var correct = 0
         var wrong = 0
         var skipped = 0
         var ungraded = 0
         var score = 0.0
         var maxScore = 0.0
-        val results = mutableListOf<QuestionResultEntity>()
-        // Resolved once for the whole attempt: was two lookups per question.
-        val categoryTitles = categoryTitlesOf(questions.map { it.categoryId }.toSet())
+    }
+
+    /**
+     * Scores one batch of questions and materialises their result rows.
+     * Shared by [saveAttempt] and [saveAttemptStreamed] so both count exactly
+     * the same way.
+     */
+    private fun scoreBatch(
+        questions: List<Question>,
+        selections: Map<String, Set<String>>,
+        negativeMarking: Double,
+        categoryTitles: Map<String, String>,
+        dwellSeconds: Map<String, Long>,
+        tally: Tally,
+        rows: MutableList<QuestionResultEntity>
+    ) {
         for (q in questions) {
             val selected = selections[q.id].orEmpty()
             // Computed once and shared by the aggregate counters and the
@@ -126,22 +132,22 @@ internal class HistoryStore(
             val isCorrect = selected.isNotEmpty() && selected == q.correctOptionIds
             if (q.correctOptionIds.isEmpty()) {
                 // No answer key: excluded from scoring entirely (no credit, no penalty).
-                ungraded++
+                tally.ungraded++
             } else {
-                maxScore += q.marks
+                tally.maxScore += q.marks
                 when {
-                    selected.isEmpty() -> skipped++
+                    selected.isEmpty() -> tally.skipped++
                     isCorrect -> {
-                        correct++
-                        score += q.marks
+                        tally.correct++
+                        tally.score += q.marks
                     }
                     else -> {
-                        wrong++
-                        score -= q.marks * negativeMarking
+                        tally.wrong++
+                        tally.score -= q.marks * negativeMarking
                     }
                 }
             }
-            results.add(
+            rows.add(
                 QuestionResultEntity(
                     attemptId = 0,
                     questionId = q.id,
@@ -160,9 +166,34 @@ internal class HistoryStore(
                 )
             )
         }
+    }
+
+    companion object {
+        /** Question rows resolved per batch by [saveAttemptStreamed]. */
+        const val BATCH = 500
+    }
+
+    suspend fun saveAttempt(
+        paperId: String,
+        paperTitle: String,
+        questions: List<Question>,
+        selections: Map<String, Set<String>>,
+        negativeMarking: Double,
+        durationSeconds: Long,
+        finishedAt: Long,
+        dwellSeconds: Map<String, Long> = emptyMap()
+    ): Long {
+        val tally = Tally()
+        val results = mutableListOf<QuestionResultEntity>()
+        // Resolved once for the whole attempt: was two lookups per question.
+        val categoryTitles = categoryTitlesOf(questions.map { it.categoryId }.toSet())
+        scoreBatch(
+            questions, selections, negativeMarking, categoryTitles,
+            dwellSeconds, tally, results
+        )
         Logger.d("REPO", "saveAttempt(paper=$paperId, questions=${questions.size}, " +
-            "correct=$correct, wrong=$wrong, skipped=$skipped, ungraded=$ungraded, " +
-            "score=$score/maxScore=$maxScore)")
+            "correct=${tally.correct}, wrong=${tally.wrong}, skipped=${tally.skipped}, " +
+            "ungraded=${tally.ungraded}, score=${tally.score}/maxScore=${tally.maxScore}")
         // One transaction: the attempt header and its per-question rows must
         // land together, so history never shows an attempt without results.
         return db.withTransaction {
@@ -171,11 +202,11 @@ internal class HistoryStore(
                     paperId = paperId,
                     title = paperTitle,
                     totalQuestions = questions.size,
-                    correctCount = correct,
-                    wrongCount = wrong,
-                    skippedCount = skipped,
-                    score = score,
-                    maxScore = maxScore,
+                    correctCount = tally.correct,
+                    wrongCount = tally.wrong,
+                    skippedCount = tally.skipped,
+                    score = tally.score,
+                    maxScore = tally.maxScore,
                     durationSeconds = durationSeconds,
                     finishedAt = finishedAt
                 )
@@ -184,6 +215,72 @@ internal class HistoryStore(
             Logger.d("REPO", "saveAttempt stored attemptId=$attemptId with ${results.size} results")
             attemptId
         }
+    }
+
+    /**
+     * The same save as [saveAttempt], but the questions are ids resolved from
+     * the database in batches: a full-paper test of a 169k-question paper
+     * would otherwise hold every question's content at once. Only the ordered
+     * ids, the tallies and one batch of result rows are in memory.
+     */
+    suspend fun saveAttemptStreamed(
+        paperId: String,
+        paperTitle: String,
+        questionIdsInOrder: List<String>,
+        selections: Map<String, Set<String>>,
+        negativeMarking: Double,
+        durationSeconds: Long,
+        finishedAt: Long,
+        dwellSeconds: Map<String, Long> = emptyMap()
+    ): Long = db.withTransaction {
+        val tally = Tally()
+        var stored = 0
+        val attemptId = db.attemptDao().insertAttempt(
+            AttemptEntity(
+                paperId = paperId,
+                title = paperTitle,
+                totalQuestions = questionIdsInOrder.size,
+                correctCount = 0,
+                wrongCount = 0,
+                skippedCount = 0,
+                score = 0.0,
+                maxScore = 0.0,
+                durationSeconds = durationSeconds,
+                finishedAt = finishedAt
+            )
+        )
+        val categoryTitles = categoryTitlesOf(
+            questionIdsInOrder.chunked(BATCH).flatMap { ids ->
+                db.questionDao().getByIdsChunked(ids).map { it.categoryId }
+            }.toSet()
+        )
+        for (batch in questionIdsInOrder.chunked(BATCH)) {
+            // Authored order inside the batch, not the database's.
+            val entities = db.questionDao().getByIdsChunked(batch).associateBy { it.id }
+            val ordered = batch.mapNotNull { entities[it] }
+            val rows = mutableListOf<QuestionResultEntity>()
+            scoreBatch(
+                mapper.toDomainBulk(ordered), selections, negativeMarking,
+                categoryTitles, dwellSeconds, tally, rows
+            )
+            db.attemptDao().insertResults(rows.map { it.copy(attemptId = attemptId) })
+            stored += rows.size
+        }
+        db.attemptDao().updateTally(
+            attemptId,
+            tally.correct,
+            tally.wrong,
+            tally.skipped,
+            tally.score,
+            tally.maxScore
+        )
+        Logger.d(
+            "REPO",
+            "saveAttemptStreamed(paper=$paperId, questions=${questionIdsInOrder.size}, " +
+                "correct=${tally.correct}, wrong=${tally.wrong}, skipped=${tally.skipped}, " +
+                "ungraded=${tally.ungraded}, score=${tally.score}/maxScore=${tally.maxScore})"
+        )
+        attemptId
     }
 
     fun observeAttempts(): Flow<List<Attempt>> =
@@ -245,6 +342,20 @@ internal class HistoryStore(
     }
 
     /** Ever-missed questions of one paper, most-recently-missed first. */
+    /** The mistaken questions of a paper as refs (content fetched on demand). */
+    suspend fun getMistakenQuestionRefs(
+        paperId: String
+    ): List<com.mcqapp.data.local.QuestionRef> {
+        val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
+            db.attemptDao().getLatestStandings().map {
+                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+            }
+        )[paperId] ?: return emptyList()
+        if (ids.isEmpty()) return emptyList()
+        val byId = db.questionDao().getRefsByIdsChunked(ids).associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
     suspend fun getMistakenQuestions(paperId: String): List<Question> {
         // Same single aggregate as the badge counts; the map lookup filters
         // to this paper and preserves the most-recently-missed-first order.

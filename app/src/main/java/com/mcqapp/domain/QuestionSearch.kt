@@ -97,6 +97,15 @@ object QuestionSearch {
             q.categoryId.isBlank() || titlesByCategoryId[q.categoryId] == "Uncategorized"
         }
 
+    /** [filterUncategorized] over browse's lightweight refs. */
+    fun filterUncategorizedRefs(
+        questions: List<com.mcqapp.data.local.QuestionRef>,
+        titlesByCategoryId: Map<String, String>
+    ): List<com.mcqapp.data.local.QuestionRef> =
+        questions.filter { q ->
+            q.categoryId.isBlank() || titlesByCategoryId[q.categoryId] == "Uncategorized"
+        }
+
     /** A cross-paper hit: the question plus where it lives. */
     data class Hit(
         val question: Question,

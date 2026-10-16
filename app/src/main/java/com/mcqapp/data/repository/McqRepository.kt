@@ -4,6 +4,8 @@ import android.content.Context
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
@@ -281,6 +283,22 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionStore.getQuestionsForCategories(categoryIds)
     suspend fun getQuestionsForPaper(paperId: String): List<Question> =
         questionStore.getQuestionsForPaper(paperId)
+
+    /** Scheduling-and-prefix columns only: no question content. */
+    suspend fun getQuestionRefsForPaper(paperId: String): List<QuestionRef> =
+        questionStore.getRefsForPaper(paperId)
+
+    /** Observed refs for browse: the list re-emits on any write. */
+    fun observeQuestionRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<QuestionRef>> =
+        questionStore.observeRefsForPaper(paperId)
+
+    /** Domain questions for already-loaded entities (batch surfaces only). */
+    suspend fun questionsOf(
+        entities: List<com.mcqapp.data.local.QuestionEntity>
+    ): List<Question> = questionStore.toDomain(entities)
+
+    suspend fun getQuestionRefsForCategories(categoryIds: List<String>): List<QuestionRef> =
+        questionStore.getRefsForCategories(categoryIds)
     suspend fun getQuestion(questionId: String): Question? = questionStore.getQuestion(questionId)
     suspend fun getQuestionsByIds(ids: List<String>): List<Question> =
         questionStore.getQuestionsByIds(ids)
@@ -367,6 +385,25 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId, paperTitle, questions, selections, negativeMarking,
         durationSeconds, finishedAt, dwellSeconds
     )
+
+    /**
+     * Same save, but the questions are ids resolved in batches: a full-paper
+     * test of a huge paper never holds every question at once. The caller
+     * passes the ordered ids it already holds.
+     */
+    suspend fun saveAttemptStreamed(
+        paperId: String,
+        paperTitle: String,
+        questionIdsInOrder: List<String>,
+        selections: Map<String, Set<String>>,
+        negativeMarking: Double,
+        durationSeconds: Long,
+        finishedAt: Long,
+        dwellSeconds: Map<String, Long> = emptyMap()
+    ): Long = historyStore.saveAttemptStreamed(
+        paperId, paperTitle, questionIdsInOrder, selections, negativeMarking,
+        durationSeconds, finishedAt, dwellSeconds
+    )
     fun observeAttempts(): Flow<List<com.mcqapp.domain.Attempt>> = historyStore.observeAttempts()
     suspend fun getAttempt(attemptId: Long): com.mcqapp.domain.Attempt? =
         historyStore.getAttempt(attemptId)
@@ -376,7 +413,21 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         historyStore.getAllQuestionResults()
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
-    suspend fun getMistakenQuestions(paperId: String): List<Question> =
+        /** Mistaken questions as refs: content is fetched when one is opened. */
+    suspend fun getMistakenQuestionRefs(paperId: String): List<QuestionRef> =
+        historyStore.getMistakenQuestionRefs(paperId)
+
+    /**
+     * How many of these questions have no answer key — excluded from
+     * scoring. Ids only: never loads question content to count them.
+     */
+    suspend fun countUngraded(questionIds: List<String>): Int {
+        if (questionIds.isEmpty()) return 0
+        val withKeys = db.correctAnswerDao().getQuestionIdsWithKeysChunked(questionIds)
+        return questionIds.count { it !in withKeys }
+    }
+
+suspend fun getMistakenQuestions(paperId: String): List<Question> =
         historyStore.getMistakenQuestions(paperId)
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? =
         historyStore.getBookmarkExportDto()

@@ -21,7 +21,12 @@ import kotlinx.coroutines.launch
 data class BrowseUiState(
     val loading: Boolean = true,
     val paper: Paper? = null,
-    val questions: List<Question> = emptyList()
+    /**
+     * The paper's questions as refs: ids, categories, passage membership and
+     * preview stems. Question content is fetched for the rows on screen, so
+     * a 169k-question paper lists without loading its whole content.
+     */
+    val refs: List<com.mcqapp.data.local.QuestionRef> = emptyList()
 )
 
 class BrowseViewModel(
@@ -53,20 +58,20 @@ class BrowseViewModel(
         }
         viewModelScope.launch {
             try {
-                repository.observeQuestionsForPaper(paperId).collect { questions ->
-                    val ids = questions.map { it.id }
-                    Logger.d("BROWSEVM", "Observed ${questions.size} questions for paper $paperId: " +
+                repository.observeQuestionRefsForPaper(paperId).collect { refs ->
+                    val ids = refs.map { it.id }
+                    Logger.d("BROWSEVM", "Observed ${refs.size} question refs for paper $paperId: " +
                         "order=[${ids.take(5).joinToString(",")}${if (ids.size > 5) ",... +${ids.size - 5} more" else ""}]")
                     if (firstLoad) {
                         firstLoad = false
                         val runtime = Runtime.getRuntime()
                         val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
                         val maxMb = runtime.maxMemory() / 1048576
-                        Logger.i("BROWSEVM", "first load of ${questions.size} questions took " +
+                        Logger.i("BROWSEVM", "first load of ${refs.size} refs took " +
                             "${android.os.SystemClock.elapsedRealtime() - created}ms, " +
                             "heap ${usedMb}MB/${maxMb}MB")
                     }
-                    _state.update { it.copy(loading = false, questions = questions) }
+                    _state.update { it.copy(loading = false, refs = refs) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Navigating away cancels the collector; that is the flow of
@@ -77,6 +82,10 @@ class BrowseViewModel(
             }
         }
     }
+
+    /** The row's full content, fetched when the row composes. */
+    suspend fun questionContent(questionId: String): Question? =
+        repository.getQuestion(questionId)
 
     fun deleteQuestion(questionId: String) {
         viewModelScope.launch {
@@ -160,7 +169,11 @@ class BrowseViewModel(
     ) {
         viewModelScope.launch {
             try {
-                val selected = _state.value.questions.filter { it.id in questionIds }
+                // Sessions and the list hold refs; content comes back by id.
+                // Contained in questionIds, so a stale ref still exports the
+                // question the user selected.
+                val selected = repository.getQuestionsByIds(questionIds.toList())
+                    .sortedBy { q -> questionIds.indexOf(q.id) }
                 if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
                 val dto = com.mcqapp.data.io.SelectionExport.paperDto(
                     title = title,

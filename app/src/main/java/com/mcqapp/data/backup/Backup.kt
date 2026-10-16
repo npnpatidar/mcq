@@ -14,6 +14,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.builtins.serializer
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -150,6 +153,98 @@ object McqBackupFormat {
         return out.toByteArray()
     }
 
+    /**
+     * The streaming write: every entry's body is produced through a writer
+     * while the zip entry is open, so the content (the whole bank) and the
+     * study rows never exist as one object or one String. The in-memory
+     * [write] stays for tests and small callers.
+     */
+    fun writeTo(
+        output: OutputStream,
+        manifest: Manifest,
+        content: suspend (java.io.BufferedWriter) -> Unit,
+        study: suspend (java.io.BufferedWriter) -> Unit,
+        settings: SettingsFile
+    ) {
+        ZipOutputStream(output.buffered()).use { zip ->
+            suspend fun entry(name: String, body: suspend (java.io.BufferedWriter) -> Unit) {
+                zip.putNextEntry(ZipEntry(name))
+                val w = java.io.BufferedWriter(
+                    java.io.OutputStreamWriter(zip, Charsets.UTF_8), 1 shl 14
+                )
+                body(w)
+                w.flush()
+                zip.closeEntry()
+            }
+            runBlocking {
+                entry(MANIFEST) { it.write(json.encodeToString(Manifest.serializer(), manifest)) }
+                entry(CONTENT, content)
+                entry(STUDY, study)
+                entry(SETTINGS) { it.write(json.encodeToString(SettingsFile.serializer(), settings)) }
+            }
+        }
+    }
+
+    fun stateRow(entity: com.mcqapp.data.local.CardStateEntity): CardStateRow = CardStateRow(
+        paperId = entity.paperId,
+        questionId = entity.questionId,
+        ease = entity.ease,
+        intervalDays = entity.intervalDays,
+        dueAt = entity.dueAt,
+        reps = entity.reps,
+        lapses = entity.lapses,
+        leech = entity.leech,
+        lastReviewedAt = entity.lastReviewedAt,
+        contentHash = entity.contentHash,
+        difficulty = entity.difficulty,
+        stability = entity.stability,
+        cardState = entity.cardState.name,
+        reviewCount = entity.reviewCount
+    )
+
+    fun logRow(entity: com.mcqapp.data.local.ReviewLogEntity): ReviewLogRow = ReviewLogRow(
+        id = entity.id,
+        paperId = entity.paperId,
+        questionId = entity.questionId,
+        rating = entity.rating,
+        reviewedAt = entity.reviewedAt,
+        elapsedSeconds = entity.elapsedSeconds,
+        stateBefore = entity.stateBefore,
+        stabilityAfter = entity.stabilityAfter,
+        difficultyAfter = entity.difficultyAfter,
+        intervalDaysAfter = entity.intervalDaysAfter
+    )
+
+    /** The study file's rows, written one at a time from their entities. */
+    suspend fun writeStudyRows(
+        w: java.io.BufferedWriter,
+        cardState: List<com.mcqapp.data.local.CardStateEntity>,
+        reviewLog: List<com.mcqapp.data.local.ReviewLogEntity>,
+        paperCreated: List<PaperCreated>,
+        inProgressTest: String?,
+        toStateRow: (com.mcqapp.data.local.CardStateEntity) -> CardStateRow,
+        toLogRow: (com.mcqapp.data.local.ReviewLogEntity) -> ReviewLogRow
+    ) {
+        w.write("{\"cardState\":[")
+        cardState.forEachIndexed { i, entity ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(CardStateRow.serializer(), toStateRow(entity)))
+        }
+        w.write("],\"reviewLog\":[")
+        reviewLog.forEachIndexed { i, entity ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(ReviewLogRow.serializer(), toLogRow(entity)))
+        }
+        w.write("],\"paperCreated\":[")
+        paperCreated.forEachIndexed { i, row ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(PaperCreated.serializer(), row))
+        }
+        w.write("],\"inProgressTest\":")
+        w.write(if (inProgressTest == null) "null" else json.encodeToString(String.serializer(), inProgressTest))
+        w.write("}")
+    }
+
     /** Zip bytes to a decoded [Backup]; every part must be present and valid. */
     fun read(bytes: ByteArray): Backup {
         val entries = try {
@@ -251,7 +346,7 @@ class BackupSource(private val db: AppDatabase) {
         )
     }
 
-    private fun CardStateEntity.toRow() = McqBackupFormat.CardStateRow(
+    internal fun CardStateEntity.toRow() = McqBackupFormat.CardStateRow(
         paperId = paperId,
         questionId = questionId,
         ease = ease,
@@ -268,7 +363,7 @@ class BackupSource(private val db: AppDatabase) {
         reviewCount = reviewCount
     )
 
-    private fun ReviewLogEntity.toRow() = McqBackupFormat.ReviewLogRow(
+    internal fun ReviewLogEntity.toRow() = McqBackupFormat.ReviewLogRow(
         id = id,
         paperId = paperId,
         questionId = questionId,

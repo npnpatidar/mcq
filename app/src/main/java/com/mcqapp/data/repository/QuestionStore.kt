@@ -12,6 +12,7 @@ import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
+import com.mcqapp.data.local.getRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.updateBulkFieldsChunked
@@ -77,6 +78,39 @@ internal class QuestionStore(
         val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
         return getQuestionsForCategories(categoryIds)
     }
+
+    /**
+     * The paper's questions as refs — scheduling columns and preview text
+     * only, never elements, images or options. List surfaces (test sessions,
+     * browse) order these and resolve the one question on screen by id.
+     */
+    /** Observed refs for browse: the list re-emits on any write. */
+    fun observeRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<com.mcqapp.data.local.QuestionRef>> =
+        kotlinx.coroutines.flow.combine(
+            db.questionDao().observeCategoryCounts(),
+            db.categoryDao().observeAll()
+        ) { _, _ -> Unit }
+            .map {
+                val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+                if (categoryIds.isEmpty()) emptyList()
+                else db.questionDao().getRefsByCategoriesChunked(categoryIds)
+            }
+            .flowOn(kotlinx.coroutines.Dispatchers.IO)
+
+    suspend fun getRefsForPaper(paperId: String): List<com.mcqapp.data.local.QuestionRef> {
+        val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+        if (categoryIds.isEmpty()) return emptyList()
+        return db.questionDao().getRefsByCategoriesChunked(categoryIds)
+    }
+
+    suspend fun getRefsForCategories(
+        categoryIds: List<String>
+    ): List<com.mcqapp.data.local.QuestionRef> =
+        db.questionDao().getRefsByCategoriesChunked(categoryIds)
+
+    /** Domain questions for entities a batch surface already loaded. */
+    suspend fun toDomain(entities: List<QuestionEntity>): List<Question> =
+        mapper.toDomainBulk(entities)
 
     suspend fun getQuestion(questionId: String): Question? {
         Logger.d("REPO", "getQuestion($questionId)")

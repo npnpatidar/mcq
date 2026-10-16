@@ -21,11 +21,20 @@ suspend fun OptionDao.getForQuestionsChunked(questionIds: List<String>): List<Op
 suspend fun CorrectAnswerDao.getForQuestionsChunked(questionIds: List<String>): List<CorrectAnswerEntity> =
     questionIds.chunks().flatMap { getForQuestions(it) }
 
+suspend fun CorrectAnswerDao.getQuestionIdsWithKeysChunked(questionIds: List<String>): Set<String> =
+    questionIds.chunks().flatMap { getQuestionIdsWithKeys(it) }.toHashSet()
+
 suspend fun QuestionDao.getByIdsChunked(ids: List<String>): List<QuestionEntity> =
     ids.chunks().flatMap { getByIds(it) }
 
 suspend fun QuestionDao.getByCategoriesChunked(categoryIds: List<String>): List<QuestionEntity> =
     categoryIds.chunks().flatMap { getByCategories(it) }
+
+suspend fun QuestionDao.getRefsByCategoriesChunked(categoryIds: List<String>): List<QuestionRef> =
+    categoryIds.chunks().flatMap { getRefsByCategories(it) }
+
+suspend fun QuestionDao.getRefsByIdsChunked(ids: List<String>): List<QuestionRef> =
+    ids.chunks().flatMap { getRefsByIds(it) }
 
 suspend fun QuestionDao.getMatchesByContentHashesChunked(
     hashes: Collection<String>

@@ -126,28 +126,35 @@ internal fun PaperCard(
                 }
             }
             Spacer(Modifier.height(8.dp))
+            // Study alone on its own full-width row: its label changes with
+            // the due/new counts, and inside a FlowRow that kept resizing the
+            // button and shuffling its neighbours. Text stays centred; the
+            // remaining actions wrap below.
+            Button(
+                onClick = onStudy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("paper-study-${paper.id}"),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                )
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    when {
+                        dueCount > 0 && freshCount > 0 -> "Study ($dueCount due, $freshCount new)"
+                        dueCount > 0 -> "Study ($dueCount due)"
+                        freshCount > 0 -> "Study ($freshCount new)"
+                        else -> "Study"
+                    }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = onStudy,
-                    modifier = Modifier.testTag("paper-study-${paper.id}"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
-                    )
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        when {
-                            dueCount > 0 && freshCount > 0 -> "Study ($dueCount due, $freshCount new)"
-                            dueCount > 0 -> "Study ($dueCount due)"
-                            freshCount > 0 -> "Study ($freshCount new)"
-                            else -> "Study"
-                        }
-                    )
-                }
                 Button(onClick = onStart) {
                     Text(stringResource(R.string.test_action))
                 }

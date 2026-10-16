@@ -23,9 +23,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 
 object ImportDataHolder {
-    var pendingJsonText: String? = null
+    /**
+     * Raw bytes of a picked JSON bank. Held as bytes, never as a String: a
+     * 48 MB bank became a 96 MB Java String on top of the byte array the
+     * picker already held, which alone could exhaust the heap before the
+     * parser even started.
+     */
+    var pendingJsonBytes: ByteArray? = null
     var pendingDocxBytes: ByteArray? = null
     /** Display name of the picked Word file; becomes the default paper title. */
     var pendingDocxName: String? = null
@@ -334,15 +341,42 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     // not be retained twice) of the last directly-loaded JSON.
     private var loadedDirectFp: String? = null
 
-    private fun fingerprint(text: String): String {
-        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
+    private fun fingerprint(bytes: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * The JSON a picker handed over. Parsed straight from the bytes: the
+     * old text path held the file twice (String + byte array) and then a
+     * whole-document DOM, which is how a 48 MB bank died in an OOM.
+     */
+    fun loadJsonBytes(bytes: ByteArray) {
+        viewModelScope.launch {
+            val fp = withContext(Dispatchers.Default) { fingerprint(bytes) }
+            if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) {
+                Logger.d("IMPORTVM", "loadJsonBytes: same file already loaded " +
+                    "(${_state.value.questions.size} questions), skipping reload to preserve in-memory edits")
+                return@launch
+            }
+            loadedDirectFp = fp
+            try {
+                withContext(Dispatchers.Default) {
+                    parseAndLoad(parse = {
+                        LegacyParser.parse(ByteArrayInputStream(bytes))
+                    })
+                }
+            } catch (e: Exception) {
+                loadedDirectFp = null
+                Logger.e("IMPORTVM", "Failed to parse JSON", e)
+                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
+            }
+        }
     }
 
     fun loadJsonText(text: String) {
         viewModelScope.launch {
-            // Fingerprint + parse off the main thread: multi-MB files froze it.
-            val fp = withContext(Dispatchers.Default) { fingerprint(text) }
+            val fp = withContext(Dispatchers.Default) { fingerprint(text.toByteArray()) }
             if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) {
                 Logger.d("IMPORTVM", "loadJsonText: same text already loaded " +
                     "(${_state.value.questions.size} questions), skipping reload to preserve in-memory edits")
@@ -350,7 +384,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             }
             loadedDirectFp = fp
             try {
-                withContext(Dispatchers.Default) { parseAndLoad(text) }
+                withContext(Dispatchers.Default) { parseAndLoad(parse = { LegacyParser.parse(text) }) }
             } catch (e: Exception) {
                 loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
@@ -392,11 +426,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         extraWarnings: List<String>,
         titleOverride: String? = null
     ) {
-        val fp = withContext(Dispatchers.Default) { fingerprint(text) }
+        val fp = withContext(Dispatchers.Default) { fingerprint(text.toByteArray()) }
         if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) return
         loadedDirectFp = fp
         try {
-            withContext(Dispatchers.Default) { parseAndLoad(text, extraWarnings, titleOverride) }
+            withContext(Dispatchers.Default) {
+                parseAndLoad(parse = { LegacyParser.parse(text) }, extraWarnings, titleOverride)
+            }
         } catch (e: Exception) {
             loadedDirectFp = null
             throw e
@@ -404,11 +440,11 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun parseAndLoad(
-        text: String,
+        parse: () -> McqFileDto,
         extraWarnings: List<String> = emptyList(),
         titleOverride: String? = null
     ) {
-        val file = LegacyParser.parse(text)
+        val file = parse()
         val paper = file.papers.firstOrNull()
         if (paper == null) {
             Logger.e("IMPORTVM", "No papers found in JSON")

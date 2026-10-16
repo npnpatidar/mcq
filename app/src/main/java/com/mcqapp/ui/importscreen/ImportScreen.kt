@@ -61,7 +61,7 @@ import com.mcqapp.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
-    importText: String?,
+    importBytes: ByteArray?,
     navController: NavController,
     viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
@@ -177,13 +177,13 @@ fun ImportScreen(
             val pendingName = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = null
             viewModel.loadDocx(pendingDocx, pendingName)
-        } else if (importText != null) {
-            viewModel.loadJsonText(importText)
-            // Drop the global copy once consumed: the VM owns the text now
-            // (fingerprint-gated), and a 25k-question file is ~9MB retained.
+        } else if (importBytes != null) {
+            viewModel.loadJsonBytes(importBytes)
+            // Drop the global copy once consumed: the VM owns the parse now
+            // (fingerprint-gated), and a 25k-question bank is ~9MB retained.
             // Identity-guarded so a newer pick made meanwhile is never lost.
-            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText === importText) {
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = null
+            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes === importBytes) {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = null
             }
         } else {
             // Process death: the static holder is empty and no text was passed,

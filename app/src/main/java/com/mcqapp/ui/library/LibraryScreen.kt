@@ -214,16 +214,17 @@ fun LibraryScreen(
                 viewModel.importAnkiPackage(title) { bytes }
                 return@launch
             }
-            val text = bytes.toString(Charsets.UTF_8)
+            // Bytes stay bytes: the String copy that used to be made here
+            // doubled the bank in memory before the parser ever saw it.
             val fingerprint = try {
                 val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(text.toByteArray())
+                    .digest(bytes)
                 digest.joinToString("") { "%02x".format(it) }.take(12)
             } catch (e: Exception) {
                 "unknown"
             }
-            Logger.i("LIB", "picked import file: chars=${text.length}, sha=$fingerprint")
-            com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = text
+            Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint")
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = bytes
             navController.navigate("import/direct")
         }
     }

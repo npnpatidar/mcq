@@ -92,7 +92,7 @@
     <string name="check">Check</string>
     <string name="correct">Correct</string>
     <string name="guessing">Guessing</string>
-    <string name="guessing_this_is_a_guess">I\'m guessing — grade a right answer as Hard.</string>
+    <string name="guessing_this_is_a_guess">I\'m guessing — grade a right answer as Again.</string>
     <string name="incorrect">Incorrect</string>
     <string name="incorrect_answer_review_soon">Incorrect answer — back soon for another try.</string>
     <string name="guessed_right_marked_again">Guessed right — marked Again, back soon.</string>

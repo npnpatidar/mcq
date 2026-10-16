@@ -396,11 +396,11 @@ fun BrowseScreen(
             ) { index ->
                 val question = items[index] ?: return@items
                 val context = state.categoryContexts[question.categoryId]
-                LaunchedEffect(question.categoryId) {
+                LaunchedEffect(question.categoryId, state.contextsVersion) {
                     viewModel.ensureCategoryContext(question.categoryId)
                 }
                 question.passageId?.let { pid ->
-                    LaunchedEffect(pid) {
+                    LaunchedEffect(pid, state.contextsVersion) {
                         viewModel.ensurePassageFirstId(pid)
                         viewModel.ensurePassage(pid)
                     }

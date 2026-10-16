@@ -385,15 +385,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         db.categoryDao().getByPaper(paperId).map { it.id }
 
     /**
-     * Fires on any question, category or passage write. Browse uses it to drop
-     * its per-category reorder contexts and passage-header lookups; the list
-     * itself pages with Room's own invalidation.
+     * Fires when a question or passage write could change Browse's on-demand
+     * reorder contexts and passage-header lookups; the list itself pages with
+     * Room's own invalidation. Category-only writes (a sibling reorder or a
+     * rename) leave every context valid, so they are deliberately not observed:
+     * clearing on them dropped the section-move buttons mid-gesture.
      */
     fun observeBrowseInvalidation(): Flow<Unit> = kotlinx.coroutines.flow.combine(
         db.questionDao().observeCategoryCounts(),
-        db.categoryDao().observeAll(),
         db.passageDao().observeAll()
-    ) { _, _, _ -> Unit }
+    ) { _, _ -> Unit }
 
     /**
      * Passage ids whose searchable body matches [query] (title + flattened

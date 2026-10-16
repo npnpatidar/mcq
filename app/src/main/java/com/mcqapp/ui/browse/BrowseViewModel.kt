@@ -47,7 +47,14 @@ data class BrowseUiState(
     /** passageId -> its first member's id in paper order (null: not loaded). */
     val passageFirstIds: Map<String, String?> = emptyMap(),
     /** Full passages for the visible group headers, loaded on demand. */
-    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
+    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap(),
+    /**
+     * Bumped whenever the on-demand loads above are dropped. Rows key their
+     * load effects on it so a dropped context is re-fetched; without it a
+     * cleared map stayed empty for already-composed rows and the section-move
+     * buttons disappeared after their own move.
+     */
+    val contextsVersion: Long = 0L
 )
 
 /** The list's live filter, read by the screen for its move-enable contract. */
@@ -201,7 +208,12 @@ class BrowseViewModel(
 
     private fun invalidateContexts() {
         _state.update {
-            it.copy(categoryContexts = emptyMap(), passageFirstIds = emptyMap(), passages = emptyMap())
+            it.copy(
+                categoryContexts = emptyMap(),
+                passageFirstIds = emptyMap(),
+                passages = emptyMap(),
+                contextsVersion = it.contextsVersion + 1
+            )
         }
         contextsLoading.clear()
         firstIdsLoading.clear()

@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
 @Dao
 interface PaperDao {
@@ -186,6 +187,20 @@ interface QuestionDao {
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 
     /**
+     * One page of bookmarked questions, newest bookmark first (the order the
+     * bookmarks screen has always shown). Only requested pages carry the full
+     * question content, so a "bookmark everything" bank no longer loads every
+     * bookmarked question at once.
+     */
+    @Query(
+        "SELECT questions.* FROM questions " +
+            "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
+            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC " +
+            "LIMIT :limit OFFSET :offset"
+    )
+    suspend fun getBookmarkedQuestionsPage(offset: Int, limit: Int): List<QuestionEntity>
+
+    /**
      * The scheduling-relevant columns only — no text, elements, image or
      * options. Lists that order a paper (study pools, test sessions, the
      * browse list) work off these; the question body is fetched by id for
@@ -238,6 +253,148 @@ interface QuestionDao {
     )
     fun observeRefsByCategories(categoryIds: List<String>): kotlinx.coroutines.flow.Flow<List<QuestionRef>>
 
+    /**
+     * Browse's list, one window at a time, in the same
+     * `(categories.sortOrder, categories.title, questions.sortOrder, rowid)`
+     * order as [getRefsByCategories]. Filters are expressed as SQL predicates
+     * so a 250k-question paper never materialises its full ref set:
+     *
+     * - `query` is pre-escaped for `LIKE ... ESCAPE '\'`; an empty string
+     *   disables the text search. `matchingPassageIds` are the passage ids
+     *   whose searchable body matches (computed in Kotlin with the same
+     *   `searchableText` the in-memory filter used), so a member is still
+     *   found through its shared context. Pass a single impossible id when
+     *   there are none — SQLite rejects an empty `IN ()`.
+     * - the `Int` filter flags are 0/1 for reuse of one statement.
+     */
+    @Query(
+        "SELECT questions.id, questions.categoryId, questions.passageId, " +
+            "questions.contentHash, questions.text, questions.explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "AND (:noAnswer = 0 OR NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noExplanation = 0 OR " +
+            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:uncategorized = 0 OR questions.categoryId = '' " +
+            "OR categories.title = 'Uncategorized') " +
+            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    fun pagingRefsByCategories(
+        categoryIds: List<String>,
+        query: String,
+        matchingPassageIds: List<String>,
+        noAnswer: Int,
+        noExplanation: Int,
+        uncategorized: Int,
+        categoryFilter: Int,
+        categoryFilterIds: List<String>
+    ): PagingSource<Int, QuestionRef>
+
+    /**
+     * One category's refs in its own order. Reorder math works on a single
+     * category's list; fetching it on demand replaces deriving every id from
+     * the paper-wide list.
+     */
+    @Query(
+        "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions WHERE categoryId = :categoryId " +
+            "ORDER BY sortOrder, rowid"
+    )
+    suspend fun getRefsByCategoryOrdered(categoryId: String): List<QuestionRef>
+
+    @Query(
+        "SELECT id FROM questions WHERE categoryId = :categoryId " +
+            "ORDER BY sortOrder, rowid LIMIT 1"
+    )
+    suspend fun getFirstRefIdByCategory(categoryId: String): String?
+
+    @Query(
+        "SELECT id FROM questions WHERE categoryId = :categoryId " +
+            "ORDER BY sortOrder DESC, rowid DESC LIMIT 1"
+    )
+    suspend fun getLastRefIdByCategory(categoryId: String): String?
+
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds)"
+    )
+    suspend fun countRefsByCategories(categoryIds: List<String>): Int
+
+    @Query(
+        "SELECT questions.id, questions.categoryId, questions.passageId, " +
+            "questions.contentHash, questions.text, questions.explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.passageId = :passageId " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun getRefsByPassageOrdered(passageId: String): List<QuestionRef>
+
+    /**
+     * A passage's member rows, one page at a time. Same projection and order
+     * as [getRefsByPassageOrdered] so the list is stable across pages.
+     */
+    @Query(
+        "SELECT questions.id, questions.categoryId, questions.passageId, " +
+            "questions.contentHash, questions.text, questions.explanation, " +
+            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AS answerKeyCount FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.passageId = :passageId " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    fun pagingRefsByPassage(passageId: String): PagingSource<Int, QuestionRef>
+
+    /** The passage's member ids in list order, for the editor's Prev/Next queue. */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.passageId = :passageId " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun getMemberIdsByPassage(passageId: String): List<String>
+
+    /** The browse filter set reduced to ids, for the editor's Prev/Next queue. */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "AND (:noAnswer = 0 OR NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noExplanation = 0 OR " +
+            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:uncategorized = 0 OR questions.categoryId = '' " +
+            "OR categories.title = 'Uncategorized') " +
+            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun browseIdsByCategories(
+        categoryIds: List<String>,
+        query: String,
+        matchingPassageIds: List<String>,
+        noAnswer: Int,
+        noExplanation: Int,
+        uncategorized: Int,
+        categoryFilter: Int,
+        categoryFilterIds: List<String>
+    ): List<String>
+
     @Query(
         "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
@@ -255,11 +412,58 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE id = :id")
     fun observeById(id: String): Flow<QuestionEntity?>
 
-    @Query("SELECT * FROM questions")
-    fun observeAll(): Flow<List<QuestionEntity>>
+    /**
+     * Every content hash, column-narrow. Import dedup classification probes
+     * this set; materialising the whole `questions` table (element JSON and
+     * base64 images included) to read one string column is what made a large
+     * re-import OOM.
+     */
+    @Query("SELECT contentHash FROM questions")
+    suspend fun getAllContentHashes(): List<String>
 
-    @Query("SELECT * FROM questions")
-    suspend fun getAll(): List<QuestionEntity>
+    /** Every question id, column-narrow; collision probes need no body. */
+    @Query("SELECT id FROM questions")
+    suspend fun getAllIds(): List<String>
+
+    /**
+     * Per-paper question counts in one grouped read. The storage report used
+     * to filter a fully materialised question list per paper.
+     */
+    @Query(
+        "SELECT categories.paperId AS paperId, COUNT(*) AS cnt FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "GROUP BY categories.paperId"
+    )
+    suspend fun questionCountsByPaper(): Map<
+        @MapColumn(columnName = "paperId") String,
+        @MapColumn(columnName = "cnt") Int
+        >
+
+    /** Per-paper embedded question-image weight (base64 chars ≈ bytes), in SQL. */
+    @Query(
+        "SELECT categories.paperId AS paperId, " +
+            "COALESCE(SUM(LENGTH(questions.image)), 0) + " +
+            "COALESCE(SUM(LENGTH(questions.explanationImage)), 0) AS chars " +
+            "FROM questions INNER JOIN categories ON questions.categoryId = categories.id " +
+            "GROUP BY categories.paperId"
+    )
+    suspend fun questionImageCharsByPaper(): Map<
+        @MapColumn(columnName = "paperId") String,
+        @MapColumn(columnName = "chars") Long
+        >
+
+    /** Per-paper embedded option-image weight, in SQL. */
+    @Query(
+        "SELECT categories.paperId AS paperId, " +
+            "COALESCE(SUM(LENGTH(options.image)), 0) AS chars " +
+            "FROM options INNER JOIN questions ON options.questionId = questions.id " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "GROUP BY categories.paperId"
+    )
+    suspend fun optionImageCharsByPaper(): Map<
+        @MapColumn(columnName = "paperId") String,
+        @MapColumn(columnName = "chars") Long
+        >
 
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
     fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
@@ -399,9 +603,14 @@ interface QuestionDao {
             "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
-            "ORDER BY q.qrowid DESC"
+            "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
-    suspend fun search(query: String, fragment: String): List<QuestionEntity>
+    suspend fun search(
+        query: String,
+        fragment: String,
+        limit: Int,
+        offset: Int
+    ): List<QuestionEntity>
 
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions LEFT JOIN options " +
@@ -414,9 +623,14 @@ interface QuestionDao {
             "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
-            "ORDER BY q.qrowid DESC"
+            "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
-    suspend fun searchIncludingOptions(query: String, fragment: String): List<QuestionEntity>
+    suspend fun searchIncludingOptions(
+        query: String,
+        fragment: String,
+        limit: Int,
+        offset: Int
+    ): List<QuestionEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)
@@ -554,6 +768,9 @@ interface BookmarkDao {
     @Query("SELECT questionId FROM bookmarks ORDER BY createdAt DESC")
     suspend fun getAll(): List<String>
 
+    @Query("SELECT COUNT(*) FROM bookmarks")
+    suspend fun countAll(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun add(bookmark: BookmarkEntity)
 
@@ -630,11 +847,61 @@ interface AttemptDao {
     @Query("SELECT * FROM question_results WHERE attemptId = :attemptId ORDER BY rowid")
     suspend fun getResults(attemptId: Long): List<QuestionResultEntity>
 
+    /** One paged window of an attempt, ordered by insertion (`rowid`). */
+    @Query(
+        "SELECT * FROM question_results WHERE attemptId = :attemptId " +
+            "AND id > :afterId ORDER BY rowid LIMIT :limit"
+    )
+    suspend fun getResultsAfter(
+        attemptId: Long,
+        afterId: Long,
+        limit: Int
+    ): List<QuestionResultEntity>
+
+    @Query("SELECT * FROM question_results WHERE id IN (:ids)")
+    suspend fun getResultsByIds(ids: List<Long>): List<QuestionResultEntity>
+
+    /**
+     * Filter-window scan: only the columns a chip filter needs, so paging a
+     * rare filter never decodes every heavy element/option JSON in the attempt.
+     */
+    @Query(
+        "SELECT id, questionId, isCorrect, correctOptionIds, selectedOptionIds " +
+            "FROM question_results WHERE attemptId = :attemptId " +
+            "AND id > :afterId ORDER BY rowid LIMIT :limit"
+    )
+    suspend fun scanResults(
+        attemptId: Long,
+        afterId: Long,
+        limit: Int
+    ): List<ResultScan>
+
+    @Query(
+        "SELECT COUNT(*) AS total, " +
+            "COALESCE(SUM(CASE WHEN correctOptionIds = '' THEN 1 ELSE 0 END), 0) AS ungraded, " +
+            "COALESCE(SUM(dwellSeconds), 0) AS totalDwell, " +
+            "COALESCE(SUM(CASE WHEN dwellSeconds > 0 THEN 1 ELSE 0 END), 0) AS dwellCount " +
+            "FROM question_results WHERE attemptId = :attemptId"
+    )
+    suspend fun getResultAggregates(attemptId: Long): ResultAggregates
+
+    @Query(
+        "SELECT categoryTitle AS title, " +
+            "COALESCE(SUM(CASE WHEN correctOptionIds != '' AND isCorrect THEN 1 ELSE 0 END), 0) AS correct, " +
+            "COALESCE(SUM(CASE WHEN correctOptionIds != '' THEN 1 ELSE 0 END), 0) AS graded " +
+            "FROM question_results WHERE attemptId = :attemptId " +
+            "GROUP BY categoryTitle ORDER BY categoryTitle"
+    )
+    suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow>
+
     @Query("SELECT * FROM question_results ORDER BY rowid")
     suspend fun getAllResults(): List<QuestionResultEntity>
 
     @Query("SELECT * FROM attempts ORDER BY finishedAt ASC")
     suspend fun getAllAttempts(): List<AttemptEntity>
+
+    @Query("SELECT COUNT(*) FROM attempts")
+    suspend fun countAll(): Int
 
     @Query("DELETE FROM attempts WHERE id = :id")
     suspend fun deleteById(id: Long)
@@ -650,8 +917,172 @@ interface AttemptDao {
     suspend fun countByPaper(paperId: String): Int
 }
 
+@Dao
+interface QuestionStatsDao {
+
+    /**
+     * Folds one batch of a question's result rows into its lifetime counters.
+     * `INSERT OR REPLACE ... SELECT` carries the previous totals forward in a
+     * single statement, so it does not need SQLite's 3.24 UPSERT (the app's
+     * minSdk 26 ships 3.18).
+     */
+    @Query(
+        "INSERT OR REPLACE INTO question_stats " +
+            "(questionId, paperId, paperTitle, categoryTitle, text, " +
+            "totalAttempts, gradedCount, correctCount, wrongCount, skipCount, " +
+            "ungradedCount, lastResultIsCorrect, lastFinishedAt) " +
+            "SELECT :questionId, :paperId, :paperTitle, :categoryTitle, :text, " +
+            "COALESCE((SELECT totalAttempts FROM question_stats WHERE questionId = :questionId), 0) + :total, " +
+            "COALESCE((SELECT gradedCount FROM question_stats WHERE questionId = :questionId), 0) + :graded, " +
+            "COALESCE((SELECT correctCount FROM question_stats WHERE questionId = :questionId), 0) + :correct, " +
+            "COALESCE((SELECT wrongCount FROM question_stats WHERE questionId = :questionId), 0) + :wrong, " +
+            "COALESCE((SELECT skipCount FROM question_stats WHERE questionId = :questionId), 0) + :skip, " +
+            "COALESCE((SELECT ungradedCount FROM question_stats WHERE questionId = :questionId), 0) + :ungraded, " +
+            ":isCorrect, :finishedAt"
+    )
+    suspend fun bumpQuestionStats(
+        questionId: String,
+        paperId: String,
+        paperTitle: String,
+        categoryTitle: String,
+        text: String,
+        total: Int,
+        graded: Int,
+        correct: Int,
+        wrong: Int,
+        skip: Int,
+        ungraded: Int,
+        isCorrect: Boolean,
+        finishedAt: Long
+    )
+
+    /**
+     * Hardest first: highest wrong rate, then most graded attempts, then text.
+     * Identical ordering to the legacy in-memory [com.mcqapp.domain.QuestionStats.hardest].
+     */
+    @Query(
+        "SELECT questionId, text, totalAttempts AS attempts, correctCount AS correct, " +
+            "wrongCount AS wrong, skipCount AS skipped, ungradedCount AS ungraded " +
+            "FROM question_stats WHERE gradedCount > 0 " +
+            "ORDER BY (wrongCount * 1.0 / gradedCount) DESC, gradedCount DESC, text ASC " +
+            "LIMIT :limit"
+    )
+    suspend fun getHardestQuestions(limit: Int): List<QuestionStatRow>
+
+    /**
+     * Weakest (paper, category) first: lowest rate, then most graded, then
+     * titles. Identical ordering to the legacy in-memory
+     * [com.mcqapp.domain.Mastery.weakest].
+     */
+    @Query(
+        "SELECT paperId, paperTitle, categoryTitle, " +
+            "SUM(correctCount) AS correct, SUM(gradedCount) AS graded " +
+            "FROM question_stats GROUP BY paperId, categoryTitle " +
+            "HAVING SUM(gradedCount) > 0 " +
+            "ORDER BY (SUM(correctCount) * 1.0 / SUM(gradedCount)) ASC, " +
+            "SUM(gradedCount) DESC, paperTitle ASC, categoryTitle ASC " +
+            "LIMIT :limit"
+    )
+    suspend fun getWeakestCategories(limit: Int): List<CategoryMasteryRow>
+}
+
+/**
+ * Folds a batch of just-written result rows into [QuestionStatsDao], one
+ * bump per distinct question. Call inside the same transaction as
+ * `insertResults` so the aggregate can never drift from the rows.
+ */
+suspend fun QuestionStatsDao.applyQuestionStats(
+    paperId: String,
+    paperTitle: String,
+    finishedAt: Long,
+    rows: List<QuestionResultEntity>
+) {
+    if (rows.isEmpty()) return
+    val grouped = LinkedHashMap<String, MutableList<QuestionResultEntity>>()
+    for (row in rows) grouped.getOrPut(row.questionId) { mutableListOf() }.add(row)
+    for ((questionId, list) in grouped) {
+        var graded = 0
+        var correct = 0
+        var wrong = 0
+        var skip = 0
+        var ungraded = 0
+        for (row in list) {
+            if (row.correctOptionIds.isEmpty()) {
+                ungraded++
+            } else {
+                graded++
+                when {
+                    row.selectedOptionIds.isEmpty() -> skip++
+                    row.isCorrect -> correct++
+                    else -> wrong++
+                }
+            }
+        }
+        val last = list.last()
+        bumpQuestionStats(
+            questionId = questionId,
+            paperId = paperId,
+            paperTitle = paperTitle,
+            categoryTitle = last.categoryTitle,
+            text = last.text,
+            total = list.size,
+            graded = graded,
+            correct = correct,
+            wrong = wrong,
+            skip = skip,
+            ungraded = ungraded,
+            isCorrect = last.isCorrect,
+            finishedAt = finishedAt
+        )
+    }
+}
+
+/** One row of [QuestionStatsDao.getHardestQuestions]. */
+data class QuestionStatRow(
+    val questionId: String,
+    val text: String,
+    val attempts: Int,
+    val correct: Int,
+    val wrong: Int,
+    val skipped: Int,
+    val ungraded: Int
+)
+
+/** One row of [QuestionStatsDao.getWeakestCategories]. */
+data class CategoryMasteryRow(
+    val paperId: String,
+    val paperTitle: String,
+    val categoryTitle: String,
+    val correct: Int,
+    val graded: Int
+)
+
 /** One row of [QuestionDao.getMatchesByContentHashes]. */
 data class ContentHashMatch(val id: String, val contentHash: String)
+
+/** The chip-filter columns of one result row, without its content payload. */
+data class ResultScan(
+    val id: Long,
+    val questionId: String,
+    val isCorrect: Boolean,
+    val correctOptionIds: String,
+    val selectedOptionIds: String
+)
+
+/** One-row header aggregate for the results screen. */
+data class ResultAggregates(
+    val total: Int = 0,
+    val ungraded: Int = 0,
+    val totalDwell: Long = 0,
+    val dwellCount: Int = 0
+)
+
+/** One category's graded tally in [AttemptDao.getResultCategoryBreakdown]. */
+data class CategoryBreakdownRow(
+    val title: String,
+    val correct: Int,
+    val graded: Int
+)
 
 /**
  * A question's scheduling-and-list columns, with the flattened stem for

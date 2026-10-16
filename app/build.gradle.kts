@@ -156,6 +156,13 @@ android {
     }
 }
 
+// Room schema export (AppDatabase.exportSchema = true): each version lands as
+// a reviewable JSON diff in app/schemas, so an index or column change cannot
+// slip past review and only surface as a migration crash on a device.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
@@ -176,7 +183,11 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.8.5")
     implementation("androidx.room:room-ktx:2.8.5")
+    implementation("androidx.room:room-paging:2.8.5")
     ksp("androidx.room:room-compiler:2.8.5")
+
+    implementation("androidx.paging:paging-runtime-ktx:3.3.2")
+    implementation("androidx.paging:paging-compose:3.3.2")
 
     implementation("androidx.datastore:datastore-preferences:1.2.1")
 

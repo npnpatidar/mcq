@@ -17,12 +17,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookmarkEntity::class,
         AttemptEntity::class,
         QuestionResultEntity::class,
+        QuestionStatsEntity::class,
         CardStateEntity::class,
         ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 11,
-    exportSchema = false
+    version = 13,
+    // From v11 on the schema is exported to app/schemas so every index and
+    // column change is reviewable as a diff rather than discovered by a
+    // migration failure on a user's device.
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun paperDao(): PaperDao
@@ -32,6 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun correctAnswerDao(): CorrectAnswerDao
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun attemptDao(): AttemptDao
+    abstract fun questionStatsDao(): QuestionStatsDao
     abstract fun cardStateDao(): CardStateDao
     abstract fun reviewLogDao(): ReviewLogDao
     abstract fun passageDao(): PassageDao
@@ -229,6 +234,83 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * The remaining large-collection indexes: per-paper/per-state due
+         * counts (`card_state`), results tallies (`question_results`), and the
+         * title lookups imports and the paper list do (`papers`, `categories`).
+         * Index-only — no table changes shape, every row survives verbatim.
+         * The two composite indexes replace their standalone prefixes, which
+         * are dropped here.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_papers_title` " +
+                        "ON `papers` (`title`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_cardState_dueAt` " +
+                        "ON `card_state` (`paperId`, `cardState`, `dueAt`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_question_results_attemptId`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_question_results_attemptId_isCorrect` " +
+                        "ON `question_results` (`attemptId`, `isCorrect`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_categories_paperId`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_categories_paperId_title` " +
+                        "ON `categories` (`paperId`, `title`)"
+                )
+            }
+        }
+
+        /**
+         * Adds the `question_stats` lifetime aggregate and backfills it from
+         * `question_results` in one grouped statement. History's
+         * "hardest"/"weakest" cards become two indexed reads instead of
+         * loading every result row. Deleting an attempt intentionally does
+         * not shrink these counters (they are an all-time aggregate).
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `question_stats` (" +
+                        "`questionId` TEXT NOT NULL, `paperId` TEXT NOT NULL, " +
+                        "`paperTitle` TEXT NOT NULL, `categoryTitle` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, `totalAttempts` INTEGER NOT NULL, " +
+                        "`gradedCount` INTEGER NOT NULL, `correctCount` INTEGER NOT NULL, " +
+                        "`wrongCount` INTEGER NOT NULL, `skipCount` INTEGER NOT NULL, " +
+                        "`ungradedCount` INTEGER NOT NULL, `lastResultIsCorrect` INTEGER NOT NULL, " +
+                        "`lastFinishedAt` INTEGER NOT NULL, PRIMARY KEY(`questionId`))"
+                )
+                db.execSQL(
+                    "INSERT OR REPLACE INTO question_stats " +
+                        "(questionId, paperId, paperTitle, categoryTitle, text, " +
+                        "totalAttempts, gradedCount, correctCount, wrongCount, skipCount, " +
+                        "ungradedCount, lastResultIsCorrect, lastFinishedAt) " +
+                        "SELECT r.questionId, a.paperId, a.title, r.categoryTitle, r.text, " +
+                        "c.total, c.graded, c.correct, c.wrong, c.skip, c.ungraded, " +
+                        "r.isCorrect, a.finishedAt " +
+                        "FROM question_results r " +
+                        "INNER JOIN attempts a ON a.id = r.attemptId " +
+                        "INNER JOIN (" +
+                        "SELECT questionId, COUNT(*) AS total, " +
+                        "SUM(CASE WHEN correctOptionIds != '' THEN 1 ELSE 0 END) AS graded, " +
+                        "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds != '' " +
+                        "AND isCorrect THEN 1 ELSE 0 END) AS correct, " +
+                        "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds != '' " +
+                        "AND isCorrect = 0 THEN 1 ELSE 0 END) AS wrong, " +
+                        "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds = '' " +
+                        "THEN 1 ELSE 0 END) AS skip, " +
+                        "SUM(CASE WHEN correctOptionIds = '' THEN 1 ELSE 0 END) AS ungraded, " +
+                        "MAX(rowid) AS maxRow FROM question_results GROUP BY questionId" +
+                        ") c ON c.questionId = r.questionId " +
+                        "WHERE r.rowid = c.maxRow"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -237,7 +319,8 @@ abstract class AppDatabase : RoomDatabase() {
                     "mcq.db"
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11
+                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
+                    MIGRATION_11_12, MIGRATION_12_13
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

@@ -177,7 +177,9 @@ class MigrationTest {
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
                 AppDatabase.MIGRATION_9_10,
-                AppDatabase.MIGRATION_10_11
+                AppDatabase.MIGRATION_10_11,
+                AppDatabase.MIGRATION_11_12,
+                AppDatabase.MIGRATION_12_13
             )
             .allowMainThreadQueries()
             .build()
@@ -477,7 +479,9 @@ class MigrationTest {
                     AppDatabase.MIGRATION_7_8,
                     AppDatabase.MIGRATION_8_9,
                     AppDatabase.MIGRATION_9_10,
-                    AppDatabase.MIGRATION_10_11
+                    AppDatabase.MIGRATION_10_11,
+                    AppDatabase.MIGRATION_11_12,
+                    AppDatabase.MIGRATION_12_13
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -491,6 +495,85 @@ class MigrationTest {
             assertEquals(1.0, question.marks, 0.0001)
             db.close()
             context.deleteDatabase("chain-test.db")
+        }
+    }
+
+    @Test
+    fun `migration 11 to 12 lands the aggregate and title indexes`() {
+        runBlocking {
+            createV6(insertPaper())
+            val db = openMigrated()
+            // Opening ran the whole chain to v12 and Room validated the schema.
+            db.cardStateDao().getByPaper("p1")
+            db.close()
+            val check = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("migration-test.db").path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            fun indexExists(name: String): Boolean = check.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                arrayOf(name)
+            ).use { it.moveToFirst() }
+            assertTrue("papers(title)", indexExists("index_papers_title"))
+            assertTrue(
+                "card_state(paperId,cardState,dueAt)",
+                indexExists("index_card_state_paperId_cardState_dueAt")
+            )
+            assertTrue(
+                "question_results(attemptId,isCorrect)",
+                indexExists("index_question_results_attemptId_isCorrect")
+            )
+            assertTrue(
+                "categories(paperId,title)",
+                indexExists("index_categories_paperId_title")
+            )
+            // The composite replaces the standalone prefix.
+            assertEquals(false, indexExists("index_question_results_attemptId"))
+            assertEquals(false, indexExists("index_categories_paperId"))
+            check.close()
+        }
+    }
+
+    @Test
+    fun `migration 12 to 13 backfills question_stats from existing results`() {
+        runBlocking {
+            createV6(
+                insertPaper(),
+                "INSERT INTO attempts (id,paperId,title,totalQuestions,correctCount," +
+                    "wrongCount,skippedCount,score,maxScore,durationSeconds,finishedAt) " +
+                    "VALUES (1,'p1','Paper',3,1,1,0,1.0,2.0,60,2000)",
+                "INSERT INTO question_results (id,attemptId,questionId,categoryTitle,text," +
+                    "optionsJson,correctOptionIds,selectedOptionIds,isCorrect,explanation," +
+                    "explanationImage,dwellSeconds) VALUES " +
+                    "(1,1,'q1','Cat','Q1','[]','a','a',1,'',NULL,0)",
+                "INSERT INTO question_results (id,attemptId,questionId,categoryTitle,text," +
+                    "optionsJson,correctOptionIds,selectedOptionIds,isCorrect,explanation," +
+                    "explanationImage,dwellSeconds) VALUES " +
+                    "(2,1,'q1','Cat','Q1b','[]','a','b',0,'',NULL,0)",
+                // Ungraded: no answer key, so it must not rank as hardest.
+                "INSERT INTO question_results (id,attemptId,questionId,categoryTitle,text," +
+                    "optionsJson,correctOptionIds,selectedOptionIds,isCorrect,explanation," +
+                    "explanationImage,dwellSeconds) VALUES " +
+                    "(3,1,'q2','Cat','Q2','[]','','x',0,'',NULL,0)"
+            )
+            val db = openMigrated()
+            val hardest = db.questionStatsDao().getHardestQuestions(5)
+            assertEquals(1, hardest.size)
+            val q1 = hardest.first()
+            assertEquals("q1", q1.questionId)
+            assertEquals(2, q1.attempts)
+            assertEquals(1, q1.correct)
+            assertEquals(1, q1.wrong)
+            // The last result row's text is what the aggregate carries.
+            assertEquals("Q1b", q1.text)
+            val weakest = db.questionStatsDao().getWeakestCategories(5)
+            assertEquals(1, weakest.size)
+            assertEquals("p1", weakest.first().paperId)
+            assertEquals("Paper", weakest.first().paperTitle)
+            assertEquals(1, weakest.first().correct)
+            assertEquals(2, weakest.first().graded)
+            db.close()
         }
     }
 }

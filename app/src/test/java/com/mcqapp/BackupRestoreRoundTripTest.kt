@@ -212,12 +212,29 @@ class BackupRestoreRoundTripTest {
         )
     }
 
-    private suspend fun allQuestionIds(): List<String> = db.questionDao().getAll().map { it.id }
+    private suspend fun allQuestionIds(): List<String> = db.questionDao().getAllIds()
+
+    /**
+     * A raw whole-table dump for the fixpoint comparison. The production DAO
+     * deliberately has no whole-table `SELECT *` question read any more, so
+     * the test reads the rows straight off the database connection.
+     */
+    private fun questionRowsDump(): List<String> {
+        val rows = mutableListOf<String>()
+        db.query("SELECT * FROM questions ORDER BY id", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += (0 until cursor.columnCount).joinToString("|") { i ->
+                    cursor.getString(i) ?: "null"
+                }
+            }
+        }
+        return rows.sorted()
+    }
 
     private suspend fun rowDump(): Map<String, List<String>> = mapOf(
         "papers" to db.paperDao().getAll().map { it.toString() }.sorted(),
         "categories" to db.categoryDao().getByPaper("paper-1").map { it.toString() }.sorted(),
-        "questions" to db.questionDao().getAll().map { it.toString() }.sorted(),
+        "questions" to questionRowsDump(),
         "options" to allQuestionIds().flatMap { db.optionDao().getForQuestions(listOf(it)) }
             .map { it.toString() }.sorted(),
         "correct" to allQuestionIds().flatMap { db.correctAnswerDao().getForQuestions(listOf(it)) }

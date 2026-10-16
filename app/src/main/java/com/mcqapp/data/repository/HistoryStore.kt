@@ -1,16 +1,27 @@
 package com.mcqapp.data.repository
 
+import androidx.paging.PagingSource
+import androidx.paging.PagingState
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.AttemptDao
 import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.BookmarkEntity
+import com.mcqapp.data.local.CategoryBreakdownRow
 import com.mcqapp.data.local.QuestionResultEntity
+import com.mcqapp.data.local.ResultAggregates
+import com.mcqapp.data.local.ResultScan
+import com.mcqapp.data.local.applyQuestionStats
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getRefsByIdsChunked
 import com.mcqapp.domain.Attempt
+import com.mcqapp.domain.Mastery
+import com.mcqapp.domain.NumberedResult
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
+import com.mcqapp.domain.QuestionStats
+import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
@@ -83,6 +94,27 @@ internal class HistoryStore(
         return categories.mapNotNull { category ->
             papers[category.paperId]?.let { category.id to it.title }
         }.toMap()
+    }
+
+    /**
+     * Bookmarked questions as a paged list, newest bookmark first. Content is
+     * decoded per requested page only, so a "bookmark everything" bank never
+     * materialises its whole reading list.
+     */
+    fun bookmarkedPagingSource(): PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion> =
+        BookmarksPagingSource { offset, limit -> bookmarkedPage(offset, limit) }
+
+    private suspend fun bookmarkedPage(offset: Int, limit: Int): BookmarkPage {
+        val entities = db.questionDao().getBookmarkedQuestionsPage(offset, limit)
+        if (entities.isEmpty()) return BookmarkPage(emptyList(), hasMore = false)
+        val questions = mapper.toDomainBulk(entities)
+        val paperIdByCategory = categoryPaperIdsOf(questions.map { it.categoryId }.toSet())
+        val items = questions.mapNotNull { question ->
+            paperIdByCategory[question.categoryId]?.let {
+                com.mcqapp.domain.BookmarkedQuestion(it, question)
+            }
+        }
+        return BookmarkPage(items, hasMore = entities.size == limit)
     }
 
     /** Bookmark rows paired with their owning paper, for the bookmarks screen. */
@@ -212,6 +244,7 @@ internal class HistoryStore(
                 )
             )
             db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
+            db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, results)
             Logger.d("REPO", "saveAttempt stored attemptId=$attemptId with ${results.size} results")
             attemptId
         }
@@ -264,6 +297,7 @@ internal class HistoryStore(
                 categoryTitles, dwellSeconds, tally, rows
             )
             db.attemptDao().insertResults(rows.map { it.copy(attemptId = attemptId) })
+            db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, rows)
             stored += rows.size
         }
         db.attemptDao().updateTally(
@@ -310,6 +344,32 @@ internal class HistoryStore(
         return db.attemptDao().getResults(attemptId).map { it.toDomainResult() }
     }
 
+    /**
+     * Attempt rows as a paged list. The key is `(last scanned id, skipped
+     * count)` rather than a filtered offset: chip filters drop rows, but each
+     * row still carries its index in the *unfiltered* attempt, which is what
+     * the review screen numbers questions by. The "All" chip is served
+     * directly; the others scan a light column projection and fetch content
+     * only for the rows that match.
+     */
+    fun resultPagingSource(
+        attemptId: Long,
+        filter: String,
+        bookmarked: Set<String>
+    ): PagingSource<ResultPageKey, NumberedResult> = ResultsPagingSource(
+        attemptId = attemptId,
+        filter = filter,
+        bookmarked = bookmarked,
+        dao = db.attemptDao(),
+        map = { it.toDomainResult() }
+    )
+
+    suspend fun getResultAggregates(attemptId: Long): ResultAggregates =
+        db.attemptDao().getResultAggregates(attemptId)
+
+    suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow> =
+        db.attemptDao().getResultCategoryBreakdown(attemptId)
+
     suspend fun getAllQuestionResults(): List<QuestionResult> {
         Logger.d("REPO", "getAllQuestionResults()")
         return db.attemptDao().getAllResults().map { it.toDomainResult() }
@@ -319,6 +379,32 @@ internal class HistoryStore(
         Logger.d("REPO", "getAttempts()")
         return db.attemptDao().getAllAttempts().map { it.toDomain() }
     }
+
+    /** Hardest questions, read from the lifetime aggregate (two indexed reads). */
+    suspend fun getHardestQuestions(limit: Int = 5): List<QuestionStats.Stat> =
+        db.questionStatsDao().getHardestQuestions(limit).map {
+            QuestionStats.Stat(
+                questionId = it.questionId,
+                text = it.text,
+                attempts = it.attempts,
+                correct = it.correct,
+                wrong = it.wrong,
+                skipped = it.skipped,
+                ungraded = it.ungraded
+            )
+        }
+
+    /** Weakest (paper, category) pairs, read from the lifetime aggregate. */
+    suspend fun getWeakestCategories(limit: Int = 5): List<Mastery.CategoryMastery> =
+        db.questionStatsDao().getWeakestCategories(limit).map {
+            Mastery.CategoryMastery(
+                paperId = it.paperId,
+                paperTitle = it.paperTitle,
+                categoryTitle = it.categoryTitle,
+                correct = it.correct,
+                graded = it.graded
+            )
+        }
 
     /** Paper id -> count of distinct ever-missed questions (for badges). */
     suspend fun getMistakeCounts(): Map<String, Int> =
@@ -400,4 +486,115 @@ internal class HistoryStore(
     suspend fun deleteAttempt(attemptId: Long) {
         db.attemptDao().deleteById(attemptId)
     }
+}
+
+/** One bookmarks page plus whether more rows exist past it. */
+private data class BookmarkPage(
+    val items: List<com.mcqapp.domain.BookmarkedQuestion>,
+    val hasMore: Boolean
+)
+
+private class BookmarksPagingSource(
+    private val fetch: suspend (offset: Int, limit: Int) -> BookmarkPage
+) : PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion>() {
+
+    override suspend fun load(
+        params: LoadParams<Int>
+    ): LoadResult<Int, com.mcqapp.domain.BookmarkedQuestion> {
+        val offset = params.key ?: 0
+        return try {
+            val page = fetch(offset, params.loadSize.coerceAtLeast(1))
+            LoadResult.Page(
+                data = page.items,
+                prevKey = null,
+                nextKey = if (page.hasMore) offset + params.loadSize else null
+            )
+        } catch (e: Exception) {
+            LoadResult.Error(e)
+        }
+    }
+
+    override fun getRefreshKey(
+        state: PagingState<Int, com.mcqapp.domain.BookmarkedQuestion>
+    ): Int? = null
+}
+
+/** Cursor for [ResultsPagingSource]: last scanned row id plus rows skipped. */
+data class ResultPageKey(val afterId: Long, val nextIndex: Int)
+
+/** Rows examined per filter-window scan; matched rows are then loaded in full. */
+private const val RESULT_SCAN_WINDOW = 200
+
+private class ResultsPagingSource(
+    private val attemptId: Long,
+    private val filter: String,
+    private val bookmarked: Set<String>,
+    private val dao: AttemptDao,
+    private val map: (QuestionResultEntity) -> QuestionResult
+) : PagingSource<ResultPageKey, NumberedResult>() {
+
+    override suspend fun load(
+        params: LoadParams<ResultPageKey>
+    ): LoadResult<ResultPageKey, NumberedResult> {
+        val key = params.key ?: ResultPageKey(afterId = 0L, nextIndex = 0)
+        var afterId = key.afterId
+        var index = key.nextIndex
+        val target = params.loadSize.coerceAtLeast(1)
+        val out = mutableListOf<NumberedResult>()
+        return try {
+            if (filter == ReviewFilters.ALL) {
+                val window = dao.getResultsAfter(attemptId, afterId, target)
+                window.forEachIndexed { offset, entity ->
+                    out += NumberedResult(index + offset, map(entity))
+                }
+                index += window.size
+                if (window.isNotEmpty()) afterId = window.last().id
+                val nextKey = if (window.size == target) ResultPageKey(afterId, index) else null
+                LoadResult.Page(out, prevKey = null, nextKey = nextKey)
+            } else {
+                var nextKey: ResultPageKey? = null
+                while (out.size < target) {
+                    val window = dao.scanResults(attemptId, afterId, RESULT_SCAN_WINDOW)
+                    if (window.isEmpty()) {
+                        nextKey = null
+                        break
+                    }
+                    val matchedIds = window.filter { matches(it) }.map { it.id }.toHashSet()
+                    if (matchedIds.isNotEmpty()) {
+                        val full = dao.getResultsByIds(matchedIds.toList()).associateBy { it.id }
+                        window.forEachIndexed { offset, scan ->
+                            if (scan.id in matchedIds) {
+                                full[scan.id]?.let { out += NumberedResult(index + offset, map(it)) }
+                            }
+                        }
+                    }
+                    index += window.size
+                    afterId = window.last().id
+                    nextKey = ResultPageKey(afterId, index)
+                    if (window.size < RESULT_SCAN_WINDOW) {
+                        nextKey = null
+                        break
+                    }
+                }
+                LoadResult.Page(out, prevKey = null, nextKey = nextKey)
+            }
+        } catch (e: Exception) {
+            LoadResult.Error(e)
+        }
+    }
+
+    private fun matches(scan: ResultScan): Boolean = when (filter) {
+        ReviewFilters.CORRECT -> scan.isCorrect
+        ReviewFilters.WRONG ->
+            !scan.isCorrect && scan.selectedOptionIds.isNotBlank() &&
+                scan.correctOptionIds.isNotBlank()
+        ReviewFilters.SKIPPED ->
+            scan.selectedOptionIds.isBlank() && scan.correctOptionIds.isNotBlank()
+        ReviewFilters.UNGRADED -> scan.correctOptionIds.isBlank()
+        ReviewFilters.SAVED -> scan.questionId in bookmarked
+        else -> true
+    }
+
+    override fun getRefreshKey(state: PagingState<ResultPageKey, NumberedResult>): ResultPageKey? =
+        null
 }

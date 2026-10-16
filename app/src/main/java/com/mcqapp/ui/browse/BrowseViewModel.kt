@@ -3,32 +3,73 @@ package com.mcqapp.ui.browse
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class BrowseUiState(
-    val loading: Boolean = true,
-    val paper: Paper? = null,
-    /**
-     * The paper's questions as refs: ids, categories, passage membership and
-     * preview stems. Question content is fetched for the rows on screen, so
-     * a 169k-question paper lists without loading its whole content.
-     */
-    val refs: List<com.mcqapp.data.local.QuestionRef> = emptyList()
+/**
+ * One category's reorder context: its questions in order (id + passageId are
+ * all [com.mcqapp.domain.PassageReorder] reads) plus the first and last id,
+ * which mark the section-edge rows that carry the category-move buttons.
+ */
+data class CategoryContext(
+    val refs: List<QuestionRef> = emptyList(),
+    val firstId: String? = null,
+    val lastId: String? = null
 )
 
+data class BrowseUiState(
+    val paper: Paper? = null,
+    /** Loaded on demand per visible category; drives reorder math only. */
+    val categoryContexts: Map<String, CategoryContext> = emptyMap(),
+    /** passageId -> its first member's id in paper order (null: not loaded). */
+    val passageFirstIds: Map<String, String?> = emptyMap(),
+    /** Full passages for the visible group headers, loaded on demand. */
+    val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
+)
+
+/** The list's live filter, read by the screen for its move-enable contract. */
+data class BrowseFilterState(
+    val query: String = "",
+    val filter: BrowseListFilter = BrowseListFilter.ALL,
+    val categoryFilterId: String? = null
+)
+
+private data class BrowseFilterRequest(
+    val state: BrowseFilterState = BrowseFilterState(),
+    val categoriesVersion: Long = 0L
+)
+
+/**
+ * Browse's list pages through Room: opening a 250k-question paper streams a
+ * window instead of materialising every ref. Filters are SQL predicates in the
+ * paging query (the same observable order as before). The only whole-category
+ * reads left are the on-demand reorder contexts and passage-header lookups,
+ * both bounded by one category/passage.
+ */
+@kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class BrowseViewModel(
     application: Application,
     private val paperId: String
@@ -41,46 +82,155 @@ class BrowseViewModel(
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
+    private val filters = MutableStateFlow(BrowseFilterRequest())
+    val filterState: StateFlow<BrowseFilterState> =
+        filters.map { it.state }.stateIn(viewModelScope, SharingStarted.Eagerly, BrowseFilterState())
+
+    /** In-flight loads, guarding against a row recomposing into a duplicate read. */
+    private val contextsLoading = mutableSetOf<String>()
+    private val firstIdsLoading = mutableSetOf<String>()
+    private val passagesByIdLoading = mutableSetOf<String>()
+
     init {
         Logger.i("BROWSEVM", "BrowseViewModel created: paperId=$paperId")
-        val created = android.os.SystemClock.elapsedRealtime()
-        var firstLoad = true
         viewModelScope.launch {
-            // Observed, not fetched once: a category moved in the drawer or
-            // inline rewrites the tree this screen's sibling math and section
-            // labels read — a stale snapshot left the second move computed
-            // against the pre-move order.
             repository.observePapers().collect { papers ->
                 papers.firstOrNull { it.id == paperId }?.let { paper ->
-                    _state.value = _state.value.copy(paper = paper)
+                    _state.update { it.copy(paper = paper) }
+                    bumpCategories()
                 }
             }
         }
+        // Drop stale reorder contexts / passage headers on any question write.
+        viewModelScope.launch {
+            repository.observeBrowseInvalidation().collect { invalidateContexts() }
+        }
+    }
+
+    private fun bumpCategories() {
+        filters.update { it.copy(categoriesVersion = it.categoriesVersion + 1) }
+    }
+
+    val pagingData: Flow<PagingData<QuestionRef>> = filters
+        .flatMapLatest { request ->
+            val categoryIds = repository.browseCategoryIds(paperId)
+            if (categoryIds.isEmpty()) {
+                flowOf(PagingData.empty<QuestionRef>())
+            } else {
+                val query = request.state.query
+                val passageIds = if (query.isBlank()) listOf("")
+                else repository.browseMatchingPassageIds(paperId, query)
+                val subtree = subtreeIds(request.state.categoryFilterId)
+                Pager(
+                    PagingConfig(
+                        pageSize = BROWSE_PAGE,
+                        initialLoadSize = BROWSE_PAGE * 2,
+                        prefetchDistance = BROWSE_PAGE / 2,
+                        enablePlaceholders = false
+                    )
+                ) {
+                    repository.browseRefsSource(
+                        categoryIds, query, passageIds, request.state.filter, subtree
+                    )
+                }.flow
+            }
+        }
+        .cachedIn(viewModelScope)
+
+    fun updateQuery(query: String) {
+        filters.update { it.copy(state = it.state.copy(query = query)) }
+    }
+
+    fun updateFilter(filter: BrowseListFilter) {
+        filters.update { it.copy(state = it.state.copy(filter = filter)) }
+    }
+
+    fun updateCategoryFilter(categoryId: String?) {
+        filters.update { it.copy(state = it.state.copy(categoryFilterId = categoryId)) }
+    }
+
+    private fun subtreeIds(rootId: String?): Set<String>? {
+        if (rootId == null) return null
+        val flat = flattenCategories(_state.value.paper?.categories.orEmpty())
+        return com.mcqapp.ui.browse.subtreeIdsOf(flat, rootId)
+    }
+
+    /** Loads a visible category's reorder context once. */
+    fun ensureCategoryContext(categoryId: String) {
+        if (_state.value.categoryContexts.containsKey(categoryId) || !contextsLoading.add(categoryId)) return
         viewModelScope.launch {
             try {
-                repository.observeQuestionRefsForPaper(paperId).collect { refs ->
-                    val ids = refs.map { it.id }
-                    Logger.d("BROWSEVM", "Observed ${refs.size} question refs for paper $paperId: " +
-                        "order=[${ids.take(5).joinToString(",")}${if (ids.size > 5) ",... +${ids.size - 5} more" else ""}]")
-                    if (firstLoad) {
-                        firstLoad = false
-                        val runtime = Runtime.getRuntime()
-                        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
-                        val maxMb = runtime.maxMemory() / 1048576
-                        Logger.i("BROWSEVM", "first load of ${refs.size} refs took " +
-                            "${android.os.SystemClock.elapsedRealtime() - created}ms, " +
-                            "heap ${usedMb}MB/${maxMb}MB")
-                    }
-                    _state.update { it.copy(loading = false, refs = refs) }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // Navigating away cancels the collector; that is the flow of
-                // things, not a failure worth an error line.
-                throw e
+                val refs = repository.browseCategoryRefs(categoryId)
+                val context = CategoryContext(
+                    refs = refs,
+                    firstId = refs.firstOrNull()?.id,
+                    lastId = refs.lastOrNull()?.id
+                )
+                _state.update { it.copy(categoryContexts = it.categoryContexts + (categoryId to context)) }
             } catch (e: Exception) {
-                Logger.e("BROWSEVM", "Observation of questions for paper $paperId FAILED", e)
+                Logger.e("BROWSEVM", "reorder context for $categoryId failed", e)
             }
         }
+    }
+
+    /** Loads a visible passage header's first-member id once. */
+    fun ensurePassageFirstId(passageId: String) {
+        if (_state.value.passageFirstIds.containsKey(passageId) || !firstIdsLoading.add(passageId)) return
+        viewModelScope.launch {
+            try {
+                val first = repository.browsePassageFirstRefId(passageId)
+                _state.update { it.copy(passageFirstIds = it.passageFirstIds + (passageId to first)) }
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "passage first id for $passageId failed", e)
+            }
+        }
+    }
+
+    /** Loads a visible passage's body once, for its group header/label. */
+    fun ensurePassage(passageId: String) {
+        if (_state.value.passages.containsKey(passageId) || !passagesByIdLoading.add(passageId)) return
+        viewModelScope.launch {
+            try {
+                val passage = repository.getPassagesByIds(listOf(passageId)).firstOrNull() ?: return@launch
+                _state.update { it.copy(passages = it.passages + (passageId to passage)) }
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "passage $passageId load failed", e)
+            }
+        }
+    }
+
+    private fun invalidateContexts() {
+        _state.update {
+            it.copy(categoryContexts = emptyMap(), passageFirstIds = emptyMap(), passages = emptyMap())
+        }
+        contextsLoading.clear()
+        firstIdsLoading.clear()
+        passagesByIdLoading.clear()
+    }
+
+    /**
+     * Resolves the filtered list as bare ids, so callers can seed the editor's
+     * Prev/Next queue or locate a deep-link target with exactly the order the
+     * user is looking at. Ids only: a 250k-question list costs a few MB, not
+     * the full ref set.
+     */
+    fun withFilteredIds(onReady: suspend (List<String>) -> Unit) {
+        viewModelScope.launch {
+            val request = filters.value.state
+            val categoryIds = repository.browseCategoryIds(paperId)
+            val passageIds = if (request.query.isBlank()) listOf("")
+            else repository.browseMatchingPassageIds(paperId, request.query)
+            val ids = repository.browseFilteredIds(
+                categoryIds, request.query, passageIds, request.filter,
+                subtreeIds(request.categoryFilterId)
+            )
+            onReady(ids)
+        }
+    }
+
+    /** Seeds the editor's Prev/Next queue with the filtered list. */
+    fun openEditor(anchorId: String, onReady: (List<String>, Int) -> Unit) {
+        withFilteredIds { ids -> onReady(ids, ids.indexOf(anchorId).coerceAtLeast(0)) }
     }
 
     /** The row's full content, fetched when the row composes. */
@@ -90,6 +240,7 @@ class BrowseViewModel(
     fun deleteQuestion(questionId: String) {
         viewModelScope.launch {
             repository.deleteQuestion(questionId)
+            invalidateContexts()
             Logger.i("BROWSEVM", "Deleted question $questionId")
         }
     }
@@ -97,12 +248,14 @@ class BrowseViewModel(
     fun duplicateQuestion(questionId: String) {
         viewModelScope.launch {
             repository.duplicateQuestion(questionId)
+            invalidateContexts()
         }
     }
 
     fun deleteQuestions(questionIds: Set<String>) {
         viewModelScope.launch {
             repository.deleteQuestions(questionIds)
+            invalidateContexts()
             Logger.i("BROWSEVM", "Deleted ${questionIds.size} questions")
         }
     }
@@ -110,6 +263,7 @@ class BrowseViewModel(
     fun moveQuestions(questionIds: Set<String>, targetCategoryId: String) {
         viewModelScope.launch {
             repository.moveQuestionsToCategory(questionIds, targetCategoryId)
+            invalidateContexts()
             Logger.i("BROWSEVM", "Moved ${questionIds.size} questions to $targetCategoryId")
         }
     }
@@ -117,6 +271,7 @@ class BrowseViewModel(
     fun swapQuestions(firstId: String, secondId: String) {
         viewModelScope.launch {
             repository.swapQuestionOrder(firstId, secondId)
+            invalidateContexts()
         }
     }
 
@@ -131,6 +286,7 @@ class BrowseViewModel(
             if (!repository.renumberQuestions(categoryId, orderedIds)) {
                 Logger.w("BROWSEVM", "renumberCategory($categoryId) refused: stale order?")
             }
+            invalidateContexts()
         }
     }
 
@@ -153,6 +309,7 @@ class BrowseViewModel(
     fun copyQuestions(questionIds: Set<String>, targetCategoryId: String) {
         viewModelScope.launch {
             repository.copyQuestionsToCategory(questionIds, targetCategoryId)
+            invalidateContexts()
             Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
         }
     }
@@ -196,7 +353,7 @@ class BrowseViewModel(
 
     /** Every category in this paper, flattened to id -> title for the export. */
     private fun categoryTitles(): Map<String, String> = buildMap {
-        fun walk(nodes: List<com.mcqapp.domain.CategoryNode>) {
+        fun walk(nodes: List<CategoryNode>) {
             for (node in nodes) {
                 put(node.id, node.title)
                 walk(node.children)
@@ -222,7 +379,23 @@ class BrowseViewModel(
             val tags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 .takeIf { tagsText.isNotBlank() }
             repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
+            invalidateContexts()
             Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
+        }
+    }
+
+    companion object {
+        /** Window size: ~a screenful and a half, so flings stay ahead of IO. */
+        const val BROWSE_PAGE = 60
+
+        private fun flattenCategories(
+            nodes: List<CategoryNode>,
+            depth: Int = 0
+        ): List<Pair<CategoryNode, Int>> = buildList {
+            for (node in nodes) {
+                add(node to depth)
+                addAll(flattenCategories(node.children, depth + 1))
+            }
         }
     }
 }

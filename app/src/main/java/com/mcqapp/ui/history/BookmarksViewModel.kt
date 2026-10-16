@@ -3,33 +3,59 @@ package com.mcqapp.ui.history
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-data class BookmarksUiState(
-    val questions: List<com.mcqapp.domain.BookmarkedQuestion> = emptyList()
-)
+data class BookmarksUiState(val count: Int = 0)
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class BookmarksViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
 
     private val _state = MutableStateFlow(BookmarksUiState())
     val state: StateFlow<BookmarksUiState> = _state.asStateFlow()
 
+    /**
+     * Rebuilt whenever the bookmark set changes, so removing (or adding) a
+     * bookmark from anywhere refreshes the visible list. Pages carry content
+     * only as they scroll in.
+     */
+    val pagingData: Flow<PagingData<com.mcqapp.domain.BookmarkedQuestion>> =
+        repository.observeBookmarks()
+            .map { it.size }
+            .distinctUntilChanged()
+            .flatMapLatest {
+                Pager(
+                    PagingConfig(
+                        pageSize = BOOKMARKS_PAGE,
+                        initialLoadSize = BOOKMARKS_PAGE,
+                        enablePlaceholders = false
+                    )
+                ) {
+                    repository.bookmarkedPagingSource()
+                }.flow
+            }
+            .cachedIn(viewModelScope)
+
     init {
         viewModelScope.launch {
             repository.observeBookmarks().collect { ids ->
-                // Was three queries per bookmark, re-run on every toggle.
-                // Carries the paper id so the editor can load its categories.
-                val questions = repository.getBookmarkedQuestions()
-                _state.value = BookmarksUiState(questions = questions)
+                _state.value = BookmarksUiState(count = ids.size)
             }
         }
     }
@@ -70,5 +96,9 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun dismissError() {
         _exportError.value = null
+    }
+
+    companion object {
+        private const val BOOKMARKS_PAGE = 50
     }
 }

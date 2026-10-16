@@ -6,7 +6,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.mcqapp.domain.CardStateKind
 
-@Entity(tableName = "papers")
+@Entity(tableName = "papers", indices = [Index("title")])
 data class PaperEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -31,7 +31,9 @@ data class CategoryCountEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("paperId"), Index("parentId")]
+    // (paperId, title) covers getByPaper's per-paper scan and the title
+    // match imports do; the paperId prefix replaces the old standalone index.
+    indices = [Index("paperId", "title"), Index("parentId")]
 )
 data class CategoryEntity(
     @PrimaryKey val id: String,
@@ -135,7 +137,14 @@ data class CorrectAnswerEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("questionId"), Index("paperId", "dueAt")]
+    // (paperId, cardState, dueAt) serves the per-paper, per-state due count
+    // and eligibility aggregates; (paperId, dueAt) still serves the paper-wide
+    // due range that never constrains the state.
+    indices = [
+        Index("questionId"),
+        Index("paperId", "dueAt"),
+        Index("paperId", "cardState", "dueAt")
+    ]
 )
 data class CardStateEntity(
     val paperId: String,
@@ -228,7 +237,9 @@ data class AttemptEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("attemptId")]
+    // (attemptId, isCorrect) serves the results-screen tallies; the attemptId
+    // prefix replaces the old standalone index.
+    indices = [Index("attemptId", "isCorrect")]
 )
 data class QuestionResultEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -243,4 +254,28 @@ data class QuestionResultEntity(
     val explanation: String,
     val explanationImage: String? = null,
     val dwellSeconds: Long = 0
+)
+
+/**
+ * A question's lifetime performance across every stored attempt, maintained
+ * as results are written so History's "hardest"/"weakest" cards are two
+ * indexed reads instead of a whole-`question_results` scan. It is an
+ * aggregate of all history, so deleting an attempt intentionally leaves it
+ * untouched (matching the existing "hardest ever" semantics).
+ */
+@Entity(tableName = "question_stats")
+data class QuestionStatsEntity(
+    @PrimaryKey val questionId: String,
+    val paperId: String,
+    val paperTitle: String,
+    val categoryTitle: String,
+    val text: String,
+    val totalAttempts: Int,
+    val gradedCount: Int,
+    val correctCount: Int,
+    val wrongCount: Int,
+    val skipCount: Int,
+    val ungradedCount: Int,
+    val lastResultIsCorrect: Boolean,
+    val lastFinishedAt: Long
 )

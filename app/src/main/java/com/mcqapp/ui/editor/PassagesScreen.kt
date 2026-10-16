@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -22,6 +21,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -48,14 +48,27 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Passage
 import com.mcqapp.util.ContentElements
 import com.mcqapp.R
+import androidx.paging.LoadState
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
+import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -64,16 +77,39 @@ data class PassagesUiState(
     val loading: Boolean = true,
     /** memberCount per passage id, refreshed with the list. */
     val memberCounts: Map<String, Int> = emptyMap(),
-    /** Fetched on expand: the member questions of the expanded passages. */
-    val members: Map<String, List<com.mcqapp.domain.Question>> = emptyMap(),
+    /** The one passage whose member list is open; null when none is. */
+    val expandedId: String? = null,
+    /** The open passage's member ids in list order, for the editor queue. */
+    val expandedMemberIds: List<String> = emptyList(),
     val papers: List<com.mcqapp.domain.Paper> = emptyList()
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class PassagesViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
 
     private val _state = MutableStateFlow(PassagesUiState())
     val state: StateFlow<PassagesUiState> = _state.asStateFlow()
+
+    private val expandedId = MutableStateFlow<String?>(null)
+
+    /** The open passage's members, paged; empty while nothing is open. */
+    val memberPaging: Flow<PagingData<QuestionRef>> = expandedId
+        .flatMapLatest { id ->
+            if (id == null) {
+                flowOf(PagingData.empty())
+            } else {
+                Pager(
+                    config = PagingConfig(
+                        pageSize = MEMBER_PAGE,
+                        initialLoadSize = MEMBER_PAGE,
+                        enablePlaceholders = false
+                    ),
+                    pagingSourceFactory = { repository.passageMembersSource(id) }
+                ).flow
+            }
+        }
+        .cachedIn(viewModelScope)
 
     val passages: StateFlow<List<Passage>> = repository.observePassages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -98,14 +134,22 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Fetches the passage's member questions for its detail list. Re-fetched
-     * on every expand (and whenever the member count moved while expanded),
-     * so a membership changed elsewhere in the app is picked up.
+     * Opens (or closes) one passage's member list. Only one is open at a time
+     * so a single pager can back the rows; the id list for Prev/Next is small
+     * and fetched alongside.
      */
-    fun refreshMembers(passageId: String) {
-        viewModelScope.launch {
-            val members = repository.getPassageMembers(passageId)
-            _state.update { it.copy(members = it.members + (passageId to members)) }
+    fun setExpanded(passageId: String?) {
+        _state.update {
+            it.copy(expandedId = passageId, expandedMemberIds = emptyList())
+        }
+        expandedId.value = passageId
+        if (passageId != null) {
+            viewModelScope.launch {
+                val ids = repository.getPassageMemberIds(passageId)
+                _state.update {
+                    if (it.expandedId == passageId) it.copy(expandedMemberIds = ids) else it
+                }
+            }
         }
     }
 
@@ -122,6 +166,10 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
 
     fun move(passageId: String, delta: Int) {
         viewModelScope.launch { repository.movePassage(passageId, delta) }
+    }
+
+    companion object {
+        private const val MEMBER_PAGE = 50
     }
 }
 
@@ -143,8 +191,8 @@ fun PassagesScreen(
     var editing by remember { mutableStateOf<Passage?>(null) }
     var creating by remember { mutableStateOf(false) }
     var deleteRefusal by remember { mutableStateOf<Pair<String, Int>?>(null) }
-    // Passages whose member questions are listed under the row.
-    var expandedIds by remember { mutableStateOf(emptySet<String>()) }
+    // The one open passage's member rows, paged in as they scroll into view.
+    val memberItems: LazyPagingItems<QuestionRef> = viewModel.memberPaging.collectAsLazyPagingItems()
 
     // categoryId -> owning paper, hoisted: the per-row firstOrNull below ran
     // once per scroll frame for every visible row.
@@ -193,11 +241,12 @@ fun PassagesScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(passages, key = { it.id }) { passage ->
+                passages.forEach { passage ->
                     val paperTitle = paperByCategoryId[passage.categoryId]
                     val paperId = paperTitle?.id.orEmpty()
-                    val expanded = passage.id in expandedIds
+                    val expanded = passage.id == state.expandedId
                     val memberCount = state.memberCounts[passage.id] ?: 0
+                    item(key = "p:" + passage.id) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -257,12 +306,8 @@ fun PassagesScreen(
                                 textStyle = MaterialTheme.typography.bodySmall,
                                 maxLines = 4
                             )
-                            // The member questions, on demand: the row below a
-                            // passage is the natural place to see what it
-                            // holds and jump into one to edit.
                             TextButton(onClick = {
-                                expandedIds =
-                                    if (expanded) expandedIds - passage.id else expandedIds + passage.id
+                                viewModel.setExpanded(if (expanded) null else passage.id)
                             }) {
                                 Text(
                                     stringResource(
@@ -273,43 +318,69 @@ fun PassagesScreen(
                                     style = MaterialTheme.typography.labelMedium
                                 )
                             }
-                            if (expanded) {
-                                androidx.compose.runtime.LaunchedEffect(memberCount) {
-                                    viewModel.refreshMembers(passage.id)
-                                }
-                                val members = state.members[passage.id].orEmpty()
-                                members.forEachIndexed { memberIndex, member ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                EditorSession.start(
-                                                    members.map { it.id },
-                                                    memberIndex
+                        }
+                    }
+                    }
+                    // The member questions, on demand: rows below the passage
+                    // are the natural place to see what it holds and jump into
+                    // one to edit. Paged, so a big passage stays smooth.
+                    if (expanded) {
+                        items(
+                            count = memberItems.itemCount,
+                            key = { index -> memberItems.itemKey { it.id }(index) },
+                            contentType = { "member" }
+                        ) { index ->
+                            val member = memberItems[index]
+                            if (member != null) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            EditorSession.start(state.expandedMemberIds, index)
+                                            navController.navigate(
+                                                com.mcqapp.ui.navigation.editorRoute(
+                                                    member.id, paperId, member.categoryId
                                                 )
-                                                navController.navigate(
-                                                    com.mcqapp.ui.navigation.editorRoute(
-                                                        member.id, paperId, member.categoryId
-                                                    )
-                                                )
-                                            }
-                                            .padding(vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            "${memberIndex + 1}.",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier.padding(end = 8.dp)
-                                        )
-                                        Text(
-                                            member.text,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 2,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                        )
-                                    }
+                                            )
+                                        }
+                                        .padding(vertical = 6.dp, horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "${index + 1}.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        member.text,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
                                 }
+                            }
+                        }
+                        if (memberItems.itemCount == 0) {
+                            item(key = "p-empty:" + passage.id) {
+                                if (memberItems.loadState.refresh is LoadState.Loading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.padding(12.dp).width(20.dp)
+                                    )
+                                } else {
+                                    Text(
+                                        stringResource(R.string.passages_empty),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
+                                }
+                            }
+                        }
+                        if (memberItems.loadState.append is LoadState.Loading) {
+                            item(key = "p-append:" + passage.id) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.padding(12.dp).width(20.dp)
+                                )
                             }
                         }
                     }

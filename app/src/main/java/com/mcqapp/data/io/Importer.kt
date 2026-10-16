@@ -8,6 +8,7 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.applyQuestionStats
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
@@ -88,23 +89,18 @@ class Importer(
         var restoredAttempts = 0
         var restoredSchedules = 0
 
-        // Image preparation (Bitmap decode/scale/compress) runs BEFORE the
-        // transaction: it is pure CPU work that must not hold the database
-        // write lock. The scaled twins mirror the originals 1:1 — identity
-        // reads the scaled DTOs (the bytes that get stored, and the bytes a
-        // re-imported export carries back), only the work order differs.
-        val scaledFile = file.withDownscaledImages()
-        scaledForHashes = scaledFile
-        val scaledPapers = scaledFile.papers
-
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
             // so a snapshot taken later could match hashes of already-deleted rows.
-            val existingHashes = db.questionDao().getAll()
-                .map { it.contentHash }
-                .toHashSet()
+            val existingHashes = db.questionDao().getAllContentHashes().toHashSet()
 
-            for ((paperDto, scaledPaper) in file.papers.zip(scaledPapers)) {
+            // Scale each paper's images just before writing it and drop the
+            // scaled twin when the paper is done. The previous whole-file
+            // deep copy held a second full bank (every DTO, every base64
+            // image) on top of the parsed one, which is what pushed a 100k
+            // bank over the heap; one paper at a time keeps the peak flat.
+            for (paperDto in file.papers) {
+                val scaledPaper = paperDto.withDownscaledImages()
                 // Paper identity: match by id first. The title fallback is
                 // only for ephemeral parser-generated ids (bare-array or
                 // id-less files mint a fresh id on every parse, so without it
@@ -518,22 +514,24 @@ class Importer(
                         finishedAt = attempt.finishedAt
                     )
                 )
-                db.attemptDao().insertResults(
-                    attempt.results.map { r ->
-                        com.mcqapp.data.local.QuestionResultEntity(
-                            attemptId = attemptId,
-                            questionId = r.questionId,
-                            categoryTitle = r.categoryTitle,
-                            text = r.text,
-                            optionsJson = normaliseOptionsJson(json, r.optionsJson),
-                            correctOptionIds = r.correctOptionIds,
-                            selectedOptionIds = r.selectedOptionIds,
-                            isCorrect = r.isCorrect,
-                            explanation = r.explanation,
-                            explanationImage = r.explanationImage,
-                            dwellSeconds = r.dwellSeconds
-                        )
-                    }
+                val restoredRows = attempt.results.map { r ->
+                    com.mcqapp.data.local.QuestionResultEntity(
+                        attemptId = attemptId,
+                        questionId = r.questionId,
+                        categoryTitle = r.categoryTitle,
+                        text = r.text,
+                        optionsJson = normaliseOptionsJson(json, r.optionsJson),
+                        correctOptionIds = r.correctOptionIds,
+                        selectedOptionIds = r.selectedOptionIds,
+                        isCorrect = r.isCorrect,
+                        explanation = r.explanation,
+                        explanationImage = r.explanationImage,
+                        dwellSeconds = r.dwellSeconds
+                    )
+                }
+                db.attemptDao().insertResults(restoredRows)
+                db.questionStatsDao().applyQuestionStats(
+                    attempt.paperId, attempt.title, attempt.finishedAt, restoredRows
                 )
                 restoredAttempts++
             }
@@ -596,16 +594,16 @@ class Importer(
      * the same inputs the question loop hashes (and the row stores), so the
      * collision prefetch and the per-question lookup always agree.
      */
-    private fun importHashes(): Set<String> = scaledForHashes?.papers.orEmpty()
+    private fun importHashes(): Set<String> = importedFile?.papers.orEmpty()
         .flatMap { paper ->
-            paper.categories.flatMap { it.questions } + paper.topLevelQuestions()
+            // Scale one paper at a time: only this paper's scaled twin and the
+            // hash set are live, never a second copy of the whole bank.
+            val scaled = paper.withDownscaledImages()
+            scaled.categories.flatMap { it.questions } + scaled.topLevelQuestions()
         }
         .mapTo(mutableSetOf()) { question ->
             ContentHash.of(question)
         }
-
-    /** The scaled twin of [importedFile], for [importHashes]. */
-    private var scaledForHashes: McqFileDto? = null
 
     /** The file being imported, kept so collision candidates can be gathered. */
     private var importedFile: McqFileDto? = null
@@ -731,13 +729,18 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
  */
 internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
     passages = passages.map { passage -> passage.copy(image = ImageDownscale.downscaleDataUri(passage.image)) },
-    papers = papers.map { paper ->
-        paper.copy(
-            questions = paper.questions.map { it.withDownscaledImages() },
-            categories = paper.categories.map { category ->
-                category.copy(questions = category.questions.map { it.withDownscaledImages() })
-            }
-        )
+    papers = papers.map { it.withDownscaledImages() }
+)
+
+/**
+ * The single paper-level scaler, reused by the whole-file scaler above and by
+ * the import loop (which scales one paper at a time so a large bank never
+ * holds both the parsed and a fully scaled copy at once).
+ */
+internal fun PaperDto.withDownscaledImages(): PaperDto = copy(
+    questions = questions.map { it.withDownscaledImages() },
+    categories = categories.map { category ->
+        category.copy(questions = category.questions.map { it.withDownscaledImages() })
     }
 )
 

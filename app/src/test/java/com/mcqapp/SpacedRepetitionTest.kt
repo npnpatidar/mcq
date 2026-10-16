@@ -561,6 +561,37 @@ class SpacedRepetitionTest {
         )
     }
 
+    @Test
+    fun `reading time lifts the Hard boundary too so Good stays reachable`() {
+        // A long question pushes the Easy threshold past the configured Hard
+        // boundary (8 + 32s of reading = 40 > 30). Unless Hard lifts by the
+        // same bonus, Good is unreachable: every correct answer grades Easy
+        // or Hard, and 45s of honest deliberation grades Easy.
+        val easyAt = 40L
+        val hardAt = autoConfig.slowSeconds + (easyAt - autoConfig.fastSeconds)  // 62
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(
+                setOf("a"), setOf("a"), 39L, isGuess = false,
+                config = autoConfig, fastSeconds = easyAt, slowSeconds = hardAt
+            )
+        )
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.autoGrade(
+                setOf("a"), setOf("a"), 50L, isGuess = false,
+                config = autoConfig, fastSeconds = easyAt, slowSeconds = hardAt
+            )
+        )
+        assertEquals(
+            ReviewGrade.HARD,
+            Study.autoGrade(
+                setOf("a"), setOf("a"), 62L, isGuess = false,
+                config = autoConfig, fastSeconds = easyAt, slowSeconds = hardAt
+            )
+        )
+    }
+
     // --- badge / eligibility agreement ---
     //
     // The library badge and the pull read the same pools, so the badge can

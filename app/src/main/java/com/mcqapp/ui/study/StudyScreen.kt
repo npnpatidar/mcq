@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -164,6 +168,23 @@ private fun StudyBody(
     viewModel: StudyViewModel
 ) {
     val question = state.question ?: return
+    // The dwell clock only charges while the question card is actually in the
+    // viewport: scrolling a long passage — or, after reveal, the answer — past
+    // the card pauses it, the same rule the test screen applies to dialogs.
+    var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var cardCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var questionOnScreen by remember { mutableStateOf(true) }
+    fun reportVisibility() {
+        val card = cardCoords
+        val container = containerCoords
+        if (card == null || container == null || !card.isAttached || !container.isAttached) return
+        val top = card.localPositionOf(container, Offset.Zero).y
+        questionOnScreen = top < container.size.height && top + card.size.height > 0f
+    }
+    val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
+    LaunchedEffect(questionOnScreen) {
+        viewModel.setQuestionVisible(questionOnScreen)
+    }
     if (state.simplified) {
         // Like test mode: the question scrolls, but Check, Guess and Next live
         // in a fixed footer so they are always tappable without scrolling.
@@ -172,8 +193,9 @@ private fun StudyBody(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
+                    .onGloballyPositioned { containerCoords = it; reportVisibility() }
                     .padding(16.dp)
-                ) {
+            ) {
                 Spacer(Modifier.height(12.dp))
                 QuestionCard(
                     question = question,
@@ -181,7 +203,8 @@ private fun StudyBody(
                     revealed = state.revealed,
                     reason = state.current?.reason,
                     onToggleOption = { viewModel.toggleOption(it) },
-                    passage = state.passage
+                    passage = state.passage,
+                    modifier = cardPositioned
                 )
                 Spacer(Modifier.height(12.dp))
                 if (state.revealed) {
@@ -198,8 +221,9 @@ private fun StudyBody(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
+                    .onGloballyPositioned { containerCoords = it; reportVisibility() }
                     .padding(16.dp)
-                ) {
+            ) {
                 Spacer(Modifier.height(12.dp))
                 QuestionCard(
                     question = question,
@@ -207,7 +231,8 @@ private fun StudyBody(
                     revealed = state.revealed,
                     reason = state.current?.reason,
                     onToggleOption = { viewModel.toggleOption(it) },
-                    passage = state.passage
+                    passage = state.passage,
+                    modifier = cardPositioned
                 )
             }
             Column(
@@ -483,9 +508,10 @@ private fun QuestionCard(
     revealed: Boolean,
     reason: StudyReason?,
     onToggleOption: (String) -> Unit,
-    passage: com.mcqapp.domain.Passage? = null
+    passage: com.mcqapp.domain.Passage? = null,
+    modifier: Modifier = Modifier
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             // Shared context: the passage renders above every member whenever
             // it comes due — no queue grouping, the schedule stays per question.

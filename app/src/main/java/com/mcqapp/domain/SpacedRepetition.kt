@@ -247,17 +247,21 @@ object Study {
      * Infers a grade from an answered attempt. Untracked timing (0s) is a
      * normal Good rather than effortless. Takes the timing thresholds from
      * [config] so a user who retunes them also changes history reconstruction.
+     * [fastSeconds] and [slowSeconds] override one end each of the ladder;
+     * callers that extend one for reading time must extend the other by the
+     * same amount, or Good becomes unreachable on long questions.
      */
     fun inferGrade(
         isCorrect: Boolean,
         dwellSeconds: Long,
         skipped: Boolean = false,
         config: SchedulerConfig = SchedulerConfig(),
-        fastSeconds: Long = config.fastSeconds
+        fastSeconds: Long = config.fastSeconds,
+        slowSeconds: Long = config.slowSeconds
     ): ReviewGrade {
         if (skipped || !isCorrect) return ReviewGrade.AGAIN
         if (dwellSeconds in 1 until fastSeconds) return ReviewGrade.EASY
-        if (dwellSeconds >= config.slowSeconds) return ReviewGrade.HARD
+        if (dwellSeconds >= slowSeconds) return ReviewGrade.HARD
         return ReviewGrade.GOOD
     }
 
@@ -280,7 +284,8 @@ object Study {
         dwellSeconds: Long,
         isGuess: Boolean,
         config: SchedulerConfig = SchedulerConfig(),
-        fastSeconds: Long = config.fastSeconds
+        fastSeconds: Long = config.fastSeconds,
+        slowSeconds: Long = config.slowSeconds
     ): ReviewGrade {
         if (selection.isEmpty()) return ReviewGrade.AGAIN
         if (selection != correctOptionIds) return ReviewGrade.AGAIN
@@ -289,7 +294,8 @@ object Study {
             isCorrect = true,
             dwellSeconds = dwellSeconds,
             config = config,
-            fastSeconds = fastSeconds
+            fastSeconds = fastSeconds,
+            slowSeconds = slowSeconds
         )
     }
 

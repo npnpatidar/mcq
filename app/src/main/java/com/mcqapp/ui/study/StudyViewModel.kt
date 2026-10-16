@@ -362,6 +362,15 @@ class StudyViewModel(
         if (!clockPausedByUser) resumeQuestionClock()
     }
 
+    /**
+     * The question card left the viewport: stop charging reading time, and
+     * start charging again when it returns. A deliberate pause always wins —
+     * [resumeQuestionClock] refuses to run while the learner has paused.
+     */
+    fun setQuestionVisible(visible: Boolean) {
+        if (visible) resumeQuestionClock() else pauseQuestionClock()
+    }
+
     private fun clockCanRun(state: StudyUiState): Boolean =
         !state.loading &&
             state.loadError == null &&
@@ -407,17 +416,22 @@ class StudyViewModel(
         val paused = _state.value
         val dwellSeconds = paused.questionElapsedSeconds
         val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
+        // Reading time lifts both ends of the ladder by the same amount, so
+        // Good stays reachable on long questions and deliberation beyond the
+        // Easy window is not mistaken for a struggle.
+        val easyAt = com.mcqapp.domain.Study.easyThresholdSeconds(
+            config = schedulerConfig,
+            question = question,
+            passage = paused.passage
+        )
         val grade = com.mcqapp.domain.Study.autoGrade(
             correctOptionIds = question.correctOptionIds,
             selection = paused.selection,
             dwellSeconds = dwellSeconds,
             isGuess = paused.isGuess,
             config = schedulerConfig,
-            fastSeconds = com.mcqapp.domain.Study.easyThresholdSeconds(
-                config = schedulerConfig,
-                question = question,
-                passage = paused.passage
-            )
+            fastSeconds = easyAt,
+            slowSeconds = schedulerConfig.slowSeconds + (easyAt - schedulerConfig.fastSeconds)
         )
         _state.update {
             it.copy(

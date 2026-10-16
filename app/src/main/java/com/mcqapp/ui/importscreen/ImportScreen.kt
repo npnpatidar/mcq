@@ -62,6 +62,7 @@ import com.mcqapp.R
 @Composable
 fun ImportScreen(
     importBytes: ByteArray?,
+    importUri: android.net.Uri?,
     navController: NavController,
     viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
@@ -184,6 +185,11 @@ fun ImportScreen(
             // Identity-guarded so a newer pick made meanwhile is never lost.
             if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes === importBytes) {
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = null
+            }
+        } else if (importUri != null) {
+            viewModel.loadJsonUri(importUri)
+            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri == importUri) {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri = null
             }
         } else {
             // Process death: the static holder is empty and no text was passed,

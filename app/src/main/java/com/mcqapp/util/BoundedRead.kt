@@ -62,6 +62,30 @@ fun readBounded(stream: InputStream, limit: Long = MAX_IMPORT_BYTES): ByteArray 
     return out.toByteArray()
 }
 
+/** The first [bytes] of a stream, and whether anything followed them. */
+class Prefix(val bytes: ByteArray, val truncated: Boolean)
+
+/**
+ * Reads at most [limit] bytes without failing, reporting whether the stream
+ * held anything more. The picker uses this to keep a small bank in memory
+ * while handing a large one to the streaming import by `Uri`: only a bounded
+ * prefix is ever allocated, so a provider cannot size the allocation.
+ */
+fun readPrefix(stream: InputStream, limit: Long): Prefix {
+    val chunk = ByteArray(COPY_CHUNK_BYTES)
+    val out = java.io.ByteArrayOutputStream(minOf(limit, COPY_CHUNK_BYTES.toLong()).toInt())
+    var total = 0L
+    while (total < limit) {
+        val want = minOf(chunk.size.toLong(), limit - total).toInt()
+        val read = stream.read(chunk, 0, want)
+        if (read < 0) return Prefix(out.toByteArray(), truncated = false)
+        total += read
+        out.write(chunk, 0, read)
+    }
+    val extra = stream.read()
+    return Prefix(out.toByteArray(), truncated = extra >= 0)
+}
+
 /**
  * Prefers the provider's display name over a [Uri.getLastPathSegment] id.
  *

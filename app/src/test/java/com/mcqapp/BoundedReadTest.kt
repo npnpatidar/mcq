@@ -88,6 +88,38 @@ class BoundedReadTest {
     }
 
     @Test
+    fun prefixReadsASmallStreamWhole() {
+        val bytes = ByteArray(3000) { (it % 251).toByte() }
+        val prefix = com.mcqapp.util.readPrefix(ByteArrayInputStream(bytes), limit = 4096)
+        assertArrayEquals(bytes, prefix.bytes)
+        assertTrue("nothing followed", !prefix.truncated)
+    }
+
+    @Test
+    fun prefixReadsExactlyTheLimitWhole() {
+        val bytes = ByteArray(4096) { 7 }
+        val prefix = com.mcqapp.util.readPrefix(ByteArrayInputStream(bytes), limit = 4096)
+        assertArrayEquals(bytes, prefix.bytes)
+        assertTrue("exactly the limit is not truncated", !prefix.truncated)
+    }
+
+    @Test
+    fun prefixStopsAtTheLimitAndSaysMoreFollowed() {
+        val bytes = ByteArray(9000) { (it % 251).toByte() }
+        val prefix = com.mcqapp.util.readPrefix(ByteArrayInputStream(bytes), limit = 4096)
+        assertEquals(4096, prefix.bytes.size)
+        assertTrue("more followed", prefix.truncated)
+        assertArrayEquals(bytes.copyOf(4096), prefix.bytes)
+    }
+
+    @Test
+    fun prefixDoesNotAllocateAnEndlessStream() {
+        val prefix = com.mcqapp.util.readPrefix(EndlessStream(), limit = 128 * 1024)
+        assertEquals(128 * 1024, prefix.bytes.size)
+        assertTrue(prefix.truncated)
+    }
+
+    @Test
     fun theExceptionCarriesHowMuchWasRead() {
         val e = try {
             readBounded(java.io.ByteArrayInputStream(ByteArray(4096)), limit = 1024)

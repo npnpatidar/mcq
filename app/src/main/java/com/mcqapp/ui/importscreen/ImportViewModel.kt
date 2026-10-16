@@ -50,6 +50,12 @@ object ImportDataHolder {
      * parser even started.
      */
     var pendingJsonBytes: ByteArray? = null
+    /**
+     * A JSON bank too large to hold as bytes. The import screen re-opens it
+     * from here to preview a bounded sample and stream the rest, so the whole
+     * bank never reaches the heap.
+     */
+    var pendingJsonUri: Uri? = null
     var pendingDocxBytes: ByteArray? = null
     /** Display name of the picked Word file; becomes the default paper title. */
     var pendingDocxName: String? = null
@@ -444,6 +450,37 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
+                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * A JSON bank too large to hold as bytes. The Uri is re-opened for the
+     * bounded preview and again for the streaming import, so the pick never
+     * has to fit in the heap.
+     */
+    fun loadJsonUri(uri: Uri) {
+        viewModelScope.launch {
+            val resolver = getApplication<Application>().contentResolver
+            val key = "uri:$uri"
+            if (key == loadedDirectFp &&
+                (_state.value.questions.isNotEmpty() || _state.value.totalQuestionCount > 0)
+            ) {
+                Logger.d("IMPORTVM", "loadJsonUri: same uri already loaded, skipping reload")
+                return@launch
+            }
+            loadedDirectFp = key
+            try {
+                withContext(Dispatchers.Default) {
+                    loadLargeJson {
+                        resolver.openInputStream(uri)
+                            ?: throw java.io.IOException("Could not open $uri")
+                    }
+                }
+            } catch (e: Exception) {
+                loadedDirectFp = null
+                Logger.e("IMPORTVM", "Failed to parse JSON from uri", e)
                 _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
             }
         }

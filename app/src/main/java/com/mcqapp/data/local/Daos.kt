@@ -95,6 +95,12 @@ data class QuestionCategoryRow(
     val categoryId: String
 )
 
+/** Scheduling input for a question: its id and stored content hash only. */
+data class QuestionIdHash(
+    val id: String,
+    val contentHash: String
+)
+
 @Dao
 interface PassageDao {
     @Query("SELECT * FROM passages WHERE id = :id")
@@ -199,6 +205,25 @@ interface QuestionDao {
             "questions.sortOrder, questions.rowid"
     )
     suspend fun getRefsByCategories(categoryIds: List<String>): List<QuestionRef>
+
+    /**
+     * Scheduling inputs only: id and stored content hash, in the same
+     * (sortOrder, title) order as [getRefsByCategories]. Studies read these
+     * to resolve card states; no stem, explanation or correlated answer-key
+     * count is materialised for a 169k-question paper.
+     */
+    @Query(
+        "SELECT questions.id AS id, questions.contentHash AS contentHash FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun getHashInputsByCategories(categoryIds: List<String>): List<QuestionIdHash>
+
+    /** One question's stored content hash; null when the question exists not. */
+    @Query("SELECT contentHash FROM questions WHERE id = :id")
+    suspend fun getHashById(id: String): String?
 
     /** Observation variant of [getRefsByCategories]: list surfaces re-emit. */
     @Query(

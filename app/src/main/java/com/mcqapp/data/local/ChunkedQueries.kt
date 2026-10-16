@@ -33,6 +33,11 @@ suspend fun QuestionDao.getByCategoriesChunked(categoryIds: List<String>): List<
 suspend fun QuestionDao.getRefsByCategoriesChunked(categoryIds: List<String>): List<QuestionRef> =
     categoryIds.chunks().flatMap { getRefsByCategories(it) }
 
+suspend fun QuestionDao.getHashInputsByCategoriesChunked(
+    categoryIds: List<String>
+): List<QuestionIdHash> =
+    categoryIds.chunks().flatMap { getHashInputsByCategories(it) }
+
 suspend fun QuestionDao.getRefsByIdsChunked(ids: List<String>): List<QuestionRef> =
     ids.chunks().flatMap { getRefsByIds(it) }
 

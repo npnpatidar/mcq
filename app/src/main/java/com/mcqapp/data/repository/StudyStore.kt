@@ -5,7 +5,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getForQuestionsChunked
-import com.mcqapp.data.local.getRefsByCategoriesChunked
+import com.mcqapp.data.local.getHashInputsByCategoriesChunked
 import com.mcqapp.data.io.ContentHash
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
@@ -32,6 +32,62 @@ internal class StudyStore(
     private val questions: QuestionStore,
     private val settings: SettingsStore
 ) {
+
+    /**
+     * The resolved scheduling model for one paper: the question ids (with
+     * their stored hashes for serve-time edit checks) and every card's
+     * current schedule under one config. Built once, then reused by every
+     * pull and badge read until the scheduling inputs change — the same
+     * re-read-on-write correctness today's per-call build bought, without
+     * paying a whole-paper price per graded card.
+     */
+    private class ResolvedStudy(
+        val paperId: String,
+        val config: com.mcqapp.domain.SchedulerConfig,
+        /** Authored order; the queue's fresh pool iterates this. */
+        val ids: MutableList<String>,
+        /** questionId -> content hash as of the build, for serve-time checks. */
+        val hashes: Map<String, String>,
+        /** Question's resolved schedule; grades update it in place. */
+        val states: MutableMap<String, com.mcqapp.domain.CardState>
+    )
+
+    @Volatile
+    private var resolved: ResolvedStudy? = null
+
+    init {
+        // Any write to the scheduling inputs drops the build; the next read
+        // resolves afresh. Quadra: questions carry the hashes, categories
+        // the order, card_state the schedules. Robolectric/plain-JVM stores
+        // without a tracker lose only the cache, nothing else.
+        try {
+            db.invalidationTracker.addObserver(
+                object : androidx.room.InvalidationTracker.Observer(
+                    "questions", "categories", "card_state", "papers"
+                ) {
+                    override fun onInvalidated(tables: Set<String>) {
+                        resolved = null
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Logger.w("REPO", "study resolution cache unavailable: ${e.message}")
+        }
+    }
+
+    private suspend fun resolvedFor(paperId: String): ResolvedStudy {
+        val config = settings.schedulerConfigNow()
+        resolved?.takeIf { it.paperId == paperId && it.config == config }?.let { return it }
+        val inputs = studyInputs(paperId)
+        val states = resolveStudyStates(paperId, inputs, config)
+        return ResolvedStudy(
+            paperId = paperId,
+            config = config,
+            ids = inputs.map { it.id }.toMutableList(),
+            hashes = inputs.associate { it.id to it.contentHash },
+            states = states.toMutableMap()
+        ).also { resolved = it }
+    }
 
     /** The FSRS scheduler the whole store grades and counts with. */
     private fun fsrs(config: com.mcqapp.domain.SchedulerConfig) =
@@ -87,25 +143,19 @@ internal class StudyStore(
         now: Long = System.currentTimeMillis(),
         leechesOnly: Boolean = false
     ): List<com.mcqapp.domain.StudyCard> {
-        val questionList = questions.getQuestionsForPaper(paperId)
-        if (questionList.isEmpty()) return emptyList()
-        val config = settings.schedulerConfigNow()
-        val states = resolveStudyStates(
-            paperId,
-            questionList.map { StudyInput(it.id, mapper.contentHashOf(it)) },
-            config
-        )
+        val resolved = resolvedFor(paperId)
+        if (resolved.ids.isEmpty()) return emptyList()
         val pools = com.mcqapp.domain.Study.pools(
-            fsrs(config),
-            questionList.map { it.id },
-            states,
+            fsrs(resolved.config),
+            resolved.ids,
+            resolved.states,
             now,
-            config.introduceNewCards
+            resolved.config.introduceNewCards
         )
         val queue = pools.learning + pools.reviews + pools.fresh
         Logger.i(
             "REPO",
-            "getStudyQueue($paperId): ${questionList.size} questions, " +
+            "getStudyQueue($paperId): ${resolved.ids.size} questions, " +
                 "learning=${pools.learning.size} due=${pools.reviews.size} " +
                 "new=${pools.fresh.size}"
         )
@@ -128,22 +178,60 @@ internal class StudyStore(
         reviewsSinceNew: Int = 0,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.StudyCard? {
-        // The pull runs after every graded card, so it pays the badge's
-        // reduced price: ids and content hashes only, never the option text
-        // or the answer key — the pull never reads them.
-        val inputs = studyInputs(paperId)
-        if (inputs.isEmpty()) return null
-        val config = settings.schedulerConfigNow()
-        val states = resolveStudyStates(paperId, inputs, config)
-        return com.mcqapp.domain.Study.selectNext(
+        // The pull runs after every graded card; the resolved model is read
+        // once and shared with the badge, so the pull neither loads option
+        // text, the answer key, nor a whole-paper card/ ref read per call.
+        val resolved = resolvedFor(paperId)
+        val config = resolved.config
+        val selected = com.mcqapp.domain.Study.selectNext(
             fsrs(config),
-            inputs.map { it.id },
-            states,
+            resolved.ids,
+            resolved.states,
             now,
             config.studyMode,
             config.introduceNewCards,
             reviewsSinceNew
-        )
+        ) ?: return null
+        return refetchedOnServe(resolved, selected)
+    }
+
+    /**
+     * Serve-time checks for one card, against a single row: a vanished
+     * question leaves the model, and content edited since its schedule was
+     * written resets the card exactly as the whole-paper resolution does.
+     * Legacy shape — the reset is persisted so it is not repeated.
+     */
+    private suspend fun refetchedOnServe(
+        resolved: ResolvedStudy,
+        card: com.mcqapp.domain.StudyCard
+    ): com.mcqapp.domain.StudyCard {
+        val storedHash = db.questionDao().getHashById(card.questionId)
+        if (storedHash == null) {
+            // The question was deleted while the model was alive; a dead id
+            // must not re-serve every pull.
+            resolved.states.remove(card.questionId)
+            resolved.ids.remove(card.questionId)
+            return card
+        }
+        val buildHash = resolved.hashes[card.questionId]
+        val state = resolved.states[card.questionId]
+        if (state != null && buildHash != null && buildHash != storedHash) {
+            // The stored hash described other text: schedule the card over.
+            val scheduler = fsrs(resolved.config)
+            val reset = scheduler.initial(card.questionId)
+            db.cardStateDao().upsert(reset.toEntity(resolved.paperId, storedHash))
+            resolved.states[card.questionId] = reset
+            Logger.i(
+                "REPO",
+                "resetCard(${card.questionId}) on serve: content edited"
+            )
+            return com.mcqapp.domain.StudyCard(
+                card.questionId,
+                com.mcqapp.domain.StudyReason.NEW,
+                reset
+            )
+        }
+        return card
     }
 
     /**
@@ -160,18 +248,14 @@ internal class StudyStore(
          */
         introduceNewCards: Boolean? = null
     ): com.mcqapp.domain.StudyEligibility {
-        // Same reduced price as the pull and the badge (finding 2 of the
-        // scheduling audit): ids and hashes, never option text or the key.
-        val inputs = studyInputs(paperId)
-        if (inputs.isEmpty()) return com.mcqapp.domain.StudyEligibility()
-        val config = settings.schedulerConfigNow()
-        val states = resolveStudyStates(paperId, inputs, config)
+        val resolved = resolvedFor(paperId)
+        if (resolved.ids.isEmpty()) return com.mcqapp.domain.StudyEligibility()
         return com.mcqapp.domain.Study.eligibility(
-            fsrs(config),
-            inputs.map { it.id },
-            states,
+            fsrs(resolved.config),
+            resolved.ids,
+            resolved.states,
             now,
-            introduceNewCards ?: config.introduceNewCards
+            introduceNewCards ?: resolved.config.introduceNewCards
         )
     }
 
@@ -193,9 +277,8 @@ internal class StudyStore(
     private suspend fun studyInputs(paperId: String): List<StudyInput> {
         val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
         if (categoryIds.isEmpty()) return emptyList()
-        return db.questionDao().getRefsByCategoriesChunked(categoryIds).map { ref ->
-            StudyInput(id = ref.id, contentHash = ref.contentHash)
-        }
+        return db.questionDao().getHashInputsByCategoriesChunked(categoryIds)
+            .map { StudyInput(id = it.id, contentHash = it.contentHash) }
     }
 
     /**
@@ -247,21 +330,18 @@ internal class StudyStore(
         paperId: String,
         now: Long = System.currentTimeMillis()
     ): StudyCounts {
-        // Counted from ids and content hashes only. The library re-reads these
-        // on every resume, and loading every question with its options and
-        // answer key just to add up three numbers made a large library crawl.
-        val inputs = studyInputs(paperId)
-        if (inputs.isEmpty()) return StudyCounts()
-        val config = settings.schedulerConfigNow()
-        val states = resolveStudyStates(paperId, inputs, config)
+        // One solved model shared with the pull and the queue, so the badge
+        // can never disagree with what either would offer.
+        val resolved = resolvedFor(paperId)
+        if (resolved.ids.isEmpty()) return StudyCounts()
         // The same pools the study pull reads, so the badge can never
         // advertise a card the session then refuses to serve.
         val e = com.mcqapp.domain.Study.eligibility(
-            fsrs(config),
-            inputs.map { it.id },
-            states,
+            fsrs(resolved.config),
+            resolved.ids,
+            resolved.states,
             now,
-            config.introduceNewCards
+            resolved.config.introduceNewCards
         )
         return StudyCounts(
             due = e.learning + e.due,
@@ -314,6 +394,9 @@ internal class StudyStore(
                 )
             )
         }
+        // One graded card: the shared model is updated in place instead of
+        // being whole-paper rebuilt by the next caller.
+        resolved?.takeIf { it.paperId == paperId }?.states?.put(questionId, next)
         Logger.i(
             "REPO",
             "recordStudyReview($questionId, $grade): interval=${next.intervalDays}d, " +

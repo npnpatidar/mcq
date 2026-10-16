@@ -426,6 +426,14 @@ interface QuestionDao {
     suspend fun getAllIds(): List<String>
 
     /**
+     * Which of [ids] already exists, id-only. The import preview used to load
+     * every id in the database to answer this; probing only the ids it holds
+     * keeps a large library off the heap while a bank is being parsed.
+     */
+    @Query("SELECT id FROM questions WHERE id IN (:ids)")
+    suspend fun getExistingIds(ids: Collection<String>): List<String>
+
+    /**
      * Per-paper question counts in one grouped read. The storage report used
      * to filter a fully materialised question list per paper.
      */

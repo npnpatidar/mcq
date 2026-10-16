@@ -46,6 +46,9 @@ suspend fun QuestionDao.getMatchesByContentHashesChunked(
 ): List<ContentHashMatch> =
     hashes.toList().chunks().flatMap { getMatchesByContentHashes(it) }
 
+suspend fun QuestionDao.getExistingIdsChunked(ids: Collection<String>): List<String> =
+    ids.toList().chunks().flatMap { getExistingIds(it) }
+
 suspend fun BookmarkDao.removeAllChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { removeAll(it) }
 }

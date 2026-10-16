@@ -198,12 +198,17 @@ class Importer(
                 // Passages this paper wrote; their members must end up in the
                 // passage's category (the fold below enforces it).
                 val paperPassageIds = mutableSetOf<String>()
+                // The paper's category rows, read once. Re-reading inside the
+                // loop made adding a category O(categories²) row reads — a
+                // 2000-category paper paid 2000 full table scans. The list is
+                // kept in sync with what we write so a later same-id or
+                // same-title entry still matches, exactly as a re-read would.
+                val catsInPaper = db.categoryDao().getByPaper(effectivePaperId).toMutableList()
                 effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
                     val scaledCategory = scaledCategories[categoryIndex]
                     // Category identity within the paper: match by id first, then
                     // by title, so re-imports reuse the same category instead of
                     // piling up same-named ones.
-                    val catsInPaper = db.categoryDao().getByPaper(effectivePaperId)
                     val matchInPaper = catsInPaper.find { it.id == categoryDto.id }
                         ?: catsInPaper.find { it.title == categoryDto.title }
                     // A category id owned by a DIFFERENT paper must never be
@@ -238,6 +243,16 @@ class Importer(
                             sortOrder = categoryIndex
                         )
                     }
+                    // Mirror the write in the in-memory index so a later entry in
+                    // this paper can match it (id or title) without a re-read.
+                    catsInPaper.removeAll { it.id == effectiveCatId }
+                    catsInPaper += CategoryEntity(
+                        id = effectiveCatId,
+                        paperId = effectivePaperId,
+                        title = categoryDto.title,
+                        parentId = categoryDto.parentId,
+                        sortOrder = categoryIndex
+                    )
 
                     // Passages referenced by this category's questions are written
                     // right here, inside the same transaction and AFTER the owning

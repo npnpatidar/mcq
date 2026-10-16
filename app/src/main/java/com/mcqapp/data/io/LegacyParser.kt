@@ -202,6 +202,407 @@ object LegacyParser {
         }
     }
 
+    /**
+     * Default number of questions handed to an [ImportStreamSink] at a time.
+     * Big enough that a 1M-question paper costs ~500 callbacks, small enough
+     * that one batch's DTOs are a couple of megabytes.
+     */
+    const val IMPORT_BATCH_SIZE = 2000
+
+    /**
+     * A paper's identity, emitted before its categories so a streaming import
+     * can create the paper row first. Mirrors the fields the importer writes.
+     */
+    data class PaperHeader(
+        val id: String,
+        val title: String,
+        val description: String,
+        val durationMinutes: Int,
+        val negativeMarking: Double
+    )
+
+    /**
+     * Receives a file while it is still being read, in document order. The
+     * callbacks run on the parsing thread and must not retain the questions
+     * they are handed: the whole point is that only one batch is live.
+     *
+     * [onPaper] always precedes the [onCategory]/[onQuestions] calls for that
+     * paper, and [onCategory] precedes the questions that belong to it. A
+     * category is announced even when it holds no questions, exactly as the
+     * whole-file parse keeps an empty category.
+     */
+    interface ImportStreamSink {
+        fun onPaper(header: PaperHeader)
+        fun onCategory(category: CategoryDto)
+        fun onQuestions(categoryId: String, questions: List<QuestionDto>)
+    }
+
+    /**
+     * Like [parse], but hands papers/categories/question batches to [sink] as
+     * they are read instead of materialising the whole bank, so a single paper
+     * with a million questions never exists in memory. Returns the same
+     * non-paper tail [streamPapers] returns.
+     *
+     * Canonical files list a paper's `id`/`title` before its `categories`, and
+     * a category's `id`/`title` before its `questions`; this reader relies on
+     * that (as every writer in this project does) so it can announce a row
+     * before its children. A file that inverts the order still imports, with
+     * the invented id/title that was known at the time; [parse] remains the
+     * whole-file reader for callers that need exact out-of-order handling.
+     */
+    fun streamImport(
+        input: InputStream,
+        sink: ImportStreamSink,
+        batchSize: Int = IMPORT_BATCH_SIZE
+    ): StreamedFile {
+        require(batchSize > 0) { "batchSize must be positive" }
+        val warnings = mutableListOf<String>()
+        val reader = JsonPull(input)
+        val scan = LocalImageScan()
+        return when (reader.peek()) {
+            JsonPull.Token.BEGIN_ARRAY -> {
+                val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
+                val categoryId = "$paperId-uncat"
+                sink.onPaper(PaperHeader(paperId, "Imported Questions", "", 0, 0.0))
+                var announced = false
+                val seen = HashSet<String>()
+                readQuestionsStreaming(
+                    reader, "question", warnings, seen, batchSize, scan,
+                    onFirst = {
+                        if (!announced) {
+                            sink.onCategory(CategoryDto(categoryId, "Uncategorized"))
+                            announced = true
+                        }
+                    },
+                    onBatch = { sink.onQuestions(categoryId, it) }
+                )
+                StreamedFile(1, emptyList(), emptyList(), emptyList(), emptyMap(),
+                    warnings + listOfNotNull(scan.warning()))
+            }
+            JsonPull.Token.BEGIN_OBJECT -> {
+                val tail = walkRootObjectStreaming(reader, warnings, sink, batchSize, scan)
+                tail.copy(warnings = tail.warnings + listOfNotNull(scan.warning()))
+            }
+            else -> {
+                warnings.add("File root is a scalar or null, not an object or array — no papers found")
+                StreamedFile(1, emptyList(), emptyList(), emptyList(), emptyMap(), warnings)
+            }
+        }
+    }
+
+    /**
+     * The streaming twin of [walkRootObject]: same keys, same warnings, but a
+     * paper is read through [ImportStreamSink] instead of collected.
+     */
+    private fun walkRootObjectStreaming(
+        reader: JsonPull,
+        warnings: MutableList<String>,
+        sink: ImportStreamSink,
+        batchSize: Int,
+        scan: LocalImageScan
+    ): StreamedFile {
+        var passages = emptyList<PassageDto>()
+        var attempts = emptyList<AttemptDto>()
+        var bookmarks = emptyList<String>()
+        var scheduling = emptyMap<String, CardScheduleDto>()
+        var version = 1
+        var papersEmitted = 0
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "papers" -> papersEmitted += readPapersStreaming(reader, warnings, sink, batchSize, scan)
+                "questions" -> {
+                    // The DOCX wrapper shape: root questions with no `papers`
+                    // become one ephemeral paper. When `papers` is present the
+                    // questions are still read (for the malformed-row warnings)
+                    // but, as in the whole-file walk, dropped.
+                    val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
+                    val categoryId = "$paperId-uncat"
+                    val asPaper = papersEmitted == 0
+                    var announced = false
+                    if (asPaper) sink.onPaper(PaperHeader(paperId, "Imported Questions", "", 0, 0.0))
+                    val seen = HashSet<String>()
+                    readQuestionsStreaming(
+                        reader, "question", warnings, seen, batchSize, scan,
+                        onFirst = {
+                            if (asPaper && !announced) {
+                                sink.onCategory(CategoryDto(categoryId, "Uncategorized"))
+                                announced = true
+                            }
+                        },
+                        onBatch = { if (asPaper) sink.onQuestions(categoryId, it) }
+                    )
+                }
+                "passages" -> passages = readArrayOrWarn(
+                    reader, "File", "passages", "passage", warnings
+                ) { index, obj ->
+                    try {
+                        parsePassage(obj)
+                    } catch (e: Exception) {
+                        warnings.add("Skipped malformed passage ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                        null
+                    }
+                }
+                "attempts" -> attempts = readArrayOrWarn(
+                    reader, "File", "attempts", "attempt", warnings
+                ) { index, obj ->
+                    try {
+                        parseAttempt(obj)
+                    } catch (e: Exception) {
+                        warnings.add("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                        null
+                    }
+                }
+                "bookmarks" -> bookmarks = readBookmarks(reader)
+                "scheduling" -> scheduling = readScheduling(reader)
+                "version" -> version = readInt(reader) ?: 1
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        return StreamedFile(version, passages, bookmarks, attempts, scheduling, warnings)
+    }
+
+    /** Reads a `papers` array streaming each entry; returns how many emitted. */
+    private fun readPapersStreaming(
+        reader: JsonPull,
+        warnings: MutableList<String>,
+        sink: ImportStreamSink,
+        batchSize: Int,
+        scan: LocalImageScan
+    ): Int {
+        if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
+            warnings.add("File: \"papers\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            reader.skipValue()
+            return 0
+        }
+        reader.beginArray()
+        var index = 0
+        var emitted = 0
+        while (reader.hasNext()) {
+            val at = index + 1
+            index = at
+            try {
+                readPaperStreaming(reader, warnings, sink, batchSize, scan)
+                emitted++
+            } catch (e: Exception) {
+                warnings.add("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}")
+                skipValueQuietly(reader)
+            }
+        }
+        reader.endArray()
+        return emitted
+    }
+
+    /** The streaming twin of [readPaper]. */
+    private fun readPaperStreaming(
+        reader: JsonPull,
+        warnings: MutableList<String>,
+        sink: ImportStreamSink,
+        batchSize: Int,
+        scan: LocalImageScan
+    ) {
+        var id: String? = null
+        var title: String? = null
+        var description: String? = null
+        var duration: Int? = null
+        var negative: Double? = null
+        var categoriesSeen = 0
+        var headerEmitted = false
+        val categorySkips = mutableListOf<Pair<Int, String>>()
+        val ephemeralId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
+        fun paperId(): String = id?.takeIf { it.isNotBlank() } ?: ephemeralId
+        fun emitHeader() {
+            if (headerEmitted) return
+            sink.onPaper(
+                PaperHeader(
+                    id = id?.takeIf { it.isNotBlank() } ?: ephemeralId,
+                    title = title ?: "Untitled Paper",
+                    description = description ?: "",
+                    durationMinutes = com.mcqapp.domain.ExamTiming.minutesFrom(duration),
+                    negativeMarking = negative ?: 0.0
+                )
+            )
+            headerEmitted = true
+        }
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "id" -> id = readString(reader) ?: id
+                "title", "name" -> title = readString(reader) ?: title
+                "description", "desc" -> description = readString(reader) ?: description
+                "durationMinutes", "duration" -> duration = readInt(reader) ?: duration
+                "negativeMarking", "negative" -> negative = readDouble(reader) ?: negative
+                "categories", "sections", "subjects" -> {
+                    emitHeader()
+                    categoriesSeen += readCategoriesStreaming(reader, warnings, sink, batchSize, scan, categorySkips)
+                }
+                "questions" -> {
+                    emitHeader()
+                    val rootCategoryId = paperId() + "-root"
+                    val rootTitle = if (categoriesSeen == 0) (title ?: "Untitled Paper") else "Uncategorized"
+                    var announced = false
+                    val seen = HashSet<String>()
+                    readQuestionsStreaming(
+                        reader, "question", warnings, seen, batchSize, scan,
+                        onFirst = {
+                            if (!announced) {
+                                sink.onCategory(CategoryDto(rootCategoryId, rootTitle))
+                                announced = true
+                            }
+                        },
+                        onBatch = { sink.onQuestions(rootCategoryId, it) }
+                    )
+                }
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        emitHeader()
+        for ((index, detail) in categorySkips) {
+            warnings.add(
+                "Skipped malformed category $index in paper '${title ?: "Untitled Paper"}': $detail"
+            )
+        }
+    }
+
+    /** Reads the `categories` array streaming each entry; returns how many. */
+    private fun readCategoriesStreaming(
+        reader: JsonPull,
+        warnings: MutableList<String>,
+        sink: ImportStreamSink,
+        batchSize: Int,
+        scan: LocalImageScan,
+        skips: MutableList<Pair<Int, String>>
+    ): Int {
+        if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
+            warnings.add("File: \"categories\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            reader.skipValue()
+            return 0
+        }
+        reader.beginArray()
+        var index = 0
+        var count = 0
+        while (reader.hasNext()) {
+            val at = index + 1
+            index = at
+            try {
+                readCategoryStreaming(reader, warnings, sink, batchSize, scan)
+                count++
+            } catch (e: Exception) {
+                skips += at to (e.message ?: e.javaClass.simpleName)
+                skipValueQuietly(reader)
+            }
+        }
+        reader.endArray()
+        return count
+    }
+
+    /** The streaming twin of [readCategory]. */
+    private fun readCategoryStreaming(
+        reader: JsonPull,
+        warnings: MutableList<String>,
+        sink: ImportStreamSink,
+        batchSize: Int,
+        scan: LocalImageScan
+    ) {
+        var id: String? = null
+        var title: String? = null
+        var parentId: String? = null
+        var typeMismatch = false
+        var wrongShape: String? = null
+        var announced = false
+        val seen = HashSet<String>()
+        fun categoryId(): String = id?.takeIf { it.isNotBlank() }
+            ?: "cat-" + System.currentTimeMillis().toString(36) + "-" + (0..9999).random()
+        fun announce() {
+            if (announced) return
+            sink.onCategory(CategoryDto(categoryId(), title ?: "Category", parentId))
+            announced = true
+        }
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "id" -> id = readString(reader) ?: id
+                "title", "name" -> title = readString(reader) ?: title
+                "parentId" -> parentId = readString(reader) ?: parentId
+                "questions" ->
+                    if (reader.peek() == JsonPull.Token.BEGIN_ARRAY) {
+                        readQuestionsStreaming(
+                            reader, "question", warnings, seen, batchSize, scan,
+                            onFirst = { announce() },
+                            onBatch = { sink.onQuestions(categoryId(), it) }
+                        )
+                    } else {
+                        typeMismatch = true
+                        wrongShape = kindOf(reader.peek())
+                        reader.skipValue()
+                    }
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+        val label = title ?: "Category"
+        if (typeMismatch) {
+            warnings.add(
+                "Category '$label': \"questions\" is $wrongShape, not a list — its contents were skipped"
+            )
+        }
+        announce()
+    }
+
+    /**
+     * Streams a `questions` array in batches of [batchSize], applying the same
+     * per-list id dedupe [uniqueIds] applies and feeding the local-image scan.
+     * [onFirst] fires once, before the first batch, so the owner can announce a
+     * category only when it actually has a question.
+     */
+    private fun readQuestionsStreaming(
+        reader: JsonPull,
+        label: String,
+        warnings: MutableList<String>,
+        seen: MutableSet<String>,
+        batchSize: Int,
+        scan: LocalImageScan,
+        onFirst: () -> Unit,
+        onBatch: (List<QuestionDto>) -> Unit
+    ) {
+        if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
+            reader.skipValue()
+            return
+        }
+        reader.beginArray()
+        var index = 0
+        val batch = ArrayList<QuestionDto>(minOf(batchSize, 256))
+        fun flush() {
+            if (batch.isEmpty()) return
+            onBatch(ArrayList(batch))
+            batch.clear()
+        }
+        while (reader.hasNext()) {
+            val at = ++index
+            when (val element = readElement(reader)) {
+                is JsonObject -> {
+                    val parsed = safeQuestion(element, "$label $at", warnings) ?: continue
+                    var uniqueId = parsed.id
+                    var n = 2
+                    while (!seen.add(uniqueId)) {
+                        uniqueId = "${parsed.id}-$n"
+                        n++
+                    }
+                    val unique = if (uniqueId != parsed.id) parsed.copy(id = uniqueId) else parsed
+                    onFirst()
+                    scan.addQuestion(unique)
+                    batch.add(unique)
+                    if (batch.size >= batchSize) flush()
+                }
+                else -> warnings.add("Skipped malformed $label $at: not an object")
+            }
+        }
+        reader.endArray()
+        flush()
+    }
+
     private fun readRootObject(reader: JsonPull, warnings: MutableList<String>): McqFileDto {
         val papers = mutableListOf<PaperDto>()
         val tail = walkRootObject(reader, warnings) { papers += it }
@@ -626,15 +1027,18 @@ object LegacyParser {
             // No intermediate lists: a bank can hold hundreds of thousands of
             // questions, and a flatMap would build every one of them at once.
             for (category in paper.categories) {
-                for (q in category.questions) {
-                    if (!seen.add(q.id)) continue
-                    val bad = countLocalImages(q)
-                    if (bad == 0) continue
-                    questions++
-                    images += bad
-                    if (example.isEmpty()) example = firstLocalImage(q) ?: ""
-                }
+                for (q in category.questions) addQuestion(q)
             }
+        }
+
+        /** One question as it streams past, deduped by id like [add]. */
+        fun addQuestion(q: QuestionDto) {
+            if (!seen.add(q.id)) return
+            val bad = countLocalImages(q)
+            if (bad == 0) return
+            questions++
+            images += bad
+            if (example.isEmpty()) example = firstLocalImage(q) ?: ""
         }
 
         fun warning(): String? {

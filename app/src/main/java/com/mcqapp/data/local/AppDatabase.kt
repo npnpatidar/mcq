@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 13,
+    version = 14,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -311,6 +311,59 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Rebuilds `card_state` to match the entity exactly. Two pieces of
+         * migration fallout are removed in one table rebuild (SQLite cannot
+         * drop a column default in place):
+         *
+         * - the four FSRS columns kept the `DEFAULT` that ALTER TABLE ADD
+         *   COLUMN required in 9->10, which Room reports as a schema drift;
+         * - `index_card_state_dueAt` is left over from 6->7, redundant now
+         *   that `(paperId, dueAt)` and `(paperId, cardState, dueAt)` exist.
+         *
+         * Every row survives verbatim; dropping the table also drops the
+         * stale index, and the three current indexes are recreated.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `card_state_new` (" +
+                        "`paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, " +
+                        "`ease` REAL NOT NULL, `intervalDays` INTEGER NOT NULL, " +
+                        "`dueAt` INTEGER NOT NULL, `reps` INTEGER NOT NULL, " +
+                        "`lapses` INTEGER NOT NULL, `leech` INTEGER NOT NULL, " +
+                        "`lastReviewedAt` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, " +
+                        "`difficulty` REAL NOT NULL, `stability` REAL NOT NULL, " +
+                        "`cardState` TEXT NOT NULL, `reviewCount` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`paperId`, `questionId`), " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "INSERT INTO `card_state_new` (`paperId`, `questionId`, `ease`, " +
+                        "`intervalDays`, `dueAt`, `reps`, `lapses`, `leech`, `lastReviewedAt`, " +
+                        "`contentHash`, `difficulty`, `stability`, `cardState`, `reviewCount`) " +
+                        "SELECT `paperId`, `questionId`, `ease`, `intervalDays`, `dueAt`, " +
+                        "`reps`, `lapses`, `leech`, `lastReviewedAt`, `contentHash`, " +
+                        "`difficulty`, `stability`, `cardState`, `reviewCount` FROM `card_state`"
+                )
+                db.execSQL("DROP TABLE `card_state`")
+                db.execSQL("ALTER TABLE `card_state_new` RENAME TO `card_state`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_questionId` " +
+                        "ON `card_state` (`questionId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_dueAt` " +
+                        "ON `card_state` (`paperId`, `dueAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_cardState_dueAt` " +
+                        "ON `card_state` (`paperId`, `cardState`, `dueAt`)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -320,7 +373,7 @@ abstract class AppDatabase : RoomDatabase() {
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12, MIGRATION_12_13
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

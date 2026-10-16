@@ -64,12 +64,13 @@ class PassagePagingTest {
 
     private suspend fun walk(source: PagingSource<Int, QuestionRef>): List<String> {
         val ids = mutableListOf<String>()
-        var key: Int? = null
+        var params: PagingSource.LoadParams<Int> =
+            PagingSource.LoadParams.Refresh(null, 2, false)
         while (true) {
-            val result = source.load(PagingSource.LoadParams.Refresh(key, 2, false))
-            val page = result as PagingSource.LoadResult.Page
+            val page = source.load(params) as PagingSource.LoadResult.Page
             ids += page.data.map { it.id }
-            key = page.nextKey ?: break
+            val next = page.nextKey ?: break
+            params = PagingSource.LoadParams.Append(next, 2, false)
         }
         return ids
     }

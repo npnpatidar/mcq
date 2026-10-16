@@ -874,6 +874,16 @@ class RepositoryTest {
     }
 
     @Test
+    fun renamingACategoryKeepsItsQuestions() = runBlocking {
+        nestedPaper()
+        val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
+        assertTrue(repository.renameCategory(xId, "Ex"))
+        assertEquals("Ex", db.categoryDao().getById(xId)!!.title)
+        // A REPLACE-based upsert here would cascade-delete og-qx.
+        assertEquals(listOf("og-qx", "og-qy"), repository.getQuestionsForPaper("og").map { it.id })
+    }
+
+    @Test
     fun reparentRefusesCyclesAndRenamesWork() = runBlocking {
         nestedPaper()
         val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id

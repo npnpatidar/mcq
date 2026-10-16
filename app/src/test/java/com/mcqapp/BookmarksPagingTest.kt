@@ -38,13 +38,13 @@ class BookmarksPagingTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries().build()
         repository = McqRepository(db, context)
+        runBlocking { repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat") }
     }
 
     @After
     fun tearDown() = db.close()
 
-    private fun saveQuestion(id: String, paperId: String = "p1") = runBlocking {
-        repository.ensurePaperAndCategory(paperId, "Paper", "c1", "Cat")
+    private fun saveQuestion(id: String) = runBlocking {
         repository.saveQuestion(
             Question(
                 id = id,
@@ -63,12 +63,13 @@ class BookmarksPagingTest {
     private suspend fun walk(): List<BookmarkedQuestion> {
         val source = repository.bookmarkedPagingSource()
         val out = mutableListOf<BookmarkedQuestion>()
-        var key: Int? = null
+        var params: PagingSource.LoadParams<Int> =
+            PagingSource.LoadParams.Refresh(null, 2, false)
         while (true) {
-            val result = source.load(PagingSource.LoadParams.Refresh(key, 2, false))
-            val page = result as PagingSource.LoadResult.Page
+            val page = source.load(params) as PagingSource.LoadResult.Page
             out += page.data
-            key = page.nextKey ?: break
+            val next = page.nextKey ?: break
+            params = PagingSource.LoadParams.Append(next, 2, false)
         }
         return out
     }

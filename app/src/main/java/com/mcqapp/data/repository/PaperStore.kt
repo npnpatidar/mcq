@@ -345,7 +345,12 @@ internal class PaperStore(
         val trimmed = title.trim()
         if (trimmed.isBlank()) return false
         val category = db.categoryDao().getById(categoryId) ?: return false
-        db.categoryDao().upsert(category.copy(title = trimmed))
+        // A targeted UPDATE, never upsert: `@Upsert` compiles to INSERT OR
+        // REPLACE, and questions.categoryId cascades on delete, so replacing
+        // the category row would wipe every question in it.
+        db.categoryDao().updateFields(
+            category.id, category.paperId, trimmed, category.parentId, category.sortOrder
+        )
         Logger.i("REPO", "renameCategory($categoryId -> '$trimmed')")
         return true
     }

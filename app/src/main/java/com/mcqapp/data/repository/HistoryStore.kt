@@ -23,6 +23,7 @@ import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.QuestionStats
 import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
@@ -385,7 +386,10 @@ internal class HistoryStore(
         db.questionStatsDao().getHardestQuestions(limit).map {
             QuestionStats.Stat(
                 questionId = it.questionId,
-                text = it.text,
+                // The aggregate stores the result row's content JSON verbatim;
+                // the in-memory pipeline and the UI both read the plain text,
+                // so parse it back (legacy plain values pass through unchanged).
+                text = it.text.parseContentElements(mapper.json).textContent,
                 attempts = it.attempts,
                 correct = it.correct,
                 wrong = it.wrong,

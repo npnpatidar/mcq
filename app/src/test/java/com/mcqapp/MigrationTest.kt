@@ -179,7 +179,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_9_10,
                 AppDatabase.MIGRATION_10_11,
                 AppDatabase.MIGRATION_11_12,
-                AppDatabase.MIGRATION_12_13
+                AppDatabase.MIGRATION_12_13,
+                AppDatabase.MIGRATION_13_14
             )
             .allowMainThreadQueries()
             .build()
@@ -481,7 +482,8 @@ class MigrationTest {
                     AppDatabase.MIGRATION_9_10,
                     AppDatabase.MIGRATION_10_11,
                     AppDatabase.MIGRATION_11_12,
-                    AppDatabase.MIGRATION_12_13
+                    AppDatabase.MIGRATION_12_13,
+                    AppDatabase.MIGRATION_13_14
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -531,6 +533,8 @@ class MigrationTest {
             // The composite replaces the standalone prefix.
             assertEquals(false, indexExists("index_question_results_attemptId"))
             assertEquals(false, indexExists("index_categories_paperId"))
+            // The stale card_state dueAt index is dropped by the 13->14 rebuild.
+            assertEquals(false, indexExists("index_card_state_dueAt"))
             check.close()
         }
     }

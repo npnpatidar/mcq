@@ -51,7 +51,10 @@ data class CategoryEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("categoryId"), Index("passageId")]
+    // contentHash: dedup probes it on every import and on the import
+    // screen's duplicate classification; without the index each probe is a
+    // full scan of the questions table (chunked thousands of times).
+    indices = [Index("categoryId"), Index("passageId"), Index("contentHash")]
 )
 data class QuestionEntity(
     @PrimaryKey val id: String,
@@ -132,7 +135,7 @@ data class CorrectAnswerEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("questionId"), Index("dueAt")]
+    indices = [Index("questionId"), Index("paperId", "dueAt")]
 )
 data class CardStateEntity(
     val paperId: String,
@@ -175,7 +178,10 @@ data class CardStateEntity(
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("questionId", "reviewedAt"), Index("paperId")]
+    // (paperId, reviewedAt) covers the per-paper/per-day aggregates the
+    // statistics screen and badges read; the bare paperId prefix of it
+    // replaces the old standalone paperId index.
+    indices = [Index("questionId", "reviewedAt"), Index("paperId", "reviewedAt")]
 )
 data class ReviewLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

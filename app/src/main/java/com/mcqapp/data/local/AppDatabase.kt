@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -201,6 +201,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Indexes the large-collection queries that scanned before: dedup
+         * probes `questions.contentHash` on every import and preview
+         * refresh, the study/library counts filter `card_state` by paper
+         * and due time, and the statistics aggregates group `review_log` by
+         * paper and day. Pure index additions — no row moves, every table
+         * keeps its shape.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_questions_contentHash` " +
+                        "ON `questions` (`contentHash`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_dueAt` " +
+                        "ON `card_state` (`paperId`, `dueAt`)"
+                )
+                // The composite replaces the standalone paperId index: its
+                // paperId prefix serves every query the old one did.
+                db.execSQL("DROP INDEX IF EXISTS `index_review_log_paperId`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_review_log_paperId_reviewedAt` " +
+                        "ON `review_log` (`paperId`, `reviewedAt`)"
+                )
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -209,8 +237,17 @@ abstract class AppDatabase : RoomDatabase() {
                     "mcq.db"
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
-                ).build().also { INSTANCE = it }
+                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11
+                )
+                // WAL keeps readers (the browsed list, an open test session,
+                // the search screen) non-blocking while an import or bulk
+                // write holds the write lock — the screens observe the same
+                // database an import is writing to. Backups and restores read
+                // and write through Room inside transactions, so they see
+                // consistent snapshots either way; nothing copies the raw
+                // file, which is the operation WAL would have broken.
+                .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                .build().also { INSTANCE = it }
             }
     }
 }

@@ -71,6 +71,7 @@ class Importer(
         sameIdCache = null
         writtenThisImport.clear()
         seenPassageIds.clear()
+        importProgressLogs = 0
         // A file this app exported carries its own review progress; an explicit
         // map (the Anki path) still wins.
         val restoreScheduling = scheduling.ifEmpty { file.scheduling }
@@ -277,9 +278,16 @@ class Importer(
                         // export (which carries the stored bytes) hashes the
                         // same and deduplicates instead of updating.
                         val contentHash = ContentHash.of(scaledQuestion)
-                        Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
-                            "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
-                            "textLength=${questionDto.text.length}")
+                        // Per-question tracing is O(file size) string building
+                        // unless gated: a 100k bank pays it inside the write
+                        // transaction. One line per 500 keeps a progress
+                        // trace; Logger.verbose turns every line on.
+                        importProgressLogs++
+                        if (Logger.verbose || importProgressLogs % 500 == 0L) {
+                            Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
+                                "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
+                                "textLength=${questionDto.text.length}")
+                        }
 
                         if (contentHash in existingHashes && updateAnswersOnDuplicate) {
                             // Same text and options under a different id: the
@@ -347,10 +355,14 @@ class Importer(
                                 )
                             if (!changedAnswer) {
                                 duplicateQuestions++
-                                Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
+                                if (Logger.verbose) {
+                                    Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
+                                }
                                 return@forEachIndexed
                             }
-                            Logger.d("IMPORT", "  Same content hash but changed answer/metadata: updating id=${questionDto.id}")
+                            if (Logger.verbose) {
+                                Logger.d("IMPORT", "  Same content hash but changed answer/metadata: updating id=${questionDto.id}")
+                            }
                         }
 
                         // New questions append after existing ones; updates keep
@@ -363,8 +375,10 @@ class Importer(
                             updatedQuestions++
                             existingQuestion.sortOrder
                         }
-                        Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
-                            "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
+                        if (Logger.verbose || importProgressLogs % 500 == 1L) {
+                            Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
+                                "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
+                        }
 
                         // NOTE: the question row below carries passageId from the
                         // file; the passage rows themselves were already written
@@ -598,6 +612,12 @@ class Importer(
 
     /** Questions this import has already written, by content hash. */
     private val writtenThisImport = mutableMapOf<String, MutableList<QuestionDto>>()
+
+    /**
+     * Counter for the gated per-question trace lines (one per 500 instead of
+     * one per row); reset with the per-import state below.
+     */
+    private var importProgressLogs = 0L
 
     /**
      * Passage ids whose rows this import has already written, so a passage

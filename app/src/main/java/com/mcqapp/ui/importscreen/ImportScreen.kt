@@ -284,6 +284,26 @@ fun ImportScreen(
                     )
                 }
 
+                if (state.previewTruncated) {
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Text(
+                                "Large bank: previewing the first ${state.questions.size} of " +
+                                    "${state.totalQuestionCount} questions. Edits and deletions apply " +
+                                    "to the previewed ones; the rest import exactly as they are in the file.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
                 item {
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -478,7 +498,8 @@ fun ImportScreen(
                 onClick = { viewModel.import() },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = state.paperTitle.isNotBlank() &&
-                    (newQuestions.isNotEmpty() || changedQuestions.isNotEmpty()) &&
+                    (state.previewTruncated ||
+                        newQuestions.isNotEmpty() || changedQuestions.isNotEmpty()) &&
                     !state.importing
             ) {
                 if (state.importing) {
@@ -489,7 +510,9 @@ fun ImportScreen(
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
-                    if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
+                    if (state.previewTruncated) {
+                        "Import ${state.totalQuestionCount} questions"
+                    } else if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
                         "Nothing new to import"
                     } else if (changedQuestions.isEmpty()) {
                         "Import ${newQuestions.size} new questions"

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.io.Importer
+import com.mcqapp.data.io.ImportOverrides
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.StreamingImporter
@@ -206,6 +207,97 @@ class StreamingImporterEquivalenceTest {
         wholeFileImport(wholeFileDb, second)
         streamingImport(streamingDb, richBank)
         streamingImport(streamingDb, second)
+        assertSameState()
+    }
+
+    private val singleCategoryBank = """
+    {
+      "papers": [
+        {
+          "id": "p1",
+          "title": "Original",
+          "description": "orig",
+          "duration": 10,
+          "negative": 0.0,
+          "categories": [
+            {"id": "c", "title": "Original Cat", "questions": [
+              {"id": "q1", "text": "One", "options": ["a", "b"], "correctOptionIds": ["a"]},
+              {"id": "q2", "text": "Two", "options": ["a", "b"], "correctOptionIds": ["b"]},
+              {"id": "q3", "text": "Three", "options": ["a", "b"], "correctOptionIds": ["a"]}
+            ]}
+          ]
+        }
+      ]
+    }
+    """.trimIndent()
+
+    /**
+     * The preview overrides are the streaming twin of assembling an edited
+     * copy: meta, category rename and a deleted question. Importing the
+     * assembled DTO through the whole-file importer must land the same rows.
+     */
+    @Test
+    fun previewMetaDeleteAndRenameMatchTheAssembledFile() = runBlocking {
+        val original = LegacyParser.parse(ByteArrayInputStream(singleCategoryBank.toByteArray()))
+        val paper = original.papers.first()
+        val assembled = original.copy(
+            papers = listOf(
+                paper.copy(
+                    title = "New Title",
+                    description = "New Desc",
+                    durationMinutes = 30,
+                    negativeMarking = 0.5,
+                    categories = listOf(
+                        paper.categories.first().copy(
+                            title = "Renamed",
+                            questions = paper.categories.first().questions.filter { it.id != "q2" }
+                        )
+                    )
+                )
+            )
+        )
+        Importer(wholeFileDb).import(assembled)
+
+        StreamingImporter(
+            streamingDb,
+            overrides = ImportOverrides(
+                paperTitle = "New Title",
+                paperDescription = "New Desc",
+                durationMinutes = 30,
+                negativeMarking = 0.5,
+                categoryTitle = "Renamed",
+                deletedIds = setOf("q2")
+            )
+        ).import { ByteArrayInputStream(singleCategoryBank.toByteArray()) }
+        assertSameState()
+    }
+
+    @Test
+    fun aPreviewedQuestionEditMatchesTheAssembledFile() = runBlocking {
+        val original = LegacyParser.parse(ByteArrayInputStream(singleCategoryBank.toByteArray()))
+        val paper = original.papers.first()
+        val editedQ1 = paper.categories.first().questions
+            .first { it.id == "q1" }
+            .copy(text = "One, edited", elements = emptyList())
+        val assembled = original.copy(
+            papers = listOf(
+                paper.copy(
+                    categories = listOf(
+                        paper.categories.first().copy(
+                            questions = paper.categories.first().questions.map {
+                                if (it.id == "q1") editedQ1 else it
+                            }
+                        )
+                    )
+                )
+            )
+        )
+        Importer(wholeFileDb).import(assembled)
+
+        StreamingImporter(
+            streamingDb,
+            overrides = ImportOverrides(editedQuestions = mapOf("q1" to editedQ1))
+        ).import { ByteArrayInputStream(singleCategoryBank.toByteArray()) }
         assertSameState()
     }
 }

@@ -5,11 +5,14 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.data.io.ImportOverrides
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.StreamingImporter
+import com.mcqapp.data.io.scanImportPreview
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.getByIdsChunked
@@ -27,6 +30,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
+import java.io.InputStream
+
+/**
+ * Files above this size are previewed and imported by streaming instead of
+ * being parsed into a whole DTO tree. Small files keep the exact whole-file
+ * path, so nothing about the common case changes.
+ */
+const val JSON_STREAM_THRESHOLD_BYTES: Int = 4 * 1024 * 1024
+
+/** How many questions of a large bank the preview keeps on the heap. */
+const val PREVIEW_SAMPLE_SIZE: Int = 500
 
 object ImportDataHolder {
     /**
@@ -95,6 +109,14 @@ data class ImportUiState(
     val originalFile: McqFileDto? = null,
     val importing: Boolean = false,
     val importDone: Boolean = false,
+    /** Questions the file actually holds; larger than [questions] when a large bank was sampled. */
+    val totalQuestionCount: Int = 0,
+    /** True when only the first [PREVIEW_SAMPLE_SIZE] questions are held for preview. */
+    val previewTruncated: Boolean = false,
+    /** The file's first paper has exactly one category, so the preview may rename it. */
+    val singleCategoryPaper: Boolean = false,
+    /** Ids the preview sample started with, to tell a preview deletion from an absent question. */
+    val previewSampleIds: Set<String> = emptySet(),
     /** Fatal load failure (unreadable/corrupt file, no papers): shown as a dialog. */
     val error: String? = null
 )
@@ -379,6 +401,10 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     // not be retained twice) of the last directly-loaded JSON.
     private var loadedDirectFp: String? = null
 
+    // Set only for a large single-paper JSON: how the streaming import re-opens
+    // the file. Null means the whole-file path (small JSON, docx, backup).
+    private var streamSource: (() -> InputStream)? = null
+
     private fun fingerprint(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
@@ -388,11 +414,17 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      * The JSON a picker handed over. Parsed straight from the bytes: the
      * old text path held the file twice (String + byte array) and then a
      * whole-document DOM, which is how a 48 MB bank died in an OOM.
+     *
+     * A bank above [JSON_STREAM_THRESHOLD_BYTES] is previewed and imported by
+     * streaming so the whole DTO tree never exists; smaller files keep the
+     * exact whole-file path.
      */
     fun loadJsonBytes(bytes: ByteArray) {
         viewModelScope.launch {
             val fp = withContext(Dispatchers.Default) { fingerprint(bytes) }
-            if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) {
+            if (fp == loadedDirectFp &&
+                (_state.value.questions.isNotEmpty() || _state.value.totalQuestionCount > 0)
+            ) {
                 Logger.d("IMPORTVM", "loadJsonBytes: same file already loaded " +
                     "(${_state.value.questions.size} questions), skipping reload to preserve in-memory edits")
                 return@launch
@@ -400,9 +432,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             loadedDirectFp = fp
             try {
                 withContext(Dispatchers.Default) {
-                    parseAndLoad(parse = {
-                        LegacyParser.parse(ByteArrayInputStream(bytes))
-                    })
+                    if (bytes.size > JSON_STREAM_THRESHOLD_BYTES) {
+                        loadLargeJson { ByteArrayInputStream(bytes) }
+                    } else {
+                        streamSource = null
+                        parseAndLoad(parse = {
+                            LegacyParser.parse(ByteArrayInputStream(bytes))
+                        })
+                    }
                 }
             } catch (e: Exception) {
                 loadedDirectFp = null
@@ -410,6 +447,57 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
             }
         }
+    }
+
+    /**
+     * Bounded preview of a large single-paper bank. One pass keeps the header,
+     * a sample of questions and the counts; the import re-opens the same source
+     * and streams it, applying the paper-level edits made here.
+     */
+    private suspend fun loadLargeJson(open: () -> InputStream) {
+        val preview = scanImportPreview(open, PREVIEW_SAMPLE_SIZE)
+        if (preview.isBackup) {
+            // Backups carry other papers and review progress the bounded
+            // preview cannot represent; fall back to the whole-file path.
+            Logger.i("IMPORTVM", "loadLargeJson: backup (${preview.paperCount} papers), " +
+                "using whole-file parse")
+            streamSource = null
+            parseAndLoad(parse = { LegacyParser.parse(open()) })
+            return
+        }
+        val header = preview.header
+        if (header == null) {
+            val detail = preview.warnings.joinToString("\n")
+            _state.update {
+                it.copy(
+                    loading = false,
+                    error = "No papers found in this file." + if (detail.isNotEmpty()) "\n$detail" else ""
+                )
+            }
+            return
+        }
+        val sampleQuestions = preview.sample.map { it.dto }
+        _state.value = ImportUiState(
+            loading = false,
+            paperTitle = header.title,
+            paperDescription = header.description,
+            durationMinutes = header.durationMinutes,
+            negativeMarking = header.negativeMarking,
+            categoryName = preview.effectiveCategoryTitle,
+            questions = sampleQuestions,
+            parseWarnings = preview.warnings,
+            originalFile = null,
+            totalQuestionCount = preview.totalQuestions,
+            previewTruncated = sampleQuestions.size < preview.totalQuestions,
+            singleCategoryPaper = preview.firstPaperCategoryCount == 1,
+            previewSampleIds = sampleQuestions.mapTo(HashSet()) { it.id },
+            paperTitleSuggestions = _state.value.paperTitleSuggestions,
+            categorySuggestions = _state.value.categorySuggestions
+        )
+        streamSource = open
+        Logger.i("IMPORTVM", "Loaded bounded preview: ${sampleQuestions.size} of " +
+            "${preview.totalQuestions} questions across ${preview.firstPaperCategoryCount} categories")
+        refreshDuplicates()
     }
 
     fun loadJsonText(text: String) {
@@ -482,6 +570,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         extraWarnings: List<String> = emptyList(),
         titleOverride: String? = null
     ) {
+        streamSource = null
         val file = parse()
         val paper = file.papers.firstOrNull()
         if (paper == null) {
@@ -566,6 +655,48 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun import() {
         val s = _state.value
+        // Large single-paper banks stream: the file is re-opened and written a
+        // batch at a time, with only the previewed sample's edits applied.
+        val source = streamSource
+        if (source != null) {
+            if (s.paperTitle.isBlank()) return
+            _state.update { it.copy(importing = true, importDone = false, importReport = null) }
+            viewModelScope.launch {
+                try {
+                    val currentIds = s.questions.mapTo(HashSet()) { it.id }
+                    val overrides = ImportOverrides(
+                        paperTitle = s.paperTitle.trim(),
+                        paperDescription = s.paperDescription.trim(),
+                        durationMinutes = s.durationMinutes,
+                        negativeMarking = s.negativeMarking,
+                        categoryTitle = if (s.singleCategoryPaper) {
+                            s.categoryName.trim().ifBlank { null }
+                        } else {
+                            null
+                        },
+                        deletedIds = s.previewSampleIds - currentIds,
+                        editedQuestions = s.questions.associateBy { it.id }
+                    )
+                    Logger.i("IMPORTVM", "import(): streaming ${s.totalQuestionCount} questions " +
+                        "with a ${s.questions.size}-question preview " +
+                        "(${overrides.deletedIds.size} deleted in preview)")
+                    val report = withContext(Dispatchers.Default) {
+                        StreamingImporter(
+                            repository.db(),
+                            updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
+                            overrides = overrides
+                        ).import(source)
+                    }
+                    Logger.i("IMPORTVM", "Imported (streamed): ${report.newQuestions} new, " +
+                        "${report.updatedQuestions} updated, ${report.duplicateQuestions} duplicates")
+                    _state.update { it.copy(importing = false, importDone = true, importReport = report) }
+                } catch (e: Exception) {
+                    Logger.e("IMPORTVM", "Streaming import failed", e)
+                    _state.update { it.copy(importing = false, error = "Import failed: ${e.message}") }
+                }
+            }
+            return
+        }
         val original = s.originalFile
         val backup = original != null && isBackupFile(original)
         // Single-paper imports need something to import; a backup still carries

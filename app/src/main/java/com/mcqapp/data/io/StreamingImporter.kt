@@ -28,6 +28,28 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 /**
+ * Edits made in the bounded preview, applied while the file streams so the
+ * preview never had to hold it. Only the first paper is affected, matching the
+ * single-paper preview the streaming path serves. A null field keeps the
+ * file's value; [categoryTitle] renames the paper's first category (the
+ * preview only offers a category name when the paper has exactly one).
+ */
+data class ImportOverrides(
+    val paperTitle: String? = null,
+    val paperDescription: String? = null,
+    val durationMinutes: Int? = null,
+    val negativeMarking: Double? = null,
+    val categoryTitle: String? = null,
+    val deletedIds: Set<String> = emptySet(),
+    val editedQuestions: Map<String, QuestionDto> = emptyMap()
+) {
+    val isEmpty: Boolean
+        get() = paperTitle == null && paperDescription == null && durationMinutes == null &&
+            negativeMarking == null && categoryTitle == null && deletedIds.isEmpty() &&
+            editedQuestions.isEmpty()
+}
+
+/**
  * Imports a JSON bank by streaming it straight into the database, one batch of
  * questions at a time, so a single paper with a thousand categories and a
  * million questions is never materialised. It is the write-side twin of
@@ -43,7 +65,8 @@ import kotlinx.serialization.json.Json
 class StreamingImporter(
     private val db: AppDatabase,
     private val updateAnswersOnDuplicate: Boolean = false,
-    private val batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE
+    private val batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
+    private val overrides: ImportOverrides = ImportOverrides()
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -54,7 +77,7 @@ class StreamingImporter(
      * return a fresh stream over the same bytes.
      */
     suspend fun import(source: () -> InputStream): ImportReport = withContext(Dispatchers.IO) {
-        val session = Session(db, json, updateAnswersOnDuplicate, batchSize)
+        val session = Session(db, json, updateAnswersOnDuplicate, batchSize, overrides)
         val queue = ArrayBlockingQueue<StreamEvent>(16)
         val tailRef = AtomicReference<LegacyParser.StreamedFile>()
         val errorRef = AtomicReference<Throwable>()
@@ -141,7 +164,8 @@ class StreamingImporter(
         private val db: AppDatabase,
         private val json: Json,
         private val updateAnswersOnDuplicate: Boolean,
-        val batchSize: Int
+        val batchSize: Int,
+        private val overrides: ImportOverrides
     ) {
         private var newPapers = 0
         private var updatedPapers = 0
@@ -153,10 +177,13 @@ class StreamingImporter(
         private var restoredAttempts = 0
 
         private var paperOpen = false
+        private var paperIndex = 0
         private var effectivePaperId = ""
         private var isNewPaper = false
         private var categoryIndex = 0
         private val catsInPaper = mutableListOf<CategoryEntity>()
+        /** Raw file category id -> effective id we wrote, for the current paper. */
+        private val effectiveCatByRawId = HashMap<String, String>()
         private val pendingCategories = mutableListOf<CategoryEntity>()
         private var flushEnabled = false
         private var needsWrite = false
@@ -179,8 +206,14 @@ class StreamingImporter(
 
         suspend fun onCategory(category: CategoryDto) {
             val paperId = effectivePaperId
+            val isFirstCategory = categoryIndex == 0
+            val title = if (paperIndex == 1 && isFirstCategory && overrides.categoryTitle != null) {
+                overrides.categoryTitle
+            } else {
+                category.title
+            }
             val match = catsInPaper.find { it.id == category.id }
-                ?: catsInPaper.find { it.title == category.title }
+                ?: catsInPaper.find { it.title == title }
             val ownedElsewhere = db.categoryDao().getById(category.id)
                 ?.takeIf { it.paperId != paperId }
             val effectiveCatId = match?.id
@@ -188,12 +221,13 @@ class StreamingImporter(
             val entity = CategoryEntity(
                 id = effectiveCatId,
                 paperId = paperId,
-                title = category.title,
+                title = title,
                 parentId = category.parentId,
                 sortOrder = categoryIndex++
             )
             catsInPaper.removeAll { it.id == effectiveCatId }
             catsInPaper += entity
+            effectiveCatByRawId[category.id] = effectiveCatId
             if (flushEnabled) writeCategoryRow(entity) else pendingCategories += entity
             currentCategoryId = effectiveCatId
             maxSortLoaded = false
@@ -201,8 +235,11 @@ class StreamingImporter(
 
         suspend fun onQuestions(categoryId: String, questions: List<QuestionDto>) {
             if (questions.isEmpty()) return
-            currentCategoryId = categoryId
-            db.withTransaction { processBatch(categoryId, questions) }
+            // The parser hands back the file's category id; the row may have been
+            // matched by title or remapped, so resolve it to what we wrote.
+            val effective = effectiveCatByRawId[categoryId] ?: categoryId
+            currentCategoryId = effective
+            db.withTransaction { processBatch(effective, questions) }
         }
 
         /** Everything after the papers: passages, bookmarks, attempts. */
@@ -232,38 +269,51 @@ class StreamingImporter(
         // --- paper / category -------------------------------------------------
 
         private suspend fun startPaper(header: LegacyParser.PaperHeader) {
-            val existingById = db.paperDao().getById(header.id)
+            paperIndex++
+            // Preview edits describe the first paper only.
+            val editedHeader = if (paperIndex == 1) {
+                header.copy(
+                    title = overrides.paperTitle ?: header.title,
+                    description = overrides.paperDescription ?: header.description,
+                    durationMinutes = overrides.durationMinutes ?: header.durationMinutes,
+                    negativeMarking = overrides.negativeMarking ?: header.negativeMarking
+                )
+            } else {
+                header
+            }
+            val existingById = db.paperDao().getById(editedHeader.id)
             val existingByTitle = if (existingById == null &&
-                header.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX) &&
-                header.title.isNotBlank()
+                editedHeader.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX) &&
+                editedHeader.title.isNotBlank()
             ) {
-                db.paperDao().getByTitle(header.title)
+                db.paperDao().getByTitle(editedHeader.title)
             } else {
                 null
             }
-            effectivePaperId = existingById?.id ?: existingByTitle?.id ?: header.id
+            effectivePaperId = existingById?.id ?: existingByTitle?.id ?: editedHeader.id
             isNewPaper = existingById == null && existingByTitle == null
             if (isNewPaper) {
                 db.paperDao().insertIgnore(
                     PaperEntity(
                         id = effectivePaperId,
-                        title = header.title,
-                        description = header.description,
-                        durationMinutes = header.durationMinutes,
-                        negativeMarking = header.negativeMarking
+                        title = editedHeader.title,
+                        description = editedHeader.description,
+                        durationMinutes = editedHeader.durationMinutes,
+                        negativeMarking = editedHeader.negativeMarking
                     )
                 )
             } else {
                 db.paperDao().updateFields(
                     id = effectivePaperId,
-                    title = header.title,
-                    description = header.description,
-                    durationMinutes = header.durationMinutes,
-                    negativeMarking = header.negativeMarking
+                    title = editedHeader.title,
+                    description = editedHeader.description,
+                    durationMinutes = editedHeader.durationMinutes,
+                    negativeMarking = editedHeader.negativeMarking
                 )
             }
             catsInPaper.clear()
             catsInPaper += db.categoryDao().getByPaper(effectivePaperId)
+            effectiveCatByRawId.clear()
             pendingCategories.clear()
             // A re-import always writes its categories; a brand-new paper only
             // does once a question actually needs writing. That reproduces the
@@ -324,14 +374,28 @@ class StreamingImporter(
         // --- questions --------------------------------------------------------
 
         private suspend fun processBatch(categoryId: String, questions: List<QuestionDto>) {
-            val scaled = questions.map { it.withDownscaledImages() }
+            // Apply the bounded preview's edits before anything else: a deleted
+            // question must not claim a passage's first member, and an edited
+            // one is what the whole-file importer would have been handed.
+            val applied = if (paperIndex == 1 && !overrides.isEmpty) {
+                questions.mapNotNull { q ->
+                    when {
+                        q.id in overrides.deletedIds -> null
+                        else -> overrides.editedQuestions[q.id] ?: q
+                    }
+                }
+            } else {
+                questions
+            }
+            if (applied.isEmpty()) return
+            val scaled = applied.map { it.withDownscaledImages() }
             val hashes = scaled.map { ContentHash.of(it) }
             val matchIds = db.questionDao().getMatchesByContentHashesChunked(hashes)
             val matchedIds = matchIds.map { it.id }.distinct()
             val candidates = candidates(matchIds, matchedIds)
             val dbHashes = matchIds.mapTo(HashSet()) { it.contentHash }
 
-            val ids = questions.map { it.id }
+            val ids = applied.map { it.id }
             val idEntities = db.questionDao().getByIdsChunked(ids).associateBy { it.id }
             val idCorrect = db.correctAnswerDao().getForQuestionsChunked(ids)
                 .groupBy({ it.questionId }, { it.optionId })
@@ -340,7 +404,7 @@ class StreamingImporter(
             val batchWritten = HashMap<String, MutableList<QuestionDto>>()
             val writtenById = HashMap<String, QuestionEntity>()
 
-            questions.forEachIndexed { index, dto ->
+            applied.forEachIndexed { index, dto ->
                 val scaledQuestion = scaled[index]
                 val contentHash = hashes[index]
                 // Record the passage before any duplicate/refresh decision: the
@@ -402,10 +466,6 @@ class StreamingImporter(
                 } else {
                     updatedQuestions++
                     existingQuestion.sortOrder
-                }
-
-                dto.passageId?.let { passageId ->
-                    paperPassageRecords.putIfAbsent(passageId, currentCategoryId!!)
                 }
 
                 // The question row needs its category row first (FK); for a

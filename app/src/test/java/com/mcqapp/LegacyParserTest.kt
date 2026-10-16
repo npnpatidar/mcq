@@ -5,6 +5,7 @@ import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 class LegacyParserTest {
 
@@ -818,5 +819,90 @@ class LegacyParserTest {
         val file = LegacyParser.parse(json)
         assertTrue(file.scheduling.isEmpty())
         assertTrue(file.warnings.isEmpty())
+    }
+
+    /**
+     * The streaming parse must be indistinguishable from the whole-file one:
+     * same papers in the same order, same tail fields, same warnings. Both
+     * share one root walk, so this pins that they cannot drift apart.
+     */
+    @Test
+    fun streamedPapersMatchTheWholeFileParse() {
+        val json = """
+        {
+          "version": 3,
+          "papers": [
+            {"id":"p1","title":"First","categories":[
+              {"id":"c1","title":"Cat","questions":[
+                {"id":"q1","text":"One?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]},
+                {"id":"q2","text":"Two?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}]}]},
+            {"id":"p2","title":"Second","categories":[
+              {"id":"c2","title":"Cat","questions":[
+                {"id":"q3","text":"Three?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}]}]}
+          ],
+          "bookmarks": ["q1"],
+          "attempts": [],
+          "warnings": [],
+          "scheduling": {"q1": {"ease": 2.5}},
+          "passages": [
+            {"id":"ps1","title":"Read","elements":[{"type":"text","content":"Body"}]}
+          ]
+        }
+        """.trimIndent()
+
+        val whole = LegacyParser.parse(json)
+        val streamed = mutableListOf<com.mcqapp.data.io.PaperDto>()
+        val tail = LegacyParser.streamPapers(
+            ByteArrayInputStream(json.toByteArray())
+        ) { streamed += it }
+
+        assertEquals(whole.papers, streamed)
+        assertEquals(whole.version, tail.version)
+        assertEquals(whole.bookmarks, tail.bookmarks)
+        assertEquals(whole.attempts, tail.attempts)
+        assertEquals(whole.scheduling, tail.scheduling)
+        assertEquals(whole.passages, tail.passages)
+        assertEquals(whole.warnings, tail.warnings)
+    }
+
+    /** Each paper is handed over as it is read, in file order. */
+    @Test
+    fun streamedPapersArriveInOrder() {
+        val json = """
+        {"version":1,"papers":[
+          {"id":"p1","title":"A","categories":[]},
+          {"id":"p2","title":"B","categories":[]},
+          {"id":"p3","title":"C","categories":[]}]}
+        """.trimIndent()
+        val ids = mutableListOf<String>()
+        LegacyParser.streamPapers(ByteArrayInputStream(json.toByteArray())) {
+            ids += it.id
+        }
+        assertEquals(listOf("p1", "p2", "p3"), ids)
+    }
+
+    /** The DOCX wrapper shape (`questions`, no `papers`) streams one paper. */
+    @Test
+    fun streamsTheRootQuestionsWrapperAsOnePaper() {
+        val json = """
+        {"questions":[
+          {"id":"q1","text":"One?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}]}
+        """.trimIndent()
+        val papers = mutableListOf<com.mcqapp.data.io.PaperDto>()
+        LegacyParser.streamPapers(ByteArrayInputStream(json.toByteArray())) { papers += it }
+        assertEquals(1, papers.size)
+        assertEquals(1, papers[0].categories.flatMap { it.questions }.size)
+    }
+
+    /** A bare questions array streams the single ephemeral paper. */
+    @Test
+    fun streamsABareQuestionsArrayAsOnePaper() {
+        val json = """
+        [{"id":"q1","text":"One?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}]
+        """.trimIndent()
+        val papers = mutableListOf<com.mcqapp.data.io.PaperDto>()
+        val tail = LegacyParser.streamPapers(ByteArrayInputStream(json.toByteArray())) { papers += it }
+        assertEquals(1, papers.size)
+        assertTrue(tail.passages.isEmpty())
     }
 }

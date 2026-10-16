@@ -150,18 +150,96 @@ object LegacyParser {
     fun parse(json: String): McqFileDto =
         parse(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
 
+    /**
+     * The tail of a streamed parse: everything the file carries that is not a
+     * paper. In the canonical order these fields trail `papers`, so they are
+     * returned once the walk ends rather than streamed ahead of it.
+     */
+    data class StreamedFile(
+        val version: Int,
+        val passages: List<PassageDto>,
+        val bookmarks: List<String>,
+        val attempts: List<AttemptDto>,
+        val scheduling: Map<String, CardScheduleDto>,
+        val warnings: List<String>
+    )
+
+    /**
+     * Parses the file, handing each paper to [onPaper] the moment its array
+     * entry is read, so a caller can persist it without holding the whole
+     * bank. Returns the non-paper tail (see [StreamedFile]).
+     *
+     * The emission shape mirrors [parse]: a root `papers` array streams its
+     * entries; a bare array or a root `questions` wrapper (the DOCX shape)
+     * streams the single ephemeral paper once its questions are read. The
+     * local-image summary is accumulated as papers stream and lands in
+     * [StreamedFile.warnings] exactly as [parse] appends it.
+     */
+    fun streamPapers(input: InputStream, onPaper: (PaperDto) -> Unit): StreamedFile {
+        val warnings = mutableListOf<String>()
+        val reader = JsonPull(input)
+        val scan = LocalImageScan()
+        val emit: (PaperDto) -> Unit = { paper ->
+            scan.add(paper)
+            onPaper(paper)
+        }
+        return when (reader.peek()) {
+            JsonPull.Token.BEGIN_ARRAY -> {
+                val questions = uniqueIds(readQuestionsArray(reader, "question", warnings))
+                emit(ephemeralPaper(questions))
+                StreamedFile(1, emptyList(), emptyList(), emptyList(), emptyMap(), warnings)
+            }
+            JsonPull.Token.BEGIN_OBJECT -> {
+                val tail = walkRootObject(reader, warnings, emit)
+                tail.copy(warnings = tail.warnings + listOfNotNull(scan.warning()))
+            }
+            // Scalar/null roots carry no questions; empty file beats a crash
+            // (the import screen reports "No papers found").
+            else -> {
+                warnings.add("File root is a scalar or null, not an object or array — no papers found")
+                StreamedFile(1, emptyList(), emptyList(), emptyList(), emptyMap(), warnings)
+            }
+        }
+    }
+
     private fun readRootObject(reader: JsonPull, warnings: MutableList<String>): McqFileDto {
         val papers = mutableListOf<PaperDto>()
+        val tail = walkRootObject(reader, warnings) { papers += it }
+        return McqFileDto(
+            version = tail.version,
+            papers = papers,
+            bookmarks = tail.bookmarks,
+            attempts = tail.attempts,
+            passages = tail.passages,
+            warnings = tail.warnings.plus(
+                localImageWarning(papers)?.let { listOf(it) } ?: emptyList()
+            ),
+            scheduling = tail.scheduling
+        )
+    }
+
+    /**
+     * Walks the root object once, handing each paper to [onPaper] as it is
+     * read. Both [parse] (which collects them) and [streamPapers] (which
+     * forwards them) share this walk, so the streaming path cannot drift from
+     * the whole-file one.
+     */
+    private fun walkRootObject(
+        reader: JsonPull,
+        warnings: MutableList<String>,
+        onPaper: (PaperDto) -> Unit
+    ): StreamedFile {
         var topLevelQuestions: List<QuestionDto>? = null
         var passages = emptyList<PassageDto>()
         var attempts = emptyList<AttemptDto>()
         var bookmarks = emptyList<String>()
         var scheduling = emptyMap<String, CardScheduleDto>()
         var version = 1
+        var papersEmitted = 0
         reader.beginObject()
         while (reader.hasNext()) {
             when (reader.nextName()) {
-                "papers" -> readPapers(reader, warnings, papers)
+                "papers" -> papersEmitted += readPapers(reader, warnings, onPaper)
                 "questions" -> topLevelQuestions = uniqueIds(
                     readQuestionsArray(reader, "question", warnings)
                 ).ifEmpty { null }
@@ -196,47 +274,39 @@ object LegacyParser {
         // wrapper shape (`{"questions": [...], "passages": [...]}`). It wraps the
         // questions in the same ephemeral paper the bare-array path builds, so
         // the passage block beside it is not stranded without a home.
-        val effectivePapers = if (papers.isEmpty() && topLevelQuestions != null) {
-            listOf(ephemeralPaper(topLevelQuestions))
-        } else {
-            papers
+        if (papersEmitted == 0 && topLevelQuestions != null) {
+            onPaper(ephemeralPaper(topLevelQuestions!!))
         }
-        return McqFileDto(
-            version = version,
-            papers = effectivePapers,
-            bookmarks = bookmarks,
-            attempts = attempts,
-            passages = passages,
-            warnings = warnings.plus(
-                localImageWarning(effectivePapers)?.let { listOf(it) } ?: emptyList()
-            ),
-            scheduling = scheduling
-        )
+        return StreamedFile(version, passages, bookmarks, attempts, scheduling, warnings)
     }
 
+    /** Reads a `papers` array through [onPaper]; returns how many were emitted. */
     private fun readPapers(
         reader: JsonPull,
         warnings: MutableList<String>,
-        sink: MutableList<PaperDto>
-    ) {
+        onPaper: (PaperDto) -> Unit
+    ): Int {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
             warnings.add("File: \"papers\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
             reader.skipValue()
-            return
+            return 0
         }
         reader.beginArray()
         var index = 0
+        var emitted = 0
         while (reader.hasNext()) {
             val at = index + 1
             index = at
             try {
-                sink += readPaper(reader, warnings)
+                onPaper(readPaper(reader, warnings))
+                emitted++
             } catch (e: Exception) {
                 warnings.add("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}")
                 skipValueQuietly(reader)
             }
         }
         reader.endArray()
+        return emitted
     }
 
     private fun readPaper(reader: JsonPull, warnings: MutableList<String>): PaperDto {
@@ -536,13 +606,25 @@ object LegacyParser {
      * with the `.apkg` format instead.
      */
     private fun localImageWarning(papers: List<PaperDto>): String? {
-        var images = 0
-        var questions = 0
-        var example = ""
-        val seen = HashSet<String>()
-        // No intermediate lists: a bank can hold hundreds of thousands of
-        // questions, and the old flatMap built every one of them at once.
-        for (paper in papers) {
+        val scan = LocalImageScan()
+        for (paper in papers) scan.add(paper)
+        return scan.warning()
+    }
+
+    /**
+     * Accumulates the local-image summary one paper at a time, so a streaming
+     * parse can build the same warning without holding every paper. Dedup is
+     * by question id, exactly as the whole-file scan did.
+     */
+    private class LocalImageScan {
+        private var images = 0
+        private var questions = 0
+        private var example = ""
+        private val seen = HashSet<String>()
+
+        fun add(paper: PaperDto) {
+            // No intermediate lists: a bank can hold hundreds of thousands of
+            // questions, and a flatMap would build every one of them at once.
             for (category in paper.categories) {
                 for (q in category.questions) {
                     if (!seen.add(q.id)) continue
@@ -554,10 +636,13 @@ object LegacyParser {
                 }
             }
         }
-        if (images == 0) return null
-        return "$images image(s) in $questions question(s) point at files on the author's computer " +
-            "(e.g. '$example') and will not display after import — " +
-            "embed data URIs or import the .apkg instead"
+
+        fun warning(): String? {
+            if (images == 0) return null
+            return "$images image(s) in $questions question(s) point at files on the author's computer " +
+                "(e.g. '$example') and will not display after import — " +
+                "embed data URIs or import the .apkg instead"
+        }
     }
 
     private fun questionElementLists(q: QuestionDto): List<List<ContentElement>> =

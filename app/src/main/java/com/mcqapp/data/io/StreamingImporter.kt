@@ -75,9 +75,15 @@ class StreamingImporter(
      * Streams the file [source] opens and writes it. [source] is called exactly
      * once, on the parsing thread, and may be called again by a retry; it must
      * return a fresh stream over the same bytes.
+     *
+     * [onProgress] runs on the consuming thread after each batch with the
+     * running count of questions read, so a long import can show it is alive.
      */
-    suspend fun import(source: () -> InputStream): ImportReport = withContext(Dispatchers.IO) {
-        val session = Session(db, json, updateAnswersOnDuplicate, batchSize, overrides)
+    suspend fun import(
+        source: () -> InputStream,
+        onProgress: ((Int) -> Unit)? = null
+    ): ImportReport = withContext(Dispatchers.IO) {
+        val session = Session(db, json, updateAnswersOnDuplicate, batchSize, overrides, onProgress)
         val queue = ArrayBlockingQueue<StreamEvent>(16)
         val tailRef = AtomicReference<LegacyParser.StreamedFile>()
         val errorRef = AtomicReference<Throwable>()
@@ -165,7 +171,8 @@ class StreamingImporter(
         private val json: Json,
         private val updateAnswersOnDuplicate: Boolean,
         val batchSize: Int,
-        private val overrides: ImportOverrides
+        private val overrides: ImportOverrides,
+        private val onProgress: ((Int) -> Unit)?
     ) {
         private var newPapers = 0
         private var updatedPapers = 0
@@ -175,6 +182,7 @@ class StreamingImporter(
         private var answersRefreshed = 0
         private var restoredBookmarks = 0
         private var restoredAttempts = 0
+        private var questionsSeen = 0
 
         private var paperOpen = false
         private var paperIndex = 0
@@ -240,6 +248,8 @@ class StreamingImporter(
             val effective = effectiveCatByRawId[categoryId] ?: categoryId
             currentCategoryId = effective
             db.withTransaction { processBatch(effective, questions) }
+            questionsSeen += questions.size
+            onProgress?.invoke(questionsSeen)
         }
 
         /** Everything after the papers: passages, bookmarks, attempts. */

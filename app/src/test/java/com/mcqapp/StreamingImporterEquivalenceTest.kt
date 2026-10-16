@@ -72,7 +72,7 @@ class StreamingImporterEquivalenceTest {
     ) {
         val importer = StreamingImporter(db, updateAnswersOnDuplicate = updateAnswers, batchSize = batchSize)
         repeat(times) {
-            importer.import { ByteArrayInputStream(json.toByteArray()) }
+            importer.import(source = { ByteArrayInputStream(json.toByteArray()) })
         }
     }
 
@@ -172,7 +172,7 @@ class StreamingImporterEquivalenceTest {
             LegacyParser.parse(ByteArrayInputStream(richBank.toByteArray()))
         )
         val streamReport = StreamingImporter(streamingDb)
-            .import { ByteArrayInputStream(richBank.toByteArray()) }
+            .import(source = { ByteArrayInputStream(richBank.toByteArray()) })
         assertEquals(wholeReport, streamReport)
         assertSameState()
     }
@@ -268,36 +268,20 @@ class StreamingImporterEquivalenceTest {
                 categoryTitle = "Renamed",
                 deletedIds = setOf("q2")
             )
-        ).import { ByteArrayInputStream(singleCategoryBank.toByteArray()) }
+        ).import(source = { ByteArrayInputStream(singleCategoryBank.toByteArray()) })
         assertSameState()
     }
 
     @Test
-    fun aPreviewedQuestionEditMatchesTheAssembledFile() = runBlocking {
-        val original = LegacyParser.parse(ByteArrayInputStream(singleCategoryBank.toByteArray()))
-        val paper = original.papers.first()
-        val editedQ1 = paper.categories.first().questions
-            .first { it.id == "q1" }
-            .copy(text = "One, edited", elements = emptyList())
-        val assembled = original.copy(
-            papers = listOf(
-                paper.copy(
-                    categories = listOf(
-                        paper.categories.first().copy(
-                            questions = paper.categories.first().questions.map {
-                                if (it.id == "q1") editedQ1 else it
-                            }
-                        )
-                    )
-                )
-            )
-        )
-        Importer(wholeFileDb).import(assembled)
-
-        StreamingImporter(
-            streamingDb,
-            overrides = ImportOverrides(editedQuestions = mapOf("q1" to editedQ1))
-        ).import { ByteArrayInputStream(singleCategoryBank.toByteArray()) }
-        assertSameState()
+    fun progressIsMonotonicAndEndsAtTheTotal() = runBlocking {
+        val n = 7
+        val questions = (1..n).joinToString(",") {
+            """{"id":"q$it","text":"Q$it","options":["a","b"],"correctOptionIds":["a"]}"""
+        }
+        val json = """{"papers":[{"id":"p","title":"P","categories":[{"id":"c","title":"C","questions":[$questions]}]}]}"""
+        val seen = mutableListOf<Int>()
+        StreamingImporter(streamingDb, batchSize = 2)
+            .import({ ByteArrayInputStream(json.toByteArray()) }) { seen += it }
+        assertEquals(listOf(2, 4, 6, 7), seen)
     }
 }

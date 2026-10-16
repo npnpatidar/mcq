@@ -27,6 +27,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -499,6 +500,25 @@ fun ImportScreen(
                 }
             }
 
+            if (state.importing && state.previewTruncated) {
+                LinearProgressIndicator(
+                    progress = {
+                        if (state.totalQuestionCount <= 0) {
+                            0f
+                        } else {
+                            (state.importedQuestions.toFloat() / state.totalQuestionCount)
+                                .coerceIn(0f, 1f)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Importing ${state.importedQuestions} of ${state.totalQuestionCount} questions…",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = { viewModel.import() },
@@ -516,7 +536,9 @@ fun ImportScreen(
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
-                    if (state.previewTruncated) {
+                    if (state.importing && state.previewTruncated) {
+                        "Importing…"
+                    } else if (state.previewTruncated) {
                         "Import ${state.totalQuestionCount} questions"
                     } else if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
                         "Nothing new to import"

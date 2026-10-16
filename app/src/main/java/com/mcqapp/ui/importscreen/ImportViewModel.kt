@@ -115,6 +115,8 @@ data class ImportUiState(
     val originalFile: McqFileDto? = null,
     val importing: Boolean = false,
     val importDone: Boolean = false,
+    /** Questions read so far during a streaming import, for the progress line. */
+    val importedQuestions: Int = 0,
     /** Questions the file actually holds; larger than [questions] when a large bank was sampled. */
     val totalQuestionCount: Int = 0,
     /** True when only the first [PREVIEW_SAMPLE_SIZE] questions are held for preview. */
@@ -697,7 +699,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val source = streamSource
         if (source != null) {
             if (s.paperTitle.isBlank()) return
-            _state.update { it.copy(importing = true, importDone = false, importReport = null) }
+            _state.update {
+                it.copy(importing = true, importDone = false, importReport = null, importedQuestions = 0)
+            }
             viewModelScope.launch {
                 try {
                     val currentIds = s.questions.mapTo(HashSet()) { it.id }
@@ -722,7 +726,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                             repository.db(),
                             updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
                             overrides = overrides
-                        ).import(source)
+                        ).import(source) { seen ->
+                            _state.update { it.copy(importedQuestions = seen) }
+                        }
                     }
                     Logger.i("IMPORTVM", "Imported (streamed): ${report.newQuestions} new, " +
                         "${report.updatedQuestions} updated, ${report.duplicateQuestions} duplicates")

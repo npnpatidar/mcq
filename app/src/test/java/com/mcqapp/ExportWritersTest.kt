@@ -6,7 +6,9 @@ import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
+import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -167,6 +169,86 @@ class ExportWritersTest {
         // question image and identical option image dedupe to one file
         assertEquals(1, entries.keys.count { it.startsWith("images/") })
         assertTrue(entries[imgEntry]!!.contentEquals(raw))
+    }
+
+    private fun dataUri(mime: String, raw: ByteArray) =
+        "data:$mime;base64," + java.util.Base64.getEncoder().encodeToString(raw)
+
+    private fun unzip(bytes: ByteArray): Map<String, ByteArray> {
+        val entries = LinkedHashMap<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                entries[entry.name] = zip.readBytes()
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        return entries
+    }
+
+    /**
+     * Nearly all of this app's images are blocks inside content elements, not
+     * the legacy per-row `image` field. The writer used to walk only the legacy
+     * fields, so those images stayed inline as data URIs in paper.json and the
+     * images/ folder came out empty.
+     */
+    @Test
+    fun zipMovesImagesInsideElementsIntoTheFolder() {
+        val stem = ByteArray(16) { it.toByte() }
+        val option = ByteArray(16) { (it + 1).toByte() }
+        val explanation = ByteArray(16) { (it + 2).toByte() }
+        val passage = ByteArray(16) { (it + 3).toByte() }
+        val q = QuestionDto(
+            id = "q1",
+            elements = listOf(
+                ContentElement.TextElement("Read this"),
+                ContentElement.ImageElement(dataUri("image/png", stem))
+            ),
+            options = listOf(
+                OptionDto(
+                    id = "a",
+                    elements = listOf(ContentElement.ImageElement(dataUri("image/gif", option)))
+                ),
+                OptionDto(id = "b", text = "Beta")
+            ),
+            correctOptionIds = listOf("b"),
+            explanationElements = listOf(
+                ContentElement.ImageElement(dataUri("image/jpeg", explanation))
+            )
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q))),
+            passages = listOf(
+                PassageDto(
+                    id = "passage-1",
+                    title = "Reading",
+                    elements = listOf(ContentElement.ImageElement(dataUri("image/png", passage)))
+                )
+            )
+        )
+
+        val entries = unzip(ZipPaperWriter.paperToZipBytes(paper))
+        val json = entries.getValue("paper.json").toString(Charsets.UTF_8)
+        val images = entries.filterKeys { it.startsWith("images/") }
+
+        assertFalse("an element image is still inline: $json", json.contains("data:image"))
+        // One file per image, its bytes intact, and the JSON refers to each
+        // by a relative path (a passage is referenced twice — by the paper and
+        // by the top-level list — so count distinct references, not mentions).
+        assertEquals(4, images.size)
+        assertEquals(
+            4,
+            Regex("images/img\\d{3}\\.[a-z]+").findAll(json).map { it.value }.toSet().size
+        )
+        listOf(stem, option, explanation, passage).forEach { raw ->
+            assertTrue(
+                "an element image never reached images/",
+                images.values.any { it.contentEquals(raw) }
+            )
+        }
     }
 
     @Test

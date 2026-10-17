@@ -79,8 +79,6 @@ data class PassagesUiState(
     val memberCounts: Map<String, Int> = emptyMap(),
     /** The one passage whose member list is open; null when none is. */
     val expandedId: String? = null,
-    /** The open passage's member ids in list order, for the editor queue. */
-    val expandedMemberIds: List<String> = emptyList(),
     val papers: List<com.mcqapp.domain.Paper> = emptyList()
 )
 
@@ -135,22 +133,11 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Opens (or closes) one passage's member list. Only one is open at a time
-     * so a single pager can back the rows; the id list for Prev/Next is small
-     * and fetched alongside.
+     * so a single pager can back the rows.
      */
     fun setExpanded(passageId: String?) {
-        _state.update {
-            it.copy(expandedId = passageId, expandedMemberIds = emptyList())
-        }
+        _state.update { it.copy(expandedId = passageId) }
         expandedId.value = passageId
-        if (passageId != null) {
-            viewModelScope.launch {
-                val ids = repository.getPassageMemberIds(passageId)
-                _state.update {
-                    if (it.expandedId == passageId) it.copy(expandedMemberIds = ids) else it
-                }
-            }
-        }
     }
 
     fun delete(passageId: String, onRefused: (Int) -> Unit) {
@@ -336,10 +323,16 @@ fun PassagesScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            EditorSession.start(state.expandedMemberIds, index)
+                                            // The question in its paper, focused:
+                                            // the same arrival a search hit gets.
+                                            // The member's own paper, not the
+                                            // passage's, in case a question ever
+                                            // sits in another category's paper.
+                                            val memberPaperId =
+                                                paperByCategoryId[member.categoryId]?.id ?: paperId
                                             navController.navigate(
-                                                com.mcqapp.ui.navigation.editorRoute(
-                                                    member.id, paperId, member.categoryId
+                                                com.mcqapp.ui.navigation.browseRoute(
+                                                    memberPaperId, member.id
                                                 )
                                             )
                                         }

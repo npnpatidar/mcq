@@ -213,17 +213,22 @@ interface QuestionDao {
     suspend fun getBookmarkedQuestionsPage(offset: Int, limit: Int): List<QuestionEntity>
 
     /**
-     * The scheduling-relevant columns only — no text, elements, image or
-     * options. Lists that order a paper (study pools, test sessions, the
-     * browse list) work off these; the question body is fetched by id for
-     * the one row on screen, so a 169k-question paper never materialises
-     * its full rows anywhere.
+     * What a list row needs and nothing more: identity and order, the content
+     * hash, a flattened preview of the stem, and the answer-key count — never
+     * elements, image or options. Lists that order a paper (study pools, test
+     * sessions, the browse list) work off these; the question body is fetched
+     * by id for the one row on screen, so a 169k-question paper never
+     * materialises its full rows anywhere.
+     *
+     * The preview is `searchText`, the flattened visible text — the `text`
+     * column holds elements JSON, which is for the row reader, not for a row
+     * preview (a passage's member list rendered it verbatim).
      *
      * Same (sortOrder, title) order as [getByCategories].
      */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
-            "questions.contentHash, questions.text, questions.explanation, " +
+            "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
@@ -255,7 +260,7 @@ interface QuestionDao {
     /** Observation variant of [getRefsByCategories]: list surfaces re-emit. */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
-            "questions.contentHash, questions.text, questions.explanation, " +
+            "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
@@ -283,7 +288,7 @@ interface QuestionDao {
      */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
-            "questions.contentHash, questions.text, questions.explanation, " +
+            "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
@@ -317,7 +322,7 @@ interface QuestionDao {
      * the paper-wide list.
      */
     @Query(
-        "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
+        "SELECT id, categoryId, passageId, contentHash, searchText AS text, explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions WHERE categoryId = :categoryId " +
             "ORDER BY sortOrder, rowid"
@@ -345,7 +350,7 @@ interface QuestionDao {
 
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
-            "questions.contentHash, questions.text, questions.explanation, " +
+            "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
@@ -361,7 +366,7 @@ interface QuestionDao {
      */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
-            "questions.contentHash, questions.text, questions.explanation, " +
+            "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
@@ -480,14 +485,14 @@ interface QuestionDao {
     ): Int
 
     @Query(
-        "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
+        "SELECT id, categoryId, passageId, contentHash, searchText AS text, explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions WHERE id IN (:ids)"
     )
     suspend fun getRefsByIds(ids: List<String>): List<QuestionRef>
 
     @Query(
-        "SELECT id, categoryId, passageId, contentHash, text, explanation, " +
+        "SELECT id, categoryId, passageId, contentHash, searchText AS text, explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions WHERE id = :id"
     )
@@ -1222,7 +1227,11 @@ data class QuestionRef(
     val categoryId: String,
     val passageId: String? = null,
     val contentHash: String = "",
-    /** Flattened stem: the preview a list row shows without loading content. */
+    /**
+     * Flattened preview of the stem, for a list row. The ref queries select
+     * `searchText`; the `text` column holds elements JSON and must not be
+     * rendered as if it were a stem.
+     */
     val text: String = "",
     val explanation: String = "",
     val answerKeyCount: Int = 0

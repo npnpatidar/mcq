@@ -247,9 +247,12 @@ order, filters and reorder semantics match today's behaviour.
 - `refs` state still contains `text` + `explanation` stems for the *whole*
   paper (`TestUiState.refs`). At 250k this is a significant retained string
   set, re-copied on every `_state.update` that touches `refs`.
-- `TestSnapshot.persistProgress` writes the whole `questionIds` list (plus
-  selections) as JSON into DataStore on every answer toggle/reveal/flag. At
-  250k, each write is a multi-MB JSON serialisation + DataStore commit.
+- `TestSnapshot.persistProgress` no longer serialises the paper's `questionIds`
+  — it stores the shuffle and drill seeds and rebuilds the order — so a write is
+  proportional to the *answered* part (`selections`, `revealed`, `flagged`,
+  `dwellSeconds`), not to the paper. Re-checked against `TestViewModel.kt`
+  (`questionIds = emptyList()`); a session answering hundreds of thousands of
+  questions in one sitting is still an O(answered) JSON rewrite per action.
 - `openAnswerReview` accumulates `reviewRows` for the entire session (only
   rows, in batches — good — but the final list is full-session-sized and a
   giant opened dialog).

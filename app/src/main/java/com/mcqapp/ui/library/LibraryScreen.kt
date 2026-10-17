@@ -219,20 +219,34 @@ fun LibraryScreen(
                     viewModel.showError("Could not read the file.")
                     return@launch
                 }
-                if (com.mcqapp.data.docx.isDocxArchive(bytes)) {
-                    Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
-                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
-                    // The file name becomes the paper title (the document rarely
-                    // names its own paper). The provider's display name, not the
-                    // opaque row id a content Uri carries in lastPathSegment.
-                    com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
-                        context.contentResolver.displayName(picked)
-                    navController.navigate("import/direct")
-                } else {
-                    // The bytes are already in hand; hand them over rather than
-                    // reading the same archive a second time.
-                    val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
-                    viewModel.importAnkiPackage(title) { bytes }
+                when (classifyPickedArchive(bytes)) {
+                    PickedArchive.DOCX -> {
+                        Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
+                        com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
+                        // The file name becomes the paper title (the document rarely
+                        // names its own paper). The provider's display name, not the
+                        // opaque row id a content Uri carries in lastPathSegment.
+                        com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
+                            context.contentResolver.displayName(picked)
+                        navController.navigate("import/direct")
+                    }
+                    PickedArchive.BACKUP -> {
+                        // Restore is the reverse of export: it replaces the whole
+                        // library. Import only adds papers, so a backup cannot come
+                        // through this button without either losing the papers,
+                        // schedules and history behind paper 1 or wiping silently.
+                        Logger.i("LIB", "picked library backup: not an import")
+                        viewModel.showError(
+                            "This is a library backup, not a question bank. Restore it " +
+                                "from Settings → ${context.getString(R.string.restore_backup)}."
+                        )
+                    }
+                    PickedArchive.OTHER -> {
+                        // The bytes are already in hand; hand them over rather than
+                        // reading the same archive a second time.
+                        val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
+                        viewModel.importAnkiPackage(title) { bytes }
+                    }
                 }
                 return@launch
             }

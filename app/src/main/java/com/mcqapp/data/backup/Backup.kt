@@ -17,6 +17,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -69,6 +71,13 @@ object McqBackupFormat {
      * can genuinely be large stream and have their own caps.
      */
     private const val MAX_PART_BYTES: Long = 8L * 1024 * 1024
+
+    /**
+     * Largest member [isBackupArchive] will inflate while hunting for the
+     * manifest. Past this the archive is somebody else's, and saying so is
+     * cheaper than decompressing it to find out.
+     */
+    private const val SNIFFABLE_ENTRY_BYTES: Long = 1024L * 1024
 
     @Serializable
     data class Manifest(
@@ -459,6 +468,68 @@ object McqBackupFormat {
     }
 
     /** Zip bytes to a decoded [Backup]; every part must be present and valid. */
+    /**
+     * Whether [bytes] is one of this app's backup archives: a zip holding our
+     * `manifest.json`.
+     *
+     * Only the manifest is read — never the bank, the study table or an image
+     * — because this runs on a file the user has just picked, to say what they
+     * picked. A backup is restored from Settings, not imported as a bank; the
+     * picker used to hand one to the Anki reader, which answered with an
+     * Anki-shaped error about a file that was never an Anki package.
+     */
+    fun isBackupArchive(bytes: ByteArray): Boolean {
+        if (bytes.size < 4 ||
+            bytes[0] != 'P'.code.toByte() ||
+            bytes[1] != 'K'.code.toByte()
+        ) {
+            return false
+        }
+        return try {
+            ZipInputStream(bytes.inputStream()).use { zip ->
+                // Our writer lays the manifest out first, so this is one entry
+                // in practice. A re-pack — a file manager's "compress" may
+                // prepend its own notes — can move it, so the scan keeps
+                // looking, but only past small entries: a large member means
+                // this is somebody else's archive, and inflating it to hunt for
+                // a manifest that is not there is work a pick must not do.
+                var checked = 0
+                var entry = zip.nextEntry
+                while (entry != null && checked < 12) {
+                    if (!entry.isDirectory && entry.name == MANIFEST) {
+                        val text = readBounded(zip, limit = MAX_PART_BYTES)
+                            .toString(Charsets.UTF_8)
+                        // Read the field as it was written rather than through
+                        // the serializer: [Manifest] is deliberately lenient
+                        // (unknown keys ignored, `format` defaulted to ours),
+                        // so decoding would call any JSON object a backup.
+                        val named = try {
+                            json.parseToJsonElement(text)
+                                .jsonObject["format"]
+                                ?.jsonPrimitive
+                                ?.content
+                        } catch (e: Exception) {
+                            null
+                        }
+                        return named == FORMAT
+                    }
+                    // An unknown size (-1) counts as small: skipping it is
+                    // bounded by the entry count either way.
+                    if (!entry.isDirectory && entry.size > SNIFFABLE_ENTRY_BYTES) return false
+                    zip.closeEntry()
+                    entry = zip.nextEntry
+                    checked++
+                }
+                false
+            }
+        } catch (e: Exception) {
+            // Unreadable, truncated, or not JSON where the manifest should be:
+            // all of them mean "not one of ours" to a caller deciding what to
+            // do with a file.
+            false
+        }
+    }
+
     fun read(bytes: ByteArray): Backup {
         val entries = try {
             SafeZip.unzip(bytes)

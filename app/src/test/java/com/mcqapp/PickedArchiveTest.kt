@@ -3,12 +3,14 @@ package com.mcqapp
 import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.ui.library.PickedArchive
+import com.mcqapp.ui.library.backupNotABankMessage
 import com.mcqapp.ui.library.classifyPickedArchive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -176,5 +178,47 @@ class PickedArchiveTest {
             McqBackupFormat.CONTENT to "{}".toByteArray()
         )
         assertEquals(PickedArchive.BACKUP, classifyPickedArchive(newer))
+    }
+
+    /**
+     * The screen checks the backup question on the bounded prefix it reads
+     * first, because a backup with images in it is often over the size a whole
+     * import is allowed to be — and "too large to import" is the wrong thing
+     * to tell someone who picked a file that was never meant to be imported.
+     * The manifest is the archive's first entry, so the prefix always holds it.
+     */
+    @Test
+    fun anOverLargeBackupIsStillRecognisedFromItsPrefix() {
+        val manifest = partsOf(backup()).getValue(McqBackupFormat.MANIFEST)
+        val unmovable = ByteArray(5 * 1024 * 1024).also { java.util.Random(1).nextBytes(it) }
+        val big = zipOf(
+            McqBackupFormat.MANIFEST to manifest,
+            "an-image-inside-the-bank.bin" to unmovable
+        )
+        val prefix = com.mcqapp.util.readPrefix(
+            big.inputStream(),
+            com.mcqapp.ui.importscreen.JSON_STREAM_THRESHOLD_BYTES.toLong()
+        )
+        assertTrue("prefix must be cut short for this test to mean anything", prefix.truncated)
+        assertTrue(McqBackupFormat.isBackupArchive(prefix.bytes))
+        assertEquals(PickedArchive.BACKUP, classifyPickedArchive(prefix.bytes))
+    }
+
+    /**
+     * The refusal names the Settings button in the words that are on that
+     * screen. The message is composed in Kotlin — it travels through the shared
+     * error dialog as a string, which StringResourceUsageTest (rightly) does
+     * not accept as a rendered sink — so the name is pinned to strings.xml
+     * here instead, and drift fails the build rather than misleading a user.
+     */
+    @Test
+    fun theRefusalNamesTheButtonThatCanRestoreIt() {
+        val xml = File("src/main/res/values/strings.xml").readText()
+        val label = Regex("""<string name="restore_backup">(.*?)</string>""")
+            .find(xml)?.groupValues?.get(1)
+            ?: error("restore_backup is not defined in strings.xml")
+        val message = backupNotABankMessage()
+        assertTrue("the refusal must point at Settings: $message", message.contains("Settings"))
+        assertTrue("the refusal must name the button '$label': $message", message.contains(label))
     }
 }

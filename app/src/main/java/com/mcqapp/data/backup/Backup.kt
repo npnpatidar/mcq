@@ -467,7 +467,6 @@ object McqBackupFormat {
         w.write("}")
     }
 
-    /** Zip bytes to a decoded [Backup]; every part must be present and valid. */
     /**
      * Whether [bytes] is one of this app's backup archives: a zip holding our
      * `manifest.json`.
@@ -530,6 +529,7 @@ object McqBackupFormat {
         }
     }
 
+    /** Zip bytes to a decoded [Backup]; every part must be present and valid. */
     fun read(bytes: ByteArray): Backup {
         val entries = try {
             SafeZip.unzip(bytes)

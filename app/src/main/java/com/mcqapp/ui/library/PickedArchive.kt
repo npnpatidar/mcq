@@ -32,3 +32,19 @@ internal fun classifyPickedArchive(bytes: ByteArray): PickedArchive = when {
     McqBackupFormat.isBackupArchive(bytes) -> PickedArchive.BACKUP
     else -> PickedArchive.OTHER
 }
+
+/**
+ * What to tell someone who picked a backup for import. It names the button in
+ * Settings that can actually restore it, so the message leads somewhere
+ * instead of only refusing.
+ *
+ * Composed here, like the import-size message, because it travels through the
+ * shared error dialog as a string: a `stringResource(...)` has to sit in a
+ * `Text`-like sink (StringResourceUsageTest enforces it, after a regression
+ * that blanked every label), which a message built for a ViewModel is not.
+ * The button's name is therefore literal, and [PickedArchiveTest] pins it to
+ * `restore_backup` in strings.xml so the two cannot drift apart unnoticed.
+ */
+internal fun backupNotABankMessage(): String =
+    "This is a library backup, not a question bank. " +
+        "Restore it from Settings → Restore backup."

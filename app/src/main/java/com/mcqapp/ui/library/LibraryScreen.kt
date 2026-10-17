@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.R
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
@@ -155,10 +156,6 @@ fun LibraryScreen(
         ExportFormat.DOCX -> exportDocxLauncher
     }
 
-    // Read during composition, not from the picker callback: a resource
-    // looked up off LocalContext.current there is not configuration-aware
-    // (lint is right), and this label is shown by the import launcher below.
-    val restoreBackupLabel = stringResource(R.string.restore_backup)
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -198,6 +195,17 @@ fun LibraryScreen(
                 prefix.bytes[1] == 'K'.code.toByte()
 
             if (isZip) {
+                // The backup check runs on the prefix, before the whole
+                // archive is read. A backup says what it is in its first few
+                // hundred bytes, and a backup with images in it is often over
+                // the size cap — "too large to import" would be the wrong
+                // thing to tell someone who picked a file that was never
+                // meant to be imported at all.
+                if (McqBackupFormat.isBackupArchive(prefix.bytes)) {
+                    Logger.i("LIB", "picked library backup: not an import")
+                    viewModel.showError(backupNotABankMessage())
+                    return@launch
+                }
                 // Zips are read whole; the images inside make them large, so
                 // the cap stays and tells the user what to do about it.
                 val bytes = try {
@@ -235,15 +243,12 @@ fun LibraryScreen(
                         navController.navigate("import/direct")
                     }
                     PickedArchive.BACKUP -> {
-                        // Restore is the reverse of export: it replaces the whole
-                        // library. Import only adds papers, so a backup cannot come
-                        // through this button without either losing the papers,
-                        // schedules and history behind paper 1 or wiping silently.
+                        // Fallback for an archive whose manifest the prefix did
+                        // not reach (a re-pack). Restore is the reverse of
+                        // export: it replaces the whole library, while import
+                        // only adds papers.
                         Logger.i("LIB", "picked library backup: not an import")
-                        viewModel.showError(
-                            "This is a library backup, not a question bank. Restore it " +
-                                "from Settings → $restoreBackupLabel."
-                        )
+                        viewModel.showError(backupNotABankMessage())
                     }
                     PickedArchive.OTHER -> {
                         // The bytes are already in hand; hand them over rather than

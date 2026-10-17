@@ -810,15 +810,56 @@ over `searchText` (§4.5 + F4).
   `questions(categoryId, sortOrder)` make it an index walk that stops after the
   page (5 ms); the standalone `questions(categoryId)` index is subsumed by the
   new one and dropped (migration 15→16).
+- **Browse evicted-row reload** — the window loader kept a content hash for
+  every card it had ever read but pruned only the cards, so a row that scrolled
+  away and came back answered "hash unchanged, nothing to read" with its card
+  gone: the row sat showing its stem and no options. Presence is now checked as
+  well as the hash, the hash table is pruned with the cards it describes (it
+  grew one entry per row ever scrolled past), the stand-in is card-shaped, and
+  a row on screen without its card asks for it directly (`requestRow`), which
+  covers a landing between two windows whose row sets are equal (commit
+  `99d353a`).
+- **Study/Library: whole-paper model, and a row written per unstudied
+  question** (§4.4, §5.1). The library asks for the badge counts **once per
+  paper**, and each call resolved a `CardState` for every question of that
+  paper — ids, hashes and states, several hundred MB at a million questions —
+  and **wrote a `card_state` row for every question it had not seen**, so
+  merely opening the library wrote a million rows before it could show a
+  badge. The same model was rebuilt behind every study pull and the drill.
+  Everything is now read from the rows that describe study history:
+  - the badge and the eligibility read are one aggregate query
+    (`countsForPaper`) whose predicates are `Study.pools`': a card is new while
+    it has no row, its row is still new, *or* its stored hash no longer matches
+    its question (an edit reschedules it, so counting it as due first would
+    advertise a card the pull then resets); a due leech counts as a leech and
+    never also as due; the join through questions drops a schedule whose
+    question is gone;
+  - the pull reads only the schedules that are **due** (`dueForPaper`, bounded
+    by the paper's study history) plus **the first** unanswered question in
+    authored order (`firstNewQuestionForPaper`), and takes the pull order from
+    `Study.pickNext` — the pool order still lives in one pure place, so the
+    badge and the session cannot disagree;
+  - the drill reads the due leeches, which are bounded by the schedules on
+    file rather than by the paper;
+  - a question nobody has studied is no longer seeded a schedule row. The
+    reset for an **edited** question is still written out (bounded by how many
+    questions were edited), so the stored row keeps matching what is served and
+    the statistics and exports stay truthful;
+  - the per-paper resolution cache and its invalidation observer are gone with
+    the model they cached.
 
 ### Open (in pain order)
 
-1. Study: whole-paper id/hash/card-state reads and a full due-set sort on every
-   card pull (§4.4).
+1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is still
+   linear in the paper — every eligible card, so a million-question paper that
+   has never been studied builds a million cards. No production path asks for it
+   (the session pulls one card at a time; the drill asks for leeches), but the
+   repository API allows it. The pull and the badge are bounded now (§8 Fixed).
 2. Test session: all 1M refs in state, whole-list shuffle, two full question
    scans at submit (§4.2).
 3. Exports that build the document in memory: HTML, DOCX (body XML + hidden
-   payload + all media), JSON_INLINE, Anki media pool (F5).
+   payload + all media), JSON_INLINE, Anki media pool (F5). An export also still
+   reads every `card_state` row of the paper in one list.
 4. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
    `observeCategoryCounts` for library badges (F2/F3).
 5. Search FTS (§4.5 + F4) — the only way "instant" becomes true.

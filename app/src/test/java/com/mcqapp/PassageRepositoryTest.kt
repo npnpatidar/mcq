@@ -8,6 +8,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.ReviewGrade
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -218,17 +219,21 @@ class PassageRepositoryTest {
     fun reassigningAPassageResetsTheCardHash() = runBlocking {
         val pid = repository.savePassage(Passage(id = "", categoryId = "c1", title = "P"))
         repository.assignQuestionsToPassage(listOf("q1"), pid)
-        // Seed a card at the assigned hash.
-        repository.getStudyCounts("p1")
-        val hashAtP = db.cardStateDao().get("p1", "q1")!!.contentHash
-        assertEquals(hashAtP, db.questionDao().getById("q1")!!.contentHash)
+        val hashAtP = db.questionDao().getById("q1")!!.contentHash
+        // The card is studied while it sits in the passage, so its schedule
+        // stores the hash that includes the passage. Studying it is what gives
+        // the card a schedule to reset: reading the counts no longer writes one,
+        // because a badge read must not seed a row per question of the paper.
+        repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1000L)
+        assertEquals(hashAtP, db.cardStateDao().get("p1", "q1")!!.contentHash)
         // Unassign: the stored hash no longer matches, so the next resolve resets.
         repository.unassignQuestionsFromPassage(listOf("q1"))
         assertEquals(null, db.questionDao().getById("q1")!!.passageId)
         assertTrue(db.questionDao().getById("q1")!!.contentHash != hashAtP)
-        repository.getStudyCounts("p1")
+        repository.getStudyQueue("p1")
         val after = db.cardStateDao().get("p1", "q1")!!
         assertEquals(db.questionDao().getById("q1")!!.contentHash, after.contentHash)
+        assertEquals("the reset drops the progress that described other text", 0, after.reps)
     }
 
     @Test

@@ -8,10 +8,13 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.ReviewGrade
+import com.mcqapp.domain.StudyReason
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -21,14 +24,18 @@ import org.robolectric.annotation.Config
 
 /**
  * The library re-reads the study counts on every resume, so they are counted
- * from ids and content hashes rather than by loading every question with its
- * options and answer key.
+ * from the questions and their schedules in SQL rather than by resolving every
+ * question's card state — a model of a million-question paper is hundreds of
+ * megabytes, and resolving it also used to write a schedule row for every
+ * question it had not seen.
  *
- * The risk in doing that is the hash. Scheduling compares a stored card's hash
- * against the question's to notice an edit and reschedule from scratch, so a
- * hash computed differently here would make every card look edited and reset it
- * — on every resume, for every question, silently. These tests pin the hash to
- * the same value the question path produces.
+ * Two things have to stay true for that to be safe. Reading the badge must not
+ * write anything, so a browse through the library cannot leave a million rows
+ * behind. And scheduling still compares a stored card's hash against the
+ * question's to notice an edit and reschedule from scratch, so the hash the
+ * grading path writes has to be the one the question path derives — a
+ * different one would make every card look edited and reset it, on every
+ * resume, for every question, silently.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -63,60 +70,63 @@ class StudyCountsInputTest {
         }
 
     @Test
-    fun countingSchedulesTheSameHashTheQuestionPathWould() = runBlocking {
+    fun gradingStoresTheHashTheQuestionPathWould() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "root", "Root")
         val childId = repository.addCategory("p1", "Child", parentId = "root")
         repository.saveQuestion(question("q1", "root", "First question?"))
         repository.saveQuestion(question("q2", childId, "Second question?"))
 
-        repository.getStudyCounts("p1")
+        repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1_000L)
 
-        val stored = db.cardStateDao().getByPaper("p1").associateBy { it.questionId }
-        assertEquals("both questions, nested one included", 2, stored.size)
-        assertEquals(expectedHash("q1"), stored.getValue("q1").contentHash)
-        assertEquals(expectedHash("q2"), stored.getValue("q2").contentHash)
+        val stored = db.cardStateDao().get("p1", "q1")
+        assertNotNull("grading writes the card's schedule", stored)
+        assertEquals(
+            "a drifting hash would make the card look edited on every resume",
+            expectedHash("q1"),
+            stored!!.contentHash
+        )
     }
 
     @Test
-    fun countingTwiceDoesNotRescheduleAnything() = runBlocking {
+    fun readingTheBadgeWritesNoSchedules() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", "c1", "Stable question?"))
 
         val first = repository.getStudyCounts("p1")
-        val rowsAfterFirst = db.cardStateDao().getByPaper("p1")
         val second = repository.getStudyCounts("p1")
-        val rowsAfterSecond = db.cardStateDao().getByPaper("p1")
 
         assertEquals("counts must be stable", first, second)
-        assertEquals(
-            "a drifting hash would reseed the card on every resume",
-            rowsAfterFirst,
-            rowsAfterSecond
+        assertEquals("nobody has been studied yet, so it is new", 1, first.fresh)
+        assertTrue(
+            "a badge read must not write a schedule for a question nobody studied",
+            db.cardStateDao().getByPaper("p1").isEmpty()
         )
     }
 
     @Test
-    fun anEditedQuestionIsStillRescheduledFromScratch() = runBlocking {
+    fun anEditedQuestionIsNewAgainUntilItIsGradedOnceMore() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", "c1", "Before the edit?"))
-        repository.getStudyCounts("p1")
-        val original = db.cardStateDao().getByPaper("p1").single()
+        repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1_000L)
+        // Scheduled into the future by the grade, so with no edit it is neither
+        // due nor new.
+        assertEquals(0, repository.getStudyCounts("p1", now = 1_000L).fresh)
 
         repository.saveQuestion(question("q1", "c1", "After the edit?"))
-        repository.getStudyCounts("p1")
-        val afterEdit = db.cardStateDao().getByPaper("p1").single()
 
         assertEquals(
-            "the new content hash must be persisted",
-            expectedHash("q1"),
-            afterEdit.contentHash
+            "the stored hash described other text, so the card is new again",
+            1,
+            repository.getStudyCounts("p1", now = 1_000L).fresh
         )
-        assertTrue(
-            "the old hash described different text, so the card must reset",
-            original.contentHash != afterEdit.contentHash
+        val card = repository.getNextStudyCard("p1", now = 1_000L)
+        assertNotNull("an edited card is offered again", card)
+        assertEquals("q1", card!!.questionId)
+        assertEquals(
+            "and it is offered as new material, exactly as a reset row would",
+            StudyReason.NEW,
+            card.reason
         )
-        // A reset card is new again, so it shows up as fresh.
-        assertEquals(1, repository.getStudyCounts("p1").fresh)
     }
 
     @Test

@@ -416,13 +416,32 @@ object Study {
         reviewsSinceNew: Int = 0
     ): StudyCard? {
         val pools = pools(scheduler, questionIds, states, now, introduceNewCards)
-        pools.learning.firstOrNull()?.let { return it }
+        return pickNext(pools.learning, pools.reviews, pools.fresh.firstOrNull(), studyMode, reviewsSinceNew)
+    }
+
+    /**
+     * [selectNext] over pools whose candidates were already narrowed: the
+     * learning and review pools of the stored schedules, and the *first* new
+     * card in authored order.
+     *
+     * A caller that cannot hold a whole-paper model reads those three from the
+     * database instead of building every question's card — and the pull order,
+     * which is the part worth having in one place, is this one.
+     */
+    fun pickNext(
+        learning: List<StudyCard>,
+        reviews: List<StudyCard>,
+        freshFirst: StudyCard?,
+        studyMode: StudyMode = StudyMode.MEMORY_FIRST,
+        reviewsSinceNew: Int = 0
+    ): StudyCard? {
+        learning.firstOrNull()?.let { return it }
         val exploreNew = studyMode == StudyMode.EXPLORE_NEW &&
             reviewsSinceNew >= EXPLORE_NEW_EVERY
         return when {
-            exploreNew && pools.fresh.isNotEmpty() -> pools.fresh.first()
-            pools.reviews.isNotEmpty() -> pools.reviews.first()
-            pools.fresh.isNotEmpty() -> pools.fresh.first()
+            exploreNew && freshFirst != null -> freshFirst
+            reviews.isNotEmpty() -> reviews.first()
+            freshFirst != null -> freshFirst
             else -> null
         }
     }

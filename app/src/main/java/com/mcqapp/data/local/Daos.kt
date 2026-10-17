@@ -261,6 +261,60 @@ interface QuestionDao {
     @Query("SELECT contentHash FROM questions WHERE id = :id")
     suspend fun getHashById(id: String): String?
 
+    /** How many questions the paper has, nested categories included. */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId"
+    )
+    suspend fun countForPaper(paperId: String): Int
+
+    /**
+     * The first question of the paper a session would serve as *new*, in the
+     * authored order [getHashInputsByCategories] uses.
+     *
+     * A question is new in the three cases [Study.pools] treats as fresh: it
+     * has no schedule at all, its schedule is still new (no reps, no due
+     * date), or its schedule's content hash no longer matches the question's —
+     * an edited question is scheduled from scratch, which makes it new again.
+     *
+     * The session serves new cards one at a time, so the pull reads the first
+     * of them; a paper of a million questions must not be materialised to hand
+     * over one card.
+     */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "LEFT JOIN card_state ON card_state.questionId = questions.id " +
+            "  AND card_state.paperId = categories.paperId " +
+            "WHERE categories.paperId = :paperId " +
+            "AND (card_state.questionId IS NULL " +
+            "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
+            "  OR card_state.contentHash != questions.contentHash) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid LIMIT 1"
+    )
+    suspend fun firstNewQuestionForPaper(paperId: String): String?
+
+    /**
+     * Every question of the paper a session would serve as new, in authored
+     * order — the full study queue's fresh pool. Linear in the paper by
+     * definition; the pull uses [firstNewQuestionForPaper] instead.
+     */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "LEFT JOIN card_state ON card_state.questionId = questions.id " +
+            "  AND card_state.paperId = categories.paperId " +
+            "WHERE categories.paperId = :paperId " +
+            "AND (card_state.questionId IS NULL " +
+            "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
+            "  OR card_state.contentHash != questions.contentHash) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun newQuestionsForPaper(paperId: String): List<String>
+
     /** Observation variant of [getRefsByCategories]: list surfaces re-emit. */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
@@ -825,6 +879,20 @@ interface CorrectAnswerDao {
     suspend fun deleteByQuestion(questionId: String)
 }
 
+/**
+ * A paper's schedules, counted in SQL by [CardStateDao.countsForPaper].
+ * `newish` is the row side of the fresh pool: rows the session would serve as
+ * new; `storedRows` counts the paper's rows so the caller can subtract them
+ * from the paper's question count to get the questions with no schedule yet.
+ */
+data class StudyPopulation(
+    val learning: Int,
+    val due: Int,
+    val leeches: Int,
+    val newish: Int,
+    val storedRows: Int
+)
+
 @Dao
 interface CardStateDao {
     @Query("SELECT * FROM card_state WHERE paperId = :paperId")
@@ -870,6 +938,80 @@ interface CardStateDao {
 
     @Query("SELECT COUNT(*) FROM card_state WHERE paperId = :paperId")
     suspend fun countByPaper(paperId: String): Int
+
+    /**
+     * A paper's schedules counted by pool, without resolving a card state per
+     * question. The predicates are [Study.pools]': a card is new while it has
+     * no schedule, its schedule is still new (no reps, no due date), or its
+     * stored hash no longer matches its question — an edited question is
+     * scheduled from scratch, so counting it as due first would advertise a
+     * card the pull then resets. A due leech is a leech and never also due,
+     * the way [StudyEligibility] splits them. The join through questions drops
+     * a schedule whose question is gone, so a deleted question stops counting.
+     *
+     * `paperId` is the index key here; the categories join only proves the
+     * question still belongs to the paper. A paper with no rows yields one
+     * all-zero row (the COALESCEs keep the sums from coming back null).
+     */
+    @Query(
+        "SELECT " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash " +
+            "  AND cs.cardState IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
+            "  THEN 1 ELSE 0 END), 0) AS learning, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash " +
+            "  AND cs.cardState NOT IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
+            "  THEN 1 ELSE 0 END), 0) AS due, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash AND cs.leech = 1 " +
+            "  THEN 1 ELSE 0 END), 0) AS leeches, " +
+            "COALESCE(SUM(CASE WHEN (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  OR cs.contentHash != q.contentHash THEN 1 ELSE 0 END), 0) AS newish, " +
+            "COUNT(*) AS storedRows " +
+            "FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId"
+    )
+    suspend fun countsForPaper(paperId: String, now: Long): StudyPopulation
+
+    /**
+     * The paper's schedules whose stored hash no longer matches their
+     * question, with the hash it should hold. Bounded by how many questions
+     * were edited, which is why persisting the reset is affordable — it is the
+     * *unseen* questions that must not be seeded, one row per question of the
+     * paper.
+     */
+    @Query(
+        "SELECT q.id AS id, q.contentHash AS contentHash FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND cs.contentHash != q.contentHash"
+    )
+    suspend fun staleForPaper(paperId: String): List<QuestionIdHash>
+
+    /**
+     * The paper's schedules that are due now and still describe their
+     * question's current text, in authored order — the learning and review
+     * pools' source once a paper is too large to hold as a model. Rows whose
+     * hash no longer matches are left out on purpose: they are new again, and
+     * the new-question query serves them.
+     */
+    @Query(
+        "SELECT cs.* FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.contentHash = q.contentHash " +
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
+    )
+    suspend fun dueForPaper(paperId: String, now: Long): List<CardStateEntity>
 }
 
 @Dao

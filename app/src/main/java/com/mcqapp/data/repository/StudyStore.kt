@@ -3,12 +3,6 @@ package com.mcqapp.data.repository
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
-import com.mcqapp.data.local.getByCategoriesChunked
-import com.mcqapp.data.local.getForQuestionsChunked
-import com.mcqapp.data.local.getHashInputsByCategoriesChunked
-import com.mcqapp.data.io.ContentHash
-import com.mcqapp.domain.parseContentElements
-import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 
 /** Spaced repetition badges for a paper in the library list. */
@@ -21,10 +15,17 @@ data class StudyCounts(
 }
 
 /**
- * Spaced repetition: card state resolution and seeding, the study queue and
- * the library badge counts. Split out of [McqRepository]; it reads questions
+ * Spaced repetition: the study queue, the library badge counts and the
+ * schedules behind them. Split out of [McqRepository]; it reads questions
  * through [QuestionStore] and the scheduler options through [SettingsStore],
  * so the badge and the queue can never disagree about either.
+ *
+ * Every read here is scoped to the rows that describe study history — the
+ * schedules that are due, the first unanswered question — instead of
+ * resolving every question's card state. A whole-paper model costs hundreds
+ * of megabytes on a paper of a million questions, and resolving one also
+ * wrote a schedule row for every question it had not seen, so merely opening
+ * the library wrote a million rows before it could show a badge.
  */
 internal class StudyStore(
     private val db: AppDatabase,
@@ -32,72 +33,6 @@ internal class StudyStore(
     private val questions: QuestionStore,
     private val settings: SettingsStore
 ) {
-
-    /**
-     * The resolved scheduling model for one paper: the question ids (with
-     * their stored hashes for serve-time edit checks) and every card's
-     * current schedule under one config. Built once, then reused by every
-     * pull and badge read until the scheduling inputs change — the same
-     * re-read-on-write correctness today's per-call build bought, without
-     * paying a whole-paper price per graded card.
-     */
-    private class ResolvedStudy(
-        val paperId: String,
-        val config: com.mcqapp.domain.SchedulerConfig,
-        /** Authored order; the queue's fresh pool iterates this. */
-        val ids: MutableList<String>,
-        /** questionId -> content hash as of the build, for serve-time checks. */
-        val hashes: Map<String, String>,
-        /** Question's resolved schedule; grades update it in place. */
-        val states: MutableMap<String, com.mcqapp.domain.CardState>
-    )
-
-    @Volatile
-    private var resolved: ResolvedStudy? = null
-
-    init {
-        // Any write to the scheduling inputs drops the build; the next read
-        // resolves afresh. Quadra: questions carry the hashes, categories
-        // the order, card_state the schedules. Robolectric/plain-JVM stores
-        // without a tracker lose only the cache, nothing else.
-        try {
-            // Open the connection before the tracker syncs its triggers.
-            // addObserver runs its trigger sync under runBlockingUninterruptible
-            // and, when the pool still has to open the connection, that open is
-            // resumed on the caller's coroutine event loop. Constructed from
-            // inside a coroutine (a ViewModel's scope, or a test's runBlocking),
-            // that loop is the one currently blocked, so the open can never
-            // complete and the whole process wedges. With the connection
-            // already open the sync has nothing to await. This is the same
-            // moment the sync would have opened it, so it changes no I/O.
-            db.openHelper.writableDatabase
-            db.invalidationTracker.addObserver(
-                object : androidx.room.InvalidationTracker.Observer(
-                    "questions", "categories", "card_state", "papers"
-                ) {
-                    override fun onInvalidated(tables: Set<String>) {
-                        resolved = null
-                    }
-                }
-            )
-        } catch (e: Exception) {
-            Logger.w("REPO", "study resolution cache unavailable: ${e.message}")
-        }
-    }
-
-    private suspend fun resolvedFor(paperId: String): ResolvedStudy {
-        val config = settings.schedulerConfigNow()
-        resolved?.takeIf { it.paperId == paperId && it.config == config }?.let { return it }
-        val inputs = studyInputs(paperId)
-        val states = resolveStudyStates(paperId, inputs, config)
-        return ResolvedStudy(
-            paperId = paperId,
-            config = config,
-            ids = inputs.map { it.id }.toMutableList(),
-            hashes = inputs.associate { it.id to it.contentHash },
-            states = states.toMutableMap()
-        ).also { resolved = it }
-    }
 
     /** The FSRS scheduler the whole store grades and counts with. */
     private fun fsrs(config: com.mcqapp.domain.SchedulerConfig) =
@@ -153,100 +88,137 @@ internal class StudyStore(
         now: Long = System.currentTimeMillis(),
         leechesOnly: Boolean = false
     ): List<com.mcqapp.domain.StudyCard> {
-        val resolved = resolvedFor(paperId)
-        if (resolved.ids.isEmpty()) return emptyList()
-        val pools = com.mcqapp.domain.Study.pools(
-            fsrs(resolved.config),
-            resolved.ids,
-            resolved.states,
-            now,
-            resolved.config.introduceNewCards
-        )
-        val queue = pools.learning + pools.reviews + pools.fresh
+        val config = settings.schedulerConfigNow()
+        resetEdited(paperId, config)
+        val pools = poolsOf(config, dueCards(paperId, now), now)
+        if (leechesOnly) {
+            // The drill is an explicit request for problem questions, so its
+            // cards wear the leech label however they were pulled. A new card
+            // is never a leech (a leech has lapsed at least once), so the due
+            // pools are the whole of it — bounded by the schedules on file
+            // rather than by the paper, which is what makes the drill usable
+            // on a paper that has one.
+            return com.mcqapp.domain.Study.onlyLeeches(pools.learning + pools.reviews)
+                .map { it.copy(reason = com.mcqapp.domain.StudyReason.LEECH) }
+        }
+        val fresh = if (config.introduceNewCards) {
+            val scheduler = fsrs(config)
+            db.questionDao().newQuestionsForPaper(paperId).map {
+                com.mcqapp.domain.StudyCard(
+                    it,
+                    com.mcqapp.domain.StudyReason.NEW,
+                    scheduler.initial(it)
+                )
+            }
+        } else {
+            emptyList()
+        }
         Logger.i(
             "REPO",
-            "getStudyQueue($paperId): ${resolved.ids.size} questions, " +
-                "learning=${pools.learning.size} due=${pools.reviews.size} " +
-                "new=${pools.fresh.size}"
+            "getStudyQueue($paperId): learning=${pools.learning.size} " +
+                "due=${pools.reviews.size} new=${fresh.size} leechesOnly=$leechesOnly"
         )
-        return if (leechesOnly) {
-            // The drill is an explicit request for problem questions, so its
-            // cards wear the leech label however they were pulled.
-            com.mcqapp.domain.Study.onlyLeeches(queue)
-                .map { it.copy(reason = com.mcqapp.domain.StudyReason.LEECH) }
-        } else {
-            queue
-        }
+        return pools.learning + pools.reviews + fresh
     }
 
     /**
      * The card a session should pull next, or null when nothing is eligible —
      * the same pools the badge counts, so the empty state and the pull agree.
+     *
+     * The pull runs after every graded card, so it reads the schedules that
+     * are due and the first unanswered question rather than a model of the
+     * paper: the cost is the paper's study history, not its length.
      */
     suspend fun getNextStudyCard(
         paperId: String,
         reviewsSinceNew: Int = 0,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.StudyCard? {
-        // The pull runs after every graded card; the resolved model is read
-        // once and shared with the badge, so the pull neither loads option
-        // text, the answer key, nor a whole-paper card/ ref read per call.
-        val resolved = resolvedFor(paperId)
-        val config = resolved.config
-        val selected = com.mcqapp.domain.Study.selectNext(
-            fsrs(config),
-            resolved.ids,
-            resolved.states,
-            now,
+        val config = settings.schedulerConfigNow()
+        resetEdited(paperId, config)
+        val pools = poolsOf(config, dueCards(paperId, now), now)
+        return com.mcqapp.domain.Study.pickNext(
+            pools.learning,
+            pools.reviews,
+            firstNewCard(config, paperId),
             config.studyMode,
-            config.introduceNewCards,
             reviewsSinceNew
-        ) ?: return null
-        return refetchedOnServe(resolved, selected)
+        )
     }
 
     /**
-     * Serve-time checks for one card, against a single row: a vanished
-     * question leaves the model, and content edited since its schedule was
-     * written resets the card exactly as the whole-paper resolution does.
-     * Legacy shape — the reset is persisted so it is not repeated.
+     * The paper's schedules that are due now and still describe their
+     * question, in authored order. Every card the paper has already introduced
+     * is here; a row whose hash moved on is left out, because an edited
+     * question is new again and the new-card query picks it up.
      */
-    private suspend fun refetchedOnServe(
-        resolved: ResolvedStudy,
-        card: com.mcqapp.domain.StudyCard
-    ): com.mcqapp.domain.StudyCard {
-        val storedHash = db.questionDao().getHashById(card.questionId)
-        if (storedHash == null) {
-            // The question was deleted while the model was alive; a dead id
-            // must not re-serve every pull.
-            resolved.states.remove(card.questionId)
-            resolved.ids.remove(card.questionId)
-            return card
+    private suspend fun dueCards(paperId: String, now: Long): List<CardStateEntity> =
+        db.cardStateDao().dueForPaper(paperId, now)
+
+    /**
+     * Writes out the reset for questions edited since they were scheduled, so
+     * the stored row stops describing text the learner never saw and every
+     * reader of it — the statistics, an export, the badge's own count — agrees
+     * with what the session serves. Bounded by how many questions were edited,
+     * which is what makes persisting it affordable.
+     *
+     * A question nobody has studied is deliberately *not* seeded a row: that is
+     * one row per question of the paper, which is what made a badge read write
+     * a million rows.
+     */
+    private suspend fun resetEdited(
+        paperId: String,
+        config: com.mcqapp.domain.SchedulerConfig
+    ) {
+        val stale = db.cardStateDao().staleForPaper(paperId)
+        if (stale.isEmpty()) return
+        val scheduler = fsrs(config)
+        db.withTransaction {
+            stale.forEach {
+                db.cardStateDao().upsert(
+                    scheduler.initial(it.id).toEntity(paperId, it.contentHash)
+                )
+            }
         }
-        val buildHash = resolved.hashes[card.questionId]
-        val state = resolved.states[card.questionId]
-        if (state != null && buildHash != null && buildHash != storedHash) {
-            // The stored hash described other text: schedule the card over.
-            val scheduler = fsrs(resolved.config)
-            val reset = scheduler.initial(card.questionId)
-            db.cardStateDao().upsert(reset.toEntity(resolved.paperId, storedHash))
-            resolved.states[card.questionId] = reset
-            Logger.i(
-                "REPO",
-                "resetCard(${card.questionId}) on serve: content edited"
-            )
-            return com.mcqapp.domain.StudyCard(
-                card.questionId,
-                com.mcqapp.domain.StudyReason.NEW,
-                reset
-            )
-        }
-        return card
+        Logger.i("REPO", "resetEdited($paperId): ${stale.size} card(s) scheduled again")
+    }
+
+    /** The learning and review pools of [due], read through the pure pools. */
+    private fun poolsOf(
+        config: com.mcqapp.domain.SchedulerConfig,
+        due: List<CardStateEntity>,
+        now: Long
+    ): com.mcqapp.domain.Study.CandidatePools = com.mcqapp.domain.Study.pools(
+        fsrs(config),
+        due.map { it.questionId },
+        due.associate { it.questionId to it.toDomain() },
+        now,
+        config.introduceNewCards
+    )
+
+    /**
+     * The first new card in authored order, or null when the paper has none
+     * left or new cards are switched off. The session serves new cards one at
+     * a time, so the first of them stands in for the pool a whole-paper model
+     * would have built.
+     */
+    private suspend fun firstNewCard(
+        config: com.mcqapp.domain.SchedulerConfig,
+        paperId: String
+    ): com.mcqapp.domain.StudyCard? {
+        if (!config.introduceNewCards) return null
+        val id = db.questionDao().firstNewQuestionForPaper(paperId) ?: return null
+        return com.mcqapp.domain.StudyCard(
+            id,
+            com.mcqapp.domain.StudyReason.NEW,
+            fsrs(config).initial(id)
+        )
     }
 
     /**
      * Per-pool eligibility counts for the pull path: what a session would
-     * serve right now and why. The badge reads the same pools.
+     * serve right now and why. The badge reads the same numbers, so the empty
+     * state can never promise a card the pull refuses.
      */
     suspend fun getStudyEligibility(
         paperId: String,
@@ -258,81 +230,37 @@ internal class StudyStore(
          */
         introduceNewCards: Boolean? = null
     ): com.mcqapp.domain.StudyEligibility {
-        val resolved = resolvedFor(paperId)
-        if (resolved.ids.isEmpty()) return com.mcqapp.domain.StudyEligibility()
-        return com.mcqapp.domain.Study.eligibility(
-            fsrs(resolved.config),
-            resolved.ids,
-            resolved.states,
-            now,
-            introduceNewCards ?: resolved.config.introduceNewCards
-        )
+        val config = settings.schedulerConfigNow()
+        return counts(paperId, now, config, introduceNewCards ?: config.introduceNewCards)
     }
 
     /**
-     * What scheduling actually needs about a question: its id and the hash of
-     * its content. Both are derived from the stored elements, so the counts on
-     * the library screen no longer have to load every option and every answer
-     * key just to count them.
+     * The four pool sizes, counted from the rows instead of by resolving every
+     * question's card state. [com.mcqapp.domain.Study.pools] classifies a card
+     * by its stored schedule and by whether its hash still matches its
+     * question, and both are predicates SQL can apply — see
+     * [com.mcqapp.data.local.CardStateDao.countsForPaper].
      */
-    private data class StudyInput(val id: String, val contentHash: String)
-
-    /**
-     * Ids and content hashes for a paper's questions, nested categories
-     * included. The hash is read from the question row's own column, which
-     * every save keeps current, so no option or element is ever loaded: a
-     * 169k-question paper has three quarters of a million option rows, and
-     * materialising them to re-derive a stored value is what used to OOM.
-     */
-    private suspend fun studyInputs(paperId: String): List<StudyInput> {
-        val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
-        if (categoryIds.isEmpty()) return emptyList()
-        return db.questionDao().getHashInputsByCategoriesChunked(categoryIds)
-            .map { StudyInput(id = it.id, contentHash = it.contentHash) }
-    }
-
-    /**
-     * Resolves every question's card state, resetting questions whose text has
-     * changed. Both the queue and the library badges go through here, so the
-     * badge can never disagree with what the queue would actually offer.
-     */
-    private suspend fun resolveStudyStates(
+    private suspend fun counts(
         paperId: String,
-        questionInputs: List<StudyInput>,
-        config: com.mcqapp.domain.SchedulerConfig
-    ): Map<String, com.mcqapp.domain.CardState> {
-        val scheduler = fsrs(config)
-        val stored = db.cardStateDao().getByPaper(paperId).associate { it.questionId to it }
-        val states = mutableMapOf<String, com.mcqapp.domain.CardState>()
-        val seeded = mutableListOf<CardStateEntity>()
-        for (q in questionInputs) {
-            val existing = stored[q.id]
-            if (existing != null) {
-                // A question whose text or options changed is scheduled again
-                // from scratch: the old interval describes memory of other text.
-                if (existing.contentHash != q.contentHash) {
-                    val reset = scheduler.initial(q.id)
-                    states[q.id] = reset
-                    // Persist the new hash, otherwise the edit looks stale again
-                    // on the next load and the card is reset every time.
-                    seeded += reset.toEntity(paperId, q.contentHash)
-                } else {
-                    states[q.id] = existing.toDomain()
-                }
-            } else {
-                val fresh = scheduler.initial(q.id)
-                states[q.id] = fresh
-                seeded += fresh.toEntity(paperId, q.contentHash)
-            }
-        }
-        if (seeded.isNotEmpty()) {
-            // One transaction: this runs from a badge read as well as from
-            // getStudyQueue, and without it the seeding was N separate
-            // transactions that two coroutines could interleave.
-            db.withTransaction { seeded.forEach { db.cardStateDao().upsert(it) } }
-            Logger.i("REPO", "seeded ${seeded.size} card_state rows for $paperId")
-        }
-        return states
+        now: Long,
+        config: com.mcqapp.domain.SchedulerConfig,
+        introduceNewCards: Boolean
+    ): com.mcqapp.domain.StudyEligibility {
+        val questions = db.questionDao().countForPaper(paperId)
+        if (questions == 0) return com.mcqapp.domain.StudyEligibility()
+        val rows = db.cardStateDao().countsForPaper(paperId, now)
+        // Fresh is everything the session would serve as new: the questions
+        // with no schedule at all, plus the stored rows it would treat as new
+        // (still new, or edited since) — that is, what is left after the rows
+        // that describe an introduced card.
+        val fresh = if (introduceNewCards) questions - (rows.storedRows - rows.newish) else 0
+        return com.mcqapp.domain.StudyEligibility(
+            learning = rows.learning,
+            due = rows.due,
+            leeches = rows.leeches,
+            fresh = fresh
+        )
     }
 
     /** Due / new / leech counts for a paper's library badge. */
@@ -340,19 +268,10 @@ internal class StudyStore(
         paperId: String,
         now: Long = System.currentTimeMillis()
     ): StudyCounts {
-        // One solved model shared with the pull and the queue, so the badge
-        // can never disagree with what either would offer.
-        val resolved = resolvedFor(paperId)
-        if (resolved.ids.isEmpty()) return StudyCounts()
+        val config = settings.schedulerConfigNow()
         // The same pools the study pull reads, so the badge can never
         // advertise a card the session then refuses to serve.
-        val e = com.mcqapp.domain.Study.eligibility(
-            fsrs(resolved.config),
-            resolved.ids,
-            resolved.states,
-            now,
-            resolved.config.introduceNewCards
-        )
+        val e = counts(paperId, now, config, config.introduceNewCards)
         return StudyCounts(
             due = e.learning + e.due,
             leeches = e.leeches,
@@ -404,9 +323,6 @@ internal class StudyStore(
                 )
             )
         }
-        // One graded card: the shared model is updated in place instead of
-        // being whole-paper rebuilt by the next caller.
-        resolved?.takeIf { it.paperId == paperId }?.states?.put(questionId, next)
         Logger.i(
             "REPO",
             "recordStudyReview($questionId, $grade): interval=${next.intervalDays}d, " +

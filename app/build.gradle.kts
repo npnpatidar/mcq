@@ -216,3 +216,46 @@ dependencies {
     testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0:linux-aarch_64")
     testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0:linux-x86_64")
 }
+
+// Robolectric downloads its android-all runtime from Maven Central while the
+// tests run — over TLS, with no timeout. A stalled or blocked download hangs
+// the whole test worker: we saw :app:testDebugUnitTest sit for 37 minutes with
+// no output, and another run fail fetching this exact jar with an
+// SSLException (Conscrypt's OpenSSLXDHKeyPairGenerator). Gradle already
+// downloads and caches dependencies robustly, so resolve the Android runtimes
+// the tests need, stage them in the build directory, and point Robolectric at
+// them in offline mode. No test does any network I/O of its own after this.
+//
+// Two are needed: every Robolectric class pins sdk = [34]
+// (14-robolectric-10818077-i7), and Robolectric also loads the app package
+// under targetSdk 36, which 4.14.1 clamps to its newest supported SDK, 35
+// (15-robolectric-12650502-i7).
+private val robolectricSdkVersions = listOf(
+    "14-robolectric-10818077-i7",
+    "15-robolectric-12650502-i7"
+)
+
+val robolectricSdk = configurations.create("robolectricSdk") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
+dependencies {
+    robolectricSdkVersions.forEach {
+        robolectricSdk("org.robolectric:android-all-instrumented:$it")
+    }
+}
+
+val stageRobolectricSdk = tasks.register<Copy>("stageRobolectricSdk") {
+    from(robolectricSdk)
+    into(layout.buildDirectory.dir("robolectric-sdk"))
+}
+
+tasks.withType<Test>().configureEach {
+    dependsOn(stageRobolectricSdk)
+    systemProperty("robolectric.offline", "true")
+    systemProperty(
+        "robolectric.dependency.dir",
+        layout.buildDirectory.dir("robolectric-sdk").get().asFile.absolutePath
+    )
+}

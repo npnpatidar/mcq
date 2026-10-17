@@ -38,7 +38,13 @@ object StatsAggregator {
 
     /** Everything the aggregation reads, in domain shapes. */
     data class Input(
-        /** Every logged review across every paper, replayed by [FsrsReplay]. */
+        /**
+         * Every logged review across every paper, replayed by [FsrsReplay] and
+         * in per-card chronological order. The streamed retention pass reads
+         * one card's day's at a time, so a caller that hands reviews over out
+         * of order gets the same answer this order would have given only if
+         * each card's reviews are oldest first.
+         */
         val reviews: List<ReplayReview>,
         /** Every tracked card with its current schedule. */
         val cards: List<CardSnapshot>,
@@ -64,6 +70,7 @@ object StatsAggregator {
         val inRange: List<ReplayReview>,
         val cards: List<CardSnapshot>,
         val scopePaperId: String?,
+        val range: Range,
         val rangeStart: Long?,
         val todayStart: Long,
         val tomorrowStart: Long,
@@ -85,6 +92,7 @@ object StatsAggregator {
                     inRange = inScope.filter { rangeStart == null || it.reviewedAt >= rangeStart },
                     cards = input.cards.filter { scopePaperId == null || it.paperId == scopePaperId },
                     scopePaperId = scopePaperId,
+                    range = range,
                     rangeStart = rangeStart,
                     todayStart = todayStart,
                     tomorrowStart = todayStart + DayBoundary.DAY_MS,
@@ -175,12 +183,19 @@ object StatsAggregator {
             weakest = weakest(ctx.inRange, ctx.cards)
         )
 
-    private fun retentionOf(ctx: Context): RetentionData = RetentionData(
-        retentionTrend = retentionTrend(ctx.inRange, ctx.rangeStart, ctx.todayDay, ctx.input, ctx.cfg, ctx.zone),
-        calibration = calibration(ctx.inRange),
-        groupRetention = groupRetention(ctx.inRange, ctx.input, ctx.scopePaperId),
-        weekdayRetention = weekdayRetention(ctx.inRange, ctx.todayStart, ctx.cfg, ctx.zone)
-    )
+    private fun retentionOf(ctx: Context): RetentionData {
+        val accumulator = RetentionAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone,
+            paperTitleOf = ctx.input.paperTitleOf,
+            categoryOfQuestion = ctx.input.categoryOfQuestion
+        )
+        ctx.inScope.forEach(accumulator::add)
+        return accumulator.toData()
+    }
 
     private fun workloadOf(ctx: Context): WorkloadData = WorkloadData(
         forecast = forecast(ctx.cards, ctx.todayStart, ctx.todayDay),
@@ -405,139 +420,204 @@ object StatsAggregator {
         )
     }
 
-    // --- retention trend ---------------------------------------------------
+    // --- retention accumulator ---------------------------------------------
 
-    private fun retentionTrend(
-        inRange: List<ReplayReview>,
-        rangeStart: Long?,
-        todayDay: Long,
-        input: Input,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): RetentionTrendData {
-        val windowStart = rangeStart ?: inRange.minOfOrNull { it.reviewedAt } ?: input.now
-        val granularity = granularityFor(windowStart, todayDay, cfg, zone)
-        val rangeStartDay = studyEpochDay(windowStart, cfg, zone)
-        val buckets = bucketList(rangeStartDay, todayDay, granularity, cfg, zone)
-        val firstOfDay = firstOfDayReviews(inRange, Long.MIN_VALUE / 2, Long.MAX_VALUE / 2, cfg, zone)
-        val perBucket = firstOfDay.groupBy {
-            bucketKeyOf(studyEpochDay(it.reviewedAt, cfg, zone), granularity)
-        }
-        val rowsByBucket = buckets.map { perBucket[it.key].orEmpty() }
-        val points = buckets.mapIndexed { i, b ->
-            val rows = rowsByBucket[i]
-            SeriesPoint(
-                label = b.label,
-                value = if (rows.isEmpty()) null else rows.count { it.passed }.toDouble() / rows.size,
-                count = rows.size
-            )
-        }
-        // Trailing pooled pass rate: a 1-review 100% day must not outweigh a
-        // 40-review 70% day, so pool the counts instead of the percentages.
-        val rollingWindow = if (granularity == Granularity.DAILY) 7 else 4
-        val rolling = points.indices.map { index ->
-            val first = maxOf(0, index - rollingWindow + 1)
-            var passes = 0
-            var reviews = 0
-            for (i in first..index) {
-                passes += rowsByBucket[i].count { it.passed }
-                reviews += rowsByBucket[i].size
-            }
-            SeriesPoint(
-                label = points[index].label,
-                value = if (reviews == 0) null else passes.toDouble() / reviews,
-                count = reviews
-            )
-        }
-        return RetentionTrendData(
-            points = points,
-            rolling = rolling,
-            desiredRetention = input.config.desiredRetention
-        )
-    }
-
-    // --- calibration -------------------------------------------------------
-
-    private fun calibration(inRange: List<ReplayReview>): CalibrationData {
-        val usable = inRange.filter { it.predictedRetention != null }
-        if (usable.isEmpty()) {
-            return CalibrationData(emptyList(), 0, null, null, null)
-        }
-        val bins = MutableList(10) { i ->
-            CalibrationData.CalibrationBin(i / 10.0, 0.0, null, 0)
-        }
-        val sums = DoubleArray(10)
-        val counts = IntArray(10)
-        val passes = IntArray(10)
-        var brier = 0.0
-        usable.forEach { review ->
-            val p = review.predictedRetention!!.coerceIn(0.0, 0.999999)
-            val i = floor(p * 10).toInt().coerceIn(0, 9)
-            sums[i] += p
-            counts[i]++
-            if (review.passed) passes[i]++
-            val outcome = if (review.passed) 1.0 else 0.0
-            brier += (p - outcome) * (p - outcome)
-        }
-        val built = bins.indices.mapNotNull { i ->
-            if (counts[i] == 0) null else CalibrationData.CalibrationBin(
-                predictedFrom = bins[i].predictedFrom,
-                predictedMean = sums[i] / counts[i],
-                actualRate = passes[i].toDouble() / counts[i],
-                count = counts[i]
-            )
-        }
-        return CalibrationData(
-            bins = built,
-            samples = usable.size,
-            predictedMean = usable.mapNotNull { it.predictedRetention }.average(),
-            actualMean = usable.count { it.passed }.toDouble() / usable.size,
-            brier = brier / usable.size
-        )
-    }
-
-    // --- group / weekday retention -----------------------------------------
-
-    /**
-     * Per-paper (or per-category when scoped to one paper) pass rate over the
-     * range: every review counts, so a card's re-answer same day still moves
-     * the number. The true-retention rule is the retention table's job.
-     */
-    private fun groupRetention(
-        inRange: List<ReplayReview>,
-        input: Input,
-        scopePaperId: String?
-    ): List<GroupRetention> {
-        val grouped = inRange.groupBy {
-            if (scopePaperId == null) it.paperId else it.questionId
-        }
-        return grouped.map { (_, rows) ->
-            val label = if (scopePaperId == null) {
-                input.paperTitleOf[rows.first().paperId] ?: rows.first().paperId
-            } else {
-                input.categoryOfQuestion[rows.first().questionId] ?: UNKNOWN_GROUP
-            }
-            GroupRetention(label, rows.size, rows.count { it.passed })
-        }
-            .filter { it.reviews > 0 }
-            .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }))
-            .take(15)
-    }
-
+    /** A group whose label the breakdown could not resolve. */
     private const val UNKNOWN_GROUP = "—"
 
-    private fun weekdayRetention(
-        inRange: List<ReplayReview>,
-        todayStart: Long,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): List<WeekdayRetention> {
-        val qualifying = firstOfDayReviews(
-            inRange, Long.MIN_VALUE / 2, Long.MAX_VALUE / 2, cfg, zone
-        ).groupBy { weekdayOf(studyEpochDay(it.reviewedAt, cfg, zone)) }
-        return (0..6).map { day ->
-            val rows = qualifying[day].orEmpty()
-            WeekdayRetention(day, rows.size, rows.count { it.passed })
+    /**
+     * The retention tab as one bounded pass.
+     *
+     * Its four charts read the log two different ways: the trend and the
+     * weekday split follow Anki's true-retention rule (each card's first
+     * qualifying review of a study day), while calibration and the per-group
+     * table count every review. Holding the whole log to do that is what made
+     * the page grow with the library, so the rule is expressed as a cursor
+     * instead: rows arrive in per-card chronological order, one day index per
+     * card recognises a day's first qualifying review, and everything else is
+     * a counter. Live state is O(cards + days + groups), never O(reviews).
+     *
+     * The in-memory and the streamed build feed this same accumulator, so the
+     * two cannot drift apart.
+     */
+    class RetentionAccumulator(
+        private val scopePaperId: String?,
+        private val range: Range,
+        private val now: Long,
+        private val cfg: SchedulerConfig,
+        private val zone: Long,
+        private val paperTitleOf: Map<String, String>,
+        private val categoryOfQuestion: Map<String, String>
+    ) {
+        private class Counts {
+            var reviews = 0
+            var passes = 0
+
+            fun add(passed: Boolean) {
+                reviews++
+                if (passed) passes++
+            }
+        }
+
+        private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
+        private val todayDay = studyEpochDay(todayStart, cfg, zone)
+        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+
+        /** Study day last counted for a card, to spot a day's first review. */
+        private val lastCountedDay = HashMap<String, Long>()
+
+        /** Study day → that day's first qualifying reviews. */
+        private val trendDays = HashMap<Long, Counts>()
+
+        /** 0 = Monday .. 6 = Sunday. */
+        private val weekdays = Array(7) { Counts() }
+
+        /** Group key → every in-range review of it, in first-seen order. */
+        private val groups = LinkedHashMap<String, Counts>()
+
+        private var earliestInRange: Long? = null
+
+        private val binSums = DoubleArray(10)
+        private val binCounts = IntArray(10)
+        private val binPasses = IntArray(10)
+        private var samples = 0
+        private var predictedSum = 0.0
+        private var brier = 0.0
+
+        /**
+         * Feeds one replayed review, in per-card chronological order. Rows
+         * outside the scope or the range are dropped outright: no caller's view
+         * contains them, and their replay already happened upstream.
+         */
+        fun add(review: ReplayReview) {
+            if (scopePaperId != null && review.paperId != scopePaperId) return
+            val reviewedAt = review.reviewedAt
+            if (rangeStart != null && reviewedAt < rangeStart) return
+            val earliest = earliestInRange
+            if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
+            countGroup(review)
+            countCalibration(review)
+            // The true-retention rule: only a card's first qualifying review of
+            // a study day counts, and a first exposure carries no whole-day
+            // interval to qualify with. Days only move forward per card, so
+            // remembering the last one counted is enough to spot the first.
+            if ((review.intervalBeforeDays ?: 0) < 1) return
+            val day = studyEpochDay(reviewedAt, cfg, zone)
+            if (lastCountedDay[review.questionId] == day) return
+            lastCountedDay[review.questionId] = day
+            trendDays.getOrPut(day) { Counts() }.add(review.passed)
+            weekdays[weekdayOf(day)].add(review.passed)
+        }
+
+        /** The tab's four charts. */
+        fun toData(): RetentionData = RetentionData(
+            retentionTrend = trend(),
+            calibration = calibration(),
+            groupRetention = groupRetention(),
+            weekdayRetention = weekdayRetention()
+        )
+
+        private fun countGroup(review: ReplayReview) {
+            val key = if (scopePaperId == null) review.paperId else review.questionId
+            groups.getOrPut(key) { Counts() }.add(review.passed)
+        }
+
+        private fun countCalibration(review: ReplayReview) {
+            val predicted = review.predictedRetention ?: return
+            val p = predicted.coerceIn(0.0, 0.999999)
+            val bin = floor(p * 10).toInt().coerceIn(0, 9)
+            binSums[bin] += p
+            binCounts[bin]++
+            if (review.passed) binPasses[bin]++
+            val outcome = if (review.passed) 1.0 else 0.0
+            brier += (p - outcome) * (p - outcome)
+            samples++
+            predictedSum += predicted
+        }
+
+        private fun trend(): RetentionTrendData {
+            val windowStart = rangeStart ?: earliestInRange ?: now
+            val granularity = granularityFor(windowStart, todayDay, cfg, zone)
+            val buckets = bucketList(
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+            )
+            val reviewsByBucket = HashMap<Long, Int>()
+            val passesByBucket = HashMap<Long, Int>()
+            trendDays.forEach { (day, counts) ->
+                val key = bucketKeyOf(day, granularity)
+                reviewsByBucket[key] = (reviewsByBucket[key] ?: 0) + counts.reviews
+                passesByBucket[key] = (passesByBucket[key] ?: 0) + counts.passes
+            }
+            val points = buckets.map { bucket ->
+                val reviews = reviewsByBucket[bucket.key] ?: 0
+                val passes = passesByBucket[bucket.key] ?: 0
+                SeriesPoint(
+                    label = bucket.label,
+                    value = if (reviews == 0) null else passes.toDouble() / reviews,
+                    count = reviews
+                )
+            }
+            // Trailing pooled pass rate: a 1-review 100% day must not outweigh a
+            // 40-review 70% day, so pool the counts instead of the percentages.
+            val rollingWindow = if (granularity == Granularity.DAILY) 7 else 4
+            val rolling = points.indices.map { index ->
+                val first = maxOf(0, index - rollingWindow + 1)
+                var reviews = 0
+                var passes = 0
+                for (i in first..index) {
+                    val key = buckets[i].key
+                    reviews += reviewsByBucket[key] ?: 0
+                    passes += passesByBucket[key] ?: 0
+                }
+                SeriesPoint(
+                    label = points[index].label,
+                    value = if (reviews == 0) null else passes.toDouble() / reviews,
+                    count = reviews
+                )
+            }
+            return RetentionTrendData(
+                points = points,
+                rolling = rolling,
+                desiredRetention = cfg.desiredRetention
+            )
+        }
+
+        private fun calibration(): CalibrationData {
+            if (samples == 0) return CalibrationData(emptyList(), 0, null, null, null)
+            val bins = binCounts.indices.mapNotNull { i ->
+                if (binCounts[i] == 0) {
+                    null
+                } else {
+                    CalibrationData.CalibrationBin(
+                        predictedFrom = i / 10.0,
+                        predictedMean = binSums[i] / binCounts[i],
+                        actualRate = binPasses[i].toDouble() / binCounts[i],
+                        count = binCounts[i]
+                    )
+                }
+            }
+            return CalibrationData(
+                bins = bins,
+                samples = samples,
+                predictedMean = predictedSum / samples,
+                actualMean = binPasses.sum().toDouble() / samples,
+                brier = brier / samples
+            )
+        }
+
+        private fun groupRetention(): List<GroupRetention> = groups.map { (key, counts) ->
+            val label = if (scopePaperId == null) {
+                paperTitleOf[key] ?: key
+            } else {
+                categoryOfQuestion[key] ?: UNKNOWN_GROUP
+            }
+            GroupRetention(label, counts.reviews, counts.passes)
+        }
+            .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }))
+            .take(15)
+
+        private fun weekdayRetention(): List<WeekdayRetention> = (0..6).map { day ->
+            WeekdayRetention(day, weekdays[day].reviews, weekdays[day].passes)
         }
     }
 

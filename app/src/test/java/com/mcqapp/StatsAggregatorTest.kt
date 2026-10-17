@@ -218,6 +218,62 @@ class StatsAggregatorTest {
         assertEquals(3, bundle.retentionTable[6].allReviews)
     }
 
+    // --- retention trend and weekday split -------------------------------------
+
+    /**
+     * Two of q1's reviews fall on today; only the day's first qualifies, so the
+     * trend must show one review for today, not two. Rows are in per-card
+     * chronological order, the order the log is streamed in.
+     */
+    private fun trendReviews() = listOf(
+        review("q1", rating = 1, reviewedAt = todayStart - day + 2 * hour, intervalBeforeDays = 30),
+        review("q1", rating = 3, reviewedAt = now - 3 * hour, intervalBeforeDays = 30),
+        review("q1", rating = 1, reviewedAt = now - hour, intervalBeforeDays = 30),
+        review("q2", rating = 3, reviewedAt = now - 2 * hour, intervalBeforeDays = 5)
+    )
+
+    @Test
+    fun retentionTrendCountsOnePointPerStudyDayFromFirstQualifyingReviews() {
+        val bundle = StatsAggregator.build(input(trendReviews()), null, StatsAggregator.Range.ALL)
+        val points = bundle.retentionTrend.points
+        // Oldest first, one bucket per study day, today included.
+        assertEquals(listOf("14 Jun", "15 Jun"), points.map { it.label })
+        assertEquals(1, points[0].count)
+        assertEquals(0.0, points[0].value!!, 1e-9)
+        assertEquals(2, points[1].count)
+        assertEquals(1.0, points[1].value!!, 1e-9)
+        // Rolling pools the buckets' counts rather than averaging percentages.
+        assertEquals(3, bundle.retentionTrend.rolling[1].count)
+        assertEquals(2.0 / 3.0, bundle.retentionTrend.rolling[1].value!!, 1e-9)
+    }
+
+    @Test
+    fun weekdayRetentionUsesTheSameFirstOfDayRule() {
+        val bundle = StatsAggregator.build(input(trendReviews()), null, StatsAggregator.Range.ALL)
+        val byWeekday = bundle.weekdayRetention.associateBy { it.weekday }
+        // 15 Jun 2026 is a Monday and 14 Jun a Sunday.
+        assertEquals(2, byWeekday.getValue(0).reviews)
+        assertEquals(2, byWeekday.getValue(0).passes)
+        assertEquals(1, byWeekday.getValue(6).reviews)
+        assertEquals(0, byWeekday.getValue(6).passes)
+        assertEquals(0, byWeekday.getValue(1).reviews)
+    }
+
+    @Test
+    fun rangeSlicesTheRetentionTrend() {
+        val reviews = listOf(
+            review("q1", rating = 3, reviewedAt = todayStart - 60 * day + 2 * hour, intervalBeforeDays = 30),
+            review("q1", rating = 3, reviewedAt = now - hour, intervalBeforeDays = 30)
+        )
+        val all = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.ALL)
+        val week = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
+        // Seven daily buckets ending today; the sixty-day-old review is outside
+        // the range even though the table's own windows would keep it.
+        assertEquals(7, week.retentionTrend.points.size)
+        assertEquals(1, week.retentionTrend.points.sumOf { it.count })
+        assertEquals(2, all.retentionTrend.points.sumOf { it.count })
+    }
+
     // --- scope and range ---------------------------------------------------------
 
     @Test

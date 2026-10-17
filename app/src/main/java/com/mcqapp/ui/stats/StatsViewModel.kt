@@ -28,12 +28,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Holds the statistics payload one tab at a time: the card library is read
- * once, the replayed log is read once and only if a tab asks for it, and each
- * tab is built on demand, so a screen visit aggregates the section being looked
- * at rather than all of them. The retention tab streams past the log and never
- * pays for the list. Building runs on [Dispatchers.Default] under a generation
- * counter, so a slow build can never overwrite a newer selection or a newer tab.
+ * Holds the statistics payload one tab at a time: the card library and the
+ * replayed log are each read once, on first use, and only by the tabs that need
+ * them, and each tab is built on demand, so a screen visit aggregates the
+ * section being looked at rather than all of them. The overview and retention
+ * tabs stream the log past their accumulators and never pay for either list.
+ * Building runs on [Dispatchers.Default] under a generation counter, so a slow
+ * build can never overwrite a newer selection or a newer tab.
  */
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -93,14 +94,15 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Everything but the log: the card schedules, the paper titles and the
      * config, kept so a range or scope change re-slices without a database
-     * read. The retention tab needs none of it.
+     * read. Only the list-based tabs need it, so it is read on first use.
      */
+    private val libraryLock = Mutex()
     private var library: StatsStore.Library? = null
 
     /**
-     * The replayed log, read once and shared by the four list-based tabs. It is
-     * the only thing here that scales with library size, so the lock keeps two
-     * fast tab switches from loading it twice.
+     * The replayed log, read once and shared by the list-based tabs. It is the
+     * only thing here that scales with library size, so the lock keeps two fast
+     * tab switches from loading it twice.
      */
     private val reviewsLock = Mutex()
     private var reviews: List<ReplayReview>? = null
@@ -160,10 +162,10 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         viewModelScope.launch {
             try {
-                val loaded = repository.statsLibrary()
-                library = loaded
-                // Reviews logged since the last read must be picked up, so the
-                // cached log is dropped rather than patched.
+                // Both reads are redone on demand: rows logged since the last
+                // visit must be picked up, and a tab that needs neither must
+                // not pay for them.
+                libraryLock.withLock { library = null }
                 reviewsLock.withLock { reviews = null }
                 dropSections()
                 loadVisible()
@@ -204,7 +206,6 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Builds the visible tab unless its slice is already loaded and current. */
     private fun loadVisible() {
-        val loadedLibrary = library ?: return
         val current = _state.value
         if (current.visibleSliceLoaded && !sectionsStale) {
             _state.update { it.copy(loading = false, loadError = null) }
@@ -217,16 +218,19 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         val range = current.range
         viewModelScope.launch(Dispatchers.Default) {
             try {
+                val now = System.currentTimeMillis()
                 val built = when (tab) {
-                    // The retention tab aggregates while the log streams past it,
-                    // so it reads neither the log nor the card library.
-                    Tab.RETENTION -> current.copy(retention = repository.statsRetention(scope, range))
+                    // The overview and retention tabs aggregate while the log
+                    // streams past them, so neither reads a loaded list.
+                    Tab.OVERVIEW -> current.copy(
+                        overview = repository.statsOverview(scope, range, now)
+                    )
+                    Tab.RETENTION -> current.copy(
+                        retention = repository.statsRetention(scope, range, now)
+                    )
                     else -> {
-                        val input = inputOf(loadedLibrary, loadedReviews(), System.currentTimeMillis())
+                        val input = inputOf(loadedLibrary(), loadedReviews(), now)
                         when (tab) {
-                            Tab.OVERVIEW -> current.copy(
-                                overview = StatsAggregator.buildOverview(input, scope, range)
-                            )
                             Tab.WORKLOAD -> current.copy(
                                 workload = StatsAggregator.buildWorkload(input, scope, range)
                             )
@@ -271,6 +275,11 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    /** The card library, read once and shared. Only the list-based tabs ask. */
+    private suspend fun loadedLibrary(): StatsStore.Library = libraryLock.withLock {
+        library ?: repository.statsLibrary().also { library = it }
     }
 
     /** The replayed log, read once and shared. Only the list-based tabs ask. */

@@ -11,6 +11,7 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
@@ -123,8 +124,20 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     internal suspend fun statsRetention(
         scopePaperId: String?,
-        range: StatsAggregator.Range
-    ): RetentionData = statsStore.loadRetention(scopePaperId, range)
+        range: StatsAggregator.Range,
+        now: Long
+    ): RetentionData = statsStore.loadRetention(scopePaperId, range, now)
+
+    /**
+     * The overview tab alone, aggregated while the log and the cards stream
+     * past it. [now] is the build's clock, so every tab on the page agrees on
+     * what "today" is.
+     */
+    internal suspend fun statsOverview(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): OverviewData = statsStore.loadOverview(scopePaperId, range, now)
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =

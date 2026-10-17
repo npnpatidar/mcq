@@ -10,6 +10,7 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
 import com.mcqapp.domain.stats.FsrsReplay
+import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.ReviewHistoryEntry
@@ -63,9 +64,12 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
      * because it is the one section that reads the whole log on its own scope
      * as well as on the selected range.
      */
-    suspend fun loadRetention(scopePaperId: String?, range: StatsAggregator.Range): RetentionData {
+    suspend fun loadRetention(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): RetentionData {
         val config = settings.schedulerConfigNow()
-        val now = System.currentTimeMillis()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.RetentionAccumulator(
             scopePaperId = scopePaperId,
@@ -78,16 +82,59 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             // entry per question, so the unscoped view skips building it.
             categoryOfQuestion = if (scopePaperId == null) emptyMap() else loadCategoryOfQuestion()
         )
+        replayInto(scheduler, accumulator::add)
+        return accumulator.toData()
+    }
+
+    /**
+     * The overview tab, streamed: the log is replayed and the cards are paged
+     * into one [StatsAggregator.OverviewAccumulator], so neither list is ever
+     * built. This is the tab the page opens on, so it is the read that decides
+     * whether a large library crashes the screen.
+     */
+    suspend fun loadOverview(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): OverviewData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.OverviewAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now),
+            scheduler = scheduler
+        )
+        replayInto(scheduler, accumulator::add)
+        pageCardsInto(accumulator::addCard)
+        return accumulator.toData()
+    }
+
+    /** Replays the log a page at a time into [consume]; it is never listed. */
+    private suspend fun replayInto(scheduler: FsrsScheduler, consume: (ReplayReview) -> Unit) {
         val stream = FsrsReplay.Stream(scheduler)
         var afterId = 0L
         while (true) {
             val page = db.reviewLogDao().pageAfterId(afterId, PAGE_SIZE)
             if (page.isEmpty()) break
-            page.forEach { accumulator.add(stream.accept(it.toRawReview())) }
+            page.forEach { consume(stream.accept(it.toRawReview())) }
             afterId = page.last().id
             if (page.size < PAGE_SIZE) break
         }
-        return accumulator.toData()
+    }
+
+    /** Pages every card into [consume], in the order the breakdowns tie-break on. */
+    private suspend fun pageCardsInto(consume: (CardSnapshot) -> Unit) {
+        var afterRowId = 0L
+        while (true) {
+            val page = db.cardStateDao().pageAfterRowId(afterRowId, PAGE_SIZE)
+            if (page.isEmpty()) break
+            page.forEach { consume(CardSnapshot(it.state.paperId, it.state.toDomain())) }
+            afterRowId = page.last().rowid
+            if (page.size < PAGE_SIZE) break
+        }
     }
 
     /**
@@ -100,15 +147,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
      */
     private suspend fun replayLog(scheduler: FsrsScheduler): List<ReplayReview> {
         val reviews = ArrayList<ReplayReview>()
-        val stream = FsrsReplay.Stream(scheduler)
-        var afterId = 0L
-        while (true) {
-            val page = db.reviewLogDao().pageAfterId(afterId, PAGE_SIZE)
-            if (page.isEmpty()) break
-            page.forEach { reviews += stream.accept(it.toRawReview()) }
-            afterId = page.last().id
-            if (page.size < PAGE_SIZE) break
-        }
+        replayInto(scheduler) { reviews += it }
         return reviews
     }
 
@@ -119,14 +158,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
      */
     private suspend fun loadCards(): List<CardSnapshot> {
         val cards = ArrayList<CardSnapshot>()
-        var afterRowId = 0L
-        while (true) {
-            val page = db.cardStateDao().pageAfterRowId(afterRowId, PAGE_SIZE)
-            if (page.isEmpty()) break
-            page.forEach { cards += CardSnapshot(it.state.paperId, it.state.toDomain()) }
-            afterRowId = page.last().rowid
-            if (page.size < PAGE_SIZE) break
-        }
+        pageCardsInto { cards += it }
         return cards
     }
 

@@ -125,7 +125,7 @@ class StatsRetentionStreamTest {
             "p1" to StatsAggregator.Range.D7
         )
         cases.forEach { (scope, range) ->
-            val streamed = repository.statsRetention(scope, range)
+            val streamed = repository.statsRetention(scope, range, now)
             val loaded = inMemory(scope, range)
             assertEquals("scope=$scope range=$range", loaded, streamed)
             // Guard against both sides agreeing on an empty payload.
@@ -139,8 +139,8 @@ class StatsRetentionStreamTest {
     @Test
     fun paperScopeKeepsOnlyItsOwnRows() = runBlocking {
         seedLog()
-        val everyPaper = repository.statsRetention(null, StatsAggregator.Range.ALL)
-        val scoped = repository.statsRetention("p1", StatsAggregator.Range.ALL)
+        val everyPaper = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        val scoped = repository.statsRetention("p1", StatsAggregator.Range.ALL, now)
         // Unscoped the breakdown is one row per paper; scoped to p1 it is one
         // per question of that paper — both labelled "—", since the fixture has
         // no categories — and p2's card no longer contributes.

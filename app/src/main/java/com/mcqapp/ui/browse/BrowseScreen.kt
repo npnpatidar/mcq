@@ -545,17 +545,16 @@ fun BrowseScreen(
                     )
                 }
                 if (rowContent == null) {
-                    // Preview seat: the stem stands in for the one frame before
-                    // the window's content read lands, so an unloaded row never
-                    // collapses to zero height. The number is the paper's, one
-                    // past this paged index, matching the card's.
-                    Text(
-                        "${index + 1}. ${question.text}",
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 3,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(vertical = 16.dp)
-                    )
+                    // The ref has landed but its card has not. The seat used to
+                    // hold the stem text: that reads as a card that lost its
+                    // options, and a three-line stem is not the card's shape, so
+                    // the row resized the moment the card arrived. A card-shaped
+                    // block keeps the height instead, and the request below
+                    // covers the one case the window cannot — a landing between
+                    // two equal windows, where nothing new is emitted and the row
+                    // would otherwise wait for a read that never comes.
+                    BrowseRowSkeleton(index = index + 1)
+                    LaunchedEffect(question.id) { viewModel.requestRow(question) }
                 }
             }
         }

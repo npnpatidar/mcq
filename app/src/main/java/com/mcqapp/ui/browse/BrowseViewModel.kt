@@ -216,10 +216,43 @@ class BrowseViewModel(
         loadCategoryContexts(windowCategoryIds.toList())
     }
 
+    /**
+     * One row asking for what it renders, because it is on screen without it.
+     *
+     * The window above is the path; this is the exception it cannot cover. A
+     * jump can land between two windows whose row *sets* are equal — the paged
+     * refs come back in a different order, or a placeholder is still null, so
+     * the window reads the same and emits nothing — and a row whose card was
+     * pruned before that landing is then left asking nobody. Reading the single
+     * row is enough and is safe to do here: it deliberately does not rewrite the
+     * window, so a late answer for one row cannot re-prune the rows around it.
+     * The caches are presence-checked, so a row that is already complete costs
+     * one lookup and no query.
+     */
+    fun requestRow(ref: QuestionRef) {
+        loadContent(listOf(ref))
+        listOfNotNull(ref.passageId).let { passageIds ->
+            loadPassages(passageIds)
+            loadPassageFirstIds(passageIds)
+        }
+        loadCategoryContexts(listOf(ref.categoryId))
+    }
+
     private fun loadContent(window: List<QuestionRef>) {
-        // A ref whose hash moved on means the question was edited elsewhere and
-        // the cached card is stale.
-        val stale = window.filter { contentHashes[it.id] != it.contentHash }
+        // A row needs its card read for either of two reasons: it is not held at
+        // all (the window read it once, moved on, and the prune below dropped
+        // it), or the ref's hash moved on, meaning the question was edited
+        // elsewhere and the cached card is stale.
+        //
+        // Presence has to be checked separately from the hash. The hash table is
+        // bookkeeping for the cards held, but the prune used to drop only the
+        // cards — the hashes stayed. A row returning into the window then
+        // answered "hash matches, nothing to read" while its card was gone, so
+        // the read never happened: the row fell back to its stem-only preview
+        // and stayed there, which is what "scrolled away and back, no options"
+        // was.
+        val held = _state.value.contentById
+        val stale = window.filter { it.id !in held || contentHashes[it.id] != it.contentHash }
         val toRead = stale.filter { contentLoading.add(it.id) }
         if (toRead.isEmpty()) return
         viewModelScope.launch {
@@ -231,9 +264,14 @@ class BrowseViewModel(
                     // Only what the window still covers is kept: a card scrolled
                     // far away is read again if it comes back, where holding
                     // every card ever read would grow with the paper.
-                    current.copy(contentById = current.contentById.filterKeys { it in ids } +
-                        loaded.filterKeys { it in ids })
+                    current.copy(
+                        contentById = current.contentById.filterKeys { it in ids } +
+                            loaded.filterKeys { it in ids }
+                    )
                 }
+                // Pruned with the cards they describe, so the table stays the
+                // size of the window instead of one entry per row ever read.
+                contentHashes.keys.retainAll(ids)
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "card content for ${toRead.size} rows failed", e)
             } finally {

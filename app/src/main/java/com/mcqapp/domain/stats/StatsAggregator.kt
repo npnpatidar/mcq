@@ -77,7 +77,6 @@ object StatsAggregator {
         val range: Range,
         val rangeStart: Long?,
         val todayStart: Long,
-        val tomorrowStart: Long,
         val todayDay: Long
     ) {
         val cfg: SchedulerConfig get() = input.config
@@ -99,7 +98,6 @@ object StatsAggregator {
                     range = range,
                     rangeStart = rangeStart,
                     todayStart = todayStart,
-                    tomorrowStart = todayStart + DayBoundary.DAY_MS,
                     todayDay = studyEpochDay(todayStart, cfg, zone)
                 )
             }
@@ -117,26 +115,21 @@ object StatsAggregator {
      */
     private fun buildSections(input: Input, scopePaperId: String?, range: Range): StatsSections {
         val ctx = Context.of(input, scopePaperId, range)
-        // Heatmap and true retention are inputs to the overview KPIs, so they
-        // are computed once here and handed to both consumers rather than
-        // recomputed per tab.
-        val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
-        val kpis = kpisOf(ctx, heatmap)
+        // The overview accumulator carries the KPIs the memory tab shows too,
+        // so one pass serves both rather than one each.
+        val overview = overviewAccumulator(ctx)
         return StatsSections(
-            overview = overviewOf(ctx, kpis, heatmap),
+            overview = overview.toData(),
             retention = retentionOf(ctx),
             workload = workloadOf(ctx),
-            memory = memoryOf(ctx, kpis),
+            memory = memoryOf(ctx, overview.kpis()),
             cards = cardsOf(ctx)
         )
     }
 
     /** The overview tab on its own, for a tab that loads lazily. */
-    fun buildOverview(input: Input, scopePaperId: String?, range: Range): OverviewData {
-        val ctx = Context.of(input, scopePaperId, range)
-        val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
-        return overviewOf(ctx, kpisOf(ctx, heatmap), heatmap)
-    }
+    fun buildOverview(input: Input, scopePaperId: String?, range: Range): OverviewData =
+        overviewAccumulator(Context.of(input, scopePaperId, range)).toData()
 
     /** The retention tab on its own. */
     fun buildRetention(input: Input, scopePaperId: String?, range: Range): RetentionData =
@@ -149,43 +142,33 @@ object StatsAggregator {
     /** The memory tab on its own. */
     fun buildMemory(input: Input, scopePaperId: String?, range: Range): MemoryData {
         val ctx = Context.of(input, scopePaperId, range)
-        val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
-        return memoryOf(ctx, kpisOf(ctx, heatmap))
+        return memoryOf(ctx, overviewAccumulator(ctx, collectWeakest = false).kpis())
     }
 
     /** The cards tab on its own. */
     fun buildCards(input: Input, scopePaperId: String?, range: Range): CardsData =
         cardsOf(Context.of(input, scopePaperId, range))
 
-    private fun kpisOf(ctx: Context, heatmap: HeatmapData): OverviewKpis = kpis(
-        inRange = ctx.inRange,
-        cards = ctx.cards,
-        rangeRetention = trueRetention(
-            ctx.inRange, ctx.todayStart, ctx.tomorrowStart, ctx.rangeStart, ctx.cfg, ctx.zone
-        ),
-        heatmap = heatmap,
-        input = ctx.input,
-        cfg = ctx.cfg,
-        zone = ctx.zone
-    )
-
-    private fun overviewOf(ctx: Context, kpis: OverviewKpis, heatmap: HeatmapData): OverviewData =
-        OverviewData(
-            today = today(
-                ctx.inScope, ctx.cards, ctx.todayStart, ctx.tomorrowStart, ctx.todayDay,
-                ctx.input.now, ctx.cfg, ctx.zone
-            ),
-            kpis = kpis,
-            retentionTable = retentionTable(ctx.inScope, ctx.todayStart, ctx.tomorrowStart, ctx.cfg, ctx.zone),
-            heatmap = heatmap,
-            fsrsStatus = FsrsStatus(
-                fitted = ctx.cfg.fsrsParameters != FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
-                reviewCount = ctx.input.reviews.size,
-                unlockReviews = FsrsOptimizer.MIN_REVIEWS,
-                desiredRetention = ctx.cfg.desiredRetention
-            ),
-            weakest = weakest(ctx.inRange, ctx.cards)
+    /**
+     * The overview pass: the scope-filtered log and the scope-filtered cards
+     * streamed into one accumulator. The in-memory build feeds it from the
+     * loaded lists and the streamed build feeds it from the database, so the
+     * two cannot drift apart.
+     */
+    private fun overviewAccumulator(ctx: Context, collectWeakest: Boolean = true): OverviewAccumulator {
+        val accumulator = OverviewAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone,
+            scheduler = ctx.input.scheduler,
+            collectWeakest = collectWeakest
         )
+        ctx.inScope.forEach(accumulator::add)
+        ctx.cards.forEach(accumulator::addCard)
+        return accumulator
+    }
 
     private fun retentionOf(ctx: Context): RetentionData {
         val accumulator = RetentionAccumulator(
@@ -226,130 +209,106 @@ object StatsAggregator {
         leeches = leeches(ctx.inScope, ctx.cards)
     )
 
-    // --- today strip -------------------------------------------------------
+    // --- overview accumulator ----------------------------------------------
 
-    private fun today(
-        inScope: List<ReplayReview>,
-        cards: List<CardSnapshot>,
-        todayStart: Long,
-        tomorrowStart: Long,
-        todayDay: Long,
-        now: Long,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): TodayStats {
-        val todays = inScope.filter { studyEpochDay(it.reviewedAt, cfg, zone) == todayDay }
-        val again = todays.count { !it.passed }
-        var learning = 0
-        var review = 0
-        var relearning = 0
-        var unknown = 0
-        todays.forEach {
-            when (it.kind) {
-                ReplayReview.ReviewKind.LEARNING -> learning++
-                ReplayReview.ReviewKind.REVIEW -> review++
-                ReplayReview.ReviewKind.RELEARNING -> relearning++
-                null -> unknown++
+    /** True-retention counts for one window, split by maturity. */
+    private class RetentionRowCounts {
+        private var all = 0
+        private var allPasses = 0
+        private var young = 0
+        private var youngPasses = 0
+        private var mature = 0
+        private var maturePasses = 0
+
+        fun add(review: ReplayReview) {
+            all++
+            if (review.passed) {
+                allPasses++
+                if (review.matureAtReview) maturePasses++ else youngPasses++
             }
+            if (review.matureAtReview) mature++ else young++
         }
-        return TodayStats(
-            reviews = todays.size,
-            againCount = again,
-            correctPct = if (todays.isEmpty()) null else (todays.size - again).toDouble() / todays.size,
-            timeSeconds = todays.sumOf { it.elapsedSeconds ?: 0L },
-            learning = learning,
-            review = review,
-            relearning = relearning,
-            unknown = unknown,
-            introduced = todays.count { it.stateBefore == CardStateKind.NEW },
-            dueNow = cards.count {
-                // Scheduled for this study day; overdue cards live in the
-                // backlog instead of being double-counted here.
-                it.state.dueAt != 0L && it.state.state != CardStateKind.NEW &&
-                    it.state.dueAt >= todayStart && it.state.dueAt < tomorrowStart
-            },
-            backlog = cards.count {
-                it.state.dueAt != 0L && it.state.state != CardStateKind.NEW &&
-                    it.state.dueAt < now
-            }
+
+        fun toRow(label: String) = RetentionRow(
+            label = label,
+            allReviews = all,
+            allPasses = allPasses,
+            youngReviews = young,
+            youngPasses = youngPasses,
+            matureReviews = mature,
+            maturePasses = maturePasses
         )
     }
-
-    // --- true retention ----------------------------------------------------
 
     /**
-     * Anki's true-retention rule: only the first review of each card on each
-     * study day counts, Again is a fail, and maturity is the interval the card
-     * carried into the review. Learning-step rows and first exposures (which
-     * carried no whole-day interval) are excluded, mirroring Anki's
-     * `last_interval >= 1` / `last_interval <= -86400` check. Returns the
-     * pass/review counts of the qualifying reviews inside the window.
+     * Anki's true-retention rule as a cursor: only a card's first qualifying
+     * review of a study day counts. Rows arrive oldest first within each card
+     * (the order the log is read), so remembering the last day counted for a
+     * card is enough to recognise the next day's first review. That is what
+     * keeps this O(cards) instead of the O(card, day) map the lists needed.
      */
-    private fun firstOfDayReviews(
-        reviews: List<ReplayReview>,
-        windowStart: Long,
-        windowEnd: Long,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): List<ReplayReview> {
-        // Single pass: keep the earliest qualifying review per (card, study
-        // day). The old `groupBy {}` + `minByOrNull` built a list per card-day
-        // purely to read one element back out of it, and no caller depends on
-        // the order of the result, only on the set.
-        val earliest = HashMap<Pair<String, Long>, ReplayReview>()
-        reviews.forEach { review ->
-            if (review.reviewedAt < windowStart || review.reviewedAt >= windowEnd) return@forEach
-            if ((review.intervalBeforeDays ?: 0) < 1) return@forEach
-            val key = review.questionId to studyEpochDay(review.reviewedAt, cfg, zone)
-            val current = earliest[key]
-            if (current == null || review.reviewedAt < current.reviewedAt) earliest[key] = review
+    private class FirstOfDayCursor {
+        private val lastDay = HashMap<String, Long>()
+
+        /** True when [review] is the card's first qualifying review on [day]. */
+        fun isFirstOf(review: ReplayReview, day: Long): Boolean {
+            // Learning-step rows and first exposures carry no whole-day interval
+            // to qualify with, mirroring Anki's `last_interval >= 1` check.
+            if ((review.intervalBeforeDays ?: 0) < 1) return false
+            if (lastDay[review.questionId] == day) return false
+            lastDay[review.questionId] = day
+            return true
         }
-        return earliest.values.toList()
     }
 
-    private fun retentionRow(
-        label: String,
-        qualifying: List<ReplayReview>
-    ): RetentionRow {
-        val young = qualifying.filter { !it.matureAtReview }
-        val mature = qualifying.filter { it.matureAtReview }
-        return RetentionRow(
-            label = label,
-            allReviews = qualifying.size,
-            allPasses = qualifying.count { it.passed },
-            youngReviews = young.size,
-            youngPasses = young.count { it.passed },
-            matureReviews = mature.size,
-            maturePasses = mature.count { it.passed }
-        )
-    }
+    /**
+     * The overview tab — and the KPIs the memory tab shares with it — as
+     * bounded passes: one over the log, one over the cards.
+     *
+     * Every figure here used to be derived from the two whole lists, and the
+     * review side is where the page's memory went. Each one is now a counter or
+     * a cursor: the heatmap needs a year of day buckets, the true-retention
+     * rule needs one day index per card, and the weakest list needs one
+     * roll-up per question in range. Nothing is O(reviews).
+     *
+     * The in-memory and the streamed build feed this same accumulator, so the
+     * two cannot drift apart.
+     */
+    class OverviewAccumulator(
+        private val scopePaperId: String?,
+        private val range: Range,
+        private val now: Long,
+        private val cfg: SchedulerConfig,
+        private val zone: Long,
+        private val scheduler: FsrsScheduler,
+        /** The memory tab shares this class for its KPIs; it ranks nothing. */
+        private val collectWeakest: Boolean = true
+    ) {
+        private class DayTotals {
+            var reviews = 0
+            var seconds = 0L
 
-    private fun retentionTable(
-        inScope: List<ReplayReview>,
-        todayStart: Long,
-        tomorrowStart: Long,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): List<RetentionRow> {
-        val todayDay = studyEpochDay(todayStart, cfg, zone)
-        data class Window(val label: String, val fromDay: Long, val toDay: Long)
-
-        // One pass for all seven rows. Each row used to re-scan and re-group the
-        // whole scope for its own window - seven full passes over a 1M-row log.
-        // The windows are study-day ranges, and a (card, day) contributes its
-        // earliest qualifying review to whichever window asks, so the pass
-        // builds that map once and each row slices it. Rows are day ranges
-        // because the window starts are day boundaries: yesterday ends where
-        // today begins, so day membership decides membership exactly.
-        val earliest = HashMap<Pair<String, Long>, ReplayReview>()
-        inScope.forEach { review ->
-            if (review.reviewedAt >= tomorrowStart) return@forEach
-            if ((review.intervalBeforeDays ?: 0) < 1) return@forEach
-            val key = review.questionId to studyEpochDay(review.reviewedAt, cfg, zone)
-            val current = earliest[key]
-            if (current == null || review.reviewedAt < current.reviewedAt) earliest[key] = review
+            fun add(review: ReplayReview) {
+                reviews++
+                seconds += review.elapsedSeconds ?: 0L
+            }
         }
-        val windows = listOf(
+
+        private class Window(val label: String, val fromDay: Long, val toDay: Long) {
+            val counts = RetentionRowCounts()
+        }
+
+        private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
+        private val tomorrowStart = todayStart + DayBoundary.DAY_MS
+        private val todayDay = studyEpochDay(todayStart, cfg, zone)
+        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+
+        /** The heatmap's year, keyed by study day; older days are never read. */
+        private val heatDays = HashMap<Long, DayTotals>()
+
+        private val firstOfDay = FirstOfDayCursor()
+
+        private val windows = listOf(
             Window("today", todayDay, todayDay + 1),
             Window("yesterday", todayDay - 1, todayDay),
             Window("last7", todayDay - 6, todayDay + 1),
@@ -358,70 +317,225 @@ object StatsAggregator {
             Window("last365", todayDay - 364, todayDay + 1),
             Window("all", Long.MIN_VALUE, todayDay + 1)
         )
-        val all = IntArray(windows.size)
-        val allPasses = IntArray(windows.size)
-        val young = IntArray(windows.size)
-        val youngPasses = IntArray(windows.size)
-        val mature = IntArray(windows.size)
-        val maturePasses = IntArray(windows.size)
-        earliest.forEach { (key, review) ->
-            val reviewedDay = key.second
-            windows.forEachIndexed { i, window ->
-                if (reviewedDay < window.fromDay || reviewedDay >= window.toDay) return@forEachIndexed
-                all[i]++
-                if (review.passed) {
-                    allPasses[i]++
-                    if (review.matureAtReview) maturePasses[i]++ else youngPasses[i]++
+
+        /** Every row read, for the FSRS panel's library-wide review count. */
+        private var allReviews = 0
+
+        private var rangeReviews = 0
+        private var rangeTimedCount = 0
+        private var rangeTimedSeconds = 0L
+        private val rangeDays = HashSet<Long>()
+        private val rangeRetention = RetentionRowCounts()
+
+        private var todayReviews = 0
+        private var todayAgain = 0
+        private var todayLearning = 0
+        private var todayReview = 0
+        private var todayRelearning = 0
+        private var todayUnknown = 0
+        private var todaySeconds = 0L
+        private var todayIntroduced = 0
+
+        private val rollOf = HashMap<String, QuestionRoll>()
+        private val rollOrder = ArrayList<String>()
+
+        private var dueNow = 0
+        private var backlog = 0
+        private var intervalSum = 0L
+        private var intervalCount = 0
+        private var knowledge = 0.0
+        private var leechCount = 0
+        private val leechQuestions = HashSet<String>()
+
+        /**
+         * Feeds one replayed review, in per-card chronological order. Rows
+         * outside the scope are counted for the library total and then dropped.
+         */
+        fun add(review: ReplayReview) {
+            allReviews++
+            if (scopePaperId != null && review.paperId != scopePaperId) return
+            val day = studyEpochDay(review.reviewedAt, cfg, zone)
+            if (day > todayDay - HEATMAP_DAYS) heatDays.getOrPut(day) { DayTotals() }.add(review)
+            if (day == todayDay) countToday(review)
+            // The cursor sees every scoped row, in range or not, so a day the
+            // range excludes cannot hide a later day's first review.
+            val inRange = rangeStart == null || review.reviewedAt >= rangeStart
+            if (firstOfDay.isFirstOf(review, day) && day <= todayDay) {
+                // The retention table's windows are their own, not the
+                // selector's: the range only narrows the KPIs and the graphs.
+                windows.forEach { if (day >= it.fromDay && day < it.toDay) it.counts.add(review) }
+                if (inRange) rangeRetention.add(review)
+            }
+            if (!inRange) return
+            rangeReviews++
+            rangeDays += day
+            rangeTimedSeconds += review.elapsedSeconds ?: 0L
+            if (review.elapsedSeconds != null) rangeTimedCount++
+            if (collectWeakest) countRoll(review)
+        }
+
+        /** Feeds one scoped card: [CardSnapshot] carries its current schedule. */
+        fun addCard(snapshot: CardSnapshot) {
+            if (scopePaperId != null && snapshot.paperId != scopePaperId) return
+            val state = snapshot.state
+            if (state.state != CardStateKind.NEW) {
+                // Scheduled for this study day; overdue cards stay in the
+                // backlog instead of being double-counted here.
+                if (state.dueAt != 0L && state.dueAt >= todayStart && state.dueAt < tomorrowStart) {
+                    dueNow++
                 }
-                if (review.matureAtReview) mature[i]++ else young[i]++
+                if (state.dueAt != 0L && state.dueAt < now) backlog++
+            }
+            if (state.intervalDays > 0) {
+                intervalSum += state.intervalDays
+                intervalCount++
+            }
+            if (state.stability > 0.0) knowledge += scheduler.retention(state, now)
+            if (state.leech) {
+                leechCount++
+                leechQuestions += state.questionId
             }
         }
-        return windows.mapIndexed { i, window ->
-            RetentionRow(
-                label = window.label,
-                allReviews = all[i],
-                allPasses = allPasses[i],
-                youngReviews = young[i],
-                youngPasses = youngPasses[i],
-                matureReviews = mature[i],
-                maturePasses = maturePasses[i]
+
+        /** The overview tab's slice. */
+        fun toData(): OverviewData {
+            val heatmap = heatmap()
+            return OverviewData(
+                today = today(),
+                kpis = kpis(heatmap, rangeRetention.toRow("range")),
+                retentionTable = windows.map { it.counts.toRow(it.label) },
+                heatmap = heatmap,
+                fsrsStatus = FsrsStatus(
+                    fitted = cfg.fsrsParameters != FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+                    reviewCount = allReviews,
+                    unlockReviews = FsrsOptimizer.MIN_REVIEWS,
+                    desiredRetention = cfg.desiredRetention
+                ),
+                weakest = weakest()
             )
         }
-    }
 
-    // --- overview kpis -----------------------------------------------------
+        /** The KPIs the overview and memory tabs both show. */
+        fun kpis(): OverviewKpis = kpis(heatmap(), rangeRetention.toRow("range"))
 
-    private fun kpis(
-        inRange: List<ReplayReview>,
-        cards: List<CardSnapshot>,
-        rangeRetention: Pair<RetentionRow, RetentionRow>,
-        heatmap: HeatmapData,
-        input: Input,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): OverviewKpis {
-        val timed = inRange.mapNotNull { it.elapsedSeconds }
-        val days = inRange.mapTo(HashSet()) { studyEpochDay(it.reviewedAt, cfg, zone) }
-        val intervals = cards.mapNotNull {
-            if (it.state.intervalDays > 0) it.state.intervalDays.toDouble() else null
-        }
-        val knowledge = cards.sumOf {
-            if (it.state.stability > 0.0) input.scheduler.retention(it.state, input.now) else 0.0
-        }
-        return OverviewKpis(
-            reviews = inRange.size,
-            days = days.size,
-            timeSeconds = timed.sum(),
-            avgAnswerSeconds = if (timed.isEmpty()) null else timed.average(),
-            retention = rangeRetention.first.allRetention,
-            matureRetention = rangeRetention.second.matureRetention,
-            desiredRetention = input.config.desiredRetention,
+        private fun kpis(heatmap: HeatmapData, rangeRow: RetentionRow): OverviewKpis = OverviewKpis(
+            reviews = rangeReviews,
+            days = rangeDays.size,
+            timeSeconds = rangeTimedSeconds,
+            avgAnswerSeconds = if (rangeTimedCount == 0) {
+                null
+            } else {
+                rangeTimedSeconds.toDouble() / rangeTimedCount
+            },
+            retention = rangeRow.allRetention,
+            matureRetention = rangeRow.matureRetention,
+            desiredRetention = cfg.desiredRetention,
             estimatedKnowledge = knowledge.roundToInt(),
-            avgIntervalDays = if (intervals.isEmpty()) null else intervals.average(),
-            leeches = cards.count { it.state.leech },
+            avgIntervalDays = if (intervalCount == 0) null else intervalSum.toDouble() / intervalCount,
+            leeches = leechCount,
             currentStreak = heatmap.currentStreak,
             longestStreak = heatmap.longestStreak
         )
+
+        private fun today(): TodayStats = TodayStats(
+            reviews = todayReviews,
+            againCount = todayAgain,
+            correctPct = if (todayReviews == 0) {
+                null
+            } else {
+                (todayReviews - todayAgain).toDouble() / todayReviews
+            },
+            timeSeconds = todaySeconds,
+            learning = todayLearning,
+            review = todayReview,
+            relearning = todayRelearning,
+            unknown = todayUnknown,
+            introduced = todayIntroduced,
+            dueNow = dueNow,
+            backlog = backlog
+        )
+
+        private fun countToday(review: ReplayReview) {
+            todayReviews++
+            if (!review.passed) todayAgain++
+            when (review.kind) {
+                ReplayReview.ReviewKind.LEARNING -> todayLearning++
+                ReplayReview.ReviewKind.REVIEW -> todayReview++
+                ReplayReview.ReviewKind.RELEARNING -> todayRelearning++
+                null -> todayUnknown++
+            }
+            todaySeconds += review.elapsedSeconds ?: 0L
+            if (review.stateBefore == CardStateKind.NEW) todayIntroduced++
+        }
+
+        private fun countRoll(review: ReplayReview) {
+            val roll = rollOf.getOrPut(review.questionId) {
+                rollOrder += review.questionId
+                QuestionRoll()
+            }
+            roll.reviews++
+            if (!review.passed) roll.lapses++
+            if (roll.firstPaperId == null) roll.firstPaperId = review.paperId
+            if (review.reviewedAt > roll.lastReviewedAt) roll.lastReviewedAt = review.reviewedAt
+            review.elapsedSeconds?.let { seconds ->
+                roll.timedCount++
+                roll.timedSeconds += seconds
+            }
+        }
+
+        private fun heatmap(): HeatmapData {
+            val firstDay = todayStart - (HEATMAP_DAYS - 1) * DayBoundary.DAY_MS
+            val days = (0 until HEATMAP_DAYS).map { i ->
+                val totals = heatDays[todayDay - (HEATMAP_DAYS - 1 - i)]
+                HeatmapDay(
+                    dayStart = firstDay + i * DayBoundary.DAY_MS,
+                    reviews = totals?.reviews ?: 0,
+                    seconds = totals?.seconds ?: 0L
+                )
+            }
+            var longest = 0
+            var run = 0
+            days.forEach {
+                run = if (it.reviews > 0) run + 1 else 0
+                longest = maxOf(longest, run)
+            }
+            // A day with no reviews yet does not break the streak until it is over.
+            var current = 0
+            for (i in days.indices.reversed()) {
+                val day = days[i]
+                if (day.reviews > 0) current++
+                else if (i == days.lastIndex) continue
+                else break
+            }
+            return HeatmapData(days, current, longest)
+        }
+
+        private fun weakest(): List<WeakCard> = rollOrder.mapNotNull { questionId ->
+            val roll = rollOf.getValue(questionId)
+            if (roll.reviews < 3) return@mapNotNull null
+            if (roll.lapses == 0) return@mapNotNull null
+            WeakCard(
+                paperId = roll.firstPaperId!!,
+                questionId = questionId,
+                reviews = roll.reviews,
+                lapses = roll.lapses,
+                againRate = roll.lapses.toDouble() / roll.reviews,
+                avgSeconds = if (roll.timedCount == 0) {
+                    null
+                } else {
+                    roll.timedSeconds.toDouble() / roll.timedCount
+                },
+                lastReviewedAt = roll.lastReviewedAt,
+                leech = leechQuestions.contains(questionId)
+            )
+        }
+            .sortedWith(compareBy({ -it.againRate }, { -it.lapses }))
+            .take(15)
+
+        private companion object {
+            /** The heatmap shows a year, today included. */
+            const val HEATMAP_DAYS = 365
+        }
     }
 
     // --- retention accumulator ---------------------------------------------
@@ -467,11 +581,10 @@ object StatsAggregator {
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
         private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
 
-        /** Study day last counted for a card, to spot a day's first review. */
-        private val lastCountedDay = HashMap<String, Long>()
-
         /** Study day → that day's first qualifying reviews. */
         private val trendDays = HashMap<Long, Counts>()
+
+        private val firstOfDay = FirstOfDayCursor()
 
         /** 0 = Monday .. 6 = Sunday. */
         private val weekdays = Array(7) { Counts() }
@@ -501,14 +614,11 @@ object StatsAggregator {
             if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
             countGroup(review)
             countCalibration(review)
-            // The true-retention rule: only a card's first qualifying review of
-            // a study day counts, and a first exposure carries no whole-day
-            // interval to qualify with. Days only move forward per card, so
-            // remembering the last one counted is enough to spot the first.
-            if ((review.intervalBeforeDays ?: 0) < 1) return
+            // The true-retention rule, through the shared cursor: a first
+            // exposure carries no whole-day interval to qualify with, and only
+            // the day's first qualifying review counts.
             val day = studyEpochDay(reviewedAt, cfg, zone)
-            if (lastCountedDay[review.questionId] == day) return
-            lastCountedDay[review.questionId] = day
+            if (!firstOfDay.isFirstOf(review, day)) return
             trendDays.getOrPut(day) { Counts() }.add(review.passed)
             weekdays[weekdayOf(day)].add(review.passed)
         }
@@ -665,44 +775,6 @@ object StatsAggregator {
             dueToday = learning[0] + review[0],
             dailyLoad = load
         )
-    }
-
-    // --- heatmap -----------------------------------------------------------
-
-    private fun heatmap(
-        inScope: List<ReplayReview>,
-        todayStart: Long,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): HeatmapData {
-        val year = 365
-        val firstDay = todayStart - (year - 1) * DayBoundary.DAY_MS
-        val byDay = inScope.groupBy { studyEpochDay(it.reviewedAt, cfg, zone) }
-        val todayDay = studyEpochDay(todayStart, cfg, zone)
-        val days = (0 until year).map { i ->
-            val day = todayDay - (year - 1 - i)
-            val rows = byDay[day].orEmpty()
-            HeatmapDay(
-                dayStart = firstDay + i * DayBoundary.DAY_MS,
-                reviews = rows.size,
-                seconds = rows.sumOf { it.elapsedSeconds ?: 0L }
-            )
-        }
-        var longest = 0
-        var run = 0
-        days.forEach {
-            run = if (it.reviews > 0) run + 1 else 0
-            longest = maxOf(longest, run)
-        }
-        // A day with no reviews yet does not break the streak until it is over.
-        var current = 0
-        for (i in days.indices.reversed()) {
-            val day = days[i]
-            if (day.reviews > 0) current++
-            else if (i == days.lastIndex) continue
-            else break
-        }
-        return HeatmapData(days, current, longest)
     }
 
     // --- review history graphs ----------------------------------------------
@@ -1132,56 +1204,6 @@ object StatsAggregator {
             )
         }.sortedWith(compareByDescending<PaperCardCounts> { it.total }.thenBy { it.label })
 
-    // --- weakest cards -------------------------------------------------------
-
-    private fun weakest(
-        inRange: List<ReplayReview>,
-        cards: List<CardSnapshot>
-    ): List<WeakCard> {
-        val leechByQuestion = cards.filter { it.state.leech }.associate { it.state.questionId to true }
-        // One pass, in place of `groupBy {}`: the old shape held a list per
-        // question (up to 250k lists over a 1M-row log) purely to read four
-        // aggregates off it. `order` reproduces groupBy's first-seen order,
-        // which the tie-break in the sort below depends on.
-        val rollOf = HashMap<String, QuestionRoll>()
-        val order = ArrayList<String>()
-        inRange.forEach { review ->
-            val roll = rollOf.getOrPut(review.questionId) {
-                order += review.questionId
-                QuestionRoll()
-            }
-            roll.reviews++
-            if (!review.passed) roll.lapses++
-            if (roll.firstPaperId == null) roll.firstPaperId = review.paperId
-            if (review.reviewedAt > roll.lastReviewedAt) roll.lastReviewedAt = review.reviewedAt
-            review.elapsedSeconds?.let { seconds ->
-                roll.timedCount++
-                roll.timedSeconds += seconds
-            }
-        }
-        return order.mapNotNull { questionId ->
-            val roll = rollOf.getValue(questionId)
-            if (roll.reviews < 3) return@mapNotNull null
-            if (roll.lapses == 0) return@mapNotNull null
-            WeakCard(
-                paperId = roll.firstPaperId!!,
-                questionId = questionId,
-                reviews = roll.reviews,
-                lapses = roll.lapses,
-                againRate = roll.lapses.toDouble() / roll.reviews,
-                avgSeconds = if (roll.timedCount == 0) {
-                    null
-                } else {
-                    roll.timedSeconds.toDouble() / roll.timedCount
-                },
-                lastReviewedAt = roll.lastReviewedAt,
-                leech = leechByQuestion.containsKey(questionId)
-            )
-        }
-            .sortedWith(compareBy({ -it.againRate }, { -it.lapses }))
-            .take(15)
-    }
-
     /**
      * The flagged leeches with their lifetime figures (all history, not the
      * selected range: a leech is a property of the card, not of the window).
@@ -1304,17 +1326,4 @@ object StatsAggregator {
         return if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2.0
     }
 
-    private fun trueRetention(
-        inRange: List<ReplayReview>,
-        todayStart: Long,
-        tomorrowStart: Long,
-        rangeStart: Long?,
-        cfg: SchedulerConfig,
-        zone: Long
-    ): Pair<RetentionRow, RetentionRow> {
-        val start = rangeStart ?: Long.MIN_VALUE / 2
-        val qualifying = firstOfDayReviews(inRange, start, tomorrowStart, cfg, zone)
-        return retentionRow("range", qualifying) to
-            retentionRow("range-mature", qualifying.filter { it.matureAtReview })
-    }
 }

@@ -809,6 +809,16 @@ interface ReviewLogDao {
     @Query("SELECT * FROM review_log ORDER BY id ASC")
     suspend fun getAll(): List<ReviewLogEntity>
 
+    /**
+     * One keyset page of the whole log in append order, for the statistics
+     * screen's streaming replay (`FsrsReplay.Stream`). Paging by `id` (the
+     * autoincrement primary key, so also each card's chronological order) means
+     * a million-row log is never held as entities: only the enriched rows that
+     * survive the pass, plus one page, are live at a time.
+     */
+    @Query("SELECT * FROM review_log WHERE id > :afterId ORDER BY id LIMIT :limit")
+    suspend fun pageAfterId(afterId: Long, limit: Int): List<ReviewLogEntity>
+
     /** One question's review history, oldest first. */
     @Query("SELECT * FROM review_log WHERE questionId = :questionId ORDER BY reviewedAt ASC, id ASC")
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>

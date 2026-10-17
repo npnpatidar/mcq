@@ -34,8 +34,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
     suspend fun load(): RawData {
         val config = settings.schedulerConfigNow()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
-        val raw = db.reviewLogDao().getAll().map { it.toRawReview() }
-        val reviews = FsrsReplay.replay(raw, scheduler)
+        val reviews = replayLog(scheduler)
         val cards = db.cardStateDao().getAll().map { CardSnapshot(it.paperId, it.toDomain()) }
         val categoryTitle = db.categoryDao().getAll().associate { it.id to it.title }
         val categoryOfQuestion = db.questionDao().getAllIdCategories()
@@ -43,6 +42,28 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             .toMap()
         val paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
         return RawData(reviews, cards, categoryOfQuestion, paperTitleOf, config)
+    }
+
+    /**
+     * Replays the whole log in append (`id`) order, one keyset page at a time.
+     * The old `getAll().map { … }` held every row as an entity and then every
+     * enriched row, while [FsrsReplay.replay] built two maps keyed by *row* id —
+     * a million reviews meant three million-entry structures live at once.
+     * [FsrsReplay.Stream] needs only per-card state, so what survives is the
+     * enriched rows the aggregator reads plus a single page.
+     */
+    private suspend fun replayLog(scheduler: FsrsScheduler): List<ReplayReview> {
+        val reviews = ArrayList<ReplayReview>()
+        val stream = FsrsReplay.Stream(scheduler)
+        var afterId = 0L
+        while (true) {
+            val page = db.reviewLogDao().pageAfterId(afterId, REVIEW_PAGE_SIZE)
+            if (page.isEmpty()) break
+            page.forEach { reviews += stream.accept(it.toRawReview()) }
+            afterId = page.last().id
+            if (page.size < REVIEW_PAGE_SIZE) break
+        }
+        return reviews
     }
 
     /** One card's logged reviews, oldest first, for the drill-down sheet. */
@@ -90,4 +111,12 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         state = cardState,
         reviewCount = reviewCount
     )
+
+    private companion object {
+        /**
+         * Rows per keyset page while replaying. Bounds the transient entity
+         * list only; the enriched result still spans the whole log.
+         */
+        const val REVIEW_PAGE_SIZE = 5_000
+    }
 }

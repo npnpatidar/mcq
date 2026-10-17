@@ -165,14 +165,21 @@ class StatsOverviewStreamTest {
             "p1" to StatsAggregator.Range.D7,
             "p2" to StatsAggregator.Range.D30
         )
+        var sawTrueRetentionRow = false
         cases.forEach { (scope, range) ->
             val streamed = repository.statsOverview(scope, range, now)
             val loaded = inMemory(scope, range)
             assertEquals("scope=$scope range=$range", loaded, streamed)
             // Guard against both sides agreeing on an empty payload.
-            assertTrue(streamed.retentionTable.last().allReviews > 0)
-            assertTrue(streamed.heatmap.days.any { it.reviews > 0 })
+            assertTrue("heatmap scope=$scope", streamed.heatmap.days.any { it.reviews > 0 })
+            sawTrueRetentionRow = sawTrueRetentionRow ||
+                streamed.retentionTable.last().allReviews > 0
         }
+        // And against every case agreeing on an empty true-retention table. p2's
+        // history is a NEW exposure plus a learning step, so it has no whole-day
+        // interval to qualify with and its windows are legitimately empty; q1's
+        // second review does qualify, so the unscoped cases reach the rows.
+        assertTrue("no case reached the true-retention rows", sawTrueRetentionRow)
     }
 
     @Test

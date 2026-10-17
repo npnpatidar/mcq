@@ -123,17 +123,24 @@ class BulkQueryTest {
         )
         // p2 has no reviews at all: its card must read as untouched
         // even though p1 was reviewed.
-        repository.getStudyCounts("p1")
-        repository.getStudyCounts("p2")
+        val p1Counts = repository.getStudyCounts("p1")
+        val p2Counts = repository.getStudyCounts("p2")
 
         val reviewed = repository.cardState("p1", "q1")!!
-        val untouched = repository.cardState("p2", "q2")!!
         assertTrue("p1's question was reviewed", reviewed.reps > 0)
-        // If p1's scheduling had leaked into p2's scan, this card would show
-        // that review instead of staying untouched.
-        assertEquals("p2's question was never reviewed", 0, untouched.reps)
+        // No schedule at all is what untouched means, and that is what p2's
+        // question must read as. Counting no longer materializes a card for a
+        // question nobody has studied — it used to, which is what made a badge
+        // read write a row per question of the paper.
+        assertEquals("p2's question was never reviewed", null, repository.cardState("p2", "q2"))
+        assertEquals("p2's question is new", 1, p2Counts.fresh)
+        assertTrue(
+            "counting wrote a schedule for a paper nobody studied",
+            db.cardStateDao().getByPaper("p2").isEmpty()
+        )
         // And p2's read must not have materialized a card for p1's other question.
         assertEquals(null, repository.cardState("p1", "q2"))
+        assertEquals("p1's reviewed card is not new", 0, p1Counts.fresh)
     }
 
     @Test

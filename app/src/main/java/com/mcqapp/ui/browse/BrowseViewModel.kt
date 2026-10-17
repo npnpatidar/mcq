@@ -230,6 +230,12 @@ class BrowseViewModel(
      * one lookup and no query.
      */
     fun requestRow(ref: QuestionRef) {
+        // The row is on screen, so the window should cover it already; the case
+        // this exists for is a landing that emitted nothing new, which leaves it
+        // out. Hold it for the duration of its own read, or the prune above
+        // drops the card the moment it lands. Bounded by the rows actually on
+        // screen, and released by the next window.
+        windowIds = windowIds + ref.id
         loadContent(listOf(ref))
         listOfNotNull(ref.passageId).let { passageIds ->
             loadPassages(passageIds)
@@ -257,21 +263,29 @@ class BrowseViewModel(
         if (toRead.isEmpty()) return
         viewModelScope.launch {
             try {
-                val ids = windowIds
                 val loaded = repository.getQuestionsByIds(toRead.map { it.id }).associateBy { it.id }
                 toRead.forEach { contentHashes[it.id] = it.contentHash }
                 _state.update { current ->
-                    // Only what the window still covers is kept: a card scrolled
-                    // far away is read again if it comes back, where holding
-                    // every card ever read would grow with the paper.
+                    // Only what the current window covers is kept: a card
+                    // scrolled far away is read again if it comes back, where
+                    // holding every card ever read would grow with the paper.
+                    //
+                    // "Current", not the window this read started from. Scrolling
+                    // moves the window more than once, so reads land out of
+                    // order, and pruning by its own older window made a read that
+                    // finished last drop the cards a newer read had just landed —
+                    // the rows on screen fell back to their stand-in and nothing
+                    // asked for them again, since the window that covered them had
+                    // already been collected. The other loaders prune by the live
+                    // window for the same reason; this one held a copy.
                     current.copy(
-                        contentById = current.contentById.filterKeys { it in ids } +
-                            loaded.filterKeys { it in ids }
+                        contentById = current.contentById.filterKeys { it in windowIds } +
+                            loaded.filterKeys { it in windowIds }
                     )
                 }
                 // Pruned with the cards they describe, so the table stays the
                 // size of the window instead of one entry per row ever read.
-                contentHashes.keys.retainAll(ids)
+                contentHashes.keys.retainAll(windowIds)
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "card content for ${toRead.size} rows failed", e)
             } finally {

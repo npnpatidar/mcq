@@ -11,6 +11,7 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.flow.Flow
@@ -107,16 +108,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     // --- statistics ---
 
     /**
-     * The whole statistics input in one read: the replayed review log, every
-     * card's schedule and the grouping titles. The stats ViewModel slices this
-     * in memory per range and paper scope.
+     * Everything the list-based tabs need except the log: each card's schedule,
+     * the paper titles and the scheduler config. The stats ViewModel slices
+     * this in memory per range and paper scope.
      */
-    internal suspend fun statsRawData(): StatsStore.RawData = statsStore.load()
+    internal suspend fun statsLibrary(): StatsStore.Library = statsStore.loadLibrary()
+
+    /** The replayed review log, for the tabs that still slice it in memory. */
+    internal suspend fun statsReviews(): List<ReplayReview> = statsStore.loadReviews()
 
     /**
      * The retention tab alone, aggregated while the log streams past it. Unlike
-     * [statsRawData] this never holds the log: the page's other tabs still
-     * slice the list in memory, but this one does not need it.
+     * [statsReviews] this never holds the log.
      */
     internal suspend fun statsRetention(
         scopePaperId: String?,

@@ -91,20 +91,22 @@ class StatsRetentionStreamTest {
         log("q3", rating = 3, reviewedAt = todayStart - day + 2 * hour, paperId = "p2")
     }
 
-    /** The same payload built the way every other tab builds it. */
+    /** The same payload built the way every list-based tab builds it. */
     private suspend fun inMemory(scopePaperId: String?, range: StatsAggregator.Range): RetentionData {
-        val raw = repository.statsRawData()
+        val library = repository.statsLibrary()
         return StatsAggregator.buildRetention(
             StatsAggregator.Input(
-                reviews = raw.reviews,
-                cards = raw.cards,
-                categoryOfQuestion = raw.categoryOfQuestion,
-                paperTitleOf = raw.paperTitleOf,
+                reviews = repository.statsReviews(),
+                cards = library.cards,
+                // The fixture has no categories; the scoped labels fall back to
+                // the same "unknown group" the streamed build produces.
+                categoryOfQuestion = emptyMap(),
+                paperTitleOf = library.paperTitleOf,
                 scheduler = FsrsScheduler(
-                    desiredRetention = raw.config.desiredRetention,
-                    config = raw.config
+                    desiredRetention = library.config.desiredRetention,
+                    config = library.config
                 ),
-                config = raw.config,
+                config = library.config,
                 now = now,
                 zoneOffsetMillis = DayBoundary.zoneOffset(now)
             ),

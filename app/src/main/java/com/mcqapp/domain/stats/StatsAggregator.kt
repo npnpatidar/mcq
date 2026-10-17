@@ -48,7 +48,11 @@ object StatsAggregator {
         val reviews: List<ReplayReview>,
         /** Every tracked card with its current schedule. */
         val cards: List<CardSnapshot>,
-        /** questionId → category title, for the per-category breakdown. */
+        /**
+         * questionId → category title, for the per-category breakdown. Only the
+         * retention tab's group breakdown reads it, and a caller that builds
+         * any other section may pass an empty map.
+         */
         val categoryOfQuestion: Map<String, String>,
         /** paperId → title. */
         val paperTitleOf: Map<String, String>,

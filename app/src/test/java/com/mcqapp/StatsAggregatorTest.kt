@@ -77,11 +77,12 @@ class StatsAggregatorTest {
         reviews: List<ReplayReview> = emptyList(),
         cards: List<CardSnapshot> = emptyList(),
         at: Long = now,
-        config: SchedulerConfig = SchedulerConfig()
+        config: SchedulerConfig = SchedulerConfig(),
+        categoryOfQuestion: Map<String, String> = emptyMap()
     ) = StatsAggregator.Input(
         reviews = reviews,
         cards = cards,
-        categoryOfQuestion = emptyMap(),
+        categoryOfQuestion = categoryOfQuestion,
         paperTitleOf = mapOf("p1" to "Paper One", "p2" to "Paper Two"),
         scheduler = FsrsScheduler(config = config),
         config = config,
@@ -657,5 +658,25 @@ class StatsAggregatorTest {
         val byPaper = bundle.groupRetention.associateBy { it.label }
         assertEquals(1.0, byPaper["Paper One"]!!.retention!!, 1e-9)
         assertEquals(0.5, byPaper["Paper Two"]!!.retention!!, 1e-9)
+    }
+
+    @Test
+    fun scopedGroupRetentionBreaksDownByCategory() {
+        val reviews = listOf(
+            review("q1", rating = 3, reviewedAt = now - hour),
+            review("q2", rating = 1, reviewedAt = now - 2 * hour),
+            // A question with no category still gets a row, under the fallback.
+            review("q3", rating = 3, reviewedAt = now - 3 * hour)
+        )
+        val bundle = StatsAggregator.build(
+            input(reviews, categoryOfQuestion = mapOf("q1" to "Algebra", "q2" to "Geometry")),
+            "p1",
+            StatsAggregator.Range.ALL
+        )
+        val byLabel = bundle.groupRetention.associateBy { it.label }
+        assertEquals(1, byLabel.getValue("Algebra").reviews)
+        assertEquals(1, byLabel.getValue("Algebra").passes)
+        assertEquals(0, byLabel.getValue("Geometry").passes)
+        assertEquals(1, byLabel.getValue("—").passes)
     }
 }

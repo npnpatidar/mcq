@@ -16,33 +16,43 @@ import com.mcqapp.domain.stats.ReviewHistoryEntry
 import com.mcqapp.domain.stats.StatsAggregator
 
 /**
- * Loads what the statistics page needs: the review log replayed through the
- * current scheduler, every card's current schedule, and the paper/category
- * titles the breakdowns group by. The list-shaped read is kept whole so the
- * ViewModel can re-slice ranges and scopes in memory without touching the
- * database; the retention tab, which is the largest reader of the log, streams
- * past it instead via [loadRetention].
+ * Loads what the statistics page needs: the replayed review log, every card's
+ * current schedule, and the paper titles the breakdowns group by. The log and
+ * the cards are separate reads — the retention tab streams past the log and
+ * never builds it, so [loadLibrary] and [loadReviews] are asked for
+ * independently. The list-shaped reads are kept whole so the ViewModel can
+ * re-slice ranges and scopes in memory without touching the database.
  */
 internal class StatsStore(private val db: AppDatabase, private val settings: SettingsStore) {
 
-    data class RawData(
-        val reviews: List<ReplayReview>,
+    /**
+     * Everything but the log. A library this size is a fraction of the review
+     * log, and every list-based tab slices it in memory per range and scope.
+     */
+    data class Library(
         val cards: List<CardSnapshot>,
-        /** questionId → category title. */
-        val categoryOfQuestion: Map<String, String>,
         /** paperId → title. */
         val paperTitleOf: Map<String, String>,
         val config: SchedulerConfig
     )
 
-    suspend fun load(): RawData {
+    suspend fun loadLibrary(): Library {
+        val config = settings.schedulerConfigNow()
+        return Library(
+            cards = loadCards(),
+            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
+            config = config
+        )
+    }
+
+    /**
+     * The whole log in one list, for the tabs that slice it in memory. A caller
+     * that only needs the retention tab streams instead and never pays for it.
+     */
+    suspend fun loadReviews(): List<ReplayReview> {
         val config = settings.schedulerConfigNow()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
-        val reviews = replayLog(scheduler)
-        val cards = loadCards()
-        val categoryOfQuestion = loadCategoryOfQuestion()
-        val paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
-        return RawData(reviews, cards, categoryOfQuestion, paperTitleOf, config)
+        return replayLog(scheduler)
     }
 
     /**

@@ -11,6 +11,7 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
@@ -22,14 +23,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Holds the statistics payload one tab at a time: the repository read is
- * cached, then each tab is built on demand, so a screen visit aggregates the
- * section being looked at rather than all of them. Building runs on
- * [Dispatchers.Default] under a generation counter, so a slow build can never
- * overwrite a newer selection or a newer tab.
+ * Holds the statistics payload one tab at a time: the card library is read
+ * once, the replayed log is read once and only if a tab asks for it, and each
+ * tab is built on demand, so a screen visit aggregates the section being looked
+ * at rather than all of them. The retention tab streams past the log and never
+ * pays for the list. Building runs on [Dispatchers.Default] under a generation
+ * counter, so a slow build can never overwrite a newer selection or a newer tab.
  */
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -87,10 +91,19 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private var sectionsStale = false
 
     /**
-     * The loaded log, kept so a range or scope change re-slices without a
-     * database read. It is the only thing here that scales with library size.
+     * Everything but the log: the card schedules, the paper titles and the
+     * config, kept so a range or scope change re-slices without a database
+     * read. The retention tab needs none of it.
      */
-    private var raw: StatsStore.RawData? = null
+    private var library: StatsStore.Library? = null
+
+    /**
+     * The replayed log, read once and shared by the four list-based tabs. It is
+     * the only thing here that scales with library size, so the lock keeps two
+     * fast tab switches from loading it twice.
+     */
+    private val reviewsLock = Mutex()
+    private var reviews: List<ReplayReview>? = null
 
     init {
         refresh()
@@ -109,7 +122,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 val cardState = repository.cardState(paperId, questionId)
                 val history = repository.reviewHistory(questionId)
                 val retrievability = cardState?.takeIf { it.stability > 0.0 }?.let { state ->
-                    val config = raw?.config ?: repository.schedulerConfigNow()
+                    val config = library?.config ?: repository.schedulerConfigNow()
                     FsrsScheduler(
                         desiredRetention = config.desiredRetention,
                         config = config
@@ -147,8 +160,11 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         viewModelScope.launch {
             try {
-                val loaded = repository.statsRawData()
-                raw = loaded
+                val loaded = repository.statsLibrary()
+                library = loaded
+                // Reviews logged since the last read must be picked up, so the
+                // cached log is dropped rather than patched.
+                reviewsLock.withLock { reviews = null }
                 dropSections()
                 loadVisible()
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -188,7 +204,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Builds the visible tab unless its slice is already loaded and current. */
     private fun loadVisible() {
-        val loaded = raw ?: return
+        val loadedLibrary = library ?: return
         val current = _state.value
         if (current.visibleSliceLoaded && !sectionsStale) {
             _state.update { it.copy(loading = false, loadError = null) }
@@ -201,16 +217,29 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         val range = current.range
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                val now = System.currentTimeMillis()
-                val input = inputOf(loaded, now)
                 val built = when (tab) {
-                    Tab.OVERVIEW -> current.copy(overview = StatsAggregator.buildOverview(input, scope, range))
                     // The retention tab aggregates while the log streams past it,
-                    // so it does not read the loaded list at all.
+                    // so it reads neither the log nor the card library.
                     Tab.RETENTION -> current.copy(retention = repository.statsRetention(scope, range))
-                    Tab.WORKLOAD -> current.copy(workload = StatsAggregator.buildWorkload(input, scope, range))
-                    Tab.MEMORY -> current.copy(memory = StatsAggregator.buildMemory(input, scope, range))
-                    Tab.CARDS -> current.copy(cards = StatsAggregator.buildCards(input, scope, range))
+                    else -> {
+                        val input = inputOf(loadedLibrary, loadedReviews(), System.currentTimeMillis())
+                        when (tab) {
+                            Tab.OVERVIEW -> current.copy(
+                                overview = StatsAggregator.buildOverview(input, scope, range)
+                            )
+                            Tab.WORKLOAD -> current.copy(
+                                workload = StatsAggregator.buildWorkload(input, scope, range)
+                            )
+                            Tab.MEMORY -> current.copy(
+                                memory = StatsAggregator.buildMemory(input, scope, range)
+                            )
+                            // Cards is the remaining branch, and the only tab
+                            // left that reads the log as a list.
+                            else -> current.copy(
+                                cards = StatsAggregator.buildCards(input, scope, range)
+                            )
+                        }
+                    }
                 }
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
@@ -244,17 +273,28 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun inputOf(loaded: StatsStore.RawData, now: Long): StatsAggregator.Input =
+    /** The replayed log, read once and shared. Only the list-based tabs ask. */
+    private suspend fun loadedReviews(): List<ReplayReview> = reviewsLock.withLock {
+        reviews ?: repository.statsReviews().also { reviews = it }
+    }
+
+    private fun inputOf(
+        library: StatsStore.Library,
+        loaded: List<ReplayReview>,
+        now: Long
+    ): StatsAggregator.Input =
         StatsAggregator.Input(
-            reviews = loaded.reviews,
-            cards = loaded.cards,
-            categoryOfQuestion = loaded.categoryOfQuestion,
-            paperTitleOf = loaded.paperTitleOf,
+            reviews = loaded,
+            cards = library.cards,
+            // Only the retention breakdown reads categories, and that tab
+            // streams its own map; no list-based section touches this.
+            categoryOfQuestion = emptyMap(),
+            paperTitleOf = library.paperTitleOf,
             scheduler = FsrsScheduler(
-                desiredRetention = loaded.config.desiredRetention,
-                config = loaded.config
+                desiredRetention = library.config.desiredRetention,
+                config = library.config
             ),
-            config = loaded.config,
+            config = library.config,
             now = now,
             zoneOffsetMillis = DayBoundary.zoneOffset(now)
         )

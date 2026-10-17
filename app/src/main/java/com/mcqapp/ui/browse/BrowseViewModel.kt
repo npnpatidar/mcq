@@ -15,6 +15,7 @@ import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.ui.editor.EditorSession
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -124,10 +125,7 @@ class BrowseViewModel(
             if (categoryIds.isEmpty()) {
                 flowOf(PagingData.empty<QuestionRef>())
             } else {
-                val query = request.state.query
-                val passageIds = if (query.isBlank()) listOf("")
-                else repository.browseMatchingPassageIds(paperId, query)
-                val subtree = subtreeIds(request.state.categoryFilterId)
+                val scope = scopeFor(request.state, categoryIds)
                 Pager(
                     PagingConfig(
                         pageSize = BROWSE_PAGE,
@@ -136,13 +134,30 @@ class BrowseViewModel(
                         enablePlaceholders = false
                     )
                 ) {
-                    repository.browseRefsSource(
-                        categoryIds, query, passageIds, request.state.filter, subtree
-                    )
+                    repository.browseRefsSource(scope)
                 }.flow
             }
         }
         .cachedIn(viewModelScope)
+
+    private suspend fun scopeFor(
+        state: BrowseFilterState,
+        categoryIds: List<String>
+    ): McqRepository.BrowseScope {
+        val query = state.query
+        val passageIds = if (query.isBlank()) listOf("")
+        else repository.browseMatchingPassageIds(paperId, query)
+        return McqRepository.BrowseScope.of(
+            categoryIds = categoryIds,
+            query = query,
+            matchingPassageIds = passageIds,
+            filter = state.filter,
+            categoryFilterIds = subtreeIds(state.categoryFilterId)
+        )
+    }
+
+    private suspend fun currentScope(): McqRepository.BrowseScope =
+        scopeFor(filters.value.state, repository.browseCategoryIds(paperId))
 
     fun updateQuery(query: String) {
         filters.update { it.copy(state = it.state.copy(query = query)) }
@@ -226,23 +241,38 @@ class BrowseViewModel(
      * user is looking at. Ids only: a 250k-question list costs a few MB, not
      * the full ref set.
      */
-    fun withFilteredIds(onReady: suspend (List<String>) -> Unit) {
+    /**
+     * The anchor's index in the current filter, for the deep-link scroll.
+     * Returns -1 when the question is not in scope, matching the old
+     * `indexOf` result. The cursor's count-based index cannot tell "first"
+     * from "absent", so the id at that index is checked.
+     */
+    fun browseIndexOf(anchorId: String, onResult: suspend (Int) -> Unit) {
         viewModelScope.launch {
-            val request = filters.value.state
-            val categoryIds = repository.browseCategoryIds(paperId)
-            val passageIds = if (request.query.isBlank()) listOf("")
-            else repository.browseMatchingPassageIds(paperId, request.query)
-            val ids = repository.browseFilteredIds(
-                categoryIds, request.query, passageIds, request.filter,
-                subtreeIds(request.categoryFilterId)
-            )
-            onReady(ids)
+            val scope = currentScope()
+            val index = repository.browseFilteredIndexOf(anchorId, scope)
+            val at = repository.browseFilteredIdAt(index, scope)
+            onResult(if (at == anchorId) index else -1)
         }
     }
 
-    /** Seeds the editor's Prev/Next queue with the filtered list. */
-    fun openEditor(anchorId: String, onReady: (List<String>, Int) -> Unit) {
-        withFilteredIds { ids -> onReady(ids, ids.indexOf(anchorId).coerceAtLeast(0)) }
+    /**
+     * Seeds the editor's Prev/Next with a cursor over the current filter,
+     * without materialising the filtered list: a 250k-question paper never
+     * holds every id just to support two buttons.
+     */
+    fun openEditor(anchorId: String, onReady: suspend (EditorSession.Cursor) -> Unit) {
+        viewModelScope.launch {
+            val scope = currentScope()
+            val size = repository.browseFilteredCount(scope)
+            if (size == 0) return@launch
+            val index = repository.browseFilteredIndexOf(anchorId, scope).coerceIn(0, size - 1)
+            onReady(
+                EditorSession.Cursor(size, index) { offset ->
+                    repository.browseFilteredIdAt(offset, scope)
+                }
+            )
+        }
     }
 
     /** The row's full content, fetched when the row composes. */

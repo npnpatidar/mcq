@@ -367,7 +367,41 @@ interface QuestionDao {
     )
     suspend fun getMemberIdsByPassage(passageId: String): List<String>
 
-    /** The browse filter set reduced to ids, for the editor's Prev/Next queue. */
+    /**
+     * The same browse filter set, but only its size. The editor's "N of M"
+     * reads this instead of materialising 250k ids just to count them.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "AND (:noAnswer = 0 OR NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noExplanation = 0 OR " +
+            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:uncategorized = 0 OR questions.categoryId = '' " +
+            "OR categories.title = 'Uncategorized') " +
+            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds))"
+    )
+    suspend fun countBrowseIds(
+        categoryIds: List<String>,
+        query: String,
+        matchingPassageIds: List<String>,
+        noAnswer: Int,
+        noExplanation: Int,
+        uncategorized: Int,
+        categoryFilter: Int,
+        categoryFilterIds: List<String>
+    ): Int
+
+    /**
+     * The id at one position in the browse order, so the editor's Prev/Next
+     * can fetch a neighbour without the full filtered list. `OFFSET` walks the
+     * ordered index, which is bounded memory even where it is not the fastest
+     * read — the alternative was holding every id.
+     */
     @Query(
         "SELECT questions.id FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
@@ -382,9 +416,10 @@ interface QuestionDao {
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
             "ORDER BY categories.sortOrder, categories.title, " +
-            "questions.sortOrder, questions.rowid"
+            "questions.sortOrder, questions.rowid LIMIT 1 OFFSET :offset"
     )
-    suspend fun browseIdsByCategories(
+    suspend fun browseIdAtIndex(
+        offset: Int,
         categoryIds: List<String>,
         query: String,
         matchingPassageIds: List<String>,
@@ -393,7 +428,42 @@ interface QuestionDao {
         uncategorized: Int,
         categoryFilter: Int,
         categoryFilterIds: List<String>
-    ): List<String>
+    ): String?
+
+    /**
+     * How many in-scope rows precede [anchorId] in the browse order: its index,
+     * for the editor's "N of M". The row-value comparison is keyset, so it does
+     * not walk the whole table.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "INNER JOIN questions anchor ON anchor.id = :anchorId " +
+            "INNER JOIN categories anchorCategory ON anchorCategory.id = anchor.categoryId " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "AND (:noAnswer = 0 OR NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noExplanation = 0 OR " +
+            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:uncategorized = 0 OR questions.categoryId = '' " +
+            "OR categories.title = 'Uncategorized') " +
+            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
+            "AND (categories.sortOrder, categories.title, questions.sortOrder, questions.rowid) " +
+            "< (anchorCategory.sortOrder, anchorCategory.title, anchor.sortOrder, anchor.rowid)"
+    )
+    suspend fun browseIndexBefore(
+        anchorId: String,
+        categoryIds: List<String>,
+        query: String,
+        matchingPassageIds: List<String>,
+        noAnswer: Int,
+        noExplanation: Int,
+        uncategorized: Int,
+        categoryFilter: Int,
+        categoryFilterIds: List<String>
+    ): Int
 
     @Query(
         "SELECT id, categoryId, passageId, contentHash, text, explanation, " +

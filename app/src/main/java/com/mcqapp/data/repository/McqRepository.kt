@@ -380,6 +380,41 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     // --- browse list paging ---
 
+    /**
+     * The browse filter set mapped once to its SQL form. The paging source,
+     * the count and the editor's cursor all describe the same scope through
+     * this, so they can never drift.
+     */
+    data class BrowseScope(
+        val categoryIds: List<String>,
+        val query: String,
+        val matchingPassageIds: List<String>,
+        val noAnswer: Int,
+        val noExplanation: Int,
+        val uncategorized: Int,
+        val categoryFilter: Int,
+        val categoryFilterIds: List<String>
+    ) {
+        companion object {
+            fun of(
+                categoryIds: List<String>,
+                query: String,
+                matchingPassageIds: List<String>,
+                filter: BrowseListFilter,
+                categoryFilterIds: Set<String>?
+            ): BrowseScope = BrowseScope(
+                categoryIds = categoryIds.ifEmpty { listOf("") },
+                query = com.mcqapp.domain.QuestionSearch.escapeLike(query.trim()),
+                matchingPassageIds = matchingPassageIds.ifEmpty { listOf("") },
+                noAnswer = if (filter == BrowseListFilter.NO_ANSWER) 1 else 0,
+                noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
+                uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,
+                categoryFilter = if (categoryFilterIds.isNullOrEmpty()) 0 else 1,
+                categoryFilterIds = categoryFilterIds?.toList().orEmpty().ifEmpty { listOf("") }
+            )
+        }
+    }
+
     /** The paper's category ids, in the order the browse list joins against. */
     suspend fun browseCategoryIds(paperId: String): List<String> =
         db.categoryDao().getByPaper(paperId).map { it.id }
@@ -417,22 +452,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * invalidates it on any question/category/answer write, the same
      * refetch-on-write behaviour the observe-based list had.
      */
-    fun browseRefsSource(
-        categoryIds: List<String>,
-        query: String,
-        matchingPassageIds: List<String>,
-        filter: BrowseListFilter,
-        categoryFilterIds: Set<String>?
-    ): androidx.paging.PagingSource<Int, QuestionRef> =
+    fun browseRefsSource(scope: BrowseScope): androidx.paging.PagingSource<Int, QuestionRef> =
         db.questionDao().pagingRefsByCategories(
-            categoryIds = categoryIds.ifEmpty { listOf("") },
-            query = com.mcqapp.domain.QuestionSearch.escapeLike(query.trim()),
-            matchingPassageIds = matchingPassageIds.ifEmpty { listOf("") },
-            noAnswer = if (filter == BrowseListFilter.NO_ANSWER) 1 else 0,
-            noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
-            uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,
-            categoryFilter = if (categoryFilterIds.isNullOrEmpty()) 0 else 1,
-            categoryFilterIds = categoryFilterIds?.toList().orEmpty().ifEmpty { listOf("") }
+            categoryIds = scope.categoryIds,
+            query = scope.query,
+            matchingPassageIds = scope.matchingPassageIds,
+            noAnswer = scope.noAnswer,
+            noExplanation = scope.noExplanation,
+            uncategorized = scope.uncategorized,
+            categoryFilter = scope.categoryFilter,
+            categoryFilterIds = scope.categoryFilterIds
         )
 
     /** One category's refs in order. Reorder math works per category. */
@@ -448,27 +477,28 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun browsePassageFirstRefId(passageId: String): String? =
         db.questionDao().getRefsByPassageOrdered(passageId).firstOrNull()?.id
 
-    /**
-     * The filtered browse list as bare ids, in the same order. Used only when
-     * Edit is tapped, to seed the editor's Prev/Next queue with the exact list
-     * the user is looking at without materialising full refs.
-     */
-    suspend fun browseFilteredIds(
-        categoryIds: List<String>,
-        query: String,
-        matchingPassageIds: List<String>,
-        filter: BrowseListFilter,
-        categoryFilterIds: Set<String>?
-    ): List<String> =
-        db.questionDao().browseIdsByCategories(
-            categoryIds = categoryIds.ifEmpty { listOf("") },
-            query = com.mcqapp.domain.QuestionSearch.escapeLike(query.trim()),
-            matchingPassageIds = matchingPassageIds.ifEmpty { listOf("") },
-            noAnswer = if (filter == BrowseListFilter.NO_ANSWER) 1 else 0,
-            noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
-            uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,
-            categoryFilter = if (categoryFilterIds.isNullOrEmpty()) 0 else 1,
-            categoryFilterIds = categoryFilterIds?.toList().orEmpty().ifEmpty { listOf("") }
+    /** The scope's size, for the editor's "N of M" without listing every id. */
+    suspend fun browseFilteredCount(scope: BrowseScope): Int =
+        db.questionDao().countBrowseIds(
+            scope.categoryIds, scope.query, scope.matchingPassageIds,
+            scope.noAnswer, scope.noExplanation, scope.uncategorized,
+            scope.categoryFilter, scope.categoryFilterIds
+        )
+
+    /** The id at one position in the scope, for the editor's Prev/Next. */
+    suspend fun browseFilteredIdAt(offset: Int, scope: BrowseScope): String? =
+        db.questionDao().browseIdAtIndex(
+            offset, scope.categoryIds, scope.query, scope.matchingPassageIds,
+            scope.noAnswer, scope.noExplanation, scope.uncategorized,
+            scope.categoryFilter, scope.categoryFilterIds
+        )
+
+    /** The anchor's index in the scope, for the editor's "N of M". */
+    suspend fun browseFilteredIndexOf(anchorId: String, scope: BrowseScope): Int =
+        db.questionDao().browseIndexBefore(
+            anchorId, scope.categoryIds, scope.query, scope.matchingPassageIds,
+            scope.noAnswer, scope.noExplanation, scope.uncategorized,
+            scope.categoryFilter, scope.categoryFilterIds
         )
     suspend fun getQuestion(questionId: String): Question? = questionStore.getQuestion(questionId)
     suspend fun getQuestionsByIds(ids: List<String>): List<Question> =

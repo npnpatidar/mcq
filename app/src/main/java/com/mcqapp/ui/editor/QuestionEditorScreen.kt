@@ -110,7 +110,7 @@ fun QuestionEditorScreen(
     // again, so Save/Prev/Next stayed disabled however much was typed.
     val canProceed = state.canSave
     val queueIndex = EditorSession.index
-    val queueSize = EditorSession.ids.size
+    val queueSize = EditorSession.size
     val prevId = EditorSession.prevId
     val nextId = EditorSession.nextId
 

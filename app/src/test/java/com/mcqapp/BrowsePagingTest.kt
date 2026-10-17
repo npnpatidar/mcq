@@ -70,11 +70,13 @@ class BrowsePagingTest {
         categoryIds: List<String> = listOf("c1", "c2"),
         categoryFilterIds: Set<String>? = null
     ): PagingSource<Int, QuestionRef> = repository.browseRefsSource(
-        categoryIds = categoryIds,
-        query = query,
-        matchingPassageIds = listOf(""),
-        filter = filter,
-        categoryFilterIds = categoryFilterIds
+        McqRepository.BrowseScope.of(
+            categoryIds = categoryIds,
+            query = query,
+            matchingPassageIds = listOf(""),
+            filter = filter,
+            categoryFilterIds = categoryFilterIds
+        )
     )
 
     /** Walks every page at a small size, crossing window boundaries. */

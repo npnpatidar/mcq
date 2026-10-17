@@ -278,8 +278,7 @@ fun BrowseScreen(
         val highlightId = focusQuestionId
         LaunchedEffect(focusQuestionId) {
             if (focusQuestionId.isBlank()) return@LaunchedEffect
-            viewModel.withFilteredIds { ids ->
-                val index = ids.indexOf(focusQuestionId)
+            viewModel.browseIndexOf(focusQuestionId) { index ->
                 // +1 for the header item above the cards.
                 if (index >= 0) listState.scrollToItem(index + 1)
             }
@@ -504,11 +503,8 @@ fun BrowseScreen(
                             }
                         },
                         onEdit = {
-                            viewModel.openEditor(question.id) { ids, editorIndex ->
-                                com.mcqapp.ui.editor.EditorSession.start(
-                                    ids = ids,
-                                    index = editorIndex
-                                )
+                            viewModel.openEditor(question.id) { cursor ->
+                                com.mcqapp.ui.editor.EditorSession.startCursor(cursor)
                                 navController.navigate(
                                     com.mcqapp.ui.navigation.editorRoute(question.id, paperId, question.categoryId)
                                 )

@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.io.ContentHash
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
@@ -25,31 +26,18 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
     val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * The single content hash. [passageId] joined it on purpose: reassigning a
-     * passage changes the hash, so that question's `card_state` resets —
-     * exactly what an edit of its text does. Leaving the passage out would let
-     * a question change passages without the schedule ever noticing.
+     * The single content hash of a question, from its loaded domain shape.
+     * [passageId] is part of it on purpose: reassigning a passage changes the
+     * hash, so that question's `card_state` resets — exactly what an edit of
+     * its text does. Leaving the passage out would let a question change
+     * passages without the schedule ever noticing.
+     *
+     * Delegates to [ContentHash] so the importer (which hashes the file DTO),
+     * [QuestionStore.saveQuestion] and the study layer (which hashes a loaded
+     * question) all derive the identical value from identical content —
+     * including an option picture folded into `options_elements`.
      */
-    fun computeContentHash(
-        text: String,
-        optionTexts: List<String>,
-        optionImages: List<String?>,
-        passageId: String? = null
-    ): String =
-        // Single source of truth lives in ContentHash; this wrapper keeps the
-        // existing call sites readable.
-        com.mcqapp.data.io.ContentHash.of(text, optionTexts, optionImages, passageId)
-
-    /**
-     * Mirrors the hash written by [QuestionStore.saveQuestion] so a stored card
-     * can be compared against the question it was scheduled for.
-     */
-    fun contentHashOf(question: Question): String = computeContentHash(
-        question.text,
-        question.options.map { it.text },
-        question.options.map { it.image },
-        question.passageId
-    )
+    fun contentHashOf(question: Question): String = ContentHash.of(question)
 
     suspend fun toDomain(entity: QuestionEntity): Question {
         val options = db.optionDao().getByQuestion(entity.id)

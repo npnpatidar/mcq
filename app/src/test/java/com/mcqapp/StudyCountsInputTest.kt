@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.io.ContentHash
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
@@ -63,11 +64,18 @@ class StudyCountsInputTest {
         correctOptionIds = setOf("$id-a")
     )
 
-    /** The hash the scheduling path derives from a loaded question. */
-    private suspend fun expectedHash(id: String): String =
-        repository.getQuestionsForPaper("p1").first { it.id == id }.let { q ->
-            ContentHash.of(q.text, q.options.map { it.text }, q.options.map { it.image })
-        }
+    /**
+     * The hash the question row carries, together with the one the scheduling
+     * path derives from the loaded question. The row is the source of truth —
+     * the importer and `saveQuestion` both write it — so the two must agree
+     * before the card can be compared against either.
+     */
+    private suspend fun expectedHash(id: String): String {
+        val question = repository.getQuestionsForPaper("p1").first { it.id == id }
+        val row = db.questionDao().getById(id)!!.contentHash
+        assertEquals("the row and the loaded question must hash alike", row, ContentHash.of(question))
+        return row
+    }
 
     @Test
     fun gradingStoresTheHashTheQuestionPathWould() = runBlocking {
@@ -84,6 +92,54 @@ class StudyCountsInputTest {
             "a drifting hash would make the card look edited on every resume",
             expectedHash("q1"),
             stored!!.contentHash
+        )
+    }
+
+    /**
+     * The shape that made Study look stuck: an option whose picture lives in
+     * the elements (the bundled bank's `q-vis-*`), with no scalar mirror. The
+     * importer's hash and the study path's used to disagree on exactly those,
+     * so every pull reset the card as edited and served that same question
+     * again while the review counter climbed.
+     */
+    @Test
+    fun aFailedQuestionWithAnOptionPictureDoesNotComeStraightBack() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(
+            Question(
+                id = "qvis",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Which two shapes are quadrilaterals?")),
+                options = listOf(
+                    QuestionOption(
+                        "qvis-a",
+                        listOf(
+                            ContentElement.ImageElement("rect.png"),
+                            ContentElement.TextElement(" Rectangle")
+                        )
+                    ),
+                    QuestionOption("qvis-b", "Circle")
+                ),
+                correctOptionIds = setOf("qvis-a")
+            )
+        )
+        repository.saveQuestion(question("q2", "c1", "Second question?"))
+
+        val first = repository.getNextStudyCard("p1", now = 1_000L)
+        assertEquals("the first card in authored order", "qvis", first!!.questionId)
+        repository.recordStudyReview("p1", "qvis", ReviewGrade.AGAIN, now = 1_000L)
+
+        val stored = db.cardStateDao().get("p1", "qvis")
+        assertNotNull("grading writes the card's schedule", stored)
+        assertEquals(
+            "a picture in the elements must not make the card look edited",
+            expectedHash("qvis"),
+            stored!!.contentHash
+        )
+        assertEquals(
+            "a failed card waits for its relearn step, so the session moves on",
+            "q2",
+            repository.getNextStudyCard("p1", now = 1_000L)!!.questionId
         )
     }
 

@@ -152,10 +152,7 @@ internal class QuestionStore(
                 ?: ((db.questionDao().getMaxSortOrder(question.categoryId) ?: -1) + 1)
             Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
                 "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
-            val contentHash = mapper.computeContentHash(
-                question.text, question.options.map { it.text }, question.options.map { it.image },
-                question.passageId
-            )
+            val contentHash = mapper.contentHashOf(question)
             Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
             db.questionDao().upsert(
                 QuestionEntity(

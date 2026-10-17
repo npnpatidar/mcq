@@ -164,9 +164,7 @@ class Importer(
                 // A brand-new paper whose questions ALL already exist adds nothing:
                 // skip creating the shell so the library doesn't fill with stubs.
                 val incomingHashes = effectiveCategories.flatMap { cat ->
-                    cat.questions.map { q ->
-                        ContentHash.of(q.text, q.options.map { it.text }, q.options.map { it.image }, q.passageId)
-                    }
+                    cat.questions.map { q -> ContentHash.of(q) }
                 }
                 if (isNewPaper && incomingHashes.isNotEmpty() &&
                     incomingHashes.all { it in existingHashes }) {
@@ -451,12 +449,7 @@ class Importer(
                                         com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
                                     }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),
                                     reviewCount = schedule.reviewCount,
-                                    contentHash = ContentHash.of(
-                                        scaledQuestion.text,
-                                        scaledQuestion.options.map { it.text },
-                                        scaledQuestion.options.map { it.image },
-                                        scaledQuestion.passageId
-                                    )
+                                    contentHash = ContentHash.of(scaledQuestion)
                                 )
                             )
                             restoredSchedules++

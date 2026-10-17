@@ -850,6 +850,24 @@ over `searchText` (§4.5 + F4).
     the statistics and exports stay truthful;
   - the per-paper resolution cache and its invalidation observer are gone with
     the model they cached.
+- **Study served the same question forever** — the reported "the question
+  number increases but the question stays the same". A stored card's hash is
+  compared against the question it was scheduled for on every pull, and a
+  difference reads as an edit, so the card is reset to new: the two sides must
+  derive one value per question. They did not, for an option whose picture
+  rides the elements. The importer folds a picture into `options_elements` (the
+  bundled bank's `q-vis-*` questions carry an image element with no scalar
+  mirror) and hashed it tolerantly, while the study path hashed the scalar
+  alone, i.e. `null`. Every pull reset `q-vis-1` and served it again — 37
+  grades of one question in a row in the device log, with `advanceStats`
+  counting each. `ContentHash` is now the one derivation for both shapes: a
+  shared `optionImageValue`/`storedText`, a new `of(question)` beside `of(dto)`,
+  and every writer routed through it (`saveQuestion`, `QuestionStore.clone`, the
+  legacy importer's content-hash-only paper check and its restored schedules).
+  Pinned by `StoredQuestionHashTest` (every question of the bundled bank must
+  hash alike as a file DTO and as a stored row) and by `StudyCountsInputTest`
+  comparing a graded card's hash against the question *row*, plus a
+  picture-bearing question that must not come straight back after AGAIN.
 
 ### Open (in pain order)
 

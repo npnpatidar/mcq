@@ -60,28 +60,29 @@ internal class StudyStore(
         // resolves afresh. Quadra: questions carry the hashes, categories
         // the order, card_state the schedules. Robolectric/plain-JVM stores
         // without a tracker lose only the cache, nothing else.
-        //
-        // Registration opens a connection through Room's
-        // runBlockingUninterruptible, so it must not run on the thread that
-        // calls the repository constructor: on the main thread it blocks the
-        // UI, and under Robolectric's paused looper it can deadlock outright.
-        // The cache is optional, so attach off-thread and drop any build that
-        // raced ahead of the observer.
-        val observer = object : androidx.room.InvalidationTracker.Observer(
-            "questions", "categories", "card_state", "papers"
-        ) {
-            override fun onInvalidated(tables: Set<String>) {
-                resolved = null
-            }
+        try {
+            // Open the connection before the tracker syncs its triggers.
+            // addObserver runs its trigger sync under runBlockingUninterruptible
+            // and, when the pool still has to open the connection, that open is
+            // resumed on the caller's coroutine event loop. Constructed from
+            // inside a coroutine (a ViewModel's scope, or a test's runBlocking),
+            // that loop is the one currently blocked, so the open can never
+            // complete and the whole process wedges. With the connection
+            // already open the sync has nothing to await. This is the same
+            // moment the sync would have opened it, so it changes no I/O.
+            db.openHelper.writableDatabase
+            db.invalidationTracker.addObserver(
+                object : androidx.room.InvalidationTracker.Observer(
+                    "questions", "categories", "card_state", "papers"
+                ) {
+                    override fun onInvalidated(tables: Set<String>) {
+                        resolved = null
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Logger.w("REPO", "study resolution cache unavailable: ${e.message}")
         }
-        Thread({
-            try {
-                db.invalidationTracker.addObserver(observer)
-                resolved = null
-            } catch (e: Exception) {
-                Logger.w("REPO", "study resolution cache unavailable: ${e.message}")
-            }
-        }, "study-cache-observer").apply { isDaemon = true }.start()
     }
 
     private suspend fun resolvedFor(paperId: String): ResolvedStudy {

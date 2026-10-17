@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.util.ImportTooLargeException
 import com.mcqapp.util.MAX_IMPORT_BYTES
+import com.mcqapp.util.boundedStream
 import com.mcqapp.util.readBounded
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -26,6 +27,33 @@ class BoundedReadTest {
         }
 
         override fun available(): Int = Int.MAX_VALUE
+    }
+
+    @Test
+    fun boundedStreamHandsTheBytesThroughWhileCountingThem() {
+        val bytes = ByteArray(5000) { (it % 251).toByte() }
+        val read = boundedStream(ByteArrayInputStream(bytes), limit = 8192).readBytes()
+        assertArrayEquals(bytes, read)
+    }
+
+    @Test
+    fun boundedStreamRefusesTheBytePastTheLimit() {
+        // The same cap readBounded applies, applied as the bytes go past
+        // instead of after they have all been collected: a restore reads a
+        // stream it never keeps.
+        val e = runCatching {
+            boundedStream(ByteArrayInputStream(ByteArray(4096)), limit = 1024).readBytes()
+        }.exceptionOrNull()
+        assertTrue("expected ImportTooLargeException, got $e", e is ImportTooLargeException)
+        assertEquals(1024L, (e as ImportTooLargeException).limit)
+    }
+
+    @Test
+    fun boundedStreamStopsAnEndlessStream() {
+        val e = runCatching {
+            boundedStream(EndlessStream(), limit = 2000).readBytes()
+        }.exceptionOrNull()
+        assertTrue("expected ImportTooLargeException, got $e", e is ImportTooLargeException)
     }
 
     @Test

@@ -131,7 +131,14 @@ class BrowseViewModel(
                         pageSize = BROWSE_PAGE,
                         initialLoadSize = BROWSE_PAGE * 2,
                         prefetchDistance = BROWSE_PAGE / 2,
-                        enablePlaceholders = false
+                        // On, so the list knows the paper's whole length: a
+                        // deep link has to be able to jump to a question that
+                        // no scroll has reached yet, and without placeholders
+                        // the list holds only the pages it has loaded, so that
+                        // index does not exist to jump to. It also lets a fling
+                        // reach the end of a long paper instead of stopping at
+                        // whatever page the scroll has pulled so far.
+                        enablePlaceholders = true
                     )
                 ) {
                     repository.browseRefsSource(scope)

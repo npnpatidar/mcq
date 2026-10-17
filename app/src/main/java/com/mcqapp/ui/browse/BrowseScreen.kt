@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -61,6 +62,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -276,8 +278,16 @@ fun BrowseScreen(
         val listState = rememberLazyListState()
         // Deep link from global search: highlight persists on screen.
         val highlightId = focusQuestionId
-        LaunchedEffect(focusQuestionId) {
-            if (focusQuestionId.isBlank()) return@LaunchedEffect
+        // The list is a paging window, so on the first composition it has no
+        // items at all, and a question far down a long paper lies past
+        // everything the window holds. A scroll asked for then went to a list
+        // that did not exist yet and was never asked again, which is why a
+        // search hit landed at the top. Read the count here, in composition, so
+        // the effect runs again once the list has one — paging then jumps to
+        // the row and loads the page around it.
+        val listHasRows = items.itemCount > 0
+        LaunchedEffect(focusQuestionId, listHasRows) {
+            if (focusQuestionId.isBlank() || !listHasRows) return@LaunchedEffect
             viewModel.browseIndexOf(focusQuestionId) { index ->
                 // +1 for the header item above the cards.
                 if (index >= 0) listState.scrollToItem(index + 1)
@@ -393,7 +403,35 @@ fun BrowseScreen(
                 key = items.itemKey { it.id },
                 contentType = { "question" }
             ) { index ->
-                val question = items[index] ?: return@items
+                val question = items[index]
+                if (question == null) {
+                    // A row whose page has not been loaded yet. The list knows
+                    // the paper's whole length (placeholders are on), so the
+                    // number is already the right one; the grey bar stands in
+                    // until the page lands, so a deep-link jump or a fast fling
+                    // never leaves a blank gap where questions are.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "$index.",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                        Spacer(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(14.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        )
+                    }
+                    return@items
+                }
                 val context = state.categoryContexts[question.categoryId]
                 LaunchedEffect(question.categoryId, state.contextsVersion) {
                     viewModel.ensureCategoryContext(question.categoryId)

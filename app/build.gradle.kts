@@ -229,25 +229,26 @@ dependencies {
 // Two are needed: every Robolectric class pins sdk = [34]
 // (14-robolectric-10818077-i7), and Robolectric also loads the app package
 // under targetSdk 36, which 4.14.1 clamps to its newest supported SDK, 35
-// (15-robolectric-12650502-i7).
+// (15-robolectric-12650502-i7). They must live in separate configurations:
+// one configuration containing both versions would resolve to the newer one
+// and silently drop the other (the offline directory then misses SDK 34).
 private val robolectricSdkVersions = listOf(
     "14-robolectric-10818077-i7",
     "15-robolectric-12650502-i7"
 )
 
-val robolectricSdk = configurations.create("robolectricSdk") {
-    isCanBeConsumed = false
-    isCanBeResolved = true
-}
-
-dependencies {
-    robolectricSdkVersions.forEach {
-        robolectricSdk("org.robolectric:android-all-instrumented:$it")
+private val robolectricSdkConfigs = robolectricSdkVersions.mapIndexed { index, version ->
+    val name = "robolectricSdk${index + 34}"
+    val configuration = configurations.create(name) {
+        isCanBeConsumed = false
+        isCanBeResolved = true
     }
+    dependencies.add(name, "org.robolectric:android-all-instrumented:$version")
+    configuration
 }
 
-val stageRobolectricSdk = tasks.register<Copy>("stageRobolectricSdk") {
-    from(robolectricSdk)
+val stageRobolectricSdk = tasks.register<Sync>("stageRobolectricSdk") {
+    from(robolectricSdkConfigs)
     into(layout.buildDirectory.dir("robolectric-sdk"))
 }
 

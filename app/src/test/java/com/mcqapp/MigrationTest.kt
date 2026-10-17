@@ -584,6 +584,7 @@ class MigrationTest {
             assertEquals(2, weakest.first().graded)
             db.close()
         }
+    }
 
     /**
      * 14->15 adds the flattened `searchText` columns the prefilter scans.
@@ -631,6 +632,5 @@ class MigrationTest {
         } finally {
             db.close()
         }
-    }
     }
 }

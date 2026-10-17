@@ -109,17 +109,7 @@ object StatsAggregator {
         // are computed once here and handed to both consumers rather than
         // recomputed per tab.
         val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
-        val kpis = kpis(
-            inRange = ctx.inRange,
-            cards = ctx.cards,
-            rangeRetention = trueRetention(
-                ctx.inRange, ctx.todayStart, ctx.tomorrowStart, ctx.rangeStart, ctx.cfg, ctx.zone
-            ),
-            heatmap = heatmap,
-            input = ctx.input,
-            cfg = ctx.cfg,
-            zone = ctx.zone
-        )
+        val kpis = kpisOf(ctx, heatmap)
         return StatsSections(
             overview = overviewOf(ctx, kpis, heatmap),
             retention = retentionOf(ctx),
@@ -128,6 +118,44 @@ object StatsAggregator {
             cards = cardsOf(ctx)
         )
     }
+
+    /** The overview tab on its own, for a tab that loads lazily. */
+    fun buildOverview(input: Input, scopePaperId: String?, range: Range): OverviewData {
+        val ctx = Context.of(input, scopePaperId, range)
+        val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
+        return overviewOf(ctx, kpisOf(ctx, heatmap), heatmap)
+    }
+
+    /** The retention tab on its own. */
+    fun buildRetention(input: Input, scopePaperId: String?, range: Range): RetentionData =
+        retentionOf(Context.of(input, scopePaperId, range))
+
+    /** The workload tab on its own. */
+    fun buildWorkload(input: Input, scopePaperId: String?, range: Range): WorkloadData =
+        workloadOf(Context.of(input, scopePaperId, range))
+
+    /** The memory tab on its own. */
+    fun buildMemory(input: Input, scopePaperId: String?, range: Range): MemoryData {
+        val ctx = Context.of(input, scopePaperId, range)
+        val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
+        return memoryOf(ctx, kpisOf(ctx, heatmap))
+    }
+
+    /** The cards tab on its own. */
+    fun buildCards(input: Input, scopePaperId: String?, range: Range): CardsData =
+        cardsOf(Context.of(input, scopePaperId, range))
+
+    private fun kpisOf(ctx: Context, heatmap: HeatmapData): OverviewKpis = kpis(
+        inRange = ctx.inRange,
+        cards = ctx.cards,
+        rangeRetention = trueRetention(
+            ctx.inRange, ctx.todayStart, ctx.tomorrowStart, ctx.rangeStart, ctx.cfg, ctx.zone
+        ),
+        heatmap = heatmap,
+        input = ctx.input,
+        cfg = ctx.cfg,
+        zone = ctx.zone
+    )
 
     private fun overviewOf(ctx: Context, kpis: OverviewKpis, heatmap: HeatmapData): OverviewData =
         OverviewData(

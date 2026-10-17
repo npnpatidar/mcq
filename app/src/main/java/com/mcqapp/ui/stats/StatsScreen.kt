@@ -26,9 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,7 +60,6 @@ fun StatsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val cardDetail by viewModel.cardDetail.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableIntStateOf(0) }
 
     // Reviews logged elsewhere (a study session) must show up when coming back.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -103,7 +100,7 @@ fun StatsScreen(
                     onSelect = viewModel::setScope
                 )
             }
-            PrimaryTabRow(selectedTabIndex = tab) {
+            PrimaryTabRow(selectedTabIndex = state.tab.ordinal) {
                 listOf(
                     R.string.tab_overview,
                     R.string.tab_retention,
@@ -111,19 +108,16 @@ fun StatsScreen(
                     R.string.tab_memory,
                     R.string.tab_cards
                 ).forEachIndexed { index, titleRes ->
-                    Tab(selected = tab == index, onClick = { tab = index }, text = {
-                        Text(stringResource(titleRes))
-                    })
+                    val section = StatsViewModel.Tab.entries[index]
+                    Tab(
+                        selected = state.tab == section,
+                        onClick = { viewModel.selectTab(section) },
+                        text = { Text(stringResource(titleRes)) }
+                    )
                 }
             }
             RangeSelector(state.range, viewModel::setRange)
             when {
-                state.loading && state.bundle == null -> Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
                 state.loadError != null -> Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -134,32 +128,43 @@ fun StatsScreen(
                         color = MaterialTheme.colorScheme.error
                     )
                 }
-                state.bundle != null -> {
-                    val bundle = state.bundle!!
+                !state.visibleSliceLoaded -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+                else -> {
                     val openCard: (String, String) -> Unit = { paperId, questionId ->
                         viewModel.openCard(paperId, questionId)
                     }
                     val questionText = state.questionText
-                    key(tab) {
-                        when (tab) {
-                            0 -> OverviewSection(
-                                bundle = bundle,
-                                questionText = questionText,
-                                onOpenCard = { openCard(it.paperId, it.questionId) },
-                                onOpenSettings = { navController.navigate("settings") }
-                            )
-                            1 -> RetentionSection(bundle)
-                            2 -> WorkloadSection(
-                                bundle = bundle,
-                                questionText = questionText,
-                                onOpenCard = { openCard(it.paperId, it.questionId) }
-                            )
-                            3 -> MemorySection(bundle)
-                            else -> CardsSection(
-                                bundle = bundle,
-                                questionText = questionText,
-                                onOpenCard = { openCard(it.paperId, it.questionId) }
-                            )
+                    key(state.tab) {
+                        when (state.tab) {
+                            StatsViewModel.Tab.OVERVIEW -> state.overview?.let { data ->
+                                OverviewSection(
+                                    bundle = data,
+                                    questionText = questionText,
+                                    onOpenCard = { openCard(it.paperId, it.questionId) },
+                                    onOpenSettings = { navController.navigate("settings") }
+                                )
+                            }
+                            StatsViewModel.Tab.RETENTION -> state.retention?.let { RetentionSection(it) }
+                            StatsViewModel.Tab.WORKLOAD -> state.workload?.let { data ->
+                                WorkloadSection(
+                                    bundle = data,
+                                    questionText = questionText,
+                                    onOpenCard = { openCard(it.paperId, it.questionId) }
+                                )
+                            }
+                            StatsViewModel.Tab.MEMORY -> state.memory?.let { MemorySection(it) }
+                            StatsViewModel.Tab.CARDS -> state.cards?.let { data ->
+                                CardsSection(
+                                    bundle = data,
+                                    questionText = questionText,
+                                    onOpenCard = { openCard(it.paperId, it.questionId) }
+                                )
+                            }
                         }
                     }
                 }

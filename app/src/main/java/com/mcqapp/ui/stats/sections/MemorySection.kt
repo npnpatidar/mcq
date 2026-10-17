@@ -18,7 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
-import com.mcqapp.domain.stats.StatsBundle
+import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.ui.stats.charts.ChartCard
 import com.mcqapp.ui.stats.charts.ChartEmpty
 import com.mcqapp.ui.stats.charts.ChartSubtitle
@@ -36,7 +36,7 @@ import java.util.Locale
  * with each review.
  */
 @Composable
-internal fun MemorySection(bundle: StatsBundle) {
+internal fun MemorySection(bundle: MemoryData) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -80,7 +80,7 @@ private fun DistributionCard(
 }
 
 @Composable
-private fun RetrievabilityCard(bundle: StatsBundle) {
+private fun RetrievabilityCard(bundle: MemoryData) {
     ChartCard(
         testTag = "stats-retrievability",
         title = { ChartTitle(R.string.stats_retrievability) },
@@ -111,7 +111,7 @@ private fun RetrievabilityCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun IntervalCard(bundle: StatsBundle) {
+private fun IntervalCard(bundle: MemoryData) {
     ChartCard(
         testTag = "stats-intervals",
         title = { ChartTitle(R.string.stats_intervals) },
@@ -176,7 +176,7 @@ private fun oneDecimal(value: Double): String =
     String.format(Locale.ENGLISH, "%.1f", value)
 
 @Composable
-private fun GrowthCard(bundle: StatsBundle) {
+private fun GrowthCard(bundle: MemoryData) {
     ChartCard(
         testTag = "stats-memory-growth",
         title = { ChartTitle(R.string.stats_memory_growth) },

@@ -60,19 +60,28 @@ internal class StudyStore(
         // resolves afresh. Quadra: questions carry the hashes, categories
         // the order, card_state the schedules. Robolectric/plain-JVM stores
         // without a tracker lose only the cache, nothing else.
-        try {
-            db.invalidationTracker.addObserver(
-                object : androidx.room.InvalidationTracker.Observer(
-                    "questions", "categories", "card_state", "papers"
-                ) {
-                    override fun onInvalidated(tables: Set<String>) {
-                        resolved = null
-                    }
-                }
-            )
-        } catch (e: Exception) {
-            Logger.w("REPO", "study resolution cache unavailable: ${e.message}")
+        //
+        // Registration opens a connection through Room's
+        // runBlockingUninterruptible, so it must not run on the thread that
+        // calls the repository constructor: on the main thread it blocks the
+        // UI, and under Robolectric's paused looper it can deadlock outright.
+        // The cache is optional, so attach off-thread and drop any build that
+        // raced ahead of the observer.
+        val observer = object : androidx.room.InvalidationTracker.Observer(
+            "questions", "categories", "card_state", "papers"
+        ) {
+            override fun onInvalidated(tables: Set<String>) {
+                resolved = null
+            }
         }
+        Thread({
+            try {
+                db.invalidationTracker.addObserver(observer)
+                resolved = null
+            } catch (e: Exception) {
+                Logger.w("REPO", "study resolution cache unavailable: ${e.message}")
+            }
+        }, "study-cache-observer").apply { isDaemon = true }.start()
     }
 
     private suspend fun resolvedFor(paperId: String): ResolvedStudy {

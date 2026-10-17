@@ -1,3 +1,4 @@
+import java.time.Duration
 import java.util.Properties
 
 /**
@@ -259,4 +260,9 @@ tasks.withType<Test>().configureEach {
         "robolectric.dependency.dir",
         layout.buildDirectory.dir("robolectric-sdk").get().asFile.absolutePath
     )
+    // A hung test must fail the run, not sit for half an hour: we have seen
+    // :app:testDebugUnitTest stall with no output (a runtime download, once;
+    // a deadlocked Room/Robolectric observer, since). Ten minutes is several
+    // times the whole suite's normal wall clock.
+    timeout.set(Duration.ofMinutes(10))
 }

@@ -11,6 +11,8 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.stats.RetentionData
+import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -110,6 +112,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * in memory per range and paper scope.
      */
     internal suspend fun statsRawData(): StatsStore.RawData = statsStore.load()
+
+    /**
+     * The retention tab alone, aggregated while the log streams past it. Unlike
+     * [statsRawData] this never holds the log: the page's other tabs still
+     * slice the list in memory, but this one does not need it.
+     */
+    internal suspend fun statsRetention(
+        scopePaperId: String?,
+        range: StatsAggregator.Range
+    ): RetentionData = statsStore.loadRetention(scopePaperId, range)
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =

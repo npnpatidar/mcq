@@ -5,19 +5,23 @@ import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
+import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
 import com.mcqapp.domain.stats.FsrsReplay
 import com.mcqapp.domain.stats.ReplayReview
+import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.ReviewHistoryEntry
+import com.mcqapp.domain.stats.StatsAggregator
 
 /**
- * Loads everything the statistics page needs in one pass: the whole review log
- * replayed through the current scheduler, every card's current schedule, and
- * the paper/category titles the breakdowns group by. Deliberately one fat
- * read — the same scale the optimizer's fit already pulls — so the ViewModel
- * can re-slice ranges and scopes in memory without touching the database.
+ * Loads what the statistics page needs: the review log replayed through the
+ * current scheduler, every card's current schedule, and the paper/category
+ * titles the breakdowns group by. The list-shaped read is kept whole so the
+ * ViewModel can re-slice ranges and scopes in memory without touching the
+ * database; the retention tab, which is the largest reader of the log, streams
+ * past it instead via [loadRetention].
  */
 internal class StatsStore(private val db: AppDatabase, private val settings: SettingsStore) {
 
@@ -39,6 +43,41 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val categoryOfQuestion = loadCategoryOfQuestion()
         val paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
         return RawData(reviews, cards, categoryOfQuestion, paperTitleOf, config)
+    }
+
+    /**
+     * The retention tab, built while the log streams past instead of from a
+     * list of it: pages are replayed straight into
+     * [StatsAggregator.RetentionAccumulator], which keeps only per-card state
+     * and counters. This tab is the page's memory high-water mark otherwise,
+     * because it is the one section that reads the whole log on its own scope
+     * as well as on the selected range.
+     */
+    suspend fun loadRetention(scopePaperId: String?, range: StatsAggregator.Range): RetentionData {
+        val config = settings.schedulerConfigNow()
+        val now = System.currentTimeMillis()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.RetentionAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now),
+            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
+            // Only the scoped breakdown labels by category, and the map is one
+            // entry per question, so the unscoped view skips building it.
+            categoryOfQuestion = if (scopePaperId == null) emptyMap() else loadCategoryOfQuestion()
+        )
+        val stream = FsrsReplay.Stream(scheduler)
+        var afterId = 0L
+        while (true) {
+            val page = db.reviewLogDao().pageAfterId(afterId, PAGE_SIZE)
+            if (page.isEmpty()) break
+            page.forEach { accumulator.add(stream.accept(it.toRawReview())) }
+            afterId = page.last().id
+            if (page.size < PAGE_SIZE) break
+        }
+        return accumulator.toData()
     }
 
     /**

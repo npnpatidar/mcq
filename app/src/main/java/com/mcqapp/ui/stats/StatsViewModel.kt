@@ -205,7 +205,9 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 val input = inputOf(loaded, now)
                 val built = when (tab) {
                     Tab.OVERVIEW -> current.copy(overview = StatsAggregator.buildOverview(input, scope, range))
-                    Tab.RETENTION -> current.copy(retention = StatsAggregator.buildRetention(input, scope, range))
+                    // The retention tab aggregates while the log streams past it,
+                    // so it does not read the loaded list at all.
+                    Tab.RETENTION -> current.copy(retention = repository.statsRetention(scope, range))
                     Tab.WORKLOAD -> current.copy(workload = StatsAggregator.buildWorkload(input, scope, range))
                     Tab.MEMORY -> current.copy(memory = StatsAggregator.buildMemory(input, scope, range))
                     Tab.CARDS -> current.copy(cards = StatsAggregator.buildCards(input, scope, range))

@@ -571,6 +571,26 @@ object StatsAggregator {
         }
     }
 
+    /**
+     * Per-question figures gathered in one pass over the log, for the ranked
+     * lists. Those lists used to be built by re-filtering the whole log once
+     * per question; rolling the figures up in a single pass is what keeps the
+     * statistics screen linear in the number of reviews rather than quadratic.
+     */
+    private class QuestionRoll {
+        var reviews = 0
+        var lapses = 0
+        var lastReviewedAt = 0L
+        var timedCount = 0
+        var timedSeconds = 0L
+
+        /** Paper of the first review seen, for the row's display paper. */
+        var firstPaperId: String? = null
+
+        /** Paper of the first *timed* review; the old grouping ordered by it. */
+        var firstTimedPaperId: String? = null
+    }
+
     private fun responseTime(
         inRange: List<ReplayReview>,
         cards: List<CardSnapshot>,
@@ -618,18 +638,39 @@ object StatsAggregator {
             }
         }
         val leechByQuestion = cards.filter { it.state.leech }.associate { it.state.questionId to true }
-        val perCard = timed.groupBy { it.first.questionId }.mapNotNull { (questionId, rows) ->
-            if (rows.size < 3) return@mapNotNull null
-            val any = rows.first().first
-            val all = inRange.filter { it.questionId == questionId }
+        // One pass for the per-question figures. This used to re-filter the
+        // whole range once per question that had three or more timed reviews,
+        // which is O(reviews × questions): at 1M reviews over 250k questions
+        // it is the screen's worst hot spot. `timedOrder` reproduces the key
+        // order of the old `timed.groupBy {}` (first *timed* review), which
+        // `sortedByDescending` relies on to break equal-average ties.
+        val rollOf = HashMap<String, QuestionRoll>()
+        val timedOrder = ArrayList<String>()
+        inRange.forEach { review ->
+            val roll = rollOf.getOrPut(review.questionId) { QuestionRoll() }
+            roll.reviews++
+            if (!review.passed) roll.lapses++
+            if (review.reviewedAt > roll.lastReviewedAt) roll.lastReviewedAt = review.reviewedAt
+            review.elapsedSeconds?.let { seconds ->
+                if (roll.timedCount == 0) {
+                    roll.firstTimedPaperId = review.paperId
+                    timedOrder += review.questionId
+                }
+                roll.timedCount++
+                roll.timedSeconds += seconds
+            }
+        }
+        val perCard = timedOrder.mapNotNull { questionId ->
+            val roll = rollOf.getValue(questionId)
+            if (roll.timedCount < 3) return@mapNotNull null
             WeakCard(
-                paperId = any.paperId,
+                paperId = roll.firstTimedPaperId!!,
                 questionId = questionId,
-                reviews = all.size,
-                lapses = all.count { !it.passed },
-                againRate = if (all.isEmpty()) 0.0 else all.count { !it.passed }.toDouble() / all.size,
-                avgSeconds = rows.map { it.second }.average(),
-                lastReviewedAt = all.maxOf { it.reviewedAt },
+                reviews = roll.reviews,
+                lapses = roll.lapses,
+                againRate = roll.lapses.toDouble() / roll.reviews,
+                avgSeconds = roll.timedSeconds.toDouble() / roll.timedCount,
+                lastReviewedAt = roll.lastReviewedAt,
                 leech = leechByQuestion.containsKey(questionId)
             )
         }
@@ -855,20 +896,42 @@ object StatsAggregator {
         cards: List<CardSnapshot>
     ): List<WeakCard> {
         val leechByQuestion = cards.filter { it.state.leech }.associate { it.state.questionId to true }
-        return inRange.groupBy { it.questionId }.mapNotNull { (questionId, rows) ->
-            if (rows.size < 3) return@mapNotNull null
-            val lapses = rows.count { !it.passed }
-            if (lapses == 0) return@mapNotNull null
-            val timed = rows.mapNotNull { it.elapsedSeconds }
-            val any = rows.first()
+        // One pass, in place of `groupBy {}`: the old shape held a list per
+        // question (up to 250k lists over a 1M-row log) purely to read four
+        // aggregates off it. `order` reproduces groupBy's first-seen order,
+        // which the tie-break in the sort below depends on.
+        val rollOf = HashMap<String, QuestionRoll>()
+        val order = ArrayList<String>()
+        inRange.forEach { review ->
+            val roll = rollOf.getOrPut(review.questionId) {
+                order += review.questionId
+                QuestionRoll()
+            }
+            roll.reviews++
+            if (!review.passed) roll.lapses++
+            if (roll.firstPaperId == null) roll.firstPaperId = review.paperId
+            if (review.reviewedAt > roll.lastReviewedAt) roll.lastReviewedAt = review.reviewedAt
+            review.elapsedSeconds?.let { seconds ->
+                roll.timedCount++
+                roll.timedSeconds += seconds
+            }
+        }
+        return order.mapNotNull { questionId ->
+            val roll = rollOf.getValue(questionId)
+            if (roll.reviews < 3) return@mapNotNull null
+            if (roll.lapses == 0) return@mapNotNull null
             WeakCard(
-                paperId = any.paperId,
+                paperId = roll.firstPaperId!!,
                 questionId = questionId,
-                reviews = rows.size,
-                lapses = lapses,
-                againRate = lapses.toDouble() / rows.size,
-                avgSeconds = if (timed.isEmpty()) null else timed.average(),
-                lastReviewedAt = rows.maxOf { it.reviewedAt },
+                reviews = roll.reviews,
+                lapses = roll.lapses,
+                againRate = roll.lapses.toDouble() / roll.reviews,
+                avgSeconds = if (roll.timedCount == 0) {
+                    null
+                } else {
+                    roll.timedSeconds.toDouble() / roll.timedCount
+                },
+                lastReviewedAt = roll.lastReviewedAt,
                 leech = leechByQuestion.containsKey(questionId)
             )
         }
@@ -883,23 +946,43 @@ object StatsAggregator {
     private fun leeches(
         inScope: List<ReplayReview>,
         cards: List<CardSnapshot>
-    ): List<WeakCard> =
-        cards.filter { it.state.leech }.mapNotNull { snapshot ->
-            val rows = inScope.filter { it.questionId == snapshot.state.questionId }
-            if (rows.isEmpty()) return@mapNotNull null
-            val lapses = rows.count { !it.passed }
-            val timed = rows.mapNotNull { it.elapsedSeconds }
+    ): List<WeakCard> {
+        val flagged = cards.filter { it.state.leech }
+        if (flagged.isEmpty()) return emptyList()
+        // One pass over history, touching only the flagged cards. This used to
+        // filter the whole scope once per leech, which is O(reviews × leeches);
+        // the walk below is what makes a 1M-row log cheap for the overview.
+        val wanted = flagged.mapTo(HashSet()) { it.state.questionId }
+        val rollOf = HashMap<String, QuestionRoll>()
+        inScope.forEach { review ->
+            if (review.questionId !in wanted) return@forEach
+            val roll = rollOf.getOrPut(review.questionId) { QuestionRoll() }
+            roll.reviews++
+            if (!review.passed) roll.lapses++
+            if (review.reviewedAt > roll.lastReviewedAt) roll.lastReviewedAt = review.reviewedAt
+            review.elapsedSeconds?.let { seconds ->
+                roll.timedCount++
+                roll.timedSeconds += seconds
+            }
+        }
+        return flagged.mapNotNull { snapshot ->
+            val roll = rollOf[snapshot.state.questionId] ?: return@mapNotNull null
             WeakCard(
                 paperId = snapshot.paperId,
                 questionId = snapshot.state.questionId,
-                reviews = rows.size,
-                lapses = lapses,
-                againRate = lapses.toDouble() / rows.size,
-                avgSeconds = if (timed.isEmpty()) null else timed.average(),
-                lastReviewedAt = rows.maxOf { it.reviewedAt },
+                reviews = roll.reviews,
+                lapses = roll.lapses,
+                againRate = roll.lapses.toDouble() / roll.reviews,
+                avgSeconds = if (roll.timedCount == 0) {
+                    null
+                } else {
+                    roll.timedSeconds.toDouble() / roll.timedCount
+                },
+                lastReviewedAt = roll.lastReviewedAt,
                 leech = true
             )
         }.sortedByDescending { it.lapses }.take(15)
+    }
 
     // --- day and bucket arithmetic -------------------------------------------
 

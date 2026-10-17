@@ -313,7 +313,7 @@ class ExportWritersTest {
     }
 
     @Test
-    fun htmlAnswerLineRendersInlineTags() {
+    fun htmlAnswerNamesTheOptionLabelNotItsContent() {
         val q = QuestionDto(
             id = "q1",
             text = "Pick one?",
@@ -334,8 +334,58 @@ class ExportWritersTest {
             categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
         )
         val html = HtmlPaperWriter.paperToHtml(paper)
-        assertTrue(html.contains("Answer: 10<sup>-3</sup>"))
+        // The answer names the label the option carries, so a reader can match
+        // it against the list; the option keeps the content and its markup.
+        assertTrue(html.contains("Answer: A</p>"))
+        assertFalse(html.contains("Answer: 10"))
+        assertTrue(html.contains("A) 10<sup>-3</sup>"))
         assertFalse(html.contains("&lt;sup&gt;"))
+    }
+
+    @Test
+    fun htmlLabelsOptionsByPositionNotByStoredId() {
+        // Imported banks key their options by whatever the source used, so the
+        // label a reader sees is the position and the answer must name it.
+        val q = QuestionDto(
+            id = "q1",
+            text = "Pick two?",
+            options = listOf(
+                OptionDto(id = "opt-1", text = "one"),
+                OptionDto(id = "opt-2", text = "two"),
+                OptionDto(id = "opt-3", text = "three")
+            ),
+            correctOptionIds = listOf("opt-3", "opt-1")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        val html = HtmlPaperWriter.paperToHtml(paper)
+        assertTrue(html.contains("A) one"))
+        assertTrue(html.contains("C) three"))
+        assertTrue(html.contains("Answer: A, C</p>"))
+    }
+
+    @Test
+    fun quizHtmlAlsoAnswersWithLabels() {
+        val q = QuestionDto(
+            id = "q1",
+            text = "Pick one?",
+            options = listOf(
+                OptionDto(id = "opt-1", text = "one"),
+                OptionDto(id = "opt-2", text = "two")
+            ),
+            correctOptionIds = listOf("opt-2")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        val html = HtmlPaperWriter.paperToQuizHtml(paper)
+        assertTrue(html.contains("Answer: B</p>"))
+        assertFalse(html.contains("Answer: two"))
     }
 
     @Test

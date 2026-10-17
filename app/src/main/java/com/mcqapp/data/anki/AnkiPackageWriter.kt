@@ -1,5 +1,6 @@
 package com.mcqapp.data.anki
 
+import com.mcqapp.data.export.optionLetter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.domain.Question
@@ -231,7 +232,7 @@ object AnkiPackageWriter {
             sb.append("<b>Select all that apply.</b>").append(LINE_BREAK)
         }
         question.options.forEachIndexed { i, option ->
-            sb.append("<b>").append(letterFor(i)).append(".</b> ")
+            sb.append("<b>").append(optionLetter(i)).append(".</b> ")
             sb.append(media.elementsToHtml(option.elements, option.image))
             sb.append(LINE_BREAK)
         }
@@ -289,7 +290,7 @@ object AnkiPackageWriter {
         val sb = StringBuilder()
         question.options.forEachIndexed { i, option ->
             if (option.id !in question.correctOptionIds) return@forEachIndexed
-            sb.append("&#10003; <b>").append(letterFor(i)).append(".</b> ")
+            sb.append("&#10003; <b>").append(optionLetter(i)).append(".</b> ")
             sb.append(media.elementsToHtml(option.elements, option.image))
             sb.append(LINE_BREAK)
         }
@@ -299,20 +300,6 @@ object AnkiPackageWriter {
                 .append(media.elementsToHtml(question.explanationElements, question.explanationImage))
         }
         return sb.toString().trim()
-    }
-
-    /**
-     * Spreadsheet-style option labels: A-Z, then AA-AZ, BA-BZ, and so on
-     * (bijective base-26). The reader recognises the same shape.
-     */
-    private fun letterFor(index: Int): String {
-        var n = index
-        val sb = StringBuilder()
-        do {
-            sb.append('A' + n % 26)
-            n = n / 26 - 1
-        } while (n >= 0)
-        return sb.reverse().toString()
     }
 
     /** Anki stores tags space-delimited with a leading and trailing space. */

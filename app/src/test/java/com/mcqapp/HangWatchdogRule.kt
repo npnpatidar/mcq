@@ -32,6 +32,13 @@ class HangWatchdogRule(private val seconds: Long) : TestRule {
                     }
                     System.err.flush()
                     testThread.interrupt()
+                    // A deadlock ignores the interrupt; kill the worker rather
+                    // than let it hold the job for the full Gradle timeout.
+                    try {
+                        Thread.sleep(1000)
+                    } catch (_: InterruptedException) {
+                    }
+                    Runtime.getRuntime().halt(70)
                 }, "hang-watchdog")
                 watchdog.isDaemon = true
                 watchdog.start()

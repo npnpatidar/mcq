@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -29,6 +30,11 @@ import org.robolectric.annotation.Config
 class TestSessionPrefetchTest {
 
     private lateinit var app: McqApplication
+
+    // The run hung here (Gradle's "Could not stop all services" with this test
+    // the last one started); dump the threads and fail fast if it recurs.
+    @get:Rule
+    val watchdog = HangWatchdogRule(seconds = 90)
 
     @Before
     fun setUp() {

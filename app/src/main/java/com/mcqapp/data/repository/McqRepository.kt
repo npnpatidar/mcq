@@ -452,10 +452,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * Room's own invalidation. Category-only writes (a sibling reorder or a
      * rename) leave every context valid, so they are deliberately not observed:
      * clearing on them dropped the section-move buttons mid-gesture.
+     *
+     * Both sides are one-row probes. Watching the `GROUP BY categoryId` counts
+     * and the whole passages table instead made every question write re-scan
+     * the paper (and load every passage) just to learn that something changed.
      */
     fun observeBrowseInvalidation(): Flow<Unit> = kotlinx.coroutines.flow.combine(
-        db.questionDao().observeCategoryCounts(),
-        db.passageDao().observeAll()
+        db.questionDao().observeAnyQuestion(),
+        db.passageDao().observeAnyPassage()
     ) { _, _ -> Unit }
 
     /**

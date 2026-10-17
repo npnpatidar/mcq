@@ -42,17 +42,28 @@ data class CategoryContext(
 
 data class BrowseUiState(
     val paper: Paper? = null,
-    /** Loaded on demand per visible category; drives reorder math only. */
+    /**
+     * Reorder refs for the categories currently around the viewport; drives
+     * reorder math only. Scoped to the window rather than kept per category
+     * forever: Browse used to hold every category it had ever scrolled past, so
+     * a 1000-category paper ended up resident after one pass down the list.
+     */
     val categoryContexts: Map<String, CategoryContext> = emptyMap(),
     /** passageId -> its first member's id in paper order (null: not loaded). */
     val passageFirstIds: Map<String, String?> = emptyMap(),
     /** Full passages for the visible group headers, loaded on demand. */
     val passages: Map<String, com.mcqapp.domain.Passage> = emptyMap(),
     /**
-     * Bumped whenever the on-demand loads above are dropped. Rows key their
-     * load effects on it so a dropped context is re-fetched; without it a
-     * cleared map stayed empty for already-composed rows and the section-move
-     * buttons disappeared after their own move.
+     * Full cards for the rows around the viewport. Read ahead of the row being
+     * visible so a card does not grow after it has been laid out; scoped to the
+     * same window as the maps above.
+     */
+    val contentById: Map<String, Question> = emptyMap(),
+    /**
+     * Bumped whenever the on-demand loads above are dropped, so the window
+     * loader re-reads them; without it a cleared map stayed empty for rows the
+     * list already held and the section-move buttons disappeared after their
+     * own move.
      */
     val contextsVersion: Long = 0L
 )
@@ -93,10 +104,26 @@ class BrowseViewModel(
     val filterState: StateFlow<BrowseFilterState> =
         filters.map { it.state }.stateIn(viewModelScope, SharingStarted.Eagerly, BrowseFilterState())
 
-    /** In-flight loads, guarding against a row recomposing into a duplicate read. */
+    /** In-flight loads, guarding against a window update re-reading the same row. */
     private val contextsLoading = mutableSetOf<String>()
     private val firstIdsLoading = mutableSetOf<String>()
     private val passagesByIdLoading = mutableSetOf<String>()
+    private val contentLoading = mutableSetOf<String>()
+
+    /**
+     * Content hashes of the loaded cards, so a card whose question was edited
+     * elsewhere is re-read when the list's ref reports a new hash. Held outside
+     * [BrowseUiState] because it is bookkeeping, not something a row renders.
+     */
+    private val contentHashes = mutableMapOf<String, String>()
+
+    /** The rows the last window covered; loaded cards outside it are dropped. */
+    private var windowIds: Set<String> = emptySet()
+
+    /** The same for passages and categories, so a late load cannot resurrect
+     *  rows (or evict rows) from a window that has already scrolled past. */
+    private var windowPassageIds: Set<String> = emptySet()
+    private var windowCategoryIds: Set<String> = emptySet()
 
     init {
         Logger.i("BROWSEVM", "BrowseViewModel created: paperId=$paperId")
@@ -168,46 +195,119 @@ class BrowseViewModel(
         return com.mcqapp.ui.browse.subtreeIdsOf(flat, rootId)
     }
 
-    /** Loads a visible category's reorder context once. */
-    fun ensureCategoryContext(categoryId: String) {
-        if (_state.value.categoryContexts.containsKey(categoryId) || !contextsLoading.add(categoryId)) return
+    /**
+     * The rows around the viewport, handed in as the list scrolls. Everything a
+     * row needs is read here, in one pass, *ahead* of the row becoming visible:
+     * the card's content, its passage (header or membership label), the
+     * passage's first member, and the visible categories' reorder refs. Reading
+     * these from the row composable instead let each one land after its row had
+     * already been laid out — the card grew under the finger and a passage
+     * header appeared late and pushed the rows below it down — and left every
+     * category ever scrolled past resident in the state.
+     */
+    fun onVisibleRows(window: List<QuestionRef>) {
+        if (window.isEmpty()) return
+        windowIds = window.mapTo(mutableSetOf()) { it.id }
+        windowPassageIds = window.mapNotNullTo(mutableSetOf()) { it.passageId }
+        windowCategoryIds = window.mapTo(mutableSetOf()) { it.categoryId }
+        loadContent(window)
+        loadPassages(windowPassageIds.toList())
+        loadPassageFirstIds(windowPassageIds.toList())
+        loadCategoryContexts(windowCategoryIds.toList())
+    }
+
+    private fun loadContent(window: List<QuestionRef>) {
+        // A ref whose hash moved on means the question was edited elsewhere and
+        // the cached card is stale.
+        val stale = window.filter { contentHashes[it.id] != it.contentHash }
+        val toRead = stale.filter { contentLoading.add(it.id) }
+        if (toRead.isEmpty()) return
         viewModelScope.launch {
             try {
-                val refs = repository.browseCategoryRefs(categoryId)
-                val context = CategoryContext(
-                    refs = refs,
-                    firstId = refs.firstOrNull()?.id,
-                    lastId = refs.lastOrNull()?.id
-                )
-                _state.update { it.copy(categoryContexts = it.categoryContexts + (categoryId to context)) }
+                val ids = windowIds
+                val loaded = repository.getQuestionsByIds(toRead.map { it.id }).associateBy { it.id }
+                toRead.forEach { contentHashes[it.id] = it.contentHash }
+                _state.update { current ->
+                    // Only what the window still covers is kept: a card scrolled
+                    // far away is read again if it comes back, where holding
+                    // every card ever read would grow with the paper.
+                    current.copy(contentById = current.contentById.filterKeys { it in ids } +
+                        loaded.filterKeys { it in ids })
+                }
             } catch (e: Exception) {
-                Logger.e("BROWSEVM", "reorder context for $categoryId failed", e)
+                Logger.e("BROWSEVM", "card content for ${toRead.size} rows failed", e)
+            } finally {
+                contentLoading.removeAll(toRead.map { it.id })
             }
         }
     }
 
-    /** Loads a visible passage header's first-member id once. */
-    fun ensurePassageFirstId(passageId: String) {
-        if (_state.value.passageFirstIds.containsKey(passageId) || !firstIdsLoading.add(passageId)) return
+    private fun loadPassages(passageIds: List<String>) {
+        if (passageIds.isEmpty()) return
+        val missing = passageIds.filter { it !in _state.value.passages && passagesByIdLoading.add(it) }
+        if (missing.isEmpty()) return
         viewModelScope.launch {
             try {
-                val first = repository.browsePassageFirstRefId(passageId)
-                _state.update { it.copy(passageFirstIds = it.passageFirstIds + (passageId to first)) }
+                val loaded = repository.getPassagesByIds(missing).associateBy { it.id }
+                _state.update {
+                    it.copy(passages = it.passages.filterKeys { id -> id in windowPassageIds } + loaded)
+                }
             } catch (e: Exception) {
-                Logger.e("BROWSEVM", "passage first id for $passageId failed", e)
+                Logger.e("BROWSEVM", "passages for ${missing.size} rows failed", e)
+            } finally {
+                passagesByIdLoading.removeAll(missing)
             }
         }
     }
 
-    /** Loads a visible passage's body once, for its group header/label. */
-    fun ensurePassage(passageId: String) {
-        if (_state.value.passages.containsKey(passageId) || !passagesByIdLoading.add(passageId)) return
+    private fun loadPassageFirstIds(passageIds: List<String>) {
+        if (passageIds.isEmpty()) return
+        val missing = passageIds.filter {
+            !_state.value.passageFirstIds.containsKey(it) && firstIdsLoading.add(it)
+        }
+        if (missing.isEmpty()) return
         viewModelScope.launch {
             try {
-                val passage = repository.getPassagesByIds(listOf(passageId)).firstOrNull() ?: return@launch
-                _state.update { it.copy(passages = it.passages + (passageId to passage)) }
+                val firsts = LinkedHashMap<String, String?>()
+                for (passageId in missing) {
+                    firsts[passageId] = repository.browsePassageFirstRefId(passageId)
+                }
+                _state.update {
+                    it.copy(
+                        passageFirstIds = it.passageFirstIds.filterKeys { id -> id in windowPassageIds } + firsts
+                    )
+                }
             } catch (e: Exception) {
-                Logger.e("BROWSEVM", "passage $passageId load failed", e)
+                Logger.e("BROWSEVM", "passage first ids for ${missing.size} rows failed", e)
+            } finally {
+                firstIdsLoading.removeAll(missing)
+            }
+        }
+    }
+
+    private fun loadCategoryContexts(categoryIds: List<String>) {
+        if (categoryIds.isEmpty()) return
+        val missing = categoryIds.filter {
+            it !in _state.value.categoryContexts && contextsLoading.add(it)
+        }
+        if (missing.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val loaded = LinkedHashMap<String, CategoryContext>()
+                for (categoryId in missing) {
+                    val refs = repository.browseCategoryRefs(categoryId)
+                    loaded[categoryId] =
+                        CategoryContext(refs, refs.firstOrNull()?.id, refs.lastOrNull()?.id)
+                }
+                _state.update {
+                    it.copy(
+                        categoryContexts = it.categoryContexts.filterKeys { id -> id in windowCategoryIds } + loaded
+                    )
+                }
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "reorder context for ${missing.size} categories failed", e)
+            } finally {
+                contextsLoading.removeAll(missing)
             }
         }
     }
@@ -218,12 +318,15 @@ class BrowseViewModel(
                 categoryContexts = emptyMap(),
                 passageFirstIds = emptyMap(),
                 passages = emptyMap(),
+                contentById = emptyMap(),
                 contextsVersion = it.contextsVersion + 1
             )
         }
         contextsLoading.clear()
         firstIdsLoading.clear()
         passagesByIdLoading.clear()
+        contentLoading.clear()
+        contentHashes.clear()
     }
 
     /**
@@ -265,10 +368,6 @@ class BrowseViewModel(
             )
         }
     }
-
-    /** The row's full content, fetched when the row composes. */
-    suspend fun questionContent(questionId: String): Question? =
-        repository.getQuestion(questionId)
 
     fun deleteQuestion(questionId: String) {
         viewModelScope.launch {

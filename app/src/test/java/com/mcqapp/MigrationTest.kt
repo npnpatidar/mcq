@@ -12,6 +12,7 @@ import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -183,10 +184,47 @@ class MigrationTest {
                 AppDatabase.MIGRATION_11_12,
                 AppDatabase.MIGRATION_12_13,
                 AppDatabase.MIGRATION_13_14,
-                AppDatabase.MIGRATION_14_15
+                AppDatabase.MIGRATION_14_15,
+                AppDatabase.MIGRATION_15_16
             )
             .allowMainThreadQueries()
             .build()
+
+    /**
+     * Builds a genuine v15 file by replaying the production 6->15 migrations,
+     * with a category and a question seeded: a 15->16 test then proves both
+     * that the indices land and that the data under them survives.
+     */
+    private fun createV15WithSeed() {
+        createV6(
+            insertPaper(),
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                "VALUES ('c1','p1','Cat',NULL,0)",
+            "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage," +
+                "difficulty,marks,tags,sortOrder,contentHash) VALUES " +
+                "('q1','c1','Q one',NULL,'because',NULL,'medium',2.0,'tag',0,'hash1')"
+        )
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            AppDatabase.MIGRATION_9_10.migrate(raw)
+            AppDatabase.MIGRATION_10_11.migrate(raw)
+            AppDatabase.MIGRATION_11_12.migrate(raw)
+            AppDatabase.MIGRATION_12_13.migrate(raw)
+            AppDatabase.MIGRATION_13_14.migrate(raw)
+            AppDatabase.MIGRATION_14_15.migrate(raw)
+            raw.version = 15
+        }
+    }
 
     /**
      * Builds a genuine v9 file: the v6 schema plus the *real* 6->7, 7->8 and
@@ -488,11 +526,12 @@ class MigrationTest {
                     AppDatabase.MIGRATION_11_12,
                     AppDatabase.MIGRATION_12_13,
                     AppDatabase.MIGRATION_13_14,
-                    AppDatabase.MIGRATION_14_15
+                    AppDatabase.MIGRATION_14_15,
+                    AppDatabase.MIGRATION_15_16
                 )
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->15; Room validates the final schema.
+            // One open exercises 3->4->...->16; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)
@@ -632,6 +671,44 @@ class MigrationTest {
             }
         } finally {
             db.close()
+        }
+    }
+
+    @Test
+    fun `migration 15 to 16 lands the browse order indexes`() {
+        runBlocking {
+            createV15WithSeed()
+            val db = openMigrated()
+            try {
+                // Opening ran 15->16; Room's identity check on open is what
+                // proves the migrated schema matches the entities.
+                val repository = com.mcqapp.data.repository.McqRepository(db, context)
+                assertEquals("Q one", repository.getQuestionsForPaper("p1").first().text)
+            } finally {
+                db.close()
+            }
+            val check = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("migration-test.db").path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            val sql = { name: String ->
+                check.rawQuery(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                    arrayOf(name)
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }
+            val categories = sql("index_categories_paperId_sortOrder_title")
+            assertTrue("categories order index should exist: $categories",
+                categories != null && categories.contains("sortOrder"))
+            val questions = sql("index_questions_categoryId_sortOrder")
+            assertTrue("questions order index should exist: $questions",
+                questions != null && questions.contains("sortOrder"))
+            assertNull(
+                "the standalone categoryId index is subsumed by (categoryId, sortOrder)",
+                sql("index_questions_categoryId")
+            )
+            check.close()
         }
     }
 }

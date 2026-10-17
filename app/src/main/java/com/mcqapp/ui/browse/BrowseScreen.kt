@@ -54,11 +54,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -293,6 +295,26 @@ fun BrowseScreen(
                 if (index >= 0) listState.scrollToItem(index + 1)
             }
         }
+        // Keep the rows around the viewport loaded, cards and passages
+        // included. A row that is already complete when it scrolls in cannot
+        // grow under the finger, and a passage header is known before its row
+        // is laid out instead of being inserted afterwards and pushing the
+        // rows below it down. snapshotFlow keeps the window read out of
+        // composition, and reading it through peek() makes the flow re-run
+        // when a placeholder's page lands, not only when the scroll moves.
+        LaunchedEffect(items, listState, state.contextsVersion) {
+            snapshotFlow {
+                val info = listState.layoutInfo
+                browseWindow(
+                    peek = { index -> items.peek(index) },
+                    itemCount = items.itemCount,
+                    firstVisible = info.visibleItemsInfo.firstOrNull()?.index ?: -1,
+                    lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                )
+            }
+                .distinctUntilChanged()
+                .collect { rows -> if (rows.isNotEmpty()) viewModel.onVisibleRows(rows) }
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -407,41 +429,15 @@ fun BrowseScreen(
                 if (question == null) {
                     // A row whose page has not been loaded yet. The list knows
                     // the paper's whole length (placeholders are on), so the
-                    // number is already the right one; the grey bar stands in
-                    // until the page lands, so a deep-link jump or a fast fling
-                    // never leaves a blank gap where questions are.
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "$index.",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Spacer(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(14.dp)
-                                .clip(MaterialTheme.shapes.small)
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                        )
-                    }
+                    // number is already the right one; the block stands in —
+                    // card-shaped, so that the page landing does not resize the
+                    // row under the scroll — until the page arrives, so a
+                    // deep-link jump or a fast fling never leaves a blank gap
+                    // where questions are.
+                    BrowseRowSkeleton(index = index + 1)
                     return@items
                 }
                 val context = state.categoryContexts[question.categoryId]
-                LaunchedEffect(question.categoryId, state.contextsVersion) {
-                    viewModel.ensureCategoryContext(question.categoryId)
-                }
-                question.passageId?.let { pid ->
-                    LaunchedEffect(pid, state.contextsVersion) {
-                        viewModel.ensurePassageFirstId(pid)
-                        viewModel.ensurePassage(pid)
-                    }
-                }
                 val categoryList = context?.refs.orEmpty()
                 val indexInCategory = categoryList.indexOfFirst { it.id == question.id }
                 // A section's first/last rows carry the category moves (their
@@ -496,15 +492,11 @@ fun BrowseScreen(
                     )
                     Spacer(Modifier.height(2.dp))
                 }
-                // The row's full content, fetched when the row composes: the
-                // list holds preview stems only, and the card renders the
-                // complete content as soon as the one-row read lands.
-                var rowContent by remember(question.id) {
-                    mutableStateOf<com.mcqapp.domain.Question?>(null)
-                }
-                LaunchedEffect(question.id) {
-                    rowContent = viewModel.questionContent(question.id)
-                }
+                // The row's full card, read with the viewport window (ahead of
+                // the row becoming visible) rather than by the row itself: a
+                // card fetched when its row composes grows after it has been
+                // laid out, which is what the scroll felt like while it settled.
+                val rowContent = state.contentById[question.id]
                 rowContent?.let { content ->
                     BrowseQuestionCard(
                         index = index + 1,
@@ -553,11 +545,12 @@ fun BrowseScreen(
                     )
                 }
                 if (rowContent == null) {
-                    // One-frame preview seat: the stem stands in until the
-                    // per-row content read lands, so the row never collapses
-                    // to zero height on the way into the viewport.
+                    // Preview seat: the stem stands in for the one frame before
+                    // the window's content read lands, so an unloaded row never
+                    // collapses to zero height. The number is the paper's, one
+                    // past this paged index, matching the card's.
                     Text(
-                        "$index. ${question.text}",
+                        "${index + 1}. ${question.text}",
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 3,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -804,6 +797,48 @@ fun BrowseScreen(
             )
         }
     }
+}
+
+/**
+ * A card-shaped stand-in for a row whose page has not landed. The number is
+ * already the right one (placeholders are on, so the list knows the paper's
+ * whole length); the block is the shape of the card it becomes, so a page
+ * arriving does not resize the row under the scroll — a 14 dp bar growing into
+ * a 300 dp card is what settling felt like.
+ */
+@Composable
+private fun BrowseRowSkeleton(index: Int) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "$index.",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                SkeletonBar(Modifier.weight(0.8f).height(14.dp))
+            }
+            Spacer(Modifier.height(10.dp))
+            repeat(4) { line ->
+                SkeletonBar(
+                    Modifier
+                        .fillMaxWidth(if (line % 2 == 0) 0.9f else 0.7f)
+                        .height(12.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkeletonBar(modifier: Modifier) {
+    Spacer(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+    )
 }
 
 @Composable

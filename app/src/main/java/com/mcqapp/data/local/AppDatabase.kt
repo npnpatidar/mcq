@@ -25,7 +25,7 @@ import com.mcqapp.domain.searchableText
         ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 15,
+    version = 16,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -395,6 +395,36 @@ abstract class AppDatabase : RoomDatabase() {
         private const val SEARCH_BACKFILL_BATCH = 2000
 
         /**
+         * Adds the two indices Browse pages by, and drops the one the second
+         * replaces.
+         *
+         * Browse orders a paper's questions by
+         * *(category sortOrder, category title, question sortOrder, rowid)*.
+         * With no index providing that order, every page was the whole paper
+         * sorted into a temp B-tree before the LIMIT could throw the rest
+         * away — measured at a million questions, the first page of 60 rows
+         * took 2.3 s. With the two indices below the same page is ~5 ms,
+         * because the walk starts in category order and stops 60 rows later.
+         *
+         * `(categoryId, sortOrder)` also serves everything the standalone
+         * `index_questions_categoryId` did (it is the leftmost prefix), so
+         * that one is dropped rather than paid for twice on every import.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_categories_paperId_sortOrder_title` " +
+                        "ON `categories` (`paperId`, `sortOrder`, `title`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_questions_categoryId_sortOrder` " +
+                        "ON `questions` (`categoryId`, `sortOrder`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_questions_categoryId`")
+            }
+        }
+
+        /**
          * Fills the `searchText` columns from the element JSON already stored.
          * Keyset-paged by rowid — stable because the update never changes the
          * key — so peak memory is one batch, not a whole 250k-question table.
@@ -476,7 +506,8 @@ abstract class AppDatabase : RoomDatabase() {
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
+                    MIGRATION_15_16
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

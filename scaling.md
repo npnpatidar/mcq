@@ -745,3 +745,81 @@ Feature invariance: every column of behaviour today (ordering rules, filter
 semantics, FSRS scheduling, backup/Anki format) keeps its existing tests —
 the plan's changes are only about *how much* is read at once; each section
 names the test that already pins the behaviour that must not change.
+
+---
+
+## 8. Verification at the stated minimum: 1,000,000 questions, 1000 categories
+
+An audit of every screen and every DAO query against the app's real schema, plus
+measurements from an ad-hoc SQLite harness (the entity/index shapes copied, 1M
+questions + 4M options, run through the host's SQLite — a mid-range phone is
+slower, so the numbers below are a floor).
+
+### Holds up today
+
+| Surface | Why it is safe |
+|---|---|
+| Browse, Search, Bookmarks, Results, passage members | paged (`room-paging`), one window at a time |
+| Import / restore | streamed (4 MB threshold), chunked matchers behind the 999-bind cap |
+| Storage report, category counts | SQL aggregates, no materialisation |
+| ZIP / PDF export, Anki writer | streamed to the sink; notes batched |
+| 1000-category tree build, reorder, drawer | in-memory over the category table only |
+
+### Measured costs (1M questions)
+
+| Query | Cost |
+|---|---|
+| search prefilter window, 200 rows, no FTS | 0.6–1.1 s |
+| same, option scope (4M option rows) | 5.3 s |
+| browse first page, 1000-category `IN` list | 0.5 s and, on Android ≤ 11, past the bind cap |
+| browse first page, paper-scoped, no order index | 2.3 s (whole paper into a temp B-tree) |
+| browse first page, paper-scoped, with the order indexes | 5 ms |
+| browse count for the page, with the order indexes | 60 ms |
+| deep-link jump by index (OFFSET 500k) | 1.4 s, inherent to `LIMIT 1 OFFSET n` |
+| `GROUP BY categoryId` over the whole table | 0.12 s, re-run on every question write |
+
+Search is not instant and cannot be while it is `LIKE '%q%'` with no FTS
+index: every window is a full scan, and a rare term walks several windows
+inside one page load. Making it instant means a maintained n-gram/FTS shadow
+over `searchText` (§4.5 + F4).
+
+### Fixed
+
+- **Browse 1000-category crash** — the four browse queries bound the paper's
+  whole category list as an `IN` list (1000 bind variables against SQLite's
+  999-variable cap on API ≤ 30). The paper is now named by id through the
+  existing category join, passage matches are a subquery over
+  `passages.searchText`, the category filter travels as one `INSTR`-matched
+  CSV, and the passage-first read is `LIMIT 1` instead of loading the whole
+  passage (commit `41f1d76`, CI green).
+- **Browse reorder contexts** — one whole-category ref list was held per
+  category *forever*, so a pass down a 1000-category paper ended up resident.
+  Contexts are now scoped to the viewport window and evicted with it.
+- **Browse row loading** — a row fetched its card, passage and reorder context
+  from the row composable, i.e. after it had been laid out: the card grew under
+  the finger and a passage header was inserted late and pushed the rows below it
+  down. All of it is read for the viewport window (with a margin) before the
+  rows are visible, and the placeholder is card-shaped so a page landing does
+  not resize rows.
+- **Browse invalidation signal** — was a `GROUP BY categoryId` aggregate plus a
+  whole-passages load per write; now a one-row probe per table.
+- **Browse page order** — nothing indexed the order Browse pages in
+  (category `sortOrder`/`title`, question `sortOrder`, rowid), so every page
+  sorted the whole paper into a temp B-tree first: 2.3 s for the first 60 rows
+  of a million-row paper. `categories(paperId, sortOrder, title)` and
+  `questions(categoryId, sortOrder)` make it an index walk that stops after the
+  page (5 ms); the standalone `questions(categoryId)` index is subsumed by the
+  new one and dropped (migration 15→16).
+
+### Open (in pain order)
+
+1. Study: whole-paper id/hash/card-state reads and a full due-set sort on every
+   card pull (§4.4).
+2. Test session: all 1M refs in state, whole-list shuffle, two full question
+   scans at submit (§4.2).
+3. Exports that build the document in memory: HTML, DOCX (body XML + hidden
+   payload + all media), JSON_INLINE, Anki media pool (F5).
+4. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
+   `observeCategoryCounts` for library badges (F2/F3).
+5. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
+

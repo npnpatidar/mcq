@@ -33,7 +33,14 @@ data class CategoryCountEntity(
     ],
     // (paperId, title) covers getByPaper's per-paper scan and the title
     // match imports do; the paperId prefix replaces the old standalone index.
-    indices = [Index("paperId", "title"), Index("parentId")]
+    // (paperId, sortOrder, title) additionally carries the paper-wide category
+    // order Browse and the drawer list in, so the section order is read from
+    // the index instead of sorted into a temp B-tree.
+    indices = [
+        Index("paperId", "title"),
+        Index("paperId", "sortOrder", "title"),
+        Index("parentId")
+    ]
 )
 data class CategoryEntity(
     @PrimaryKey val id: String,
@@ -56,7 +63,12 @@ data class CategoryEntity(
     // contentHash: dedup probes it on every import and on the import
     // screen's duplicate classification; without the index each probe is a
     // full scan of the questions table (chunked thousands of times).
-    indices = [Index("categoryId"), Index("passageId"), Index("contentHash")]
+    // (categoryId, sortOrder) replaces the standalone categoryId index — it
+    // serves every one of those lookups and also carries the per-category
+    // order (and its rowid tie-break, which SQLite appends) that Browse pages
+    // by, so the sort comes from the index instead of a whole-paper temp
+    // B-tree.
+    indices = [Index("categoryId", "sortOrder"), Index("passageId"), Index("contentHash")]
 )
 data class QuestionEntity(
     @PrimaryKey val id: String,

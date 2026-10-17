@@ -131,6 +131,10 @@ interface PassageDao {
     @Query("SELECT * FROM passages")
     fun observeAll(): Flow<List<PassageEntity>>
 
+    /** One-row probe: fires on any passage write without loading the table. */
+    @Query("SELECT id FROM passages LIMIT 1")
+    fun observeAnyPassage(): Flow<String?>
+
     /** How many questions still point at the passage, for the delete guard. */
     @Query("SELECT COUNT(*) FROM questions WHERE passageId = :passageId")
     suspend fun memberCount(passageId: String): Int
@@ -586,6 +590,16 @@ interface QuestionDao {
 
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
     fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
+
+    /**
+     * A one-row probe for flows that only need to know *that* a question was
+     * written. It stands in for watching an aggregate: the `GROUP BY` above
+     * re-scans every row on each write (a million-row paper paid it on every
+     * editor save), while this reads one row — Room re-emits on any write to
+     * the table either way.
+     */
+    @Query("SELECT id FROM questions LIMIT 1")
+    fun observeAnyQuestion(): Flow<String?>
 
     @Query("SELECT COUNT(*) FROM questions")
     suspend fun countQuestions(): Int

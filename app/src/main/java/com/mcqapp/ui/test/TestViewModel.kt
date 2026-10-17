@@ -32,8 +32,8 @@ data class TestUiState(
     val paper: Paper? = null,
     /**
      * The session's ordered questions as refs — ids, passage membership and
-     * preview text. Content is resolved per question on navigation, so the
-     * list itself is tens of megabytes even for a 169k-question paper.
+     * preview text. Content is resolved per question on navigation, so this
+     * is a few strings per question rather than the full content.
      */
     val refs: List<QuestionRef> = emptyList(),
     /** The question on screen, resolved by id from its ref. */
@@ -108,6 +108,14 @@ class TestViewModel(
     private var dwellJob: Job? = null
     /** Seed for the per-question option shuffle; 0 when options stay put. */
     private var optionShuffleSeed: Long = 0L
+    /** The session's shuffle/drill seeds, so the resume snapshot can
+     *  reproduce the presented order from a few bytes. */
+    private var questionShuffleEnabled: Boolean = false
+    private var sessionSeed: Long = 0L
+    private var drillSampleSeed: Long = 0L
+    /** The order a pending resume would present; rebuilt while the base refs
+     *  are still loaded, so the unshuffled list is not retained. */
+    private var resumeOrder: List<QuestionRef> = emptyList()
 
     private companion object {
         /** Questions resolved per batch while building the review sheet. */
@@ -155,6 +163,8 @@ class TestViewModel(
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
                 val seed = Random.nextLong()
+                questionShuffleEnabled = shuffleQ
+                sessionSeed = seed
                 if (shuffleQ || shuffleO) {
                     Logger.i("TESTVM", "Shuffled attempt: seed=$seed, " +
                         "questions=$shuffleQ, options=$shuffleO")
@@ -166,12 +176,14 @@ class TestViewModel(
                     .shuffleAttempt(refs, seed, shuffleQ) { it.passageId }
                 val drilled = if (isDrill) {
                     val sampleSeed = Random.nextLong()
+                    drillSampleSeed = sampleSeed
                     Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffled.size}, seed=$sampleSeed")
                     // Whole blocks are taken, so the result may overshoot the
                     // requested count when a passage does not fit the cut.
                     com.mcqapp.domain.PassageBlocks
                         .sample(shuffled, drillCount, sampleSeed) { it.passageId }
                 } else {
+                    drillSampleSeed = 0L
                     shuffled
                 }
                 optionShuffleSeed = if (shuffleO) seed else 0L
@@ -206,7 +218,7 @@ class TestViewModel(
                         drillRequested = if (isDrill) drillCount else 0
                     )
                 }
-                checkResumeOffer()
+                checkResumeOffer(refs)
                 startTimestamp = System.currentTimeMillis()
                 lastNavMillis = startTimestamp
                 dwellCommitted.clear()
@@ -559,7 +571,7 @@ class TestViewModel(
      * paper + category selection. Only offered when real progress exists
      * and the paper still contains overlapping questions.
      */
-    private suspend fun checkResumeOffer() {
+    private suspend fun checkResumeOffer(base: List<QuestionRef>) {
         val raw = repository.loadTestProgress() ?: return
         val saved = TestSnapshot.fromJson(raw) ?: run {
             repository.clearTestProgress()
@@ -570,11 +582,12 @@ class TestViewModel(
             repository.clearTestProgress()
             return
         }
-        val ordered = TestSnapshot.reorderRefs(_state.value.refs, saved.questionIds)
+        val ordered = TestSnapshot.orderRefs(base, _state.value.refs, saved)
         if (ordered.isEmpty()) {
             repository.clearTestProgress()
             return
         }
+        resumeOrder = ordered
         Logger.i("TESTVM", "Resume available: ${saved.selections.size} answered, " +
             "index=${saved.currentIndex}, remaining=${saved.remainingSeconds}s")
         _state.update { it.copy(resumeOffer = saved) }
@@ -582,11 +595,17 @@ class TestViewModel(
 
     fun resume() {
         val saved = _state.value.resumeOffer ?: return
-        val ordered = TestSnapshot.reorderRefs(_state.value.refs, saved.questionIds)
+        val ordered = resumeOrder
         if (ordered.isEmpty()) {
             discardResume()
             return
         }
+        // Carry the saved seeds forward so later autosaves rewrite the same
+        // tiny snapshot instead of falling back to an id list.
+        saved.questionSeed?.let { sessionSeed = it }
+        saved.drillSeed?.let { drillSampleSeed = it }
+        questionShuffleEnabled = saved.questionShuffle
+        optionShuffleSeed = saved.optionShuffleSeed
         Logger.i("TESTVM", "Resuming saved progress: index=${saved.currentIndex}, " +
             "answered=${saved.selections.size}")
         _state.update {
@@ -618,6 +637,7 @@ class TestViewModel(
     fun discardResume() {
         Logger.i("TESTVM", "Discarding saved progress, starting fresh")
         viewModelScope.launch { repository.clearTestProgress() }
+        resumeOrder = emptyList()
         _state.update { it.copy(resumeOffer = null) }
     }
 
@@ -628,14 +648,19 @@ class TestViewModel(
         val snapshot = TestSnapshot(
             paperId = paperId,
             categoryIds = categoryIds,
-            questionIds = current.refs.map { it.id },
+            questionIds = emptyList(),
             selections = current.selections.mapValues { e -> e.value.toList() },
             revealed = current.revealed,
             flagged = current.flagged,
             currentIndex = current.currentIndex,
             remainingSeconds = current.remainingSeconds,
             totalSeconds = current.totalSeconds,
-            dwellSeconds = current.dwellSeconds
+            dwellSeconds = current.dwellSeconds,
+            questionSeed = sessionSeed,
+            questionShuffle = questionShuffleEnabled,
+            optionShuffleSeed = optionShuffleSeed,
+            drillSeed = if (drillSampleSeed != 0L) drillSampleSeed else null,
+            drillRequested = current.drillRequested
         )
         viewModelScope.launch {
             try {

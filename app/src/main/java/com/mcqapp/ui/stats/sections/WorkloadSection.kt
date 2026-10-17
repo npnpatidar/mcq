@@ -53,12 +53,12 @@ internal fun WorkloadSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { ForecastCard(bundle) }
-        item { ReviewsPerDayCard(bundle) }
-        item { TimePerDayCard(bundle) }
-        item { AnswerButtonsCard(bundle) }
-        item { HourlyCard(bundle) }
-        item { ResponseTimeCard(bundle, questionText, onOpenCard) }
+        item(contentType = "forecast") { ForecastCard(bundle) }
+        item(contentType = "reviews-per-day") { ReviewsPerDayCard(bundle) }
+        item(contentType = "time-per-day") { TimePerDayCard(bundle) }
+        item(contentType = "answer-buttons") { AnswerButtonsCard(bundle) }
+        item(contentType = "hourly") { HourlyCard(bundle) }
+        item(contentType = "response-time") { ResponseTimeCard(bundle, questionText, onOpenCard) }
     }
 }
 

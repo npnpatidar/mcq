@@ -45,12 +45,12 @@ internal fun RetentionSection(bundle: RetentionData) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { TrendCard(bundle) }
-        item { CalibrationCard(bundle) }
+        item(contentType = "trend") { TrendCard(bundle) }
+        item(contentType = "calibration") { CalibrationCard(bundle) }
         if (bundle.groupRetention.isNotEmpty()) {
-            item { GroupRetentionCard(bundle) }
+            item(contentType = "group-retention") { GroupRetentionCard(bundle) }
         }
-        item { WeekdayCard(bundle) }
+        item(contentType = "weekday") { WeekdayCard(bundle) }
     }
 }
 

@@ -42,11 +42,11 @@ internal fun MemorySection(bundle: MemoryData) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { DistributionCard(bundle.stability, R.string.stats_stability, R.string.stats_stability_help) }
-        item { DistributionCard(bundle.difficulty, R.string.stats_difficulty, R.string.stats_difficulty_help) }
-        item { RetrievabilityCard(bundle) }
-        item { IntervalCard(bundle) }
-        item { GrowthCard(bundle) }
+        item(contentType = "distribution") { DistributionCard(bundle.stability, R.string.stats_stability, R.string.stats_stability_help) }
+        item(contentType = "distribution") { DistributionCard(bundle.difficulty, R.string.stats_difficulty, R.string.stats_difficulty_help) }
+        item(contentType = "retrievability") { RetrievabilityCard(bundle) }
+        item(contentType = "interval") { IntervalCard(bundle) }
+        item(contentType = "growth") { GrowthCard(bundle) }
     }
 }
 

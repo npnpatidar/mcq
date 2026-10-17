@@ -50,14 +50,14 @@ internal fun OverviewSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { TodayCard(bundle) }
-        item { KpisCard(bundle) }
-        item { TrueRetentionCard(bundle) }
-        item { CalendarCard(bundle) }
+        item(contentType = "today") { TodayCard(bundle) }
+        item(contentType = "kpis") { KpisCard(bundle) }
+        item(contentType = "true-retention") { TrueRetentionCard(bundle) }
+        item(contentType = "calendar") { CalendarCard(bundle) }
         if (bundle.weakest.isNotEmpty()) {
-            item { WeakestCard(bundle, questionText, onOpenCard) }
+            item(contentType = "weakest") { WeakestCard(bundle, questionText, onOpenCard) }
         }
-        item { SchedulerCard(bundle, onOpenSettings) }
+        item(contentType = "scheduler") { SchedulerCard(bundle, onOpenSettings) }
     }
 }
 

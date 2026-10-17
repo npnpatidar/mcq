@@ -143,7 +143,7 @@ fun ResultsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
+            item(contentType = "attempt") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(attempt.title, style = MaterialTheme.typography.titleMedium)
@@ -203,7 +203,7 @@ fun ResultsScreen(
             }
 
             }
-            item {
+            item(contentType = "breakdown") {
             if (state.categoryBreakdown.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -239,7 +239,7 @@ fun ResultsScreen(
             }
             }
 
-            item {
+            item(contentType = "filter") {
                 Text(stringResource(R.string.questions), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
                 FlowRow(
@@ -266,7 +266,7 @@ fun ResultsScreen(
             }
             val refresh = items.loadState.refresh
             if (refresh is LoadState.NotLoading && items.itemCount == 0) {
-                item {
+                item(contentType = "empty") {
                     Text(
                         "No ${filterValue.lowercase()} questions",
                         style = MaterialTheme.typography.bodyMedium,
@@ -276,7 +276,8 @@ fun ResultsScreen(
             } else {
                 items(
                     count = items.itemCount,
-                    key = items.itemKey { it.result.questionId }
+                    key = items.itemKey { it.result.questionId },
+                    contentType = { "result" }
                 ) { index ->
                     val numbered = items[index] ?: return@items
                     ResultCard(
@@ -289,7 +290,7 @@ fun ResultsScreen(
                 }
             }
             if (items.loadState.append is LoadState.Loading) {
-                item(key = "results-load-more") {
+                item(key = "results-load-more", contentType = "load-more") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

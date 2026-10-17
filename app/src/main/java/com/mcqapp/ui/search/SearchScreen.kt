@@ -116,7 +116,8 @@ fun SearchScreen(
             ) {
                 items(
                     count = hits.itemCount,
-                    key = hits.itemKey { it.question.id }
+                    key = hits.itemKey { it.question.id },
+                    contentType = { "hit" }
                 ) { index ->
                     val hit = hits[index] ?: return@items
                     Card(
@@ -150,7 +151,7 @@ fun SearchScreen(
                     }
                 }
                 if (appending) {
-                    item(key = "search-load-more") {
+                    item(key = "search-load-more", contentType = "load-more") {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

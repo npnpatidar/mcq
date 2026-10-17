@@ -142,7 +142,8 @@ fun BookmarksScreen(
             ) {
                 items(
                     count = items.itemCount,
-                    key = items.itemKey { it.question.id }
+                    key = items.itemKey { it.question.id },
+                    contentType = { "bookmark" }
                 ) { index ->
                     val bookmarked = items[index] ?: return@items
                     val question = bookmarked.question
@@ -187,7 +188,7 @@ fun BookmarksScreen(
                     }
                 }
                 if (items.loadState.append is LoadState.Loading) {
-                    item(key = "bookmarks-load-more") {
+                    item(key = "bookmarks-load-more", contentType = "load-more") {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

@@ -749,6 +749,7 @@ class BackupRestorer(private val db: AppDatabase) {
             logs.clear()
         }
 
+        val started = System.currentTimeMillis()
         Logger.i("BACKUP", "Restoring from a streamed backup")
         val manifest = db.withTransaction {
             val read = McqBackupFormat.readStreaming(
@@ -795,10 +796,18 @@ class BackupRestorer(private val db: AppDatabase) {
             flushLogs()
             read
         }
+        // The heap after a restore reads as a gate on this path: a streamed
+        // restore of a backup much bigger than the heap must finish far below
+        // the file's size, and a regression that holds the archive shows up in
+        // this line (the same signal the importer logs).
+        val elapsed = System.currentTimeMillis() - started
+        val runtime = Runtime.getRuntime()
+        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1048576
         Logger.i(
             "BACKUP",
             "Restored ${manifest.papers} papers, ${manifest.questions} questions, " +
-                "$schedules card states, $reviews reviews"
+                "$schedules card states, $reviews reviews in ${elapsed}ms, heap " +
+                "${usedMb}MB/${runtime.maxMemory() / 1048576}MB"
         )
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read

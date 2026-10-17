@@ -8,6 +8,10 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.test.TestViewModel
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -43,8 +47,8 @@ class TestSessionPrefetchTest {
 
     @After
     fun tearDown() {
-        runBlocking { app.repository.clearTestProgress() }
         try {
+            clearProgressWithoutBlockingMain()
             AppDatabase::class.java
                 .getDeclaredField("INSTANCE")
                 .apply { isAccessible = true }
@@ -52,6 +56,34 @@ class TestSessionPrefetchTest {
         } finally {
             shadowOf(Looper.getMainLooper()).idle()
         }
+    }
+
+    /**
+     * Clears the resume snapshot without deadlocking the main looper.
+     *
+     * This session's autosaves run in `viewModelScope` (Dispatchers.Main), and
+     * DataStore runs an edit's transform in the *caller's* coroutine context,
+     * so its write actor dispatches back onto this Robolectric main looper. A
+     * plain `runBlocking` on the main thread blocks that looper, and both the
+     * last queued autosave and the clear behind it then wait on a looper that
+     * can never run. Clear off the main thread and keep the looper pumping
+     * until the write actor drains.
+     */
+    private fun clearProgressWithoutBlockingMain() {
+        val done = CompletableDeferred<Unit>()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                app.repository.clearTestProgress()
+            } finally {
+                done.complete(Unit)
+            }
+        }
+        repeat(600) {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (done.isCompleted) return
+            Thread.sleep(5)
+        }
+        assertTrue("clearTestProgress() never completed", done.isCompleted)
     }
 
     private fun awaitCondition(condition: () -> Boolean): Boolean {

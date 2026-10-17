@@ -165,8 +165,13 @@ object StatsAggregator {
             scheduler = ctx.input.scheduler,
             collectWeakest = collectWeakest
         )
-        ctx.inScope.forEach(accumulator::add)
-        ctx.cards.forEach(accumulator::addCard)
+        // The whole log and every card, not the scope's own slices: the
+        // accumulator applies the scope itself, and the FSRS panel's review
+        // count is the library's, which is what the streamed build sees as it
+        // pages. Feeding the slices instead would give the two builds different
+        // inputs and let them drift.
+        ctx.input.reviews.forEach(accumulator::add)
+        ctx.input.cards.forEach(accumulator::addCard)
         return accumulator
     }
 
@@ -318,7 +323,12 @@ object StatsAggregator {
             Window("all", Long.MIN_VALUE, todayDay + 1)
         )
 
-        /** Every row read, for the FSRS panel's library-wide review count. */
+        /**
+         * Every row fed in — the whole log, all papers — for the FSRS panel's
+         * review count. Deliberately not scoped: the panel reports how much
+         * history the library has to fit on, which is what the pre-streaming
+         * build read straight off its input list.
+         */
         private var allReviews = 0
 
         private var rangeReviews = 0
@@ -352,6 +362,8 @@ object StatsAggregator {
          * outside the scope are counted for the library total and then dropped.
          */
         fun add(review: ReplayReview) {
+            // Counted before the scope guard: this one is the library's
+            // history, not the scope's.
             allReviews++
             if (scopePaperId != null && review.paperId != scopePaperId) return
             val day = studyEpochDay(review.reviewedAt, cfg, zone)

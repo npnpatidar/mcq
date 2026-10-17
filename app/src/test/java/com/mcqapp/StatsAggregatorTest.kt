@@ -304,6 +304,24 @@ class StatsAggregatorTest {
         assertEquals(2, week.retentionTable.last().allReviews)
     }
 
+    @Test
+    fun scopeDoesNotShrinkTheFsrsPanelsReviewCount() {
+        // The FSRS panel reports how much history the library has to fit on, so
+        // it counts the whole log even while the sections are scoped to one
+        // paper. Pinned because the streamed/loaded parity test caught the two
+        // builds disagreeing here: the streamed build pages the whole log, so
+        // the loaded build must be handed the whole log too.
+        val old = todayStart - 60 * day
+        val reviews = listOf(
+            review("q1", rating = 3, reviewedAt = now - hour, intervalBeforeDays = 30),
+            review("q1", rating = 3, reviewedAt = old, intervalBeforeDays = 30),
+            review("q2", rating = 3, reviewedAt = old, paperId = "p2", intervalBeforeDays = 30)
+        )
+        val scoped = StatsAggregator.build(input(reviews), "p1", StatsAggregator.Range.ALL)
+        assertEquals(3, scoped.fsrsStatus.reviewCount)
+        assertEquals(2, scoped.kpis.reviews)
+    }
+
     // --- kpis and streaks --------------------------------------------------------
 
     @Test

@@ -35,11 +35,8 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val config = settings.schedulerConfigNow()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val reviews = replayLog(scheduler)
-        val cards = db.cardStateDao().getAll().map { CardSnapshot(it.paperId, it.toDomain()) }
-        val categoryTitle = db.categoryDao().getAll().associate { it.id to it.title }
-        val categoryOfQuestion = db.questionDao().getAllIdCategories()
-            .mapNotNull { row -> categoryTitle[row.categoryId]?.let { row.id to it } }
-            .toMap()
+        val cards = loadCards()
+        val categoryOfQuestion = loadCategoryOfQuestion()
         val paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
         return RawData(reviews, cards, categoryOfQuestion, paperTitleOf, config)
     }
@@ -57,13 +54,49 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val stream = FsrsReplay.Stream(scheduler)
         var afterId = 0L
         while (true) {
-            val page = db.reviewLogDao().pageAfterId(afterId, REVIEW_PAGE_SIZE)
+            val page = db.reviewLogDao().pageAfterId(afterId, PAGE_SIZE)
             if (page.isEmpty()) break
             page.forEach { reviews += stream.accept(it.toRawReview()) }
             afterId = page.last().id
-            if (page.size < REVIEW_PAGE_SIZE) break
+            if (page.size < PAGE_SIZE) break
         }
         return reviews
+    }
+
+    /**
+     * Every card, keyset-paged in physical order. `getAll()` materialised all
+     * 250k rows as entities before mapping any of them; here one page is live
+     * at a time and the order the breakdowns tie-break on is unchanged.
+     */
+    private suspend fun loadCards(): List<CardSnapshot> {
+        val cards = ArrayList<CardSnapshot>()
+        var afterRowId = 0L
+        while (true) {
+            val page = db.cardStateDao().pageAfterRowId(afterRowId, PAGE_SIZE)
+            if (page.isEmpty()) break
+            page.forEach { cards += CardSnapshot(it.state.paperId, it.state.toDomain()) }
+            afterRowId = page.last().rowid
+            if (page.size < PAGE_SIZE) break
+        }
+        return cards
+    }
+
+    /**
+     * questionId → category title, for the per-category breakdown. The old
+     * `getAllIdCategories()` built a 250k-element list of pairs on the way to
+     * this map; paging folds each page in as it arrives.
+     */
+    private suspend fun loadCategoryOfQuestion(): Map<String, String> {
+        val titles = db.categoryDao().getAll().associate { it.id to it.title }
+        val out = HashMap<String, String>()
+        var page = db.questionDao().pageIdCategoriesFirst(PAGE_SIZE)
+        while (true) {
+            if (page.isEmpty()) break
+            page.forEach { row -> titles[row.categoryId]?.let { out[row.id] = it } }
+            if (page.size < PAGE_SIZE) break
+            page = db.questionDao().pageIdCategoriesAfter(page.last().id, PAGE_SIZE)
+        }
+        return out
     }
 
     /** One card's logged reviews, oldest first, for the drill-down sheet. */
@@ -114,9 +147,9 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
 
     private companion object {
         /**
-         * Rows per keyset page while replaying. Bounds the transient entity
-         * list only; the enriched result still spans the whole log.
+         * Rows per keyset page while loading. Bounds each transient read only;
+         * the enriched rows the aggregator reads still span the whole log.
          */
-        const val REVIEW_PAGE_SIZE = 5_000
+        const val PAGE_SIZE = 5_000
     }
 }

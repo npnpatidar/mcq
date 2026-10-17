@@ -1,6 +1,7 @@
 package com.mcqapp.data.local
 
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Insert
 import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
@@ -94,6 +95,17 @@ interface CategoryDao {
 data class QuestionCategoryRow(
     val id: String,
     val categoryId: String
+)
+
+/**
+ * A card row plus its physical `rowid`. The projection exists so the
+ * statistics load can keyset-page cards in exactly `getAll()`'s order — the
+ * order the overview's tie-broken lists already see — without reading the
+ * whole 250k-row table in one go.
+ */
+data class CardStateRow(
+    @Embedded val state: CardStateEntity,
+    val rowid: Long
 )
 
 /** Scheduling input for a question: its id and stored content hash only. */
@@ -634,9 +646,23 @@ interface QuestionDao {
     @Query("SELECT id, categoryId FROM questions WHERE id IN (:ids)")
     suspend fun getIdCategoriesByIds(ids: List<String>): List<QuestionCategoryRow>
 
-    /** Every question's category, for statistics grouping; nothing else loaded. */
-    @Query("SELECT id, categoryId FROM questions")
-    suspend fun getAllIdCategories(): List<QuestionCategoryRow>
+    /**
+     * The first page of every question's category, for statistics grouping.
+     * The whole-table version this replaced materialised 250k rows into a list
+     * on the way to a lookup map; paging keeps the peak at one page. Order is
+     * irrelevant to that map, so paging on `id` lets the primary-key index
+     * serve the scan.
+     *
+     * The first page is its own query rather than a sentinel `afterId`, because
+     * no `String` is smaller than every question id in SQLite's ordering short
+     * of the empty string, and an empty id is legal (if pathological) input.
+     */
+    @Query("SELECT id, categoryId FROM questions ORDER BY id LIMIT :limit")
+    suspend fun pageIdCategoriesFirst(limit: Int): List<QuestionCategoryRow>
+
+    /** One subsequent keyset page; see [pageIdCategoriesFirst]. */
+    @Query("SELECT id, categoryId FROM questions WHERE id > :afterId ORDER BY id LIMIT :limit")
+    suspend fun pageIdCategoriesAfter(afterId: String, limit: Int): List<QuestionCategoryRow>
 
     @Query("UPDATE questions SET categoryId = :categoryId WHERE id IN (:ids)")
     suspend fun updateCategory(ids: List<String>, categoryId: String): Int
@@ -765,6 +791,15 @@ interface CardStateDao {
 
     @Query("SELECT * FROM card_state")
     suspend fun getAll(): List<CardStateEntity>
+
+    /**
+     * One keyset page of every card in physical (`rowid`) order — the order
+     * [getAll] returns and the order the statistics breakdowns tie-break on.
+     * Keyset on `rowid` keeps that order identical while bounding the transient
+     * list, and unlike `LIMIT`/`OFFSET` it stays linear over 250k cards.
+     */
+    @Query("SELECT *, rowid FROM card_state WHERE rowid > :afterRowId ORDER BY rowid LIMIT :limit")
+    suspend fun pageAfterRowId(afterRowId: Long, limit: Int): List<CardStateRow>
 
     @Query("SELECT COUNT(*) FROM card_state")
     suspend fun countAll(): Int

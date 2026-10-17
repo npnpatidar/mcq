@@ -67,13 +67,11 @@ class BrowsePagingTest {
     private suspend fun source(
         query: String = "",
         filter: BrowseListFilter = BrowseListFilter.ALL,
-        categoryIds: List<String> = listOf("c1", "c2"),
         categoryFilterIds: Set<String>? = null
     ): PagingSource<Int, QuestionRef> = repository.browseRefsSource(
         McqRepository.BrowseScope.of(
-            categoryIds = categoryIds,
+            paperId = "p1",
             query = query,
-            matchingPassageIds = listOf(""),
             filter = filter,
             categoryFilterIds = categoryFilterIds
         )

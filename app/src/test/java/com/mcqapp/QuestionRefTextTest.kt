@@ -96,9 +96,8 @@ class QuestionRefTextTest {
         assertReadable(db.questionDao().observeRefsByCategories(listOf("c1")).first())
 
         val browse = McqRepository.BrowseScope.of(
-            categoryIds = listOf("c1"),
+            paperId = "p1",
             query = "",
-            matchingPassageIds = listOf(""),
             filter = BrowseListFilter.ALL,
             categoryFilterIds = null
         )

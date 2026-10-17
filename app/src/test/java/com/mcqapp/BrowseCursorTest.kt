@@ -68,9 +68,8 @@ class BrowseCursorTest {
         filter: BrowseListFilter = BrowseListFilter.ALL,
         categoryFilterIds: Set<String>? = null
     ): McqRepository.BrowseScope = McqRepository.BrowseScope.of(
-        categoryIds = listOf("c1", "c2"),
+        paperId = "p1",
         query = query,
-        matchingPassageIds = listOf(""),
         filter = filter,
         categoryFilterIds = categoryFilterIds
     )

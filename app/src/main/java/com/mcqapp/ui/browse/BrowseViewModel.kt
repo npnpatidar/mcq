@@ -23,7 +23,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -121,50 +120,35 @@ class BrowseViewModel(
 
     val pagingData: Flow<PagingData<QuestionRef>> = filters
         .flatMapLatest { request ->
-            val categoryIds = repository.browseCategoryIds(paperId)
-            if (categoryIds.isEmpty()) {
-                flowOf(PagingData.empty<QuestionRef>())
-            } else {
-                val scope = scopeFor(request.state, categoryIds)
-                Pager(
-                    PagingConfig(
-                        pageSize = BROWSE_PAGE,
-                        initialLoadSize = BROWSE_PAGE * 2,
-                        prefetchDistance = BROWSE_PAGE / 2,
-                        // On, so the list knows the paper's whole length: a
-                        // deep link has to be able to jump to a question that
-                        // no scroll has reached yet, and without placeholders
-                        // the list holds only the pages it has loaded, so that
-                        // index does not exist to jump to. It also lets a fling
-                        // reach the end of a long paper instead of stopping at
-                        // whatever page the scroll has pulled so far.
-                        enablePlaceholders = true
-                    )
-                ) {
-                    repository.browseRefsSource(scope)
-                }.flow
-            }
+            Pager(
+                PagingConfig(
+                    pageSize = BROWSE_PAGE,
+                    initialLoadSize = BROWSE_PAGE * 2,
+                    prefetchDistance = BROWSE_PAGE / 2,
+                    // On, so the list knows the paper's whole length: a
+                    // deep link has to be able to jump to a question that
+                    // no scroll has reached yet, and without placeholders
+                    // the list holds only the pages it has loaded, so that
+                    // index does not exist to jump to. It also lets a fling
+                    // reach the end of a long paper instead of stopping at
+                    // whatever page the scroll has pulled so far.
+                    enablePlaceholders = true
+                )
+            ) {
+                repository.browseRefsSource(scopeFor(request.state))
+            }.flow
         }
         .cachedIn(viewModelScope)
 
-    private suspend fun scopeFor(
-        state: BrowseFilterState,
-        categoryIds: List<String>
-    ): McqRepository.BrowseScope {
-        val query = state.query
-        val passageIds = if (query.isBlank()) listOf("")
-        else repository.browseMatchingPassageIds(paperId, query)
-        return McqRepository.BrowseScope.of(
-            categoryIds = categoryIds,
-            query = query,
-            matchingPassageIds = passageIds,
+    private fun scopeFor(state: BrowseFilterState): McqRepository.BrowseScope =
+        McqRepository.BrowseScope.of(
+            paperId = paperId,
+            query = state.query,
             filter = state.filter,
             categoryFilterIds = subtreeIds(state.categoryFilterId)
         )
-    }
 
-    private suspend fun currentScope(): McqRepository.BrowseScope =
-        scopeFor(filters.value.state, repository.browseCategoryIds(paperId))
+    private fun currentScope(): McqRepository.BrowseScope = scopeFor(filters.value.state)
 
     fun updateQuery(query: String) {
         filters.update { it.copy(state = it.state.copy(query = query)) }

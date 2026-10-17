@@ -412,40 +412,39 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * The browse filter set mapped once to its SQL form. The paging source,
      * the count and the editor's cursor all describe the same scope through
      * this, so they can never drift.
+     *
+     * Every field is one bind variable: the paper is named by id (its category
+     * list used to be bound one id at a time — a 1000-category paper is more
+     * than SQLite accepts in a single statement on Android 11 and below), and
+     * the category filter travels as a CSV the query matches with `INSTR`.
      */
     data class BrowseScope(
-        val categoryIds: List<String>,
+        val paperId: String,
         val query: String,
-        val matchingPassageIds: List<String>,
         val noAnswer: Int,
         val noExplanation: Int,
         val uncategorized: Int,
         val categoryFilter: Int,
-        val categoryFilterIds: List<String>
+        val categoryFilterCsv: String
     ) {
         companion object {
             fun of(
-                categoryIds: List<String>,
+                paperId: String,
                 query: String,
-                matchingPassageIds: List<String>,
                 filter: BrowseListFilter,
                 categoryFilterIds: Set<String>?
             ): BrowseScope = BrowseScope(
-                categoryIds = categoryIds.ifEmpty { listOf("") },
+                paperId = paperId,
                 query = com.mcqapp.domain.QuestionSearch.escapeLike(query.trim()),
-                matchingPassageIds = matchingPassageIds.ifEmpty { listOf("") },
                 noAnswer = if (filter == BrowseListFilter.NO_ANSWER) 1 else 0,
                 noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
                 uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,
                 categoryFilter = if (categoryFilterIds.isNullOrEmpty()) 0 else 1,
-                categoryFilterIds = categoryFilterIds?.toList().orEmpty().ifEmpty { listOf("") }
+                categoryFilterCsv = categoryFilterIds.orEmpty()
+                    .joinToString(separator = ",", prefix = ",", postfix = ",")
             )
         }
     }
-
-    /** The paper's category ids, in the order the browse list joins against. */
-    suspend fun browseCategoryIds(paperId: String): List<String> =
-        db.categoryDao().getByPaper(paperId).map { it.id }
 
     /**
      * Fires when a question or passage write could change Browse's on-demand
@@ -460,36 +459,19 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ) { _, _ -> Unit }
 
     /**
-     * Passage ids whose searchable body matches [query] (title + flattened
-     * text, the same basis the old in-memory browse filter used). SQL cannot
-     * run `searchableText`, so the id set is computed here and handed to the
-     * paging query, which unions it against the question's passageId; a single
-     * impossible id keeps the `IN` list non-empty when nothing matches.
-     */
-    suspend fun browseMatchingPassageIds(paperId: String, query: String): List<String> {
-        val q = query.trim()
-        if (q.isEmpty()) return listOf("")
-        val ids = passageStore.getPassagesForPaper(paperId)
-            .filter { (it.title + "\n" + it.elements.searchableText).contains(q, ignoreCase = true) }
-            .map { it.id }
-        return ids.ifEmpty { listOf("") }
-    }
-
-    /**
      * A fresh browse [androidx.paging.PagingSource] for one filter set. Room
      * invalidates it on any question/category/answer write, the same
      * refetch-on-write behaviour the observe-based list had.
      */
     fun browseRefsSource(scope: BrowseScope): androidx.paging.PagingSource<Int, QuestionRef> =
         db.questionDao().pagingRefsByCategories(
-            categoryIds = scope.categoryIds,
+            paperId = scope.paperId,
             query = scope.query,
-            matchingPassageIds = scope.matchingPassageIds,
             noAnswer = scope.noAnswer,
             noExplanation = scope.noExplanation,
             uncategorized = scope.uncategorized,
             categoryFilter = scope.categoryFilter,
-            categoryFilterIds = scope.categoryFilterIds
+            categoryFilterCsv = scope.categoryFilterCsv
         )
 
     /** One category's refs in order. Reorder math works per category. */
@@ -503,30 +485,27 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** The passage's first member in its own order (headers key off it). */
     suspend fun browsePassageFirstRefId(passageId: String): String? =
-        db.questionDao().getRefsByPassageOrdered(passageId).firstOrNull()?.id
+        db.questionDao().getFirstRefIdByPassage(passageId)
 
     /** The scope's size, for the editor's "N of M" without listing every id. */
     suspend fun browseFilteredCount(scope: BrowseScope): Int =
         db.questionDao().countBrowseIds(
-            scope.categoryIds, scope.query, scope.matchingPassageIds,
-            scope.noAnswer, scope.noExplanation, scope.uncategorized,
-            scope.categoryFilter, scope.categoryFilterIds
+            scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
         )
 
     /** The id at one position in the scope, for the editor's Prev/Next. */
     suspend fun browseFilteredIdAt(offset: Int, scope: BrowseScope): String? =
         db.questionDao().browseIdAtIndex(
-            offset, scope.categoryIds, scope.query, scope.matchingPassageIds,
-            scope.noAnswer, scope.noExplanation, scope.uncategorized,
-            scope.categoryFilter, scope.categoryFilterIds
+            offset, scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
         )
 
     /** The anchor's index in the scope, for the editor's "N of M". */
     suspend fun browseFilteredIndexOf(anchorId: String, scope: BrowseScope): Int =
         db.questionDao().browseIndexBefore(
-            anchorId, scope.categoryIds, scope.query, scope.matchingPassageIds,
-            scope.noAnswer, scope.noExplanation, scope.uncategorized,
-            scope.categoryFilter, scope.categoryFilterIds
+            anchorId, scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
         )
     suspend fun getQuestion(questionId: String): Question? = questionStore.getQuestion(questionId)
     suspend fun getQuestionsByIds(ids: List<String>): List<Question> =

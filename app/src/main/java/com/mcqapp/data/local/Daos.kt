@@ -276,15 +276,20 @@ interface QuestionDao {
      * order as [getRefsByCategories]. Filters are expressed as SQL predicates
      * so a 250k-question paper never materialises its full ref set:
      *
+     * - the paper is named by id and joined through `categories`, not by an
+     *   `IN` list of its category ids: 1000 categories would be 1000 bind
+     *   variables, and SQLite (3.28 and older, i.e. Android 11 and below)
+     *   allows 999 in one statement.
      * - `query` is pre-escaped for `LIKE ... ESCAPE '\'`; an empty string
      *   disables the text search. It matches `questions.searchText` — the
      *   flattened visible text — so the predicate never scans the elements
-     *   JSON and agrees with the in-memory `searchableText` filter. `matchingPassageIds`
-     *   are the passage ids whose searchable body matches (computed in Kotlin
-     *   with the same `searchableText` the in-memory filter used), so a member
-     *   is still found through its shared context. Pass a single impossible id
-     *   when there are none — SQLite rejects an empty `IN ()`.
-     * - the `Int` filter flags are 0/1 for reuse of one statement.
+     *   JSON and agrees with the in-memory `searchableText` filter. A question
+     *   is also found through its passage's own flattened text (the same
+     *   `passages.searchText` the search queries match on), as a subquery
+     *   rather than a list of matching passage ids.
+     * - `categoryFilterCsv` is `,id,id,…` matched with `INSTR`, so a whole
+     *   subtree of categories costs one bind variable instead of one per
+     *   category. The `Int` filter flags are 0/1 for reuse of one statement.
      */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
@@ -292,28 +297,29 @@ interface QuestionDao {
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
-            "WHERE questions.categoryId IN (:categoryIds) " +
+            "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "OR questions.passageId IN (SELECT id FROM passages " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR " +
             "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
-            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
+            "AND (:categoryFilter = 0 OR " +
+            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )
     fun pagingRefsByCategories(
-        categoryIds: List<String>,
+        paperId: String,
         query: String,
-        matchingPassageIds: List<String>,
         noAnswer: Int,
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterIds: List<String>
+        categoryFilterCsv: String
     ): PagingSource<Int, QuestionRef>
 
     /**
@@ -340,6 +346,19 @@ interface QuestionDao {
             "ORDER BY sortOrder DESC, rowid DESC LIMIT 1"
     )
     suspend fun getLastRefIdByCategory(categoryId: String): String?
+
+    /**
+     * The passage's first member, for the Browse row that carries its header.
+     * A passage's members share one category (the importer folds strays into
+     * the passage's category), so within it the display order is the question
+     * order — which makes a `LIMIT 1` read the first member, where the whole
+     * ordered passage was read just to take its first row.
+     */
+    @Query(
+        "SELECT id FROM questions WHERE passageId = :passageId " +
+            "ORDER BY sortOrder, rowid LIMIT 1"
+    )
+    suspend fun getFirstRefIdByPassage(passageId: String): String?
 
     @Query(
         "SELECT COUNT(*) FROM questions " +
@@ -393,26 +412,27 @@ interface QuestionDao {
     @Query(
         "SELECT COUNT(*) FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
-            "WHERE questions.categoryId IN (:categoryIds) " +
+            "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "OR questions.passageId IN (SELECT id FROM passages " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR " +
             "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
-            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds))"
+            "AND (:categoryFilter = 0 OR " +
+            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0)"
     )
     suspend fun countBrowseIds(
-        categoryIds: List<String>,
+        paperId: String,
         query: String,
-        matchingPassageIds: List<String>,
         noAnswer: Int,
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterIds: List<String>
+        categoryFilterCsv: String
     ): Int
 
     /**
@@ -424,29 +444,30 @@ interface QuestionDao {
     @Query(
         "SELECT questions.id FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
-            "WHERE questions.categoryId IN (:categoryIds) " +
+            "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "OR questions.passageId IN (SELECT id FROM passages " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR " +
             "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
-            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
+            "AND (:categoryFilter = 0 OR " +
+            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid LIMIT 1 OFFSET :offset"
     )
     suspend fun browseIdAtIndex(
         offset: Int,
-        categoryIds: List<String>,
+        paperId: String,
         query: String,
-        matchingPassageIds: List<String>,
         noAnswer: Int,
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterIds: List<String>
+        categoryFilterCsv: String
     ): String?
 
     /**
@@ -459,29 +480,30 @@ interface QuestionDao {
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "INNER JOIN questions anchor ON anchor.id = :anchorId " +
             "INNER JOIN categories anchorCategory ON anchorCategory.id = anchor.categoryId " +
-            "WHERE questions.categoryId IN (:categoryIds) " +
+            "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.passageId IN (:matchingPassageIds)) " +
+            "OR questions.passageId IN (SELECT id FROM passages " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR " +
             "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
-            "AND (:categoryFilter = 0 OR questions.categoryId IN (:categoryFilterIds)) " +
+            "AND (:categoryFilter = 0 OR " +
+            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
             "AND (categories.sortOrder, categories.title, questions.sortOrder, questions.rowid) " +
             "< (anchorCategory.sortOrder, anchorCategory.title, anchor.sortOrder, anchor.rowid)"
     )
     suspend fun browseIndexBefore(
         anchorId: String,
-        categoryIds: List<String>,
+        paperId: String,
         query: String,
-        matchingPassageIds: List<String>,
         noAnswer: Int,
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterIds: List<String>
+        categoryFilterCsv: String
     ): Int
 
     @Query(

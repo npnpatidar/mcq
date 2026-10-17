@@ -260,11 +260,13 @@ interface QuestionDao {
      * so a 250k-question paper never materialises its full ref set:
      *
      * - `query` is pre-escaped for `LIKE ... ESCAPE '\'`; an empty string
-     *   disables the text search. `matchingPassageIds` are the passage ids
-     *   whose searchable body matches (computed in Kotlin with the same
-     *   `searchableText` the in-memory filter used), so a member is still
-     *   found through its shared context. Pass a single impossible id when
-     *   there are none — SQLite rejects an empty `IN ()`.
+     *   disables the text search. It matches `questions.searchText` — the
+     *   flattened visible text — so the predicate never scans the elements
+     *   JSON and agrees with the in-memory `searchableText` filter. `matchingPassageIds`
+     *   are the passage ids whose searchable body matches (computed in Kotlin
+     *   with the same `searchableText` the in-memory filter used), so a member
+     *   is still found through its shared context. Pass a single impossible id
+     *   when there are none — SQLite rejects an empty `IN ()`.
      * - the `Int` filter flags are 0/1 for reuse of one statement.
      */
     @Query(
@@ -274,7 +276,7 @@ interface QuestionDao {
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.passageId IN (:matchingPassageIds)) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
@@ -375,7 +377,7 @@ interface QuestionDao {
         "SELECT COUNT(*) FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.passageId IN (:matchingPassageIds)) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
@@ -406,7 +408,7 @@ interface QuestionDao {
         "SELECT questions.id FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.passageId IN (:matchingPassageIds)) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
@@ -441,7 +443,7 @@ interface QuestionDao {
             "INNER JOIN questions anchor ON anchor.id = :anchorId " +
             "INNER JOIN categories anchorCategory ON anchorCategory.id = anchor.categoryId " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "AND (:query = '' OR questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.passageId IN (:matchingPassageIds)) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
@@ -664,23 +666,24 @@ interface QuestionDao {
 
     /**
      * `:fragment` is the longest single word of the query; `:query` is the whole
-     * thing. Either may match, so a phrase split by markup still reaches the
-     * in-memory filter that understands it. The passage UNION keeps scope
-     * QUESTION consistent with [searchIncludingOptions] and the in-memory
-     * filter: a question whose only match is in its passage's text must not be
-     * dropped by the prefilter here while the filter accepts it elsewhere.
+     * thing. Either may match, so a phrase split by a table cell or a formula
+     * still reaches the in-memory filter that understands it. Both LIKEs run
+     * against `searchText` — the flattened visible text — not the elements JSON,
+     * so the prefilter scans plain text instead of markup for every row. The
+     * passage UNION keeps scope QUESTION consistent with [searchIncludingOptions]
+     * and the in-memory filter: a question whose only match is in its passage's
+     * text must not be dropped by the prefilter here while the filter accepts it
+     * elsewhere.
      */
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
-            "WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "WHERE questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
-            "(SELECT id FROM passages WHERE text LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "(SELECT id FROM passages WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR searchText LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
             "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun search(
@@ -692,15 +695,13 @@ interface QuestionDao {
 
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions LEFT JOIN options " +
-            "ON options.questionId = questions.id WHERE questions.text LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.text LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "ON options.questionId = questions.id WHERE questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
-            "(SELECT id FROM passages WHERE text LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR title LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR text LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR title LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "(SELECT id FROM passages WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR searchText LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
             "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun searchIncludingOptions(

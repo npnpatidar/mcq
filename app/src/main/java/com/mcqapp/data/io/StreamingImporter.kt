@@ -16,6 +16,8 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.local.ContentHashMatch
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.passageSearchText
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
@@ -491,6 +493,9 @@ class StreamingImporter(
                     text = dto.elements
                         .ifEmpty { listOf(ContentElement.TextElement(dto.text)) }
                         .toContentJson(json),
+                    searchText = dto.elements
+                        .ifEmpty { listOf(ContentElement.TextElement(dto.text)) }
+                        .searchableText,
                     image = scaledQuestion.image,
                     explanation = dto.explanationElements
                         .ifEmpty { listOf(ContentElement.TextElement(dto.explanation)) }
@@ -509,12 +514,13 @@ class StreamingImporter(
                 db.optionDao().deleteByQuestion(dto.id)
                 db.optionDao().upsertAll(
                     scaledQuestion.options.mapIndexed { optionIndex, o ->
+                        val optionElements = o.elements
+                            .ifEmpty { listOf(ContentElement.TextElement(o.text)) }
                         OptionEntity(
                             id = o.id,
                             questionId = dto.id,
-                            text = o.elements
-                                .ifEmpty { listOf(ContentElement.TextElement(o.text)) }
-                                .toContentJson(json),
+                            text = optionElements.toContentJson(json),
+                            searchText = optionElements.searchableText,
                             image = o.image,
                             sortOrder = optionIndex
                         )
@@ -578,14 +584,15 @@ class StreamingImporter(
                     continue
                 }
                 val existing = db.passageDao().getById(passageId)
+                val passageElements = passageDto.elements
+                    .ifEmpty { listOf(ContentElement.TextElement("")) }
                 db.passageDao().upsert(
                     PassageEntity(
                         id = passageDto.id,
                         categoryId = passageCategory.getValue(passageId),
                         title = passageDto.title,
-                        text = passageDto.elements
-                            .ifEmpty { listOf(ContentElement.TextElement("")) }
-                            .toContentJson(json),
+                        text = passageElements.toContentJson(json),
+                        searchText = passageSearchText(passageDto.title, passageElements),
                         image = ImageDownscale.downscaleDataUri(passageDto.image),
                         sortOrder = existing?.sortOrder ?: 0
                     )

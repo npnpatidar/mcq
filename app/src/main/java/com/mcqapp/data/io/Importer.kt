@@ -13,6 +13,8 @@ import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.passageSearchText
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
@@ -268,14 +270,15 @@ class Importer(
                         seenPassageIds.add(passageId)
                         paperPassageIds.add(passageId)
                         val existing = db.passageDao().getById(passageId)
+                        val passageElements = passageDto.elements
+                            .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement("")) }
                         db.passageDao().upsert(
                             PassageEntity(
                                 id = passageDto.id,
                                 categoryId = effectiveCatId,
                                 title = passageDto.title,
-                                text = passageDto.elements
-                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement("")) }
-                                    .toContentJson(json),
+                                text = passageElements.toContentJson(json),
+                                searchText = passageSearchText(passageDto.title, passageElements),
                                 image = ImageDownscale.downscaleDataUri(passageDto.image),
                                 sortOrder = existing?.sortOrder ?: 0
                             )
@@ -394,14 +397,15 @@ class Importer(
                         // NOTE: the question row below carries passageId from the
                         // file; the passage rows themselves were already written
                         // above, so the id always resolves inside this transaction.
+                        val questionElements = questionDto.elements
+                            .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
                         db.questionDao().upsert(
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
                                 passageId = questionDto.passageId,
-                                text = questionDto.elements
-                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
-                                    .toContentJson(json),
+                                text = questionElements.toContentJson(json),
+                                searchText = questionElements.searchableText,
                                 image = scaledQuestion.image,
                                 explanation = questionDto.explanationElements
                                     .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.explanation)) }
@@ -461,12 +465,13 @@ class Importer(
                         db.optionDao().deleteByQuestion(questionDto.id)
                         db.optionDao().upsertAll(
                             scaledQuestion.options.mapIndexed { index, o ->
+                                val optionElements = o.elements
+                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(o.text)) }
                                 OptionEntity(
                                     id = o.id,
                                     questionId = questionDto.id,
-                                    text = o.elements
-                                        .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(o.text)) }
-                                        .toContentJson(json),
+                                    text = optionElements.toContentJson(json),
+                                    searchText = optionElements.searchableText,
                                     image = o.image,
                                     sortOrder = index
                                 )

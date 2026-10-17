@@ -7,6 +7,8 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -180,7 +182,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_10_11,
                 AppDatabase.MIGRATION_11_12,
                 AppDatabase.MIGRATION_12_13,
-                AppDatabase.MIGRATION_13_14
+                AppDatabase.MIGRATION_13_14,
+                AppDatabase.MIGRATION_14_15
             )
             .allowMainThreadQueries()
             .build()
@@ -378,7 +381,8 @@ class MigrationTest {
             // A passage round-trips through the migrated schema.
             db.passageDao().upsert(
                 com.mcqapp.data.local.PassageEntity(
-                    id = "p1", categoryId = "c1", title = "T", text = "[]", image = null
+                    id = "p1", categoryId = "c1", title = "T", text = "[]", searchText = "T",
+                    image = null
                 )
             )
             assertEquals("T", db.passageDao().getById("p1")!!.title)
@@ -483,7 +487,8 @@ class MigrationTest {
                     AppDatabase.MIGRATION_10_11,
                     AppDatabase.MIGRATION_11_12,
                     AppDatabase.MIGRATION_12_13,
-                    AppDatabase.MIGRATION_13_14
+                    AppDatabase.MIGRATION_13_14,
+                    AppDatabase.MIGRATION_14_15
                 )
                 .allowMainThreadQueries()
                 .build()
@@ -579,5 +584,53 @@ class MigrationTest {
             assertEquals(2, weakest.first().graded)
             db.close()
         }
+
+    /**
+     * 14->15 adds the flattened `searchText` columns the prefilter scans.
+     * Rows written before the upgrade carry only the elements JSON, so the
+     * migration must derive the column from it; otherwise every question that
+     * predates the upgrade would be stored with an empty string and silently
+     * disappear from search.
+     */
+    @Test
+    fun migration14To15BackfillsFlattenedSearchText() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val questionText = listOf(
+            ContentElement.TextElement("Net <b>external</b> force"),
+            // No space around the operator, so "v=u" stays searchable as typed.
+            ContentElement.MathElement("<math><mi>v</mi><mo>=</mo><mi>u</mi></math>")
+        ).toContentJson(json)
+        val optionText = listOf(ContentElement.TextElement("m/s<sup>2</sup>")).toContentJson(json)
+
+        v6Schema.forEach { dbFile.execSQL(it) }
+        dbFile.execSQL(
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                "VALUES ('c1','p1','Cat',NULL,0)"
+        )
+        dbFile.execSQL(
+            "INSERT INTO questions (id,categoryId,text,image,explanation,difficulty,tags," +
+                "sortOrder,contentHash) VALUES ('q1','c1',?,NULL,'why','medium','net',0,'h1')",
+            arrayOf(questionText)
+        )
+        dbFile.execSQL(
+            "INSERT INTO options (questionId,id,text,image,sortOrder) " +
+                "VALUES ('q1','o1',?,NULL,0)",
+            arrayOf(optionText)
+        )
+        dbFile.close()
+
+        val db = openMigrated()
+        try {
+            runBlocking {
+                val question = db.questionDao().getById("q1")!!
+                // Markup dropped, the formula kept as typed, elements joined
+                // by a single space — exactly what the in-memory filter sees.
+                assertEquals("Net external force v=u", question.searchText)
+                assertEquals("m/s 2", db.optionDao().getByQuestion("q1").single().searchText)
+            }
+        } finally {
+            db.close()
+        }
+    }
     }
 }

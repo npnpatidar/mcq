@@ -6,6 +6,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.passageSearchText
+import com.mcqapp.domain.searchableText
 
 @Database(
     entities = [
@@ -22,7 +25,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 14,
+    version = 15,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -364,6 +367,106 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the flattened `searchText` columns (F4). Global search
+         * prefilters with `LIKE '%q%'`, which no index can serve, so it used
+         * to scan the elements *JSON* — markup, formulas and all — for every
+         * row. Matching the plain visible text instead is exact (it is the
+         * same string the in-memory filter tests) and much cheaper per row.
+         *
+         * Existing rows are backfilled from the JSON already on disk.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `questions` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `options` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `passages` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''"
+                )
+                backfillSearchText(db)
+            }
+        }
+
+        /** Rows filled per backfill round trip. */
+        private const val SEARCH_BACKFILL_BATCH = 2000
+
+        /**
+         * Fills the `searchText` columns from the element JSON already stored.
+         * Keyset-paged by rowid — stable because the update never changes the
+         * key — so peak memory is one batch, not a whole 250k-question table.
+         */
+        private fun backfillSearchText(db: SupportSQLiteDatabase) {
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+            fun flattened(raw: String) = raw.parseContentElements(json).searchableText
+
+            var last = -1L
+            while (true) {
+                val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
+                db.query(
+                    "SELECT rowid, text FROM questions WHERE rowid > ? " +
+                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                    arrayOf(last)
+                ).use { c ->
+                    while (c.moveToNext()) batch += c.getLong(0) to c.getString(1)
+                }
+                if (batch.isEmpty()) break
+                for ((rowid, text) in batch) {
+                    db.execSQL(
+                        "UPDATE questions SET searchText = ? WHERE rowid = ?",
+                        arrayOf(flattened(text), rowid)
+                    )
+                    last = rowid
+                }
+            }
+
+            last = -1L
+            while (true) {
+                val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
+                db.query(
+                    "SELECT rowid, text FROM options WHERE rowid > ? " +
+                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                    arrayOf(last)
+                ).use { c ->
+                    while (c.moveToNext()) batch += c.getLong(0) to c.getString(1)
+                }
+                if (batch.isEmpty()) break
+                for ((rowid, text) in batch) {
+                    db.execSQL(
+                        "UPDATE options SET searchText = ? WHERE rowid = ?",
+                        arrayOf(flattened(text), rowid)
+                    )
+                    last = rowid
+                }
+            }
+
+            last = -1L
+            while (true) {
+                val batch = ArrayList<Triple<Long, String, String>>(SEARCH_BACKFILL_BATCH)
+                db.query(
+                    "SELECT rowid, title, text FROM passages WHERE rowid > ? " +
+                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                    arrayOf(last)
+                ).use { c ->
+                    while (c.moveToNext()) {
+                        batch += Triple(c.getLong(0), c.getString(1), c.getString(2))
+                    }
+                }
+                if (batch.isEmpty()) break
+                for ((rowid, title, text) in batch) {
+                    db.execSQL(
+                        "UPDATE passages SET searchText = ? WHERE rowid = ?",
+                        arrayOf(passageSearchText(title, text.parseContentElements(json)), rowid)
+                    )
+                    last = rowid
+                }
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -373,7 +476,7 @@ abstract class AppDatabase : RoomDatabase() {
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

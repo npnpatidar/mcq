@@ -70,6 +70,18 @@ data class QuestionEntity(
      */
     val passageId: String? = null,
     val text: String,
+    /**
+     * Flattened, markup-free visible text of [text]'s elements
+     * ([com.mcqapp.domain.searchableText]), maintained at write time.
+     *
+     * Global search prefilters with `LIKE '%q%'`, which no index can serve, so
+     * it used to scan the elements *JSON* (markup, formulas and all) for every
+     * row. Matching this plain column instead is exact — it is the very string
+     * the in-memory [com.mcqapp.domain.QuestionSearch.filter] tests — and much
+     * cheaper per row. No default: every writer must set it, so a new write
+     * path cannot silently store an empty, unsearchable row.
+     */
+    val searchText: String,
     val image: String? = null,
     val explanation: String = "",
     val explanationImage: String? = null,
@@ -97,6 +109,8 @@ data class OptionEntity(
     val questionId: String,
     val id: String,
     val text: String,
+    /** Flattened text of [text], as on [QuestionEntity.searchText]. */
+    val searchText: String,
     val image: String? = null,
     val sortOrder: Int = 0
 )

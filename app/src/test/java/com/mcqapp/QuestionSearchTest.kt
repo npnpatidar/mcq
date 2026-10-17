@@ -252,9 +252,10 @@ class QuestionSearchTest {
     }
 
     /**
-     * The SQL prefilter searches the elements JSON, so it must look for a term
-     * that survives there: a whole phrase split by markup does not, but any one
-     * word of it does.
+     * The SQL prefilter ORs the longest word of the query in beside the whole
+     * query — a cheap superset so a phrase the flattened `searchText` cannot
+     * line up still reaches the in-memory filter. Markup cannot split any one
+     * word, so that word survives verbatim.
      */
     @Test
     fun thePrefilterKeyIsTheLongestWordSoMarkupCannotSplitIt() {

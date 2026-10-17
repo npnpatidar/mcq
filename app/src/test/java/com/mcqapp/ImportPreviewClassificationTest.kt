@@ -6,6 +6,7 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.ui.importscreen.classifyPreview
 import kotlinx.serialization.json.Json
@@ -52,6 +53,7 @@ class ImportPreviewClassificationTest {
         id = id,
         categoryId = "c1",
         text = listOf(ContentElement.TextElement(text)).toContentJson(json),
+        searchText = listOf(ContentElement.TextElement(text)).searchableText,
         explanation = listOf(ContentElement.TextElement("Because")).toContentJson(json)
     )
 
@@ -61,6 +63,7 @@ class ImportPreviewClassificationTest {
                 questionId = questionId,
                 id = ('a' + index).toString(),
                 text = listOf(ContentElement.TextElement(t)).toContentJson(json),
+                searchText = listOf(ContentElement.TextElement(t)).searchableText,
                 sortOrder = index
             )
         }

@@ -34,6 +34,13 @@ data class PassageEntity(
     val title: String,
     /** The passage body as rich-content elements JSON, like a question's text. */
     val text: String,
+    /**
+     * Title plus flattened body text ([com.mcqapp.domain.passageSearchText]):
+     * the string global search matches so a member can be found through its
+     * shared context. See [QuestionEntity.searchText]. No default, so every
+     * writer must set it.
+     */
+    val searchText: String,
     val image: String? = null,
     val sortOrder: Int = 0
 )

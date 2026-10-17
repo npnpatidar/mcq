@@ -19,6 +19,7 @@ import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -162,6 +163,7 @@ internal class QuestionStore(
                     categoryId = question.categoryId,
                     passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
+                    searchText = question.elements.searchableText,
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
                     explanationImage = question.explanationImage,
@@ -180,6 +182,7 @@ internal class QuestionStore(
                         id = o.id,
                         questionId = question.id,
                         text = o.elements.toContentJson(mapper.json),
+                        searchText = o.elements.searchableText,
                         image = o.image,
                         sortOrder = index
                     )
@@ -232,6 +235,7 @@ internal class QuestionStore(
                 categoryId = q.categoryId,
                 passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
+                searchText = q.elements.searchableText,
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
                 explanationImage = q.explanationImage,
@@ -248,6 +252,7 @@ internal class QuestionStore(
                     questionId = q.id,
                     id = o.id,
                     text = o.elements.toContentJson(mapper.json),
+                    searchText = o.elements.searchableText,
                     image = o.image,
                     sortOrder = index
                 )

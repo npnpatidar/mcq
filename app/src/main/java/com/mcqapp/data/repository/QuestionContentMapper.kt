@@ -10,6 +10,7 @@ import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.toContentJson
 import kotlinx.serialization.json.Json
 
@@ -110,6 +111,7 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
         categoryId = passage.categoryId,
         title = passage.title,
         text = passage.elements.toContentJson(json),
+        searchText = passageSearchText(passage.title, passage.elements),
         image = passage.image,
         sortOrder = passage.sortOrder
     )

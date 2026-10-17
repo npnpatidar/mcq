@@ -137,6 +137,14 @@ class TestViewModel(
      *  are still loaded, so the unshuffled list is not retained. */
     private var resumeOrder: List<QuestionRef> = emptyList()
 
+    /** The card resolved ahead of the visible one, keyed by its ref id. */
+    private var prefetched: Pair<String, LoadedCard>? = null
+
+    private data class LoadedCard(
+        val question: Question,
+        val passage: com.mcqapp.domain.Passage?
+    )
+
     private companion object {
         /** Questions resolved per review-sheet page. */
         const val REVIEW_PAGE = 100
@@ -469,19 +477,62 @@ class TestViewModel(
         val state = _state.value
         val ref = state.refs.getOrNull(state.currentIndex)
         if (ref == null) {
+            prefetched = null
             _state.update { it.copy(current = null, currentPassage = null) }
             return
         }
+        // The read-ahead of the previous card already holds this one: publish
+        // it without a round-trip, so tapping Next is a frame, not a query.
+        val ready = prefetched?.takeIf { it.first == ref.id }?.second
+        if (ready != null) {
+            prefetched = null
+            publishCurrent(ready)
+            prefetchNext()
+            return
+        }
         viewModelScope.launch {
-            val loaded = repository.getQuestion(ref.id)?.let { applyOptionShuffle(it) }
-            val passage = loaded?.passageId?.let { pid ->
-                repository.getPassagesByIds(listOf(pid)).firstOrNull()
-            }
+            val loaded = loadCurrent(ref.id)
             // A navigation that raced this read wins: only publish what is
             // still on screen.
             if (_state.value.refs.getOrNull(_state.value.currentIndex)?.id != ref.id) return@launch
-            _state.update { it.copy(current = loaded, currentPassage = passage) }
-            publishDwell(System.currentTimeMillis())
+            publishCurrent(loaded)
+            prefetchNext()
+        }
+    }
+
+    /** Resolves one card's content (and its passage) straight from the DB. */
+    private suspend fun loadCurrent(id: String): LoadedCard? {
+        val question = repository.getQuestion(id)?.let { applyOptionShuffle(it) } ?: return null
+        val passage = question.passageId?.let { pid ->
+            repository.getPassagesByIds(listOf(pid)).firstOrNull()
+        }
+        return LoadedCard(question, passage)
+    }
+
+    private fun publishCurrent(loaded: LoadedCard?) {
+        _state.update { it.copy(current = loaded?.question, currentPassage = loaded?.passage) }
+        publishDwell(System.currentTimeMillis())
+    }
+
+    /**
+     * Anki's reviewer read-ahead: while a card is shown, resolve the next one
+     * so it is ready the moment Next is tapped. Only ever one card ahead, and
+     * dropped if the reader moves elsewhere before it lands.
+     */
+    private fun prefetchNext() {
+        val state = _state.value
+        val nextRef = state.refs.getOrNull(state.currentIndex + 1) ?: run {
+            prefetched = null
+            return
+        }
+        if (prefetched?.first == nextRef.id) return
+        prefetched = null
+        viewModelScope.launch {
+            val loaded = loadCurrent(nextRef.id)
+            val now = _state.value
+            if (now.refs.getOrNull(now.currentIndex + 1)?.id == nextRef.id) {
+                prefetched = loaded?.let { nextRef.id to it }
+            }
         }
     }
 

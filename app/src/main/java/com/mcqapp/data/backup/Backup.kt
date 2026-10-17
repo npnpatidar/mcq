@@ -215,25 +215,32 @@ object McqBackupFormat {
         intervalDaysAfter = entity.intervalDaysAfter
     )
 
-    /** The study file's rows, written one at a time from their entities. */
+    /**
+     * The study file, written one row at a time. The two big tables arrive as
+     * emitters rather than lists, so the caller pages them ([BackupSource] does,
+     * for the settings screen) and a backup of a million reviews never holds the
+     * table in memory in order to write it.
+     */
     suspend fun writeStudyRows(
         w: java.io.BufferedWriter,
-        cardState: List<com.mcqapp.data.local.CardStateEntity>,
-        reviewLog: List<com.mcqapp.data.local.ReviewLogEntity>,
+        cardState: suspend (emit: suspend (com.mcqapp.data.local.CardStateEntity) -> Unit) -> Unit,
+        reviewLog: suspend (emit: suspend (com.mcqapp.data.local.ReviewLogEntity) -> Unit) -> Unit,
         paperCreated: List<PaperCreated>,
-        inProgressTest: String?,
-        toStateRow: (com.mcqapp.data.local.CardStateEntity) -> CardStateRow,
-        toLogRow: (com.mcqapp.data.local.ReviewLogEntity) -> ReviewLogRow
+        inProgressTest: String?
     ) {
         w.write("{\"cardState\":[")
-        cardState.forEachIndexed { i, entity ->
-            if (i > 0) w.write(",")
-            w.write(json.encodeToString(CardStateRow.serializer(), toStateRow(entity)))
+        var first = true
+        cardState { entity ->
+            if (!first) w.write(",")
+            first = false
+            w.write(json.encodeToString(CardStateRow.serializer(), stateRow(entity)))
         }
         w.write("],\"reviewLog\":[")
-        reviewLog.forEachIndexed { i, entity ->
-            if (i > 0) w.write(",")
-            w.write(json.encodeToString(ReviewLogRow.serializer(), toLogRow(entity)))
+        first = true
+        reviewLog { entity ->
+            if (!first) w.write(",")
+            first = false
+            w.write(json.encodeToString(ReviewLogRow.serializer(), logRow(entity)))
         }
         w.write("],\"paperCreated\":[")
         paperCreated.forEachIndexed { i, row ->
@@ -346,6 +353,34 @@ class BackupSource(private val db: AppDatabase) {
         )
     }
 
+    /**
+     * Pages every card into [emit] in physical (`rowid`) order — the order
+     * `getAll()` returns and the order the backup has always written — with one
+     * page live at a time.
+     */
+    suspend fun emitCards(emit: suspend (CardStateEntity) -> Unit) {
+        var afterRowId = 0L
+        while (true) {
+            val page = db.cardStateDao().pageAfterRowId(afterRowId, PAGE)
+            if (page.isEmpty()) break
+            page.forEach { emit(it.state) }
+            afterRowId = page.last().rowid
+            if (page.size < PAGE) break
+        }
+    }
+
+    /** Pages every review into [emit] in `id` order, one page at a time. */
+    suspend fun emitReviews(emit: suspend (ReviewLogEntity) -> Unit) {
+        var afterId = 0L
+        while (true) {
+            val page = db.reviewLogDao().pageAfterId(afterId, PAGE)
+            if (page.isEmpty()) break
+            page.forEach { emit(it) }
+            afterId = page.last().id
+            if (page.size < PAGE) break
+        }
+    }
+
     internal fun CardStateEntity.toRow() = McqBackupFormat.CardStateRow(
         paperId = paperId,
         questionId = questionId,
@@ -375,6 +410,11 @@ class BackupSource(private val db: AppDatabase) {
         difficultyAfter = difficultyAfter,
         intervalDaysAfter = intervalDaysAfter
     )
+
+    private companion object {
+        /** Rows per page while streaming a table into a backup. */
+        const val PAGE = 2000
+    }
 }
 
 /**

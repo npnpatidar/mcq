@@ -169,4 +169,67 @@ class McqBackupFormatTest {
         val e = assertThrows(McqBackupFormat.Invalid::class.java) { McqBackupFormat.read(stripped) }
         assertTrue(e.message!!.contains(McqBackupFormat.STUDY))
     }
+
+    /**
+     * The settings screen streams the study rows out of the database a page at
+     * a time instead of listing both tables, so [McqBackupFormat.writeStudyRows]
+     * takes emitters. It must still produce exactly what serializing the same
+     * rows would, or a backup would stop matching the format it promises.
+     */
+    @Test
+    fun streamedStudyRowsMatchTheCanonicalStudyFile() = kotlinx.coroutines.runBlocking {
+        val cards = listOf(
+            com.mcqapp.data.local.CardStateEntity(
+                paperId = "p1", questionId = "q1", ease = 2.5, intervalDays = 3,
+                dueAt = 90L, reps = 2, lapses = 1, leech = false,
+                lastReviewedAt = 50L, contentHash = "h1",
+                difficulty = 4.0, stability = 5.0,
+                cardState = com.mcqapp.domain.CardStateKind.REVIEW, reviewCount = 2
+            ),
+            com.mcqapp.data.local.CardStateEntity(
+                paperId = "p2", questionId = "q2", ease = 2.0, intervalDays = 0,
+                dueAt = 0L, reps = 0, lapses = 0, leech = false,
+                lastReviewedAt = 0L, contentHash = "h2"
+            )
+        )
+        val reviews = listOf(
+            com.mcqapp.data.local.ReviewLogEntity(
+                paperId = "p1", questionId = "q1", rating = 3, reviewedAt = 50L
+            ),
+            com.mcqapp.data.local.ReviewLogEntity(
+                id = 2, paperId = "p1", questionId = "q1", rating = 1, reviewedAt = 60L,
+                elapsedSeconds = 4L, stateBefore = "REVIEW", stabilityAfter = 5.0,
+                difficultyAfter = 4.0, intervalDaysAfter = 3
+            )
+        )
+        val paperCreated = listOf(McqBackupFormat.PaperCreated("p1", 7L))
+
+        val out = java.io.StringWriter()
+        val writer = java.io.BufferedWriter(out)
+        McqBackupFormat.writeStudyRows(
+            w = writer,
+            cardState = { emit -> cards.forEach { emit(it) } },
+            reviewLog = { emit -> reviews.forEach { emit(it) } },
+            paperCreated = paperCreated,
+            inProgressTest = "{\"paperId\":\"p1\"}"
+        )
+        writer.flush()
+
+        val canonical = McqBackupFormat.StudyFile(
+            cardState = cards.map { McqBackupFormat.stateRow(it) },
+            reviewLog = reviews.map { McqBackupFormat.logRow(it) },
+            paperCreated = paperCreated,
+            inProgressTest = "{\"paperId\":\"p1\"}"
+        )
+        // The writer adds the punctuation itself as it goes, so read what it
+        // wrote back: it must decode to exactly the study file the format's own
+        // serialization of these rows makes.
+        assertEquals(
+            canonical,
+            McqBackupFormat.json.decodeFromString(
+                McqBackupFormat.StudyFile.serializer(),
+                out.toString()
+            )
+        )
+    }
 }

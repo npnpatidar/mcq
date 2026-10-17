@@ -304,8 +304,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     val paperCreated = paperRows.map {
                         McqBackupFormat.PaperCreated(it.id, it.createdAt)
                     }
-                    val cardState = db.cardStateDao().getAll()
-                    val reviewLog = db.reviewLogDao().getAll()
                     val inProgressTest = repository.loadTestProgress()
                     val manifest = McqBackupFormat.Manifest(
                         dbVersion = db.openHelper.readableDatabase.version,
@@ -314,7 +312,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         papers = paperRows.size,
                         questions = db.questionDao().countQuestions(),
                         attempts = db.attemptDao().getAllAttempts().size,
-                        reviews = reviewLog.size
+                        // Counted in SQL: the rows are streamed below, never listed.
+                        reviews = db.reviewLogDao().countAll()
                     )
                     val settings = McqBackupFormat.SettingsFile(
                         preferences = repository.settingsSnapshot().preferences
@@ -332,14 +331,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                 com.mcqapp.data.io.Exporter(db).exportAllTo(w)
                             },
                             study = { w ->
+                                val source = com.mcqapp.data.backup.BackupSource(db)
                                 McqBackupFormat.writeStudyRows(
-                                    w, cardState, reviewLog, paperCreated, inProgressTest,
-                                    toStateRow = { entity ->
-                                        McqBackupFormat.stateRow(
-                                            entity
-                                        )
-                                    },
-                                    toLogRow = { entity -> McqBackupFormat.logRow(entity) }
+                                    w = w,
+                                    cardState = { emit -> source.emitCards(emit) },
+                                    reviewLog = { emit -> source.emitReviews(emit) },
+                                    paperCreated = paperCreated,
+                                    inProgressTest = inProgressTest
                                 )
                             },
                             settings = settings

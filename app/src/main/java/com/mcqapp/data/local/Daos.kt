@@ -870,6 +870,10 @@ interface ReviewLogDao {
     @Query("SELECT COUNT(*) FROM review_log")
     fun observeCount(): Flow<Int>
 
+    /** The one-shot form of [observeCount]: the backup manifest's review count. */
+    @Query("SELECT COUNT(*) FROM review_log")
+    suspend fun countAll(): Int
+
     /**
      * Removes one question's logged reviews. The log is immutable per review,
      * but it is not a graveyard: deleting a question, bulk-deleting or moving

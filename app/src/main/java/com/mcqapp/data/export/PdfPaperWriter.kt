@@ -20,6 +20,7 @@ import android.text.TextPaint
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.domain.ContentElement
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 
 /**
  * Renders a paper as a PDF (A4) with questions, options, correct answers and
@@ -34,17 +35,21 @@ object PdfPaperWriter {
     private val BOTTOM = (PAGE_H - MARGIN).toFloat()
 
     /**
+     * Renders the document straight to [out]: `PdfDocument.writeTo` already
+     * writes progressively, so the finished file never exists as a second copy.
+     *
      * @param answersAtEnd when true, questions print without correct marks and
      * all answers + explanations move to an "Answer Key" section at the end,
      * so the paper can be attempted without seeing answers.
      * @param twoColumn flow content down the left column, then the right,
      * then the next page (single-column pagination is otherwise untouched).
      */
-    fun paperToPdfBytes(
+    fun paperToPdf(
         paper: PaperDto,
+        out: OutputStream,
         answersAtEnd: Boolean = false,
         twoColumn: Boolean = false
-    ): ByteArray {
+    ) {
         val doc = PdfDocument()
         try {
             val w = Writer(doc, twoColumn)
@@ -162,13 +167,19 @@ object PdfPaperWriter {
                 }
             }
             w.finish()
-            val out = ByteArrayOutputStream()
             doc.writeTo(out)
-            return out.toByteArray()
         } finally {
             doc.close()
         }
     }
+
+    /** The same document as bytes, for tests and small callers. */
+    fun paperToPdfBytes(
+        paper: PaperDto,
+        answersAtEnd: Boolean = false,
+        twoColumn: Boolean = false
+    ): ByteArray =
+        ByteArrayOutputStream().also { paperToPdf(paper, it, answersAtEnd, twoColumn) }.toByteArray()
 
     private class Writer(private val doc: PdfDocument, private val twoColumn: Boolean) {
         private val geometry = PdfColumns(PAGE_W.toFloat(), MARGIN.toFloat(), twoColumn)

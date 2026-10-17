@@ -7,6 +7,7 @@ import com.mcqapp.util.Logger
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.File
+import java.io.OutputStream
 import java.util.zip.ZipEntry
 import kotlin.random.Random
 import java.util.zip.ZipOutputStream
@@ -48,6 +49,12 @@ object AnkiPackageWriter {
     /** The `<br>` that separates one line of a card from the next. */
     const val BR = NEWLINE_BREAK
 
+    /**
+     * Notes inserted per transaction when building an export collection, so a
+     * 100k-note deck does not have to hold every row before writing any.
+     */
+    private const val NOTE_BATCH = 500
+
     /** Fixed ids keep the output deterministic and diffable across exports. */
     const val DECK_ID = 1L
     const val DECK_CONFIG_ID = 1L
@@ -70,12 +77,20 @@ object AnkiPackageWriter {
      * should be; with an entry its intervals and ease travel with it. The
      * collection is created at export time, so due days are counted from then.
      */
-    fun write(
+    /**
+     * Writes the package straight to [out]: notes are built and inserted into
+     * the export collection [NOTE_BATCH] at a time instead of all at once, and
+     * the finished collection is copied into the zip in chunks. A 100k-note
+     * deck therefore never holds its notes, its collection and its archive in
+     * memory together.
+     */
+    fun writeTo(
         paper: PaperDto,
         questions: List<Question>,
+        out: OutputStream,
         scheduling: Map<String, CardScheduleDto> = emptyMap(),
         passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
-    ): ByteArray {
+    ) {
         val media = AnkiMediaPool()
         val nowSeconds = System.currentTimeMillis() / 1000
         val nowMillis = System.currentTimeMillis()
@@ -91,62 +106,101 @@ object AnkiPackageWriter {
         fun deckIdFor(name: String): Long = deckIds.getOrPut(name) { DECK_ID + deckIds.size }
         questions.forEach { deckIdFor(deckNameFor(paper.title, categoryPaths[it.categoryId])) }
 
-        val notes = mutableListOf<AnkiNoteRow>()
-        val cards = mutableListOf<AnkiCardRow>()
+        val file = File.createTempFile("anki-export", ".anki2")
+        try {
+            val db = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(file, null)
+            try {
+                AnkiSchema11.create(db)
+                AnkiSchema11.writeColRow(
+                    db = db,
+                    crt = nowSeconds,
+                    mod = nowMillis,
+                    conf = AnkiSchema11.configJson(
+                        modelId = MODEL_ID,
+                        // One note per question, and Anki numbers new cards from
+                        // here, so the count is known before any row is written.
+                        nextPos = questions.size + 1,
+                        deckIds = deckIds.map { it.value }
+                    ),
+                    models = AnkiSchema11.modelsJson(MODEL_ID, nowSeconds),
+                    decks = AnkiSchema11.decksJson(deckIds.map { (name, id) -> id to name }, nowSeconds),
+                    dconf = AnkiSchema11.dconfJson(DECK_CONFIG_ID, nowSeconds)
+                )
+                val notes = ArrayList<AnkiNoteRow>(NOTE_BATCH)
+                val cards = ArrayList<AnkiCardRow>(NOTE_BATCH)
+                fun flush() {
+                    if (notes.isEmpty()) return
+                    AnkiSchema11.insertNotes(db, notes)
+                    AnkiSchema11.insertCards(db, cards)
+                    notes.clear()
+                    cards.clear()
+                }
 
-        questions.forEachIndexed { index, question ->
-            // Ids only have to be unique inside the package; a timestamp base
-            // keeps them sortable in the same order as the source paper. The
-            // per-export salt keeps two packages exported in the same
-            // millisecond (on this device or different ones) from reusing
-            // the same id sequence, which would collide when both are
-            // imported into one Anki collection.
-            val noteId = idBase + index
-            val passage = question.passageId?.let { passages[it] }
-            val front = buildFront(question, media, passage)
-            val back = buildBack(question, media)
-            notes += AnkiNoteRow(
-                id = noteId,
-                guid = guidFor(paper.id, question.id),
-                mod = nowSeconds,
-                tags = formatTags(question),
-                // Front, Back, then the structured payload. Anki splits fields on
-                // the unit separator; the template only renders the first two.
-                fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" +
-                    payloadOf(question, passage).toField(),
-                sortField = question.text
-            )
-            val card = scheduling[question.id]
-                ?.let { AnkiScheduling.toAnki(it, nowSeconds, nowMillis) }
-                ?: AnkiScheduling.NEW_CARD
-            cards += AnkiCardRow(
-                id = noteId + 1,
-                noteId = noteId,
-                mod = nowSeconds,
-                // Anki numbers new cards from col.conf.nextPos; only the relative
-                // order matters, so an increasing sequence is correct.
-                due = if (card.queue == AnkiScheduling.QUEUE_NEW) index + 1 else card.due,
-                deckId = deckIdFor(deckNameFor(paper.title, categoryPaths[question.categoryId])),
-                type = card.type,
-                queue = card.queue,
-                interval = card.ivl,
-                factor = card.factor,
-                reps = card.reps,
-                lapses = card.lapses
-            )
+                questions.forEachIndexed { index, question ->
+                    // Ids only have to be unique inside the package; a timestamp base
+                    // keeps them sortable in the same order as the source paper. The
+                    // per-export salt keeps two packages exported in the same
+                    // millisecond (on this device or different ones) from reusing
+                    // the same id sequence, which would collide when both are
+                    // imported into one Anki collection.
+                    val noteId = idBase + index
+                    val passage = question.passageId?.let { passages[it] }
+                    val front = buildFront(question, media, passage)
+                    val back = buildBack(question, media)
+                    notes += AnkiNoteRow(
+                        id = noteId,
+                        guid = guidFor(paper.id, question.id),
+                        mod = nowSeconds,
+                        tags = formatTags(question),
+                        // Front, Back, then the structured payload. Anki splits fields on
+                        // the unit separator; the template only renders the first two.
+                        fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" +
+                            payloadOf(question, passage).toField(),
+                        sortField = question.text
+                    )
+                    val card = scheduling[question.id]
+                        ?.let { AnkiScheduling.toAnki(it, nowSeconds, nowMillis) }
+                        ?: AnkiScheduling.NEW_CARD
+                    cards += AnkiCardRow(
+                        id = noteId + 1,
+                        noteId = noteId,
+                        mod = nowSeconds,
+                        // Anki numbers new cards from col.conf.nextPos; only the relative
+                        // order matters, so an increasing sequence is correct.
+                        due = if (card.queue == AnkiScheduling.QUEUE_NEW) index + 1 else card.due,
+                        deckId = deckIdFor(deckNameFor(paper.title, categoryPaths[question.categoryId])),
+                        type = card.type,
+                        queue = card.queue,
+                        interval = card.ivl,
+                        factor = card.factor,
+                        reps = card.reps,
+                        lapses = card.lapses
+                    )
+                    if (notes.size >= NOTE_BATCH) flush()
+                }
+                flush()
+            } finally {
+                db.close()
+            }
+            zip(file, media, out)
+        } finally {
+            if (!file.delete()) {
+                Logger.w("ANKI", "Could not delete temp collection ${file.absolutePath}")
+            }
         }
-        val collectionBytes = buildCollection(
-            notes = notes,
-            cards = cards,
-            decks = deckIds.map { (name, id) -> id to name },
-            nowSeconds = nowSeconds,
-            nowMillis = nowMillis
-        )
-
-        val apkg = zip(collectionBytes, media)
-        Logger.i("EXPORT", "Wrote .apkg with ${notes.size} notes, ${media.entries.size} media files")
-        return apkg
+        Logger.i("EXPORT", "Wrote .apkg with ${questions.size} notes, ${media.entries.size} media files")
     }
+
+    /** The same package as bytes, for tests and small callers. */
+    fun write(
+        paper: PaperDto,
+        questions: List<Question>,
+        scheduling: Map<String, CardScheduleDto> = emptyMap(),
+        passages: Map<String, com.mcqapp.domain.Passage> = emptyMap()
+    ): ByteArray =
+        java.io.ByteArrayOutputStream()
+            .also { writeTo(paper, questions, it, scheduling, passages) }
+            .toByteArray()
 
     /**
      * The front of the card: the passage (when the question shares one), the
@@ -299,48 +353,17 @@ object AnkiPackageWriter {
         }
     }
 
-    private fun buildCollection(
-        notes: List<AnkiNoteRow>,
-        cards: List<AnkiCardRow>,
-        decks: List<Pair<Long, String>>,
-        nowSeconds: Long,
-        nowMillis: Long
-    ): ByteArray {
-        val file = File.createTempFile("anki-export", ".anki2")
-        try {
-            val db = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(file, null)
-            AnkiSchema11.create(db)
-            AnkiSchema11.writeColRow(
-                db = db,
-                crt = nowSeconds,
-                mod = nowMillis,
-                conf = AnkiSchema11.configJson(
-                    modelId = MODEL_ID,
-                    nextPos = notes.size + 1,
-                    deckIds = decks.map { it.first }
-                ),
-                models = AnkiSchema11.modelsJson(MODEL_ID, nowSeconds),
-                decks = AnkiSchema11.decksJson(decks, nowSeconds),
-                dconf = AnkiSchema11.dconfJson(DECK_CONFIG_ID, nowSeconds)
-            )
-            AnkiSchema11.insertNotes(db, notes)
-            AnkiSchema11.insertCards(db, cards)
-            db.close()
-            return file.readBytes()
-        } finally {
-            if (!file.delete()) {
-                Logger.w("ANKI", "Could not delete temp collection ${file.absolutePath}")
-            }
-        }
-    }
-
-    private fun zip(collection: ByteArray, media: AnkiMediaPool): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
+    /**
+     * Zips the temp collection into [out]. The collection is copied in chunks
+     * rather than read whole, so the database bytes and the archive never sit
+     * in memory together.
+     */
+    private fun zip(collection: File, media: AnkiMediaPool, out: OutputStream) {
         ZipOutputStream(out).use { zip ->
             // The database is deflated; media and its manifest are stored, which
             // is what Anki itself writes and keeps image bytes seekable.
             zip.putNextEntry(ZipEntry("collection.anki2"))
-            zip.write(collection)
+            collection.inputStream().use { it.copyTo(zip) }
             zip.closeEntry()
 
             if (media.entries.isNotEmpty()) {
@@ -361,7 +384,6 @@ object AnkiPackageWriter {
                 }
             }
         }
-        return out.toByteArray()
     }
 
     /** One row of Anki's `notes` table. */

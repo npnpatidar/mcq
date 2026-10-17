@@ -9,24 +9,31 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
+import java.io.OutputStream
 
-data class ExportResult(
-    val fileName: String,
-    val mimeType: String,
-    val bytes: ByteArray
-)
+/**
+ * Where an export went, without carrying its bytes: the name the caller
+ * suggested and the MIME type it created the document with. The bytes went
+ * straight to the caller's stream.
+ */
+data class ExportFile(val fileName: String, val mimeType: String)
 
-/** Produces the bytes for a single-paper export in the requested format. */
+/** Renders a single-paper export into a caller-provided stream. */
 class PaperExporter(private val db: AppDatabase) {
 
     private val json = Json { prettyPrint = true }
 
-    suspend fun exportPaper(paperId: String, format: ExportFormat, twoColumnPdf: Boolean = false): ExportResult {
+    suspend fun exportPaper(
+        paperId: String,
+        format: ExportFormat,
+        sink: OutputStream,
+        twoColumnPdf: Boolean = false
+    ): ExportFile {
         val dto = Exporter(db).getPaperDto(paperId)
             ?: throw IllegalStateException("Paper not found")
         Logger.i("EXPORT", "Exporting paper '${dto.title}' as ${format.name}")
         return render(
-            withPassageDtos(dto), dto.title, format,
+            withPassageDtos(dto), dto.title, format, sink,
             scheduling = loadScheduling(paperId),
             passages = loadPassages(dto),
             twoColumnPdf = twoColumnPdf
@@ -34,9 +41,15 @@ class PaperExporter(private val db: AppDatabase) {
     }
 
     /** Any assembled DTO (e.g. bookmarks) through the same format writers. */
-    suspend fun exportDto(dto: PaperDto, title: String, format: ExportFormat, twoColumnPdf: Boolean = false): ExportResult {
+    suspend fun exportDto(
+        dto: PaperDto,
+        title: String,
+        format: ExportFormat,
+        sink: OutputStream,
+        twoColumnPdf: Boolean = false
+    ): ExportFile {
         Logger.i("EXPORT", "Exporting '$title' as ${format.name}")
-        return render(withPassageDtos(dto), title, format, twoColumnPdf = twoColumnPdf)
+        return render(withPassageDtos(dto), title, format, sink, twoColumnPdf = twoColumnPdf)
     }
 
     /** Single category (with descendants) through the same format writers. */
@@ -44,15 +57,16 @@ class PaperExporter(private val db: AppDatabase) {
         paperId: String,
         categoryId: String,
         format: ExportFormat,
+        sink: OutputStream,
         twoColumnPdf: Boolean = false
-    ): ExportResult {
+    ): ExportFile {
         val dto = Exporter(db).getCategoriesDto(paperId, setOf(categoryId))
             ?.takeIf { it.categories.isNotEmpty() }
             ?: throw IllegalStateException("Category not found or empty")
         val title = dto.categories.firstOrNull()?.title ?: dto.title
         Logger.i("EXPORT", "Exporting category '$title' as ${format.name}")
         return render(
-            withPassageDtos(dto), title, format,
+            withPassageDtos(dto), title, format, sink,
             scheduling = loadScheduling(paperId),
             passages = loadPassages(dto),
             twoColumnPdf = twoColumnPdf
@@ -117,60 +131,73 @@ class PaperExporter(private val db: AppDatabase) {
         )
     }
 
+    /**
+     * Writes [dto] to [sink] in [format] and reports what was written. Every
+     * format writes into the caller's stream — the byte-heavy ones directly,
+     * the text ones through a single encode — so no format hands back a second
+     * full copy of the payload.
+     */
     private fun render(
         dto: PaperDto,
         title: String,
         format: ExportFormat,
+        sink: OutputStream,
         scheduling: Map<String, CardScheduleDto> = emptyMap(),
         passages: Map<String, com.mcqapp.domain.Passage> = emptyMap(),
         twoColumnPdf: Boolean = false
-    ): ExportResult {
+    ): ExportFile {
         val base = baseName(title)
-        return when (format) {
-            ExportFormat.JSON_INLINE -> ExportResult(
-                "$base.json",
-                format.mimeType,
-                json.encodeToString(
-                    McqFileDto.serializer(),
-                    McqFileDto(version = 1, papers = listOf(dto), passages = dto.passages)
-                ).toByteArray(Charsets.UTF_8)
-            )
-            ExportFormat.ZIP -> ExportResult(
-                "$base.zip",
-                format.mimeType,
-                ZipPaperWriter.paperToZipBytes(dto)
-            )
-            ExportFormat.HTML -> ExportResult(
-                "$base.html",
-                format.mimeType,
-                HtmlPaperWriter.paperToHtml(dto, dto.passages).toByteArray(Charsets.UTF_8)
-            )
-            ExportFormat.HTML_QUIZ -> ExportResult(
-                "$base-quiz.html",
-                format.mimeType,
-                HtmlPaperWriter.paperToQuizHtml(dto, dto.passages).toByteArray(Charsets.UTF_8)
-            )
-            ExportFormat.PDF -> ExportResult(
-                "$base.pdf",
-                format.mimeType,
-                PdfPaperWriter.paperToPdfBytes(dto, twoColumn = twoColumnPdf)
-            )
-            ExportFormat.PDF_ANSWER_KEY -> ExportResult(
-                "$base-answer-key.pdf",
-                format.mimeType,
-                PdfPaperWriter.paperToPdfBytes(dto, answersAtEnd = true, twoColumn = twoColumnPdf)
-            )
-            ExportFormat.APKG -> ExportResult(
-                "$base.apkg",
-                format.mimeType,
-                AnkiPackageWriter.write(dto, AnkiDtoMapper.flattenQuestions(dto), scheduling, passages)
-            )
-            ExportFormat.DOCX -> ExportResult(
-                "$base.docx",
-                format.mimeType,
-                DocxPaperWriter.paperToDocxBytes(dto, dto.passages)
-            )
+        val fileName = when (format) {
+            ExportFormat.JSON_INLINE -> {
+                writeUtf8(
+                    sink,
+                    json.encodeToString(
+                        McqFileDto.serializer(),
+                        McqFileDto(version = 1, papers = listOf(dto), passages = dto.passages)
+                    )
+                )
+                "$base.json"
+            }
+            ExportFormat.ZIP -> {
+                ZipPaperWriter.paperToZip(dto, sink)
+                "$base.zip"
+            }
+            ExportFormat.HTML -> {
+                writeUtf8(sink, HtmlPaperWriter.paperToHtml(dto, dto.passages))
+                "$base.html"
+            }
+            ExportFormat.HTML_QUIZ -> {
+                writeUtf8(sink, HtmlPaperWriter.paperToQuizHtml(dto, dto.passages))
+                "$base-quiz.html"
+            }
+            ExportFormat.PDF -> {
+                PdfPaperWriter.paperToPdf(dto, sink, twoColumn = twoColumnPdf)
+                "$base.pdf"
+            }
+            ExportFormat.PDF_ANSWER_KEY -> {
+                PdfPaperWriter.paperToPdf(dto, sink, answersAtEnd = true, twoColumn = twoColumnPdf)
+                "$base-answer-key.pdf"
+            }
+            ExportFormat.APKG -> {
+                AnkiPackageWriter.writeTo(
+                    dto,
+                    AnkiDtoMapper.flattenQuestions(dto),
+                    sink,
+                    scheduling,
+                    passages
+                )
+                "$base.apkg"
+            }
+            ExportFormat.DOCX -> {
+                DocxPaperWriter.paperToDocx(dto, sink, dto.passages)
+                "$base.docx"
+            }
         }
+        return ExportFile(fileName, format.mimeType)
+    }
+
+    private fun writeUtf8(sink: OutputStream, text: String) {
+        sink.write(text.toByteArray(Charsets.UTF_8))
     }
 
     companion object {

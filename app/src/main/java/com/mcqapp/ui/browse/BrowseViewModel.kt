@@ -379,12 +379,14 @@ class BrowseViewModel(
                     questions = selected,
                     categoryTitleById = categoryTitles()
                 )
-                val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportDto(dto, title, format, twoColumnPdf = repository.pdfTwoColumn().first())
-                getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
-                    it.write(result.bytes)
-                } ?: throw IllegalStateException("Could not open output stream")
-                Logger.i("BROWSEVM", "Exported ${selected.size} questions as ${result.fileName}")
+                val file = (
+                    getApplication<Application>().contentResolver.openOutputStream(uri)
+                        ?: throw IllegalStateException("Could not open output stream")
+                    ).use { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("BROWSEVM", "Exported ${selected.size} questions as ${file.fileName}")
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Export of selection failed", e)

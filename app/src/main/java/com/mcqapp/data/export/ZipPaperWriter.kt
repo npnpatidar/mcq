@@ -4,6 +4,7 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -16,7 +17,12 @@ object ZipPaperWriter {
 
     private val json = Json { prettyPrint = true }
 
-    fun paperToZipBytes(paper: PaperDto): ByteArray {
+    /**
+     * Writes the archive straight to [out]: the JSON is encoded once and each
+     * image is piped in as it is reached, so the finished zip never exists as a
+     * second full copy of the payload.
+     */
+    fun paperToZip(paper: PaperDto, out: OutputStream) {
         val files = LinkedHashMap<String, ByteArray>()
         val uriToPath = HashMap<String, String>()
         var counter = 0
@@ -52,7 +58,6 @@ object ZipPaperWriter {
             McqFileDto(version = 1, papers = listOf(newPaper), passages = newPassages)
         )
 
-        val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry("paper.json"))
             zip.write(jsonText.toByteArray(Charsets.UTF_8))
@@ -63,6 +68,9 @@ object ZipPaperWriter {
                 zip.closeEntry()
             }
         }
-        return out.toByteArray()
     }
+
+    /** The same archive as bytes, for tests and small callers. */
+    fun paperToZipBytes(paper: PaperDto): ByteArray =
+        ByteArrayOutputStream().also { paperToZip(paper, it) }.toByteArray()
 }

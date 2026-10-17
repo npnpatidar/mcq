@@ -62,18 +62,11 @@ class PassagePagingTest {
         )
     }
 
-    private suspend fun walk(source: PagingSource<Int, QuestionRef>): List<String> {
-        val ids = mutableListOf<String>()
-        var params: PagingSource.LoadParams<Int> =
-            PagingSource.LoadParams.Refresh(null, 2, false)
-        while (true) {
-            val page = source.load(params) as PagingSource.LoadResult.Page
-            ids += page.data.map { it.id }
-            val next = page.nextKey ?: break
-            params = PagingSource.LoadParams.Append(next, 2, false)
-        }
-        return ids
-    }
+    private suspend fun walk(factory: suspend () -> PagingSource<Int, QuestionRef>): List<String> =
+        walkPaging(2, factory) { key ->
+            if (key == null) PagingSource.LoadParams.Refresh(null, 2, false)
+            else PagingSource.LoadParams.Append(key, 2, false)
+        }.map { it.id }
 
     @Test
     fun pagesPreserveOrderAcrossPageBoundaries() = runBlocking {
@@ -82,20 +75,20 @@ class PassagePagingTest {
         save("z1", "pb", "Other passage")
         assertEquals(
             listOf("q1", "q2", "q3", "q4", "q5"),
-            walk(repository.passageMembersSource("pa"))
+            walk { repository.passageMembersSource("pa") }
         )
     }
 
     @Test
     fun theSessionQueueMatchesThePagedOrder() = runBlocking {
         save("q3", "pa", "Three"); save("q1", "pa", "One"); save("q2", "pa", "Two")
-        val paged = walk(repository.passageMembersSource("pa"))
+        val paged = walk { repository.passageMembersSource("pa") }
         assertEquals(paged, repository.getPassageMemberIds("pa"))
     }
 
     @Test
     fun anEmptyPassagePagesNothing() = runBlocking {
         save("q1", "pa", "One")
-        assertEquals(emptyList<String>(), walk(repository.passageMembersSource("missing")))
+        assertEquals(emptyList<String>(), walk { repository.passageMembersSource("missing") })
     }
 }

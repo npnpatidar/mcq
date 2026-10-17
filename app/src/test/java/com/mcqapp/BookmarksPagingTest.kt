@@ -60,19 +60,11 @@ class BookmarksPagingTest {
         db.bookmarkDao().add(BookmarkEntity(id, createdAt))
     }
 
-    private suspend fun walk(): List<BookmarkedQuestion> {
-        val source = repository.bookmarkedPagingSource()
-        val out = mutableListOf<BookmarkedQuestion>()
-        var params: PagingSource.LoadParams<Int> =
-            PagingSource.LoadParams.Refresh(null, 2, false)
-        while (true) {
-            val page = source.load(params) as PagingSource.LoadResult.Page
-            out += page.data
-            val next = page.nextKey ?: break
-            params = PagingSource.LoadParams.Append(next, 2, false)
+    private suspend fun walk(): List<BookmarkedQuestion> =
+        walkPaging(2, { repository.bookmarkedPagingSource() }) { key ->
+            if (key == null) PagingSource.LoadParams.Refresh(null, 2, false)
+            else PagingSource.LoadParams.Append(key, 2, false)
         }
-        return out
-    }
 
     @Test
     fun newestBookmarkFirstAcrossPages() = runBlocking {

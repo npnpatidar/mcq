@@ -78,30 +78,23 @@ class BrowsePagingTest {
     )
 
     /** Walks every page at a small size, crossing window boundaries. */
-    private suspend fun walk(source: PagingSource<Int, QuestionRef>): List<String> {
-        val ids = mutableListOf<String>()
-        var params: PagingSource.LoadParams<Int> =
-            PagingSource.LoadParams.Refresh(null, 2, false)
-        while (true) {
-            val page = source.load(params) as PagingSource.LoadResult.Page
-            ids += page.data.map { it.id }
-            val next = page.nextKey ?: break
-            params = PagingSource.LoadParams.Append(next, 2, false)
-        }
-        return ids
-    }
+    private suspend fun walk(factory: suspend () -> PagingSource<Int, QuestionRef>): List<String> =
+        walkPaging(2, factory) { key ->
+            if (key == null) PagingSource.LoadParams.Refresh(null, 2, false)
+            else PagingSource.LoadParams.Append(key, 2, false)
+        }.map { it.id }
 
     @Test
     fun pagesPreserveTheCategoryAndQuestionOrder() = runBlocking {
         save("q3", "c1", "Gamma"); save("q1", "c1", "Alpha"); save("q2", "c1", "Beta")
         save("q5", "c2", "Epsilon"); save("q4", "c2", "Delta")
-        assertEquals(listOf("q3", "q1", "q2", "q5", "q4"), walk(source()))
+        assertEquals(listOf("q3", "q1", "q2", "q5", "q4"), walk { source() })
     }
 
     @Test
     fun textQueryKeepsMatchingRowsInOrder() = runBlocking {
         save("q1", "c1", "Alpha"); save("q2", "c1", "Beta"); save("q3", "c2", "Alpha beta")
-        assertEquals(listOf("q1", "q3"), walk(source(query = "Alpha")))
+        assertEquals(listOf("q1", "q3"), walk { source(query = "Alpha") })
     }
 
     @Test
@@ -109,7 +102,7 @@ class BrowsePagingTest {
         save("q1", "c1", "Alpha", withKey = true)
         save("q2", "c1", "Beta", withKey = false)
         save("q3", "c2", "Gamma", withKey = false)
-        assertEquals(listOf("q2", "q3"), walk(source(filter = BrowseListFilter.NO_ANSWER)))
+        assertEquals(listOf("q2", "q3"), walk { source(filter = BrowseListFilter.NO_ANSWER) })
     }
 
     @Test
@@ -117,7 +110,7 @@ class BrowsePagingTest {
         save("q1", "c1", "Alpha"); save("q2", "c2", "Beta")
         assertEquals(
             listOf("q1"),
-            walk(source(categoryFilterIds = setOf("c1")))
+            walk { source(categoryFilterIds = setOf("c1")) }
         )
     }
 }

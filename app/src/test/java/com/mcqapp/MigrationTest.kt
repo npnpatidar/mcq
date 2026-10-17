@@ -492,7 +492,7 @@ class MigrationTest {
                 )
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->10; Room validates the final schema.
+            // One open exercises 3->4->...->15; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)
@@ -604,13 +604,14 @@ class MigrationTest {
         val optionText = listOf(ContentElement.TextElement("m/s<sup>2</sup>")).toContentJson(json)
 
         v6Schema.forEach { dbFile.execSQL(it) }
+        dbFile.execSQL(insertPaper())
         dbFile.execSQL(
             "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
                 "VALUES ('c1','p1','Cat',NULL,0)"
         )
         dbFile.execSQL(
-            "INSERT INTO questions (id,categoryId,text,image,explanation,difficulty,tags," +
-                "sortOrder,contentHash) VALUES ('q1','c1',?,NULL,'why','medium','net',0,'h1')",
+            "INSERT INTO questions (id,categoryId,text,image,explanation,difficulty,marks,tags," +
+                "sortOrder,contentHash) VALUES ('q1','c1',?,NULL,'why','medium',2.0,'net',0,'h1')",
             arrayOf(questionText)
         )
         dbFile.execSQL(

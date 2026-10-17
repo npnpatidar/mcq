@@ -101,6 +101,53 @@ class PickedArchiveTest {
         assertEquals(PickedArchive.BACKUP, classifyPickedArchive(rePacked))
     }
 
+    /**
+     * The scan walks past a bank of any size, because it is ours by name, so a
+     * re-pack that put one in front of the manifest is still a backup. Only a
+     * *large* member that is not ours stops it — an Anki package stays cheap.
+     */
+    @Test
+    fun aRepackedBackupWithABankInFrontOfTheManifestIsStillRecognised() {
+        val parts = partsOf(backup())
+        val bank = ByteArray(2 * 1024 * 1024).also { java.util.Random(2).nextBytes(it) }
+        val rePacked = zipOf(
+            McqBackupFormat.CONTENT to bank,
+            McqBackupFormat.STUDY to parts.getValue(McqBackupFormat.STUDY),
+            McqBackupFormat.MANIFEST to parts.getValue(McqBackupFormat.MANIFEST)
+        )
+        assertTrue(McqBackupFormat.isBackupArchive(rePacked))
+        assertEquals(PickedArchive.BACKUP, classifyPickedArchive(rePacked))
+    }
+
+    /**
+     * The other half of that rule, pinned on purpose: the first member that is
+     * not ours ends the scan, so an Anki package or a media-heavy Word file is
+     * never inflated to be told it is not a backup — and a hybrid that hides
+     * our manifest behind somebody else's file reads as somebody else's
+     * archive, a shape no re-pack tool produces. (The member's own size field
+     * cannot separate the two: a zip written with a data descriptor, which is
+     * what Java's ZipOutputStream writes, reports every size as -1.)
+     */
+    @Test
+    fun aForeignMemberEndsTheScanBeforeTheManifest() {
+        val manifest = partsOf(backup()).getValue(McqBackupFormat.MANIFEST)
+        // Large, like a real collection.
+        val large = zipOf(
+            "collection.anki2" to ByteArray(2 * 1024 * 1024)
+                .also { java.util.Random(3).nextBytes(it) },
+            McqBackupFormat.MANIFEST to manifest
+        )
+        assertFalse(McqBackupFormat.isBackupArchive(large))
+        assertEquals(PickedArchive.OTHER, classifyPickedArchive(large))
+
+        // And tiny, which the size field could never have told apart.
+        val tiny = zipOf(
+            "readme.txt" to "notes the user left beside the backup".toByteArray(),
+            McqBackupFormat.MANIFEST to manifest
+        )
+        assertEquals(PickedArchive.OTHER, classifyPickedArchive(tiny))
+    }
+
     @Test
     fun aWordBankIsStillAWordBank() {
         val docx = zipOf(

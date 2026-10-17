@@ -72,12 +72,8 @@ object McqBackupFormat {
      */
     private const val MAX_PART_BYTES: Long = 8L * 1024 * 1024
 
-    /**
-     * Largest member [isBackupArchive] will inflate while hunting for the
-     * manifest. Past this the archive is somebody else's, and saying so is
-     * cheaper than decompressing it to find out.
-     */
-    private const val SNIFFABLE_ENTRY_BYTES: Long = 1024L * 1024
+    /** The files this app's own writer puts in a backup. */
+    private val PART_NAMES = setOf(MANIFEST, CONTENT, STUDY, SETTINGS)
 
     @Serializable
     data class Manifest(
@@ -471,11 +467,12 @@ object McqBackupFormat {
      * Whether [bytes] is one of this app's backup archives: a zip holding our
      * `manifest.json`.
      *
-     * Only the manifest is read — never the bank, the study table or an image
-     * — because this runs on a file the user has just picked, to say what they
-     * picked. A backup is restored from Settings, not imported as a bank; the
-     * picker used to hand one to the Anki reader, which answered with an
-     * Anki-shaped error about a file that was never an Anki package.
+     * Only the manifest is ever held in memory — the bank, the study table and
+     * any image are walked past, never read — because this runs on a file the
+     * user has just picked, to say what they picked. A backup is restored from
+     * Settings, not imported as a bank; the picker used to hand one to the Anki
+     * reader, which answered with an Anki-shaped error about a file that was
+     * never an Anki package.
      */
     fun isBackupArchive(bytes: ByteArray): Boolean {
         if (bytes.size < 4 ||
@@ -489,9 +486,13 @@ object McqBackupFormat {
                 // Our writer lays the manifest out first, so this is one entry
                 // in practice. A re-pack — a file manager's "compress" may
                 // prepend its own notes — can move it, so the scan keeps
-                // looking, but only past small entries: a large member means
-                // this is somebody else's archive, and inflating it to hunt for
-                // a manifest that is not there is work a pick must not do.
+                // looking. What it walks past says whether the archive is ours:
+                // our own files, whatever their size (a re-pack can put a large
+                // bank in front of the manifest) and the notes a file manager
+                // drops in. Anything else ends the scan, so an Anki package or
+                // a Word file is never inflated to be told it is not a backup.
+                // The member's own size field cannot decide this: a zip written
+                // with a data descriptor reports it as -1.
                 var checked = 0
                 var entry = zip.nextEntry
                 while (entry != null && checked < 12) {
@@ -512,9 +513,9 @@ object McqBackupFormat {
                         }
                         return named == FORMAT
                     }
-                    // An unknown size (-1) counts as small: skipping it is
-                    // bounded by the entry count either way.
-                    if (!entry.isDirectory && entry.size > SNIFFABLE_ENTRY_BYTES) return false
+                    val ours = entry.isDirectory || entry.name in PART_NAMES ||
+                        entry.name.startsWith("__MACOSX/")
+                    if (!ours) return false
                     zip.closeEntry()
                     entry = zip.nextEntry
                     checked++

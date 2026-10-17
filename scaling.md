@@ -244,9 +244,20 @@ order, filters and reorder semantics match today's behaviour.
 
 **Today's hot paths** (`TestViewModel.kt`, `TestSessionScreen.kt`):
 
-- `refs` state still contains `text` + `explanation` stems for the *whole*
-  paper (`TestUiState.refs`). At 250k this is a significant retained string
-  set, re-copied on every `_state.update` that touches `refs`.
+- ~~`refs` state still contains `text` + `explanation` stems for the *whole*
+  paper (`TestUiState.refs`)~~ — fixed: the session's own reader
+  (`getSessionRefsByCategories` / `getSessionRefsByIds`) returns
+  `SessionRef(id, passageId)`, which cannot carry a preview or an explanation.
+  The grep was the argument: nothing in `ui/test` reads any other field, while
+  the bundled bank's real questions average 89 B of stem preview + 306 B of
+  explanation elements JSON — ~395 MB of strings for a million questions, and
+  an explanation can hold a data-URI image, so a row can be kilobytes. The
+  full `QuestionRef` readers stay for the browse and passage list surfaces,
+  which do render the preview (`QuestionRefTextTest`).
+- `refs` is still one `SessionRef` object per question, so 1M rows is ~110 MB
+  (id strings dominate). The order itself must become primitive: a `LongArray`
+  of question rowids (+ an `IntArray` passage index) is ~12 MB at 1M, with ids
+  resolved per visible window. That is the remaining half of the step-1 plan.
 - `TestSnapshot.persistProgress` no longer serialises the paper's `questionIds`
   — it stores the shuffle and drill seeds and rebuilds the order — so a write is
   proportional to the *answered* part (`selections`, `revealed`, `flagged`,
@@ -262,10 +273,13 @@ order, filters and reorder semantics match today's behaviour.
 
 **Plan**
 
-1. **Slim refs**: introduce a `SessionRef` (id, passageId, categoryId) for
-   ordering; stems for the palette get fetched per palette page. If a stem is
-   needed for a palette cell, load on visible demand like the question itself.
-   `refs` becomes `List<SessionRef>` (or even an id array + passage map).
+1. **Slim refs** — half done: `SessionRef(id, passageId)` is in place (the
+   planned `categoryId` turned out unused by the whole test path). Stems for
+   the palette are not fetched at all: the palette cell only needs the id to
+   read `selections`/`flagged`, and it already receives it. Remaining: replace
+   the `List<SessionRef>` order with a `LongArray` of rowids + an `IntArray`
+   passage index, resolving ids for the visible window (grid cells and the
+   review sheet) on demand.
 2. **Snapshot workload**: move the resume snapshot off DataStore:
    - New `resume_snapshot` Room row (or 4-column table: paperId, index,
      selections JSON *by deltas*, dwell map).
@@ -868,6 +882,18 @@ over `searchText` (§4.5 + F4).
   hash alike as a file DTO and as a stored row) and by `StudyCountsInputTest`
   comparing a graded card's hash against the question *row*, plus a
   picture-bearing question that must not come straight back after AGAIN.
+
+- **Test session refs carried content** (§4.2) — the session's ref reader
+  selected `searchText` and `explanation` (the elements JSON) per question,
+  fields no session code reads: the order is walked by index and the question
+  on screen is resolved by id. On the bundled bank's real questions that is
+  ~395 MB of strings for a million questions, before object overhead, and an
+  explanation can carry a data-URI image. `SessionRef(id, passageId)` replaces
+  it on the session readers (`getSessionRefsByCategories`,
+  `getSessionRefsByIds`, mistakes-only included), the type cannot carry the
+  heavy fields, and the full `QuestionRef` readers stay for the list surfaces
+  that do render previews. `Exporter`'s passage-collection read moved to the
+  slim query too.
 
 ### Open (in pain order)
 

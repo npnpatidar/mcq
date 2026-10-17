@@ -8,6 +8,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.SessionRef
 import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.ContentElement
@@ -85,6 +86,18 @@ class QuestionRefTextTest {
             if (key == null) PagingSource.LoadParams.Refresh(null, pageSize, false)
             else PagingSource.LoadParams.Append(key, pageSize, false)
         }
+
+    @Test
+    fun theSessionReaderCarriesIdsAndPassageMembershipOnly() = runBlocking {
+        val refs = repository.getQuestionRefsForPaper("p1")
+        assertEquals(listOf("q1"), refs.map { it.id })
+        assertEquals(listOf("pa"), refs.map { it.passageId })
+        assertEquals(
+            "the by-id reader is the same slim row",
+            listOf(SessionRef("q1", "pa")),
+            db.questionDao().getSessionRefsByIds(listOf("q1"))
+        )
+    }
 
     @Test
     fun everyRefQueryCarriesTheFlattenedStem() = runBlocking {

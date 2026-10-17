@@ -8,7 +8,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
-import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.SessionRef
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.AnswerReview
@@ -39,11 +39,13 @@ data class TestUiState(
     val loadError: String? = null,
     val paper: Paper? = null,
     /**
-     * The session's ordered questions as refs — ids, passage membership and
-     * preview text. Content is resolved per question on navigation, so this
-     * is a few strings per question rather than the full content.
+     * The session's ordered questions — ids and passage membership only, so a
+     * million-question paper is a list of pairs rather than of content. The
+     * question on screen is resolved by id on navigation, and its passage
+     * membership is what keeps a comprehension set together through the
+     * shuffle and a drill's cut.
      */
-    val refs: List<QuestionRef> = emptyList(),
+    val refs: List<SessionRef> = emptyList(),
     /** The question on screen, resolved by id from its ref. */
     val current: Question? = null,
     /** The passage the resolved question belongs to, when it has one. */
@@ -135,7 +137,7 @@ class TestViewModel(
     private var drillSampleSeed: Long = 0L
     /** The order a pending resume would present; rebuilt while the base refs
      *  are still loaded, so the unshuffled list is not retained. */
-    private var resumeOrder: List<QuestionRef> = emptyList()
+    private var resumeOrder: List<SessionRef> = emptyList()
 
     /** The card resolved ahead of the visible one, keyed by its ref id. */
     private var prefetched: Pair<String, LoadedCard>? = null
@@ -645,7 +647,7 @@ class TestViewModel(
      * paper + category selection. Only offered when real progress exists
      * and the paper still contains overlapping questions.
      */
-    private suspend fun checkResumeOffer(base: List<QuestionRef>) {
+    private suspend fun checkResumeOffer(base: List<SessionRef>) {
         val raw = repository.loadTestProgress() ?: return
         val saved = TestSnapshot.fromJson(raw) ?: run {
             repository.clearTestProgress()

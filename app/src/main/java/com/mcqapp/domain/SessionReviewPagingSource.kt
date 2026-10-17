@@ -2,7 +2,7 @@ package com.mcqapp.domain
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
-import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.SessionRef
 
 /**
  * Pages the pre-submit answer-review sheet over the session's ordered refs.
@@ -13,7 +13,7 @@ import com.mcqapp.data.local.QuestionRef
  * without a database.
  */
 class SessionReviewPagingSource(
-    private val refs: List<QuestionRef>,
+    private val refs: List<SessionRef>,
     private val selections: Map<String, Set<String>>,
     private val flagged: Set<String>,
     private val pageSize: Int,

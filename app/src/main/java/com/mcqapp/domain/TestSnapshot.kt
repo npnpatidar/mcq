@@ -1,6 +1,6 @@
 package com.mcqapp.domain
 
-import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.SessionRef
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -67,7 +67,7 @@ data class TestSnapshot(
         }
 
         /** The same reorder over the session's lightweight refs. */
-        fun reorderRefs(loaded: List<QuestionRef>, savedIds: List<String>): List<QuestionRef> {
+        fun reorderRefs(loaded: List<SessionRef>, savedIds: List<String>): List<SessionRef> {
             if (savedIds.isEmpty()) return loaded
             val byId = loaded.associateBy { it.id }
             val ordered = savedIds.mapNotNull { byId[it] }
@@ -83,10 +83,10 @@ data class TestSnapshot(
          * [presented] (the refs this session loaded), as they always did.
          */
         fun orderRefs(
-            base: List<QuestionRef>,
-            presented: List<QuestionRef>,
+            base: List<SessionRef>,
+            presented: List<SessionRef>,
             saved: TestSnapshot
-        ): List<QuestionRef> {
+        ): List<SessionRef> {
             val seed = saved.questionSeed
                 ?: return reorderRefs(presented, saved.questionIds)
             val shuffled = PassageBlocks.shuffleAttempt(

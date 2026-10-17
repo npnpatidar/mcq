@@ -13,7 +13,7 @@ import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.local.ResultScan
 import com.mcqapp.data.local.applyQuestionStats
 import com.mcqapp.data.local.getByIdsChunked
-import com.mcqapp.data.local.getRefsByIdsChunked
+import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.Mastery
 import com.mcqapp.domain.NumberedResult
@@ -434,17 +434,17 @@ internal class HistoryStore(
     }
 
     /** Ever-missed questions of one paper, most-recently-missed first. */
-    /** The mistaken questions of a paper as refs (content fetched on demand). */
+    /** The mistaken questions of a paper as session refs (content is fetched on demand). */
     suspend fun getMistakenQuestionRefs(
         paperId: String
-    ): List<com.mcqapp.data.local.QuestionRef> {
+    ): List<com.mcqapp.data.local.SessionRef> {
         val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
             db.attemptDao().getLatestStandings().map {
                 com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
             }
         )[paperId] ?: return emptyList()
         if (ids.isEmpty()) return emptyList()
-        val byId = db.questionDao().getRefsByIdsChunked(ids).associateBy { it.id }
+        val byId = db.questionDao().getSessionRefsByIdsChunked(ids).associateBy { it.id }
         return ids.mapNotNull { byId[it] }
     }
 

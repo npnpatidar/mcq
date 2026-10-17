@@ -55,7 +55,7 @@ class Exporter(private val db: AppDatabase) {
             // Passages referenced by this paper's members, discovered while
             // the categories streamed past.
             val members = categories.flatMap { cat ->
-                db.questionDao().getRefsByCategories(listOf(cat.id)).mapNotNull { it.passageId }
+                db.questionDao().getSessionRefsByCategories(listOf(cat.id)).mapNotNull { it.passageId }
             }.distinct()
             db.passageDao().getByIdsChunked(members).forEachIndexed { pIdx, passage ->
                 if (pIdx > 0) writer.write(",")

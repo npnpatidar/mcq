@@ -390,8 +390,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getQuestionsForPaper(paperId: String): List<Question> =
         questionStore.getQuestionsForPaper(paperId)
 
-    /** Scheduling-and-prefix columns only: no question content. */
-    suspend fun getQuestionRefsForPaper(paperId: String): List<QuestionRef> =
+    /** Ids and passage membership only: a session never materialises content. */
+    suspend fun getQuestionRefsForPaper(paperId: String): List<com.mcqapp.data.local.SessionRef> =
         questionStore.getRefsForPaper(paperId)
 
     /** Observed refs for browse: the list re-emits on any write. */
@@ -403,7 +403,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         entities: List<com.mcqapp.data.local.QuestionEntity>
     ): List<Question> = questionStore.toDomain(entities)
 
-    suspend fun getQuestionRefsForCategories(categoryIds: List<String>): List<QuestionRef> =
+    suspend fun getQuestionRefsForCategories(
+        categoryIds: List<String>
+    ): List<com.mcqapp.data.local.SessionRef> =
         questionStore.getRefsForCategories(categoryIds)
 
     // --- browse list paging ---
@@ -642,8 +644,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         historyStore.getWeakestCategories(limit)
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
-        /** Mistaken questions as refs: content is fetched when one is opened. */
-    suspend fun getMistakenQuestionRefs(paperId: String): List<QuestionRef> =
+        /** Mistaken questions as session refs: content is fetched when one is opened. */
+    suspend fun getMistakenQuestionRefs(
+        paperId: String
+    ): List<com.mcqapp.data.local.SessionRef> =
         historyStore.getMistakenQuestionRefs(paperId)
 
     /**

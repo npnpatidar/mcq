@@ -1,7 +1,7 @@
 package com.mcqapp
 
 import androidx.paging.PagingSource
-import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.SessionRef
 import com.mcqapp.domain.AnswerReview
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
@@ -18,7 +18,7 @@ import org.junit.Test
  */
 class SessionReviewPagingSourceTest {
 
-    private fun ref(id: String) = QuestionRef(id = id, categoryId = "c")
+    private fun ref(id: String) = SessionRef(id = id)
 
     private fun question(id: String, hasKey: Boolean = true): Question = Question(
         id = id,
@@ -29,7 +29,7 @@ class SessionReviewPagingSourceTest {
     )
 
     private suspend fun walk(
-        refs: List<QuestionRef>,
+        refs: List<SessionRef>,
         selections: Map<String, Set<String>> = emptyMap(),
         flagged: Set<String> = emptySet(),
         loader: suspend (List<String>) -> List<Question>

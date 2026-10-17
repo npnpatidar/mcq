@@ -1,6 +1,6 @@
 package com.mcqapp
 
-import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.SessionRef
 import com.mcqapp.domain.PassageBlocks
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
@@ -87,7 +87,7 @@ class TestSnapshotTest {
     // --- seed-based order reconstruction (bounded snapshots) ---
 
     private fun ref(id: String, passageId: String? = null) =
-        QuestionRef(id = id, categoryId = "c", passageId = passageId)
+        SessionRef(id = id, passageId = passageId)
 
     private fun bank() = listOf(
         ref("q0"), ref("q1"), ref("q2"),

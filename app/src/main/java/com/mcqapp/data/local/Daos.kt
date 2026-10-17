@@ -243,6 +243,34 @@ interface QuestionDao {
     suspend fun getRefsByCategories(categoryIds: List<String>): List<QuestionRef>
 
     /**
+     * A session's ordered questions, ids and passage membership only.
+     *
+     * A test session walks its order by index and resolves the one question on
+     * screen by id, so nothing else about a ref is ever read from here. The
+     * full ref above also materialises the stem preview and the explanation
+     * elements JSON per row: ~61 MB of strings for a million questions on the
+     * synthetic bank, and an explanation can hold an inline data-URI image, so
+     * kilobytes per row on a real one — all of it for fields no session code
+     * reads. [SessionRef] cannot carry them, so no screen can start rendering
+     * them from a session again.
+     */
+    @Query(
+        "SELECT questions.id AS id, questions.passageId AS passageId FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun getSessionRefsByCategories(categoryIds: List<String>): List<SessionRef>
+
+    /**
+     * The same slim rows for a known id list, in its own order — a
+     * mistakes-only session orders by history, not by category.
+     */
+    @Query("SELECT id, passageId FROM questions WHERE id IN (:ids)")
+    suspend fun getSessionRefsByIds(ids: List<String>): List<SessionRef>
+
+    /**
      * Scheduling inputs only: id and stored content hash, in the same
      * (sortOrder, title) order as [getRefsByCategories]. Studies read these
      * to resolve card states; no stem, explanation or correlated answer-key
@@ -1413,6 +1441,18 @@ data class QuestionRef(
     val text: String = "",
     val explanation: String = "",
     val answerKeyCount: Int = 0
+)
+
+/**
+ * One question of a test session as the session needs it: the id it is
+ * resolved and answered by, and the passage it moves with. A session's order
+ * is a list of a million of these, so it deliberately carries nothing else —
+ * a preview or explanation text on each row is tens to hundreds of megabytes
+ * of strings that no session code reads.
+ */
+data class SessionRef(
+    val id: String,
+    val passageId: String? = null
 )
 
 /**

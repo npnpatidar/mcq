@@ -76,6 +76,26 @@ class RepositoryTest {
     }
 
     @Test
+    fun streamedSaveReportsProgressUpToTheTotal() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        val ids = (1..5).map { "q$it" }
+        ids.forEach { repository.saveQuestion(question(it, setOf("$it-a"))) }
+        val progress = mutableListOf<Pair<Int, Int>>()
+        repository.saveAttemptStreamed(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questionIdsInOrder = ids,
+            selections = ids.associateWith { setOf("$it-a") },
+            negativeMarking = 0.0,
+            durationSeconds = 10,
+            finishedAt = System.currentTimeMillis(),
+            onProgress = { stored, total -> progress += stored to total }
+        )
+        // One batch here (BATCH = 500): a single report, already at the total.
+        assertEquals(listOf(ids.size to ids.size), progress)
+    }
+
+    @Test
     fun saveAttemptWeightsMarksAndExcludesUngraded() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a"), marks = 2.0))

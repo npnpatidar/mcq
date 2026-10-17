@@ -602,10 +602,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         negativeMarking: Double,
         durationSeconds: Long,
         finishedAt: Long,
-        dwellSeconds: Map<String, Long> = emptyMap()
+        dwellSeconds: Map<String, Long> = emptyMap(),
+        onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
     ): Long = historyStore.saveAttemptStreamed(
         paperId, paperTitle, questionIdsInOrder, selections, negativeMarking,
-        durationSeconds, finishedAt, dwellSeconds
+        durationSeconds, finishedAt, dwellSeconds, onProgress
     )
     fun observeAttempts(): Flow<List<com.mcqapp.domain.Attempt>> = historyStore.observeAttempts()
     suspend fun getAttempt(attemptId: Long): com.mcqapp.domain.Attempt? =

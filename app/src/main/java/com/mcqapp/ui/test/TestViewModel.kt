@@ -58,6 +58,9 @@ data class TestUiState(
     val totalSeconds: Int = 0,
     val submitted: Boolean = false,
     val saving: Boolean = false,
+    /** Result rows written so far while a large paper is being saved. */
+    val saveDone: Int = 0,
+    val saveTotal: Int = 0,
     val saveError: String? = null,
     val attemptId: Long? = null,
     val practiceMode: Boolean = false,
@@ -537,7 +540,12 @@ class TestViewModel(
         } else {
             ((System.currentTimeMillis() - startTimestamp) / 1000)
         }
-        _state.update { it.copy(submitted = true, saving = true, saveError = null) }
+        _state.update {
+            it.copy(
+                submitted = true, saving = true, saveError = null,
+                saveDone = 0, saveTotal = it.questionCount
+            )
+        }
         viewModelScope.launch {
             // Save first, clear second: the resume snapshot is the only copy
             // of this session, so dropping it before the attempt is durable
@@ -552,7 +560,10 @@ class TestViewModel(
                         negativeMarking = current.paper?.negativeMarking ?: 0.0,
                         durationSeconds = durationSeconds,
                         finishedAt = System.currentTimeMillis(),
-                        dwellSeconds = current.dwellSeconds
+                        dwellSeconds = current.dwellSeconds,
+                        onProgress = { stored, total ->
+                            _state.update { it.copy(saveDone = stored, saveTotal = total) }
+                        }
                     )
                 },
                 clearSnapshot = { repository.clearTestProgress() },

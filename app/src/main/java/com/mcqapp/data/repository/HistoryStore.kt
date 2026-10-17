@@ -265,7 +265,8 @@ internal class HistoryStore(
         negativeMarking: Double,
         durationSeconds: Long,
         finishedAt: Long,
-        dwellSeconds: Map<String, Long> = emptyMap()
+        dwellSeconds: Map<String, Long> = emptyMap(),
+        onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
     ): Long = db.withTransaction {
         val tally = Tally()
         var stored = 0
@@ -300,6 +301,7 @@ internal class HistoryStore(
             db.attemptDao().insertResults(rows.map { it.copy(attemptId = attemptId) })
             db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, rows)
             stored += rows.size
+            onProgress(stored, questionIdsInOrder.size)
         }
         db.attemptDao().updateTally(
             attemptId,

@@ -41,6 +41,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -381,6 +382,29 @@ fun TestSessionScreen(
                         ) {
                             Text(if (state.saving) "Saving…" else "Retry")
                         }
+                    }
+                }
+            }
+
+            // A large paper writes its result rows in batches; show how far it
+            // got instead of an indeterminate spinner that can sit for minutes.
+            if (state.saving && state.saveTotal > 0) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            "Saving result… ${state.saveDone} of ${state.saveTotal}",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        LinearProgressIndicator(
+                            progress = { state.saveDone.toFloat() / state.saveTotal },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp)
+                        )
                     }
                 }
             }

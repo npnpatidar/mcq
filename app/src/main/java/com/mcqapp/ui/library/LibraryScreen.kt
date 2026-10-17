@@ -155,6 +155,10 @@ fun LibraryScreen(
         ExportFormat.DOCX -> exportDocxLauncher
     }
 
+    // Read during composition, not from the picker callback: a resource
+    // looked up off LocalContext.current there is not configuration-aware
+    // (lint is right), and this label is shown by the import launcher below.
+    val restoreBackupLabel = stringResource(R.string.restore_backup)
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -238,7 +242,7 @@ fun LibraryScreen(
                         Logger.i("LIB", "picked library backup: not an import")
                         viewModel.showError(
                             "This is a library backup, not a question bank. Restore it " +
-                                "from Settings → ${context.getString(R.string.restore_backup)}."
+                                "from Settings → $restoreBackupLabel."
                         )
                     }
                     PickedArchive.OTHER -> {

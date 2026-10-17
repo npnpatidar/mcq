@@ -10,6 +10,7 @@ import com.mcqapp.data.docx.parseDocx
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.local.AppDatabase
+import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -61,9 +62,11 @@ class DocxDbRoundTripTest {
         assertEquals(53, first.newQuestions)
 
         val exporter = PaperExporter(db)
-        val docx = exporter.exportPaper("paper-demo", ExportFormat.DOCX)
+        // The exporter writes into a stream now, so the test supplies one.
+        val docx = ByteArrayOutputStream()
+        exporter.exportPaper("paper-demo", ExportFormat.DOCX, docx)
 
-        val parsed = parseDocx(docx.bytes)
+        val parsed = parseDocx(docx.toByteArray())
         assertEquals(
             "payload must be accepted as fresh",
             emptyList<String>(),

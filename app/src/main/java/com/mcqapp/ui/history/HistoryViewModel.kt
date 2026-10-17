@@ -31,10 +31,11 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch {
             try {
-                val results = repository.getAllQuestionResults()
-                _hardest.value = QuestionStats.hardest(QuestionStats.aggregate(results))
-                val attempts = repository.getAttempts()
-                _weakest.value = Mastery.weakest(Mastery.perCategory(attempts, results))
+                // Read the maintained lifetime aggregate instead of mapping
+                // every result row (option and element JSON included) into
+                // memory to re-derive two five-row lists.
+                _hardest.value = repository.getHardestQuestions()
+                _weakest.value = repository.getWeakestCategories()
             } catch (e: Exception) {
                 Logger.e("HISTVM", "Failed to load question stats", e)
             }

@@ -14,13 +14,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -34,9 +34,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -44,11 +41,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import androidx.paging.LoadState
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 import android.app.Application
 import androidx.compose.ui.platform.LocalContext
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.QuestionResult
-import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.ui.ResultsViewModelFactory
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
@@ -126,25 +125,17 @@ fun ResultsScreen(
             return@Scaffold
         }
 
-        // Hoisted + lazy: all result cards used to compose eagerly inside a
-        // scrolling Column, OOMing big attempt reviews like Browse did.
-        val filter = remember { mutableStateOf("All") }
-        val results = state.results
-        // Numbering follows the unfiltered list, so a filtered view still
-        // shows each question's real number rather than 1..n.
-        val numberByQuestionId = remember(results) {
-            results.withIndex().associate { (i, r) -> r.questionId to i + 1 }
-        }
-        val filterValue = filter.value
+        // Rows stream in a page at a time; the header numbers and tallies come
+        // from SQL aggregates, so a 250k attempt never sits in memory whole.
+        val items = viewModel.pagingData.collectAsLazyPagingItems()
+        val filterValue = state.filter
         val bookmarked = state.bookmarked
-        val ungradedCount = remember(results) { results.count { it.correctOptionIds.isEmpty() } }
+        val aggregates = state.aggregates
+        val ungradedCount = aggregates.ungraded
         // Old attempts (finished before per-question timing existed)
         // carry all-zero dwell: hide times entirely rather than
         // showing a wall of 0:00.
-        val showDwell = remember(results) { results.any { it.dwellSeconds > 0 } }
-        val filtered = remember(results, filterValue, bookmarked) {
-            ReviewFilters.apply(results, filterValue, bookmarked)
-        }
+        val showDwell = aggregates.dwellCount > 0
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -152,7 +143,7 @@ fun ResultsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
+            item(contentType = "attempt") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(attempt.title, style = MaterialTheme.typography.titleMedium)
@@ -201,10 +192,10 @@ fun ResultsScreen(
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(top = 8.dp)
                     )
-                    val totalDwell = results.sumOf { it.dwellSeconds }
-                    if (results.isNotEmpty() && totalDwell > 0) {
+                    val totalDwell = aggregates.totalDwell
+                    if (aggregates.total > 0 && totalDwell > 0) {
                         Text(
-                            "Avg ${com.mcqapp.domain.Dwell.format(totalDwell / results.size)} per question",
+                            "Avg ${com.mcqapp.domain.Dwell.format(totalDwell / aggregates.total)} per question",
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
@@ -212,7 +203,7 @@ fun ResultsScreen(
             }
 
             }
-            item {
+            item(contentType = "breakdown") {
             if (state.categoryBreakdown.isNotEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -248,7 +239,7 @@ fun ResultsScreen(
             }
             }
 
-            item {
+            item(contentType = "filter") {
                 Text(stringResource(R.string.questions), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
                 FlowRow(
@@ -266,30 +257,51 @@ fun ResultsScreen(
                     }
                     chips.forEach { label ->
                         FilterChip(
-                            selected = filter.value == label,
-                            onClick = { filter.value = label },
+                            selected = filterValue == label,
+                            onClick = { viewModel.updateFilter(label) },
                             label = { Text(label) }
                         )
                     }
                 }
             }
-            if (filtered.isEmpty()) {
-                item {
+            val refresh = items.loadState.refresh
+            if (refresh is LoadState.NotLoading && items.itemCount == 0) {
+                item(contentType = "empty") {
                     Text(
-                        "No ${filter.value.lowercase()} questions",
+                        "No ${filterValue.lowercase()} questions",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(vertical = 16.dp)
                     )
                 }
             } else {
-                itemsIndexed(filtered, key = { _, result -> result.questionId }) { _, result ->
+                items(
+                    count = items.itemCount,
+                    key = items.itemKey { it.result.questionId },
+                    contentType = { "result" }
+                ) { index ->
+                    val numbered = items[index] ?: return@items
                     ResultCard(
-                        index = numberByQuestionId[result.questionId] ?: 0,
-                        result = result,
-                        bookmarked = result.questionId in bookmarked,
-                        onToggleBookmark = { viewModel.toggleBookmark(result.questionId) },
+                        index = numbered.index + 1,
+                        result = numbered.result,
+                        bookmarked = numbered.result.questionId in bookmarked,
+                        onToggleBookmark = { viewModel.toggleBookmark(numbered.result.questionId) },
                         showDwell = showDwell
                     )
+                }
+            }
+            if (items.loadState.append is LoadState.Loading) {
+                item(key = "results-load-more", contentType = "load-more") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

@@ -63,6 +63,60 @@ fun readBounded(stream: InputStream, limit: Long = MAX_IMPORT_BYTES): ByteArray 
 }
 
 /**
+ * [stream] with [readBounded]'s cap enforced as it is read, for a caller that
+ * consumes the bytes instead of keeping them: reading past [limit] fails the
+ * same way, and nothing is buffered on the way.
+ */
+fun boundedStream(stream: InputStream, limit: Long = MAX_IMPORT_BYTES): InputStream =
+    object : InputStream() {
+        private var total = 0L
+
+        override fun read(): Int {
+            val b = stream.read()
+            if (b >= 0) counted(1)
+            return b
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val read = stream.read(b, off, len)
+            if (read > 0) counted(read.toLong())
+            return read
+        }
+
+        override fun close() {
+            stream.close()
+        }
+
+        private fun counted(bytes: Long) {
+            total += bytes
+            if (total > limit) throw ImportTooLargeException(limit, total)
+        }
+    }
+
+/** The first [bytes] of a stream, and whether anything followed them. */class Prefix(val bytes: ByteArray, val truncated: Boolean)
+
+/**
+ * Reads at most [limit] bytes without failing, reporting whether the stream
+ * held anything more. The picker uses this to keep a small bank in memory
+ * while handing a large one to the streaming import by `Uri`: only a bounded
+ * prefix is ever allocated, so a provider cannot size the allocation.
+ */
+fun readPrefix(stream: InputStream, limit: Long): Prefix {
+    val chunk = ByteArray(COPY_CHUNK_BYTES)
+    val out = java.io.ByteArrayOutputStream(minOf(limit, COPY_CHUNK_BYTES.toLong()).toInt())
+    var total = 0L
+    while (total < limit) {
+        val want = minOf(chunk.size.toLong(), limit - total).toInt()
+        val read = stream.read(chunk, 0, want)
+        if (read < 0) return Prefix(out.toByteArray(), truncated = false)
+        total += read
+        out.write(chunk, 0, read)
+    }
+    val extra = stream.read()
+    return Prefix(out.toByteArray(), truncated = extra >= 0)
+}
+
+/**
  * Prefers the provider's display name over a [Uri.getLastPathSegment] id.
  *
  * A picked document's last path segment is the provider's opaque row id, not

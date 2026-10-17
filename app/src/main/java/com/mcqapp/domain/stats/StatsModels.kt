@@ -372,3 +372,95 @@ data class StatsBundle(
     val weakest: List<WeakCard>,
     val leeches: List<WeakCard>
 )
+
+/**
+ * One tab's slice of the page, so a tab can be loaded (and re-sliced) on its
+ * own instead of dragging the whole log behind it. Each tab of the statistics
+ * screen reads exactly one of these; see [StatsSections].
+ */
+data class OverviewData(
+    val today: TodayStats,
+    val kpis: OverviewKpis,
+    val retentionTable: List<RetentionRow>,
+    val heatmap: HeatmapData,
+    val fsrsStatus: FsrsStatus,
+    val weakest: List<WeakCard>
+)
+
+/** Retention tab: true-retention trends and calibration. */
+data class RetentionData(
+    val retentionTrend: RetentionTrendData,
+    val calibration: CalibrationData,
+    val groupRetention: List<GroupRetention>,
+    val weekdayRetention: List<WeekdayRetention>
+)
+
+/** Workload tab: how the review volume and pace are distributed. */
+data class WorkloadData(
+    val forecast: ForecastData,
+    val reviewsPerDay: List<StackedPoint>,
+    val timePerDay: List<SeriesPoint>,
+    val answerButtons: AnswerButtonsData,
+    val hourly: List<HourlyStat>,
+    val responseTime: ResponseTimeData
+)
+
+/** Memory tab: where the collection sits in the FSRS state space. */
+data class MemoryData(
+    val kpis: OverviewKpis,
+    val stability: Distribution,
+    val difficulty: Distribution,
+    val retrievability: Distribution,
+    val intervals: Distribution,
+    val memoryGrowth: MemoryGrowthData
+)
+
+/** Cards tab: the collection's shape and the cards that need attention. */
+data class CardsData(
+    val cardCounts: CardCountsData,
+    val overdueAge: OverdueAgeData,
+    val paperCounts: List<PaperCardCounts>,
+    val leeches: List<WeakCard>
+)
+
+/**
+ * The whole page, one entry per tab. Kept alongside [StatsBundle] so the
+ * existing all-at-once payload stays available while tabs move to loading
+ * their own slice (§4.9 item 3).
+ */
+data class StatsSections(
+    val overview: OverviewData,
+    val retention: RetentionData,
+    val workload: WorkloadData,
+    val memory: MemoryData,
+    val cards: CardsData
+)
+
+/** Flattens the per-tab slices back into the whole-page payload. */
+fun StatsSections.toBundle(): StatsBundle = StatsBundle(
+    today = overview.today,
+    kpis = overview.kpis,
+    retentionTable = overview.retentionTable,
+    heatmap = overview.heatmap,
+    fsrsStatus = overview.fsrsStatus,
+    retentionTrend = retention.retentionTrend,
+    calibration = retention.calibration,
+    groupRetention = retention.groupRetention,
+    weekdayRetention = retention.weekdayRetention,
+    forecast = workload.forecast,
+    reviewsPerDay = workload.reviewsPerDay,
+    timePerDay = workload.timePerDay,
+    answerButtons = workload.answerButtons,
+    hourly = workload.hourly,
+    responseTime = workload.responseTime,
+    stability = memory.stability,
+    difficulty = memory.difficulty,
+    retrievability = memory.retrievability,
+    intervals = memory.intervals,
+    memoryGrowth = memory.memoryGrowth,
+    cardCounts = cards.cardCounts,
+    overdueAge = cards.overdueAge,
+    paperCounts = cards.paperCounts,
+    weakest = overview.weakest,
+    leeches = cards.leeches
+)

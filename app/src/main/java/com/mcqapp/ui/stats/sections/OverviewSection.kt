@@ -20,7 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
-import com.mcqapp.domain.stats.StatsBundle
+import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.WeakCard
 import com.mcqapp.ui.stats.RetentionTableHeader
 import com.mcqapp.ui.stats.RetentionTableRow
@@ -40,7 +40,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 internal fun OverviewSection(
-    bundle: StatsBundle,
+    bundle: OverviewData,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit,
     onOpenSettings: () -> Unit
@@ -50,19 +50,19 @@ internal fun OverviewSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { TodayCard(bundle) }
-        item { KpisCard(bundle) }
-        item { TrueRetentionCard(bundle) }
-        item { CalendarCard(bundle) }
+        item(contentType = "today") { TodayCard(bundle) }
+        item(contentType = "kpis") { KpisCard(bundle) }
+        item(contentType = "true-retention") { TrueRetentionCard(bundle) }
+        item(contentType = "calendar") { CalendarCard(bundle) }
         if (bundle.weakest.isNotEmpty()) {
-            item { WeakestCard(bundle, questionText, onOpenCard) }
+            item(contentType = "weakest") { WeakestCard(bundle, questionText, onOpenCard) }
         }
-        item { SchedulerCard(bundle, onOpenSettings) }
+        item(contentType = "scheduler") { SchedulerCard(bundle, onOpenSettings) }
     }
 }
 
 @Composable
-private fun TodayCard(bundle: StatsBundle) {
+private fun TodayCard(bundle: OverviewData) {
     val today = bundle.today
     ChartCard(testTag = "stats-today", title = { ChartTitle(R.string.period_today) }) {
         KpiGrid(
@@ -95,7 +95,7 @@ private fun TodayCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun KpisCard(bundle: StatsBundle) {
+private fun KpisCard(bundle: OverviewData) {
     val kpis = bundle.kpis
     ChartCard(testTag = "stats-kpis", title = { ChartTitle(R.string.stats_overview) }) {
         KpiGrid(
@@ -143,7 +143,7 @@ private fun KpisCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun TrueRetentionCard(bundle: StatsBundle) {
+private fun TrueRetentionCard(bundle: OverviewData) {
     ChartCard(
         testTag = "stats-retention-table",
         title = { ChartTitle(R.string.stats_true_retention) },
@@ -173,7 +173,7 @@ private fun periodLabel(label: String): String = when (label) {
 }
 
 @Composable
-private fun CalendarCard(bundle: StatsBundle) {
+private fun CalendarCard(bundle: OverviewData) {
     ChartCard(
         testTag = "stats-heatmap",
         title = { ChartTitle(R.string.stats_calendar) }
@@ -203,7 +203,7 @@ private fun CalendarCard(bundle: StatsBundle) {
 
 @Composable
 private fun WeakestCard(
-    bundle: StatsBundle,
+    bundle: OverviewData,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit
 ) {
@@ -223,7 +223,7 @@ private fun WeakestCard(
 }
 
 @Composable
-private fun SchedulerCard(bundle: StatsBundle, onOpenSettings: () -> Unit) {
+private fun SchedulerCard(bundle: OverviewData, onOpenSettings: () -> Unit) {
     val status = bundle.fsrsStatus
     ChartCard(
         testTag = "stats-scheduler",

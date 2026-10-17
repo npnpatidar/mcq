@@ -75,7 +75,7 @@ class UpdateAnswersOnDuplicateTest {
         Importer(db).import(file("q2", listOf("a")))
 
         assertEquals(listOf("b"), db.correctAnswerDao().getCorrectIds("q1"))
-        assertEquals(1, db.questionDao().getAll().size)
+        assertEquals(1, db.questionDao().countQuestions())
     }
 
     @Test
@@ -85,7 +85,7 @@ class UpdateAnswersOnDuplicateTest {
 
         assertEquals(0, report.answersRefreshed)
         assertEquals(1, report.duplicateQuestions)
-        assertEquals(1, db.questionDao().getAll().size)
+        assertEquals(1, db.questionDao().countQuestions())
         // The original answer is untouched.
         assertEquals(listOf("b"), db.correctAnswerDao().getCorrectIds("q1"))
     }
@@ -100,7 +100,7 @@ class UpdateAnswersOnDuplicateTest {
         assertEquals(1, report.answersRefreshed)
         assertEquals(listOf("a"), db.correctAnswerDao().getCorrectIds("q1"))
         // Refreshed, not duplicated.
-        assertEquals(1, db.questionDao().getAll().size)
+        assertEquals(1, db.questionDao().countQuestions())
     }
 
     @Test
@@ -109,6 +109,6 @@ class UpdateAnswersOnDuplicateTest {
         val report = Importer(db, updateAnswersOnDuplicate = true).import(file("q2", listOf("b")))
 
         assertEquals(0, report.answersRefreshed)
-        assertEquals(1, db.questionDao().getAll().size)
+        assertEquals(1, db.questionDao().countQuestions())
     }
 }

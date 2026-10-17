@@ -143,9 +143,6 @@ class StudyViewModel(
     /** Read once per session, for the button previews. */
     private var config: SchedulerConfig? = null
 
-    /** Resolved once per session; a pull then only has to map id to question. */
-    private var questionsById: Map<String, Question> = emptyMap()
-
     /**
      * The tricky drill serves a fixed list of the paper's leeches; the main
      * session pulls card by card from the scheduler. Non-null switches the
@@ -162,11 +159,12 @@ class StudyViewModel(
                 if (leechesOnly) {
                     drillCards = repository.getStudyQueue(paperId, leechesOnly = true)
                 }
-                questionsById = repository.getQuestionsForPaper(paperId).associateBy { it.id }
+                // The card on screen is fetched when it is pulled, not the
+                // whole paper up front: a 169k-question paper never fits.
                 Logger.i(
                     "STUDY",
                     "Study session: paper=$paperId, drill=$leechesOnly, " +
-                        "cards=${drillCards?.size ?: "pull"}, loaded=${questionsById.size}"
+                        "cards=${drillCards?.size ?: "pull"}"
                 )
                 _state.update {
                     it.copy(
@@ -217,7 +215,7 @@ class StudyViewModel(
                 finishEmpty()
                 return
             }
-            val question = questionsById[card.questionId] ?: continue
+            val question = repository.getQuestion(card.questionId) ?: continue
             val passage = question.passageId?.let { pid ->
                 repository.getPassagesByIds(listOf(pid)).firstOrNull()
             }

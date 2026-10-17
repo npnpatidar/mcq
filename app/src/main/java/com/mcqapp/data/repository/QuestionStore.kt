@@ -12,12 +12,15 @@ import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
+import com.mcqapp.data.local.getRefsByCategoriesChunked
+import com.mcqapp.data.local.getSessionRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +81,39 @@ internal class QuestionStore(
         return getQuestionsForCategories(categoryIds)
     }
 
+    /**
+     * The paper's questions as session refs — the id it is answered by and the
+     * passage it moves with, never the stem, options or explanation. A session
+     * orders these and resolves the one question on screen by id.
+     */
+    /** Observed refs for browse: the list re-emits on any write. */
+    fun observeRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<com.mcqapp.data.local.QuestionRef>> =
+        kotlinx.coroutines.flow.combine(
+            db.questionDao().observeCategoryCounts(),
+            db.categoryDao().observeAll()
+        ) { _, _ -> Unit }
+            .map {
+                val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+                if (categoryIds.isEmpty()) emptyList()
+                else db.questionDao().getRefsByCategoriesChunked(categoryIds)
+            }
+            .flowOn(kotlinx.coroutines.Dispatchers.IO)
+
+    suspend fun getRefsForPaper(paperId: String): List<com.mcqapp.data.local.SessionRef> {
+        val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+        if (categoryIds.isEmpty()) return emptyList()
+        return db.questionDao().getSessionRefsByCategoriesChunked(categoryIds)
+    }
+
+    suspend fun getRefsForCategories(
+        categoryIds: List<String>
+    ): List<com.mcqapp.data.local.SessionRef> =
+        db.questionDao().getSessionRefsByCategoriesChunked(categoryIds)
+
+    /** Domain questions for entities a batch surface already loaded. */
+    suspend fun toDomain(entities: List<QuestionEntity>): List<Question> =
+        mapper.toDomainBulk(entities)
+
     suspend fun getQuestion(questionId: String): Question? {
         Logger.d("REPO", "getQuestion($questionId)")
         return db.questionDao().getById(questionId)?.let { mapper.toDomain(it) }
@@ -117,10 +153,7 @@ internal class QuestionStore(
                 ?: ((db.questionDao().getMaxSortOrder(question.categoryId) ?: -1) + 1)
             Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
                 "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
-            val contentHash = mapper.computeContentHash(
-                question.text, question.options.map { it.text }, question.options.map { it.image },
-                question.passageId
-            )
+            val contentHash = mapper.contentHashOf(question)
             Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
             db.questionDao().upsert(
                 QuestionEntity(
@@ -128,6 +161,7 @@ internal class QuestionStore(
                     categoryId = question.categoryId,
                     passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
+                    searchText = question.elements.searchableText,
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
                     explanationImage = question.explanationImage,
@@ -146,6 +180,7 @@ internal class QuestionStore(
                         id = o.id,
                         questionId = question.id,
                         text = o.elements.toContentJson(mapper.json),
+                        searchText = o.elements.searchableText,
                         image = o.image,
                         sortOrder = index
                     )
@@ -198,6 +233,7 @@ internal class QuestionStore(
                 categoryId = q.categoryId,
                 passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
+                searchText = q.elements.searchableText,
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
                 explanationImage = q.explanationImage,
@@ -214,6 +250,7 @@ internal class QuestionStore(
                     questionId = q.id,
                     id = o.id,
                     text = o.elements.toContentJson(mapper.json),
+                    searchText = o.elements.searchableText,
                     image = o.image,
                     sortOrder = index
                 )

@@ -4,7 +4,10 @@ import android.content.Context
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.AttemptEntity
+import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.ui.results.ResultsViewModel
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -90,37 +93,53 @@ class ResultsViewModelTest {
     fun theStateCarriesNoErrorBeforeAnythingIsLoaded() {
         val viewModel = ResultsViewModel(app, 1L)
         assertNull(viewModel.state.value.loadError)
-        assertTrue(viewModel.state.value.results.isEmpty())
+        assertEquals(0, viewModel.state.value.aggregates.total)
     }
 
     @Test
-    fun ungradedQuestionsStayOutOfTheCategoryBreakdown() {
-        val state = com.mcqapp.ui.results.ResultsUiState(
-            loading = false,
-            results = listOf(
-                result("q1", "Cat", correct = true, graded = true),
-                result("q2", "Cat", correct = false, graded = true),
-                // No answer key: excluded from the denominator entirely.
-                result("q3", "Cat", correct = false, graded = false)
+    fun ungradedQuestionsStayOutOfTheCategoryBreakdown() = runBlocking {
+        val dao = app.repository.db().attemptDao()
+        val attemptId = dao.insertAttempt(
+            AttemptEntity(
+                paperId = "p1",
+                title = "Paper",
+                totalQuestions = 3,
+                correctCount = 1,
+                wrongCount = 1,
+                skippedCount = 0,
+                score = 1.0,
+                maxScore = 2.0,
+                durationSeconds = 60,
+                finishedAt = 0L
             )
         )
-        assertEquals(listOf("Cat" to (1 to 2)), state.categoryBreakdown)
+        dao.insertResults(
+            listOf(
+                resultEntity(attemptId, "q1", "Cat", correct = true, graded = true),
+                resultEntity(attemptId, "q2", "Cat", correct = false, graded = true),
+                // No answer key: excluded from the denominator entirely.
+                resultEntity(attemptId, "q3", "Cat", correct = false, graded = false)
+            )
+        )
+        val rows = app.repository.getResultCategoryBreakdown(attemptId)
+        assertEquals(listOf("Cat" to (1 to 2)), rows.map { it.title to (it.correct to it.graded) })
     }
 
-    private fun result(
+    private fun resultEntity(
+        attemptId: Long,
         id: String,
         category: String,
         correct: Boolean,
         graded: Boolean
-    ) = com.mcqapp.domain.QuestionResult(
-        attemptId = 1L,
+    ) = QuestionResultEntity(
+        attemptId = attemptId,
         questionId = id,
         categoryTitle = category,
-        elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Q $id")),
-        options = emptyList(),
-        correctOptionIds = if (graded) setOf("a") else emptySet(),
-        selectedOptionIds = if (graded) setOf("a") else emptySet(),
+        text = "Q $id",
+        optionsJson = "[]",
+        correctOptionIds = if (graded) "a" else "",
+        selectedOptionIds = if (graded) "a" else "",
         isCorrect = correct,
-        explanationElements = emptyList()
+        explanation = ""
     )
 }

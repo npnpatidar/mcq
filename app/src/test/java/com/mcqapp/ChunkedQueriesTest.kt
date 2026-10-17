@@ -107,7 +107,7 @@ class ChunkedQueriesTest {
         val passageIds = ids.map { "pg-$it" }
         passageIds.forEach { id ->
             db.passageDao().upsert(
-                PassageEntity(id = id, categoryId = "c1", title = "P $id", text = "T $id")
+                PassageEntity(id = id, categoryId = "c1", title = "P $id", text = "T $id", searchText = "P $id")
             )
         }
         val found = db.passageDao().getByIdsChunked(passageIds)

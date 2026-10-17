@@ -15,6 +15,7 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -38,7 +39,13 @@ import java.util.zip.ZipOutputStream
  */
 object DocxPaperWriter {
 
-    fun paperToDocxBytes(paper: PaperDto, passages: List<PassageDto> = emptyList()): ByteArray {
+    /**
+     * Renders the document straight to [out]. The body and the media files are
+     * still assembled before the zip is written (OXML needs its content types
+     * and rels first), but the finished package is never held as a second full
+     * copy of them.
+     */
+    fun paperToDocx(paper: PaperDto, out: OutputStream, passages: List<PassageDto> = emptyList()) {
         val warnings = mutableListOf<String>()
         val media = MediaPool()
         val body = StringBuilder()
@@ -133,8 +140,12 @@ object DocxPaperWriter {
         }
 
         for (warning in warnings) Logger.w("DOCX", warning)
-        return assembleZip(body.toString(), media, payload)
+        assembleZip(body.toString(), media, payload, out)
     }
+
+    /** The same document as bytes, for tests and small callers. */
+    fun paperToDocxBytes(paper: PaperDto, passages: List<PassageDto> = emptyList()): ByteArray =
+        ByteArrayOutputStream().also { paperToDocx(paper, it, passages) }.toByteArray()
 
     private val payloadJsonFormat = Json { encodeDefaults = false }
 
@@ -790,8 +801,7 @@ object DocxPaperWriter {
     // Package assembly
     // ------------------------------------------------------------------
 
-    private fun assembleZip(bodyContent: String, media: MediaPool, payload: String): ByteArray {
-        val out = ByteArrayOutputStream()
+    private fun assembleZip(bodyContent: String, media: MediaPool, payload: String, out: OutputStream) {
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
             zip.write(contentTypesXml().toByteArray(Charsets.UTF_8))
@@ -817,7 +827,6 @@ object DocxPaperWriter {
                 zip.closeEntry()
             }
         }
-        return out.toByteArray()
     }
 
     private fun contentTypesXml(): String {

@@ -18,12 +18,12 @@ package com.mcqapp.domain
 object PassageReorder {
 
     /** Contiguous run bounds of [q]'s passage, or (index, index) when standalone. */
-    private fun runOf(questions: List<Question>, index: Int): IntRange {
-        val pid = questions[index].passageId ?: return index..index
+    private fun <T> runOf(items: List<T>, index: Int, passageId: (T) -> String?): IntRange {
+        val pid = passageId(items[index]) ?: return index..index
         var start = index
-        while (start > 0 && questions[start - 1].passageId == pid) start--
+        while (start > 0 && passageId(items[start - 1]) == pid) start--
         var end = index
-        while (end < questions.size - 1 && questions[end + 1].passageId == pid) end++
+        while (end < items.size - 1 && passageId(items[end + 1]) == pid) end++
         return start..end
     }
 
@@ -34,11 +34,11 @@ object PassageReorder {
      * down are disabled so no row move can pull a question out of its group
      * (the group itself moves through the header's block buttons).
      */
-    fun canMove(questions: List<Question>, index: Int, up: Boolean): Boolean {
-        if (index !in questions.indices) return false
-        val run = runOf(questions, index)
-        return if (questions[index].passageId == null) {
-            if (up) index > 0 else index < questions.size - 1
+    fun <T> canMove(items: List<T>, index: Int, up: Boolean, passageId: (T) -> String?): Boolean {
+        if (index !in items.indices) return false
+        val run = runOf(items, index, passageId)
+        return if (passageId(items[index]) == null) {
+            if (up) index > 0 else index < items.size - 1
         } else {
             // Inside the run only: an adjacent position outside it belongs to
             // a foreign question or the list edge, and moving there splits the
@@ -47,22 +47,32 @@ object PassageReorder {
         }
     }
 
+    fun canMove(questions: List<Question>, index: Int, up: Boolean): Boolean =
+        canMove(questions, index, up) { it.passageId }
+
     /**
      * Moves one question one visual position, jumping any foreign passage
      * group in the way. Returns the new full id order, or null when the move
      * is disabled ([canMove] false) — the group's contiguity is never broken.
      */
-    fun moveQuestion(questions: List<Question>, id: String, up: Boolean): List<String>? {
-        val index = questions.indexOfFirst { it.id == id }
-        if (index < 0 || !canMove(questions, index, up)) return null
-        val ids = questions.map { it.id }
+    fun <T> moveQuestion(
+        items: List<T>,
+        id: String,
+        up: Boolean,
+        getId: (T) -> String,
+        passageId: (T) -> String?
+    ): List<String>? {
+        val questions = items
+        val index = questions.indexOfFirst { getId(it) == id }
+        if (index < 0 || !canMove(questions, index, up, passageId)) return null
+        val ids = questions.map { getId(it) }
 
         // A member only ever swaps with an adjacent same-passage member
         // (canMove pinned the run edges), and a standalone next to another
         // standalone swaps plainly.
         val neighbour = if (up) index - 1 else index + 1
-        val plainSwap = questions[index].passageId != null ||
-            questions[neighbour].passageId == null
+        val plainSwap = passageId(questions[index]) != null ||
+            passageId(questions[neighbour]) == null
         if (plainSwap) {
             return if (up) {
                 ids.take(index - 1) +
@@ -77,7 +87,7 @@ object PassageReorder {
         // A standalone facing a passage group jumps the whole run and lands
         // on its far side; slices keep every index in original coordinates,
         // so no removal-shift bookkeeping can land it inside the group.
-        val run = runOf(questions, neighbour)
+        val run = runOf(questions, neighbour, passageId)
         return if (up) {
             ids.take(run.first) +
                 listOf(ids[index]) +
@@ -95,23 +105,35 @@ object PassageReorder {
      * Swaps the whole passage group with the run next to it. Returns the new
      * full id order, or null when the group is at its category edge.
      */
-    fun movePassageBlock(questions: List<Question>, passageId: String, up: Boolean): List<String>? {
+    fun moveQuestion(questions: List<Question>, id: String, up: Boolean): List<String>? =
+        moveQuestion(questions, id, up, { it.id }, { it.passageId })
+
+    fun <T> movePassageBlock(
+        items: List<T>,
+        passageId: String,
+        up: Boolean,
+        getId: (T) -> String,
+        passageIdOf: (T) -> String?
+    ): List<String>? {
         if (passageId.isBlank()) return null
-        val first = questions.indexOfFirst { it.passageId == passageId }
+        val first = items.indexOfFirst { passageIdOf(it) == passageId }
         if (first < 0) return null
-        val run = runOf(questions, first)
+        val run = runOf(items, first, passageIdOf)
         return if (up) {
             if (run.first == 0) return null
-            buildSwapped(questions, runOf(questions, run.first - 1), run)
+            buildSwapped(items, runOf(items, run.first - 1, passageIdOf), run, getId)
         } else {
-            if (run.last >= questions.size - 1) return null
-            buildSwapped(questions, run, runOf(questions, run.last + 1))
+            if (run.last >= items.size - 1) return null
+            buildSwapped(items, run, runOf(items, run.last + 1, passageIdOf), getId)
         }
     }
 
+    fun movePassageBlock(questions: List<Question>, passageId: String, up: Boolean): List<String>? =
+        movePassageBlock(questions, passageId, up, { it.id }, { it.passageId })
+
     /** New id order with [upper] and [lower] runs exchanged (lower moves up). */
-    private fun buildSwapped(questions: List<Question>, upper: IntRange, lower: IntRange): List<String> {
-        val ids = questions.map { it.id }
+    private fun <T> buildSwapped(items: List<T>, upper: IntRange, lower: IntRange, getId: (T) -> String): List<String> {
+        val ids = items.map { getId(it) }
         return ids.take(upper.first) +
             ids.slice(lower) +
             ids.slice(upper) +

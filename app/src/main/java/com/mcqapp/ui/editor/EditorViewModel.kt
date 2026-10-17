@@ -563,10 +563,15 @@ class EditorViewModel(
      * disabled. Only dirty-and-invalid edits block the move.
      */
     fun moveToQuestion(targetId: String, onMoved: (saved: Boolean) -> Unit = {}) {
-        val targetIndex = EditorSession.ids.indexOf(targetId)
-        if (targetIndex < 0) {
-            Logger.w("EDITORVM", "moveToQuestion($targetId): not in session queue")
-            return
+        // Prev/Next only ever pass a neighbour, so the move is a ±1 step even
+        // when the scope is a cursor that never held the full id list.
+        val delta = when (targetId) {
+            EditorSession.prevId -> -1
+            EditorSession.nextId -> 1
+            else -> {
+                Logger.w("EDITORVM", "moveToQuestion($targetId): not a session neighbour")
+                return
+            }
         }
         val dirty = signatureOf(_state.value) != cleanSignature
         // A clean form moves freely even when it is not savable (an edge-case
@@ -596,7 +601,7 @@ class EditorViewModel(
                 Logger.w("EDITORVM", "moveToQuestion($targetId): not found via import reader")
                 return
             }
-            EditorSession.go(targetIndex)
+            EditorSession.go(EditorSession.index + delta)
             _state.update {
                 it.copy(
                     questionId = next.id,
@@ -637,7 +642,11 @@ class EditorViewModel(
                         Logger.w("EDITORVM", "moveToQuestion($targetId): not found in DB")
                         return@launch
                     }
-                    EditorSession.go(targetIndex)
+                    EditorSession.go(EditorSession.index + delta)
+                    // Cursor scopes read their neighbours from the database;
+                    // do it before publishing the new question, so the screen
+                    // recomposes with the new Prev/Next already in place.
+                    EditorSession.refreshNeighbors()
                     _state.update {
                         it.copy(
                             questionId = next.id,

@@ -126,8 +126,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
             try {
-                val json = Exporter(repository.db()).exportAll()
-                writeUri(uri, json)
+                // Streamed: the whole bank never lives in memory as a String.
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                    Exporter(repository.db()).exportAllTo(
+                        java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
+                    )
+                } ?: throw IllegalStateException("Could not open output stream")
                 _exportError.value = null
             } catch (e: Exception) {
                 _exportError.value = "Export failed: ${e.message}"
@@ -142,10 +146,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun exportPaperAs(uri: Uri, paperId: String, format: com.mcqapp.data.export.ExportFormat) {
         viewModelScope.launch {
             try {
-                val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportPaper(paperId, format, twoColumnPdf = repository.pdfTwoColumn().first())
-                Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
-                writeUriBytes(uri, result.bytes)
+                val file = writeExport(uri) { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportPaper(paperId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Exported ${file.fileName}")
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Export failed", e)
@@ -162,10 +167,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     ) {
         viewModelScope.launch {
             try {
-                val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportCategory(paperId, categoryId, format, twoColumnPdf = repository.pdfTwoColumn().first())
-                Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
-                writeUriBytes(uri, result.bytes)
+                val file = writeExport(uri) { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportCategory(paperId, categoryId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Exported ${file.fileName}")
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Export failed", e)
@@ -174,11 +180,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun writeUriBytes(uri: Uri, bytes: ByteArray) {
-        getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
-            it.write(bytes)
-        } ?: throw IllegalStateException("Could not open output stream")
-    }
+    /**
+     * Streams one export straight into [uri]: the exporter renders into the
+     * resolver's stream, so the finished file is never held in memory here.
+     */
+    private suspend fun writeExport(
+        uri: Uri,
+        export: suspend (java.io.OutputStream) -> com.mcqapp.data.export.ExportFile
+    ): com.mcqapp.data.export.ExportFile =
+        (
+            getApplication<Application>().contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("Could not open output stream")
+            ).use { export(it) }
 
     private suspend fun writeUri(uri: Uri, text: String) {
         getApplication<Application>().contentResolver.openOutputStream(uri)?.use {

@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -26,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -44,6 +45,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import androidx.paging.LoadState
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
@@ -60,6 +64,7 @@ fun BookmarksScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+    val items = viewModel.pagingData.collectAsLazyPagingItems()
 
     var showFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
@@ -109,7 +114,7 @@ fun BookmarksScreen(
                     }
                 },
                 actions = {
-                    if (state.questions.isNotEmpty()) {
+                    if (state.count > 0) {
                         IconButton(onClick = { showFormatDialog = true }) {
                             Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_bookmarks))
                         }
@@ -118,7 +123,7 @@ fun BookmarksScreen(
             )
         }
     ) { padding ->
-        if (state.questions.isEmpty()) {
+        if (state.count == 0) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -135,7 +140,12 @@ fun BookmarksScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(state.questions, key = { it.question.id }) { bookmarked ->
+                items(
+                    count = items.itemCount,
+                    key = items.itemKey { it.question.id },
+                    contentType = { "bookmark" }
+                ) { index ->
+                    val bookmarked = items[index] ?: return@items
                     val question = bookmarked.question
                     Card(
                         modifier = Modifier
@@ -177,6 +187,19 @@ fun BookmarksScreen(
                         }
                     }
                 }
+                if (items.loadState.append is LoadState.Loading) {
+                    item(key = "bookmarks-load-more", contentType = "load-more") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -198,7 +221,7 @@ fun BookmarksScreen(
                 showFormatDialog = false
                 pendingFormat = null
             },
-            title = { Text("Export ${state.questions.size} bookmarked questions") },
+            title = { Text("Export ${state.count} bookmarked questions") },
             text = {
                 Column {
                     ExportFormat.entries.forEach { format ->

@@ -212,12 +212,29 @@ class BackupRestoreRoundTripTest {
         )
     }
 
-    private suspend fun allQuestionIds(): List<String> = db.questionDao().getAll().map { it.id }
+    private suspend fun allQuestionIds(): List<String> = db.questionDao().getAllIds()
+
+    /**
+     * A raw whole-table dump for the fixpoint comparison. The production DAO
+     * deliberately has no whole-table `SELECT *` question read any more, so
+     * the test reads the rows straight off the database connection.
+     */
+    private fun questionRowsDump(): List<String> {
+        val rows = mutableListOf<String>()
+        db.query("SELECT * FROM questions ORDER BY id", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += (0 until cursor.columnCount).joinToString("|") { i ->
+                    cursor.getString(i) ?: "null"
+                }
+            }
+        }
+        return rows.sorted()
+    }
 
     private suspend fun rowDump(): Map<String, List<String>> = mapOf(
         "papers" to db.paperDao().getAll().map { it.toString() }.sorted(),
         "categories" to db.categoryDao().getByPaper("paper-1").map { it.toString() }.sorted(),
-        "questions" to db.questionDao().getAll().map { it.toString() }.sorted(),
+        "questions" to questionRowsDump(),
         "options" to allQuestionIds().flatMap { db.optionDao().getForQuestions(listOf(it)) }
             .map { it.toString() }.sorted(),
         "correct" to allQuestionIds().flatMap { db.correctAnswerDao().getForQuestions(listOf(it)) }
@@ -322,5 +339,94 @@ class BackupRestoreRoundTripTest {
         assertTrue(report.contains("0 papers"))
         assertNull(McqBackupFormat.read(buildBackup()).study.inProgressTest)
         assertNotNull(backup)
+    }
+
+    /**
+     * The path a restore actually takes: the zip is unzipped as it is read and
+     * the study rows are written a batch at a time. Every row must come back
+     * exactly as the whole-file restore brings it back, and the report must be
+     * the same one — it is built from the manifest's counts and the rows that
+     * streamed past, not from a decoded payload.
+     */
+    @Test
+    fun restoringFromAStreamReproducesEveryRowAndTheSameReport() = kotlinx.coroutines.runBlocking {
+        seed()
+        val before = rowDump()
+        val backup = buildBackup()
+
+        val streamed = BackupRestorer(db).restoreStreaming(java.io.ByteArrayInputStream(backup))
+        val afterStreamed = rowDump()
+        for ((table, rows) in before) {
+            assertEquals("table $table must restore identically", rows, afterStreamed[table])
+        }
+
+        val whole = BackupRestorer(db).restore(McqBackupFormat.read(backup))
+        assertEquals("the streamed report must be the whole-file report", whole, streamed)
+        assertEquals(afterStreamed, rowDump())
+    }
+
+    /**
+     * The wipe and the replace share one transaction, and the streamed restore
+     * reads the file inside it. An archive that dies half way — a truncated
+     * zip, or one re-packed with its study rows ahead of its content — must
+     * therefore leave the library exactly as it was, even though the content
+     * had already been imported by the time the read gave up.
+     */
+    @Test
+    fun aRefusedStreamedRestoreLeavesTheLibraryExactlyAsItWas() = kotlinx.coroutines.runBlocking {
+        seed()
+        val before = rowDump()
+        val backup = buildBackup()
+        val entries = entriesOf(backup)
+
+        val saboteurs = mapOf(
+            "missing part" to entries.filterNot { it.first == McqBackupFormat.STUDY },
+            "study before content" to listOf(
+                entries.first { it.first == McqBackupFormat.MANIFEST },
+                entries.first { it.first == McqBackupFormat.STUDY },
+                entries.first { it.first == McqBackupFormat.CONTENT },
+                entries.first { it.first == McqBackupFormat.SETTINGS }
+            )
+        )
+        for ((what, parts) in saboteurs) {
+            val refusals = try {
+                BackupRestorer(db).restoreStreaming(
+                    java.io.ByteArrayInputStream(zipEntries(parts))
+                )
+                throw AssertionError("expected the $what archive to be refused")
+            } catch (e: McqBackupFormat.Invalid) {
+                e
+            }
+            assertTrue("got: ${refusals.message}", refusals.message!!.contains("truncated", ignoreCase = true) ||
+                refusals.message!!.contains("before its content"))
+            assertEquals("the $what archive must not touch the library", before, rowDump())
+        }
+        // And the library still restores from the intact archive afterwards.
+        BackupRestorer(db).restoreStreaming(java.io.ByteArrayInputStream(backup))
+        assertEquals(before, rowDump())
+    }
+
+    private fun entriesOf(zip: ByteArray): List<Pair<String, ByteArray>> {
+        val parts = mutableListOf<Pair<String, ByteArray>>()
+        java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zip)).use { input ->
+            var entry = input.nextEntry
+            while (entry != null) {
+                parts += entry.name to input.readBytes()
+                entry = input.nextEntry
+            }
+        }
+        return parts
+    }
+
+    private fun zipEntries(parts: List<Pair<String, ByteArray>>): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { zip ->
+            for ((name, bytes) in parts) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
     }
 }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -30,6 +31,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class StudyPullQueryCountTest {
+
+    // Three CI runs wedged right here; a 120s cap turns the next one into a
+    // named failure plus a thread dump instead of a dead worker.
+    @get:Rule
+    val watchdog = HangWatchdogRule(seconds = 120)
 
     private lateinit var appContext: Context
 

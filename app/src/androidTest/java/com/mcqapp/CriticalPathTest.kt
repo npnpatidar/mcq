@@ -73,7 +73,7 @@ class CriticalPathTest {
         // needs no scroll synchronization.
         waitFor("UITest Paper")
         compose.onNodeWithTag("paper-title-uitest-paper").assertIsDisplayed()
-        compose.onNodeWithText("Test", substring = false).performClick()
+        compose.onNodeWithTag("paper-test-uitest-paper").performClick()
 
         // Q1 correct, Q2 skipped, Q3 wrong. Options live in the
         // scrolling column; Next/Submit sit in the fixed footer.
@@ -135,14 +135,17 @@ class CriticalPathTest {
         assertEquals(1, scheduled!!.reps)
         assertTrue(scheduled.dueAt > System.currentTimeMillis())
 
-        // The queue is per session, so only one card is graded; the other
-        // stays new and is untouched until its turn.
+        // The queue is per session, so only one card is graded; the other stays
+        // new and is untouched until its turn. Untouched means no schedule at
+        // all: a row is written when a card is graded, not when it is read, so
+        // an unreached card has none.
         val untouched = runBlocking {
             repository.cardState("uitest-sr", "uitest-sr-q2")
         }
-        assertNotNull(untouched)
-        assertEquals(0, untouched!!.reps)
-        assertTrue(untouched.isNew)
+        assertEquals("an ungraded card must have no schedule", null, untouched)
+        // And it is still counted as the new card it is.
+        val counts = runBlocking { repository.getStudyCounts("uitest-sr") }
+        assertEquals("the ungraded card is still new", 1, counts.fresh)
 
         runBlocking { repository.deletePaper("uitest-sr") }
     }

@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
-import com.mcqapp.domain.stats.StatsBundle
+import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.ui.stats.charts.CalibrationChart
 import com.mcqapp.ui.stats.charts.ChartCard
 import com.mcqapp.ui.stats.charts.ChartEmpty
@@ -39,23 +39,23 @@ import kotlin.math.roundToInt
  * paper/category and weekday.
  */
 @Composable
-internal fun RetentionSection(bundle: StatsBundle) {
+internal fun RetentionSection(bundle: RetentionData) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { TrendCard(bundle) }
-        item { CalibrationCard(bundle) }
+        item(contentType = "trend") { TrendCard(bundle) }
+        item(contentType = "calibration") { CalibrationCard(bundle) }
         if (bundle.groupRetention.isNotEmpty()) {
-            item { GroupRetentionCard(bundle) }
+            item(contentType = "group-retention") { GroupRetentionCard(bundle) }
         }
-        item { WeekdayCard(bundle) }
+        item(contentType = "weekday") { WeekdayCard(bundle) }
     }
 }
 
 @Composable
-private fun TrendCard(bundle: StatsBundle) {
+private fun TrendCard(bundle: RetentionData) {
     val trend = bundle.retentionTrend
     val labels = trend.points.map { it.label }
     ChartCard(
@@ -111,7 +111,7 @@ private fun LegendEntry(color: Color, @StringRes labelRes: Int) {
 }
 
 @Composable
-private fun CalibrationCard(bundle: StatsBundle) {
+private fun CalibrationCard(bundle: RetentionData) {
     val calibration = bundle.calibration
     ChartCard(
         testTag = "stats-calibration",
@@ -145,7 +145,7 @@ private fun CalibrationCard(bundle: StatsBundle) {
 private fun Double.roundTo3(): String = String.format(java.util.Locale.ENGLISH, "%.3f", this)
 
 @Composable
-private fun GroupRetentionCard(bundle: StatsBundle) {
+private fun GroupRetentionCard(bundle: RetentionData) {
     ChartCard(
         testTag = "stats-group-retention",
         title = { ChartTitle(R.string.stats_by_group) },
@@ -162,7 +162,7 @@ private fun GroupRetentionCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun WeekdayCard(bundle: StatsBundle) {
+private fun WeekdayCard(bundle: RetentionData) {
     ChartCard(
         testTag = "stats-weekday",
         title = { ChartTitle(R.string.stats_by_weekday) }

@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.R
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
@@ -164,24 +165,21 @@ fun LibraryScreen(
         // whole file on the UI thread and ANR'd or died on OOM, which
         // catch (Exception) does not cover.
         scope.launch {
-            val bytes = try {
+            // Read a bounded prefix first. It is enough to tell a zip from
+            // JSON and to keep a small bank in memory, but it never allocates
+            // the whole large bank: a bigger JSON is streamed from the Uri.
+            val prefix = try {
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(picked)?.use { stream ->
-                        com.mcqapp.util.readBounded(stream)
+                        com.mcqapp.util.readPrefix(
+                            stream,
+                            com.mcqapp.ui.importscreen.JSON_STREAM_THRESHOLD_BYTES.toLong()
+                        )
                     }
                 }
             } catch (e: Exception) {
                 Logger.e("LIB", "Failed to read import file", e)
-                viewModel.showError(
-                    if (e is com.mcqapp.util.ImportTooLargeException) {
-                        com.mcqapp.util.tooLargeMessage(
-                            e.atLeastBytes,
-                            com.mcqapp.util.MAX_IMPORT_BYTES
-                        )
-                    } else {
-                        "Could not read the file: ${e.message}"
-                    }
-                )
+                viewModel.showError("Could not read the file: ${e.message}")
                 return@launch
             } ?: run {
                 viewModel.showError("Could not read the file.")
@@ -193,37 +191,94 @@ fun LibraryScreen(
             // .docx is told apart by its word/document.xml entry; our
             // JSON can arrive under any extension and stays on the text
             // path below.
-            val isZip = bytes.size >= 2 && bytes[0] == 'P'.code.toByte() &&
-                bytes[1] == 'K'.code.toByte()
+            val isZip = prefix.bytes.size >= 2 && prefix.bytes[0] == 'P'.code.toByte() &&
+                prefix.bytes[1] == 'K'.code.toByte()
 
-            if (isZip && com.mcqapp.data.docx.isDocxArchive(bytes)) {
-                Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
-                // The file name becomes the paper title (the document rarely
-                // names its own paper). The provider's display name, not the
-                // opaque row id a content Uri carries in lastPathSegment.
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
-                    context.contentResolver.displayName(picked)
-                navController.navigate("import/direct")
-                return@launch
-            }
             if (isZip) {
-                // The bytes are already in hand; hand them over rather than
-                // reading the same archive a second time.
-                val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
-                viewModel.importAnkiPackage(title) { bytes }
+                // The backup check runs on the prefix, before the whole
+                // archive is read. A backup says what it is in its first few
+                // hundred bytes, and a backup with images in it is often over
+                // the size cap — "too large to import" would be the wrong
+                // thing to tell someone who picked a file that was never
+                // meant to be imported at all.
+                if (McqBackupFormat.isBackupArchive(prefix.bytes)) {
+                    Logger.i("LIB", "picked library backup: not an import")
+                    viewModel.showError(backupNotABankMessage())
+                    return@launch
+                }
+                // Zips are read whole; the images inside make them large, so
+                // the cap stays and tells the user what to do about it.
+                val bytes = try {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(picked)?.use { stream ->
+                            com.mcqapp.util.readBounded(stream)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Logger.e("LIB", "Failed to read import file", e)
+                    viewModel.showError(
+                        if (e is com.mcqapp.util.ImportTooLargeException) {
+                            com.mcqapp.util.tooLargeMessage(
+                                e.atLeastBytes,
+                                com.mcqapp.util.MAX_IMPORT_BYTES
+                            )
+                        } else {
+                            "Could not read the file: ${e.message}"
+                        }
+                    )
+                    return@launch
+                } ?: run {
+                    viewModel.showError("Could not read the file.")
+                    return@launch
+                }
+                when (classifyPickedArchive(bytes)) {
+                    PickedArchive.DOCX -> {
+                        Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
+                        com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
+                        // The file name becomes the paper title (the document rarely
+                        // names its own paper). The provider's display name, not the
+                        // opaque row id a content Uri carries in lastPathSegment.
+                        com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
+                            context.contentResolver.displayName(picked)
+                        navController.navigate("import/direct")
+                    }
+                    PickedArchive.BACKUP -> {
+                        // Fallback for an archive whose manifest the prefix did
+                        // not reach (a re-pack). Restore is the reverse of
+                        // export: it replaces the whole library, while import
+                        // only adds papers.
+                        Logger.i("LIB", "picked library backup: not an import")
+                        viewModel.showError(backupNotABankMessage())
+                    }
+                    PickedArchive.OTHER -> {
+                        // The bytes are already in hand; hand them over rather than
+                        // reading the same archive a second time.
+                        val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
+                        viewModel.importAnkiPackage(title) { bytes }
+                    }
+                }
                 return@launch
             }
-            val text = bytes.toString(Charsets.UTF_8)
-            val fingerprint = try {
-                val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(text.toByteArray())
-                digest.joinToString("") { "%02x".format(it) }.take(12)
-            } catch (e: Exception) {
-                "unknown"
+
+            if (prefix.truncated) {
+                // Too large to hold as bytes: the import screen re-opens the
+                // Uri, previews a bounded sample and streams the rest.
+                Logger.i("LIB", "picked large import file: streaming from uri")
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri = picked
+            } else {
+                // Bytes stay bytes: the String copy that used to be made here
+                // doubled the bank in memory before the parser ever saw it.
+                val bytes = prefix.bytes
+                val fingerprint = try {
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(bytes)
+                    digest.joinToString("") { "%02x".format(it) }.take(12)
+                } catch (e: Exception) {
+                    "unknown"
+                }
+                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint")
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = bytes
             }
-            Logger.i("LIB", "picked import file: chars=${text.length}, sha=$fingerprint")
-            com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = text
             navController.navigate("import/direct")
         }
     }

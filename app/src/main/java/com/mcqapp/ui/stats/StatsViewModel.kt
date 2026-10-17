@@ -8,8 +8,13 @@ import com.mcqapp.data.repository.StatsStore
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.MemoryData
+import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ReplayReview
+import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
-import com.mcqapp.domain.stats.StatsBundle
+import com.mcqapp.domain.stats.WorkloadData
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,29 +23,52 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Holds the statistics payload: one fat repository read, then in-memory
- * re-aggregation whenever the range or paper scope changes. Aggregation runs
- * on [Dispatchers.Default] under a generation counter, so a slow first build
- * can never overwrite a newer selection.
+ * Holds the statistics payload one tab at a time: the card library and the
+ * replayed log are each read once, on first use, and only by the tabs that need
+ * them, and each tab is built on demand, so a screen visit aggregates the
+ * section being looked at rather than all of them. The overview and retention
+ * tabs stream the log past their accumulators and never pay for either list.
+ * Building runs on [Dispatchers.Default] under a generation counter, so a slow
+ * build can never overwrite a newer selection or a newer tab.
  */
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = (application as McqApplication).repository
 
+    /** One tab of the statistics screen; each owns a slice of the payload. */
+    enum class Tab { OVERVIEW, RETENTION, WORKLOAD, MEMORY, CARDS }
+
     data class UiState(
+        val tab: Tab = Tab.OVERVIEW,
         val loading: Boolean = true,
         val loadError: String? = null,
-        val bundle: StatsBundle? = null,
+        val overview: OverviewData? = null,
+        val retention: RetentionData? = null,
+        val workload: WorkloadData? = null,
+        val memory: MemoryData? = null,
+        val cards: CardsData? = null,
         /** questionId → plain text, for the ranked lists. */
         val questionText: Map<String, String> = emptyMap(),
         val range: StatsAggregator.Range = StatsAggregator.Range.D30,
         /** Null means every paper, Anki's Collection view. */
         val scopePaperId: String? = null,
         val papers: List<Paper> = emptyList()
-    )
+    ) {
+        /** True once the visible tab's slice has been built for this selection. */
+        val visibleSliceLoaded: Boolean
+            get() = when (tab) {
+                Tab.OVERVIEW -> overview != null
+                Tab.RETENTION -> retention != null
+                Tab.WORKLOAD -> workload != null
+                Tab.MEMORY -> memory != null
+                Tab.CARDS -> cards != null
+            }
+    }
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -59,7 +87,25 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     val cardDetail: StateFlow<CardDetail?> = _cardDetail.asStateFlow()
 
     private var generation = 0
-    private var raw: StatsStore.RawData? = null
+
+    /** True when the held slices were built for a superseded scope or range. */
+    private var sectionsStale = false
+
+    /**
+     * Everything but the log: the card schedules, the paper titles and the
+     * config, kept so a range or scope change re-slices without a database
+     * read. Only the list-based tabs need it, so it is read on first use.
+     */
+    private val libraryLock = Mutex()
+    private var library: StatsStore.Library? = null
+
+    /**
+     * The replayed log, read once and shared by the list-based tabs. It is the
+     * only thing here that scales with library size, so the lock keeps two fast
+     * tab switches from loading it twice.
+     */
+    private val reviewsLock = Mutex()
+    private var reviews: List<ReplayReview>? = null
 
     init {
         refresh()
@@ -78,7 +124,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 val cardState = repository.cardState(paperId, questionId)
                 val history = repository.reviewHistory(questionId)
                 val retrievability = cardState?.takeIf { it.stability > 0.0 }?.let { state ->
-                    val config = raw?.config ?: repository.schedulerConfigNow()
+                    val config = library?.config ?: repository.schedulerConfigNow()
                     FsrsScheduler(
                         desiredRetention = config.desiredRetention,
                         config = config
@@ -105,13 +151,24 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         _cardDetail.value = null
     }
 
-    /** Re-reads the database and rebuilds; cheap enough to call on resume. */
+    /** Shows a tab, building its slice if this selection hasn't been built. */
+    fun selectTab(tab: Tab) {
+        if (_state.value.tab == tab) return
+        _state.update { it.copy(tab = tab) }
+        loadVisible()
+    }
+
+    /** Re-reads the database and reloads the visible tab. */
     fun refresh() {
         viewModelScope.launch {
             try {
-                val loaded = repository.statsRawData()
-                raw = loaded
-                recompute(loaded)
+                // Both reads are redone on demand: rows logged since the last
+                // visit must be picked up, and a tab that needs neither must
+                // not pay for them.
+                libraryLock.withLock { library = null }
+                reviewsLock.withLock { reviews = null }
+                dropSections()
+                loadVisible()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -122,57 +179,162 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setRange(range: StatsAggregator.Range) {
+        if (_state.value.range == range) return
         _state.update { it.copy(range = range) }
-        raw?.let { recompute(it) }
+        dropSections()
+        loadVisible()
     }
 
     fun setScope(paperId: String?) {
+        if (_state.value.scopePaperId == paperId) return
         _state.update { it.copy(scopePaperId = paperId) }
-        raw?.let { recompute(it) }
+        dropSections()
+        loadVisible()
     }
 
-    private fun recompute(loaded: StatsStore.RawData) {
+    /**
+     * Marks every built slice as belonging to a superseded selection. Bumping
+     * the generation discards any build still in flight, so a stale tab cannot
+     * land after a newer scope or range. The slices themselves stay on screen
+     * and are replaced as they are rebuilt, so changing the range does not
+     * blank the page.
+     */
+    private fun dropSections() {
+        generation++
+        sectionsStale = true
+    }
+
+    /** Builds the visible tab unless its slice is already loaded and current. */
+    private fun loadVisible() {
         val current = _state.value
+        if (current.visibleSliceLoaded && !sectionsStale) {
+            _state.update { it.copy(loading = false, loadError = null) }
+            return
+        }
+        val gen = ++generation
+        _state.update { it.copy(loading = true, loadError = null) }
+        val tab = current.tab
         val scope = current.scopePaperId
         val range = current.range
-        val gen = ++generation
         viewModelScope.launch(Dispatchers.Default) {
-            val now = System.currentTimeMillis()
-            val scheduler = FsrsScheduler(
-                desiredRetention = loaded.config.desiredRetention,
-                config = loaded.config
-            )
-            val input = StatsAggregator.Input(
-                reviews = loaded.reviews,
-                cards = loaded.cards,
-                categoryOfQuestion = loaded.categoryOfQuestion,
-                paperTitleOf = loaded.paperTitleOf,
-                scheduler = scheduler,
-                config = loaded.config,
-                now = now,
-                zoneOffsetMillis = DayBoundary.zoneOffset(now)
-            )
-            val bundle = StatsAggregator.build(input, scope, range)
-            withContext(Dispatchers.Main.immediate) {
-                if (gen == generation) {
-                    _state.update { it.copy(bundle = bundle, loading = false, loadError = null) }
+            try {
+                val now = System.currentTimeMillis()
+                val built = when (tab) {
+                    // The overview and retention tabs aggregate while the log
+                    // streams past them, so neither reads a loaded list.
+                    Tab.OVERVIEW -> current.copy(
+                        overview = repository.statsOverview(scope, range, now)
+                    )
+                    Tab.RETENTION -> current.copy(
+                        retention = repository.statsRetention(scope, range, now)
+                    )
+                    else -> {
+                        val input = inputOf(loadedLibrary(), loadedReviews(), now)
+                        when (tab) {
+                            Tab.WORKLOAD -> current.copy(
+                                workload = StatsAggregator.buildWorkload(input, scope, range)
+                            )
+                            Tab.MEMORY -> current.copy(
+                                memory = StatsAggregator.buildMemory(input, scope, range)
+                            )
+                            // Cards is the remaining branch, and the only tab
+                            // left that reads the log as a list.
+                            else -> current.copy(
+                                cards = StatsAggregator.buildCards(input, scope, range)
+                            )
+                        }
+                    }
                 }
-            }
-            // The ranked lists are small; their question texts are a follow-up
-            // read so the graphs never wait on the questions table.
-            val ids = (bundle.weakest + bundle.leeches + bundle.responseTime.slowest)
-                .map { it.questionId }
-                .distinct()
-            if (ids.isNotEmpty()) {
-                val texts = runCatching { repository.getQuestionsByIds(ids) }
-                    .getOrDefault(emptyList())
-                    .associate { it.id to it.text }
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
-                        _state.update { it.copy(questionText = texts) }
+                        sectionsStale = false
+                        _state.update { it.onlyFresh(tab, built) }
+                    }
+                }
+                // The ranked lists are small; their question texts are a
+                // follow-up read so the charts never wait on the questions table.
+                val ids = rankedIds(built, tab)
+                if (ids.isNotEmpty()) {
+                    val texts = runCatching { repository.getQuestionsByIds(ids) }
+                        .getOrDefault(emptyList())
+                        .associate { it.id to it.text }
+                    withContext(Dispatchers.Main.immediate) {
+                        if (gen == generation) {
+                            _state.update { it.copy(questionText = it.questionText + texts) }
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.e("STATS", "Failed to load statistics", e)
+                withContext(Dispatchers.Main.immediate) {
+                    if (gen == generation) {
+                        _state.update { it.copy(loading = false, loadError = e.message ?: "error") }
                     }
                 }
             }
         }
     }
+
+    /** The card library, read once and shared. Only the list-based tabs ask. */
+    private suspend fun loadedLibrary(): StatsStore.Library = libraryLock.withLock {
+        library ?: repository.statsLibrary().also { library = it }
+    }
+
+    /** The replayed log, read once and shared. Only the list-based tabs ask. */
+    private suspend fun loadedReviews(): List<ReplayReview> = reviewsLock.withLock {
+        reviews ?: repository.statsReviews().also { reviews = it }
+    }
+
+    private fun inputOf(
+        library: StatsStore.Library,
+        loaded: List<ReplayReview>,
+        now: Long
+    ): StatsAggregator.Input =
+        StatsAggregator.Input(
+            reviews = loaded,
+            cards = library.cards,
+            // Only the retention breakdown reads categories, and that tab
+            // streams its own map; no list-based section touches this.
+            categoryOfQuestion = emptyMap(),
+            paperTitleOf = library.paperTitleOf,
+            scheduler = FsrsScheduler(
+                desiredRetention = library.config.desiredRetention,
+                config = library.config
+            ),
+            config = library.config,
+            now = now,
+            zoneOffsetMillis = DayBoundary.zoneOffset(now)
+        )
+
+    /** The question ids whose text the freshly built tab displays. */
+    private fun rankedIds(built: UiState, tab: Tab): List<String> = when (tab) {
+        Tab.OVERVIEW -> built.overview?.weakest
+        Tab.WORKLOAD -> built.workload?.responseTime?.slowest
+        Tab.CARDS -> built.cards?.leeches
+        Tab.RETENTION, Tab.MEMORY -> null
+    }.orEmpty().map { it.questionId }.distinct()
+
+    /**
+     * Keeps the tab just built and drops the rest: they were built for the same
+     * superseded selection, so a later tab switch must not show them.
+     */
+    private fun UiState.onlyFresh(tab: Tab, built: UiState): UiState = when (tab) {
+        Tab.OVERVIEW -> copy(
+            overview = built.overview, retention = null, workload = null, memory = null, cards = null
+        )
+        Tab.RETENTION -> copy(
+            overview = null, retention = built.retention, workload = null, memory = null, cards = null
+        )
+        Tab.WORKLOAD -> copy(
+            overview = null, retention = null, workload = built.workload, memory = null, cards = null
+        )
+        Tab.MEMORY -> copy(
+            overview = null, retention = null, workload = null, memory = built.memory, cards = null
+        )
+        Tab.CARDS -> copy(
+            overview = null, retention = null, workload = null, memory = null, cards = built.cards
+        )
+    }.copy(loading = false, loadError = null)
 }

@@ -102,6 +102,64 @@ object FsrsReplay {
         }
     }
 
+    /**
+     * A one-pass replayer for a log read in `id` order — the order rows were
+     * appended, which is also each card's own chronological order. [replay]
+     * has to hold two maps keyed by *row* id (one entry per logged review, so a
+     * million-row log needs millions of entries) because it re-sorts an
+     * arbitrarily ordered list. This keeps only per-card state instead:
+     * [CardState] plus the interval carried out of the last review, one entry
+     * per card — a quarter of the size for the 1M-review/250k-card target, and
+     * it never holds a whole page's enriched rows.
+     *
+     * The caller must feed rows in ascending `id` and the same rows [replay]
+     * would sort within each card; the two are pinned equal by
+     * `FsrsReplayStreamTest`, which exists because this is the path the
+     * statistics screen actually uses.
+     */
+    class Stream(private val scheduler: FsrsScheduler) {
+        private val states = HashMap<String, CardState>()
+        private val previousIntervals = HashMap<String, Int>()
+
+        fun accept(row: RawReview): ReplayReview {
+            val pre = states[row.questionId]
+            val predicted = pre
+                ?.takeIf {
+                    it.state == CardStateKind.REVIEW || it.state == CardStateKind.RELEARNING
+                }
+                ?.takeIf { it.stability > 0.0 }
+                ?.let { scheduler.retention(it, row.reviewedAt) }
+            val intervalBefore = previousIntervals[row.questionId]
+            // A seeded history's first row has no knowable pre-state: it is the
+            // record of memory that predates the log. Its post-state, which the
+            // row itself carries, seeds everything after it.
+            val post = if (pre == null && isSeeded(row)) {
+                seedState(row)
+            } else {
+                scheduler.next(
+                    pre ?: scheduler.initial(row.questionId),
+                    gradeOf(row.rating),
+                    row.reviewedAt
+                )
+            }
+            states[row.questionId] = post
+            previousIntervals[row.questionId] = post.intervalDays
+            return ReplayReview(
+                paperId = row.paperId,
+                questionId = row.questionId,
+                rating = row.rating,
+                reviewedAt = row.reviewedAt,
+                elapsedSeconds = row.elapsedSeconds,
+                stateBefore = row.stateBefore,
+                stabilityAfter = row.stabilityAfter,
+                difficultyAfter = row.difficultyAfter,
+                intervalDaysAfter = row.intervalDaysAfter,
+                predictedRetention = predicted,
+                intervalBeforeDays = intervalBefore
+            )
+        }
+    }
+
     private fun isSeeded(row: RawReview): Boolean =
         row.stateBefore != null &&
             row.stateBefore != CardStateKind.NEW &&

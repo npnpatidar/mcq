@@ -155,7 +155,10 @@ internal fun PaperCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(onClick = onStart) {
+                Button(
+                    onClick = onStart,
+                    modifier = Modifier.testTag("paper-test-${paper.id}")
+                ) {
                     Text(stringResource(R.string.test_action))
                 }
                 if (leechCount > 0) {

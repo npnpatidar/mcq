@@ -139,6 +139,14 @@ val List<ContentElement>.searchableText: String
 
 private val WHITESPACE_RUNS = Regex("\\s+")
 
+/**
+ * The flattened text a passage is searched by: its title plus its body, so a
+ * member question can be found through its shared context. Mirrors the
+ * `title + body` string the in-memory search builds per passage.
+ */
+fun passageSearchText(title: String, elements: List<ContentElement>): String =
+    (title + " " + elements.searchableText).trim()
+
 /** Drops tags and entities, leaving the text between them. */
 private fun stripMarkup(raw: String): String = if ('<' in raw || '&' in raw) {
     TAG_OR_ENTITY.replace(raw, " ")
@@ -306,6 +314,16 @@ data class Attempt(
 ) {
     val percentage: Double get() = if (maxScore > 0) score / maxScore * 100.0 else 0.0
 }
+
+/**
+ * A result row plus its position in the **unfiltered** attempt order. Browse
+ * carries this so a filtered review still shows each question's real number
+ * (`index + 1`) without holding the whole attempt in memory.
+ */
+data class NumberedResult(
+    val index: Int,
+    val result: QuestionResult
+)
 
 data class QuestionResult(
     val attemptId: Long = 0,

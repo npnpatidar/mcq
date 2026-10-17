@@ -114,18 +114,18 @@ object HtmlPaperWriter {
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
-            for (option in question.options) {
-                appendOption(sb, option, isCorrect = false)
+            question.options.forEachIndexed { index, option ->
+                appendOption(sb, index, option, isCorrect = false)
             }
             sb.append("</ul>\n")
         }
         sb.append("<button class=\"toggle\" onclick=\"toggle('ans")
             .append(number).append("')\">Show answer</button>\n")
         sb.append("<div id=\"ans").append(number).append("\" class=\"ans\" style=\"display:none\">\n")
-        val correct = question.options.filter { it.id in question.correctOptionIds }
-        if (correct.isNotEmpty()) {
+        val answer = answerLabels(question.options, question.correctOptionIds)
+        if (answer.isNotEmpty()) {
             sb.append("<p class=\"answer\">Answer: ")
-                .append(correct.joinToString(", ") { renderInlineHtml(it.text) })
+                .append(answer.joinToString(", "))
                 .append("</p>\n")
         }
         if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
@@ -145,15 +145,15 @@ object HtmlPaperWriter {
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
             sb.append("<ul class=\"opts\">\n")
-            for (option in question.options) {
-                appendOption(sb, option, option.id in question.correctOptionIds)
+            question.options.forEachIndexed { index, option ->
+                appendOption(sb, index, option, option.id in question.correctOptionIds)
             }
             sb.append("</ul>\n")
         }
-        val correct = question.options.filter { it.id in question.correctOptionIds }
-        if (correct.isNotEmpty()) {
+        val answer = answerLabels(question.options, question.correctOptionIds)
+        if (answer.isNotEmpty()) {
             sb.append("<p class=\"answer\">Answer: ")
-                .append(correct.joinToString(", ") { renderInlineHtml(it.text) })
+                .append(answer.joinToString(", "))
                 .append("</p>\n")
         }
         if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
@@ -182,12 +182,13 @@ object HtmlPaperWriter {
         sb.append("</div>\n")
     }
 
-    private fun appendOption(sb: StringBuilder, option: OptionDto, isCorrect: Boolean) {
+    private fun appendOption(sb: StringBuilder, index: Int, option: OptionDto, isCorrect: Boolean) {
         sb.append("<li")
         if (isCorrect) sb.append(" class=\"correct\"")
         sb.append(">")
         sb.append(if (isCorrect) "✓ " else "○ ")
-        sb.append(esc(option.id)).append(") ")
+        // By position, so the label always matches the letter the answer names.
+        sb.append(optionLetter(index)).append(") ")
         .append(
             if (option.elements.isNotEmpty()) elementsToHtml(option.elements, option.image)
             else renderInlineHtml(option.text) + imageTag(option.image)

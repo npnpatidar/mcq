@@ -8,10 +8,13 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.applyQuestionStats
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.passageSearchText
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
@@ -71,6 +74,7 @@ class Importer(
         sameIdCache = null
         writtenThisImport.clear()
         seenPassageIds.clear()
+        importProgressLogs = 0
         // A file this app exported carries its own review progress; an explicit
         // map (the Anki path) still wins.
         val restoreScheduling = scheduling.ifEmpty { file.scheduling }
@@ -87,23 +91,18 @@ class Importer(
         var restoredAttempts = 0
         var restoredSchedules = 0
 
-        // Image preparation (Bitmap decode/scale/compress) runs BEFORE the
-        // transaction: it is pure CPU work that must not hold the database
-        // write lock. The scaled twins mirror the originals 1:1 — identity
-        // reads the scaled DTOs (the bytes that get stored, and the bytes a
-        // re-imported export carries back), only the work order differs.
-        val scaledFile = file.withDownscaledImages()
-        scaledForHashes = scaledFile
-        val scaledPapers = scaledFile.papers
-
         db.withTransaction {
             // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
             // so a snapshot taken later could match hashes of already-deleted rows.
-            val existingHashes = db.questionDao().getAll()
-                .map { it.contentHash }
-                .toHashSet()
+            val existingHashes = db.questionDao().getAllContentHashes().toHashSet()
 
-            for ((paperDto, scaledPaper) in file.papers.zip(scaledPapers)) {
+            // Scale each paper's images just before writing it and drop the
+            // scaled twin when the paper is done. The previous whole-file
+            // deep copy held a second full bank (every DTO, every base64
+            // image) on top of the parsed one, which is what pushed a 100k
+            // bank over the heap; one paper at a time keeps the peak flat.
+            for (paperDto in file.papers) {
+                val scaledPaper = paperDto.withDownscaledImages()
                 // Paper identity: match by id first. The title fallback is
                 // only for ephemeral parser-generated ids (bare-array or
                 // id-less files mint a fresh id on every parse, so without it
@@ -165,9 +164,7 @@ class Importer(
                 // A brand-new paper whose questions ALL already exist adds nothing:
                 // skip creating the shell so the library doesn't fill with stubs.
                 val incomingHashes = effectiveCategories.flatMap { cat ->
-                    cat.questions.map { q ->
-                        ContentHash.of(q.text, q.options.map { it.text }, q.options.map { it.image }, q.passageId)
-                    }
+                    cat.questions.map { q -> ContentHash.of(q) }
                 }
                 if (isNewPaper && incomingHashes.isNotEmpty() &&
                     incomingHashes.all { it in existingHashes }) {
@@ -201,12 +198,17 @@ class Importer(
                 // Passages this paper wrote; their members must end up in the
                 // passage's category (the fold below enforces it).
                 val paperPassageIds = mutableSetOf<String>()
+                // The paper's category rows, read once. Re-reading inside the
+                // loop made adding a category O(categories²) row reads — a
+                // 2000-category paper paid 2000 full table scans. The list is
+                // kept in sync with what we write so a later same-id or
+                // same-title entry still matches, exactly as a re-read would.
+                val catsInPaper = db.categoryDao().getByPaper(effectivePaperId).toMutableList()
                 effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
                     val scaledCategory = scaledCategories[categoryIndex]
                     // Category identity within the paper: match by id first, then
                     // by title, so re-imports reuse the same category instead of
                     // piling up same-named ones.
-                    val catsInPaper = db.categoryDao().getByPaper(effectivePaperId)
                     val matchInPaper = catsInPaper.find { it.id == categoryDto.id }
                         ?: catsInPaper.find { it.title == categoryDto.title }
                     // A category id owned by a DIFFERENT paper must never be
@@ -241,6 +243,16 @@ class Importer(
                             sortOrder = categoryIndex
                         )
                     }
+                    // Mirror the write in the in-memory index so a later entry in
+                    // this paper can match it (id or title) without a re-read.
+                    catsInPaper.removeAll { it.id == effectiveCatId }
+                    catsInPaper += CategoryEntity(
+                        id = effectiveCatId,
+                        paperId = effectivePaperId,
+                        title = categoryDto.title,
+                        parentId = categoryDto.parentId,
+                        sortOrder = categoryIndex
+                    )
 
                     // Passages referenced by this category's questions are written
                     // right here, inside the same transaction and AFTER the owning
@@ -256,14 +268,15 @@ class Importer(
                         seenPassageIds.add(passageId)
                         paperPassageIds.add(passageId)
                         val existing = db.passageDao().getById(passageId)
+                        val passageElements = passageDto.elements
+                            .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement("")) }
                         db.passageDao().upsert(
                             PassageEntity(
                                 id = passageDto.id,
                                 categoryId = effectiveCatId,
                                 title = passageDto.title,
-                                text = passageDto.elements
-                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement("")) }
-                                    .toContentJson(json),
+                                text = passageElements.toContentJson(json),
+                                searchText = passageSearchText(passageDto.title, passageElements),
                                 image = ImageDownscale.downscaleDataUri(passageDto.image),
                                 sortOrder = existing?.sortOrder ?: 0
                             )
@@ -277,9 +290,16 @@ class Importer(
                         // export (which carries the stored bytes) hashes the
                         // same and deduplicates instead of updating.
                         val contentHash = ContentHash.of(scaledQuestion)
-                        Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
-                            "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
-                            "textLength=${questionDto.text.length}")
+                        // Per-question tracing is O(file size) string building
+                        // unless gated: a 100k bank pays it inside the write
+                        // transaction. One line per 500 keeps a progress
+                        // trace; Logger.verbose turns every line on.
+                        importProgressLogs++
+                        if (Logger.verbose || importProgressLogs % 500 == 0L) {
+                            Logger.d("IMPORT", "  Question id=${questionDto.id}, hash=${contentHash.take(12)}, " +
+                                "options=${questionDto.options.size}, correct=${questionDto.correctOptionIds}, " +
+                                "textLength=${questionDto.text.length}")
+                        }
 
                         if (contentHash in existingHashes && updateAnswersOnDuplicate) {
                             // Same text and options under a different id: the
@@ -347,10 +367,14 @@ class Importer(
                                 )
                             if (!changedAnswer) {
                                 duplicateQuestions++
-                                Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
+                                if (Logger.verbose) {
+                                    Logger.d("IMPORT", "  Duplicate question skipped: id=${questionDto.id}")
+                                }
                                 return@forEachIndexed
                             }
-                            Logger.d("IMPORT", "  Same content hash but changed answer/metadata: updating id=${questionDto.id}")
+                            if (Logger.verbose) {
+                                Logger.d("IMPORT", "  Same content hash but changed answer/metadata: updating id=${questionDto.id}")
+                            }
                         }
 
                         // New questions append after existing ones; updates keep
@@ -363,20 +387,23 @@ class Importer(
                             updatedQuestions++
                             existingQuestion.sortOrder
                         }
-                        Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
-                            "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
+                        if (Logger.verbose || importProgressLogs % 500 == 1L) {
+                            Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
+                                "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
+                        }
 
                         // NOTE: the question row below carries passageId from the
                         // file; the passage rows themselves were already written
                         // above, so the id always resolves inside this transaction.
+                        val questionElements = questionDto.elements
+                            .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
                         db.questionDao().upsert(
                             QuestionEntity(
                                 id = questionDto.id,
                                 categoryId = effectiveCatId,
                                 passageId = questionDto.passageId,
-                                text = questionDto.elements
-                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
-                                    .toContentJson(json),
+                                text = questionElements.toContentJson(json),
+                                searchText = questionElements.searchableText,
                                 image = scaledQuestion.image,
                                 explanation = questionDto.explanationElements
                                     .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.explanation)) }
@@ -422,12 +449,7 @@ class Importer(
                                         com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
                                     }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),
                                     reviewCount = schedule.reviewCount,
-                                    contentHash = ContentHash.of(
-                                        scaledQuestion.text,
-                                        scaledQuestion.options.map { it.text },
-                                        scaledQuestion.options.map { it.image },
-                                        scaledQuestion.passageId
-                                    )
+                                    contentHash = ContentHash.of(scaledQuestion)
                                 )
                             )
                             restoredSchedules++
@@ -436,12 +458,13 @@ class Importer(
                         db.optionDao().deleteByQuestion(questionDto.id)
                         db.optionDao().upsertAll(
                             scaledQuestion.options.mapIndexed { index, o ->
+                                val optionElements = o.elements
+                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(o.text)) }
                                 OptionEntity(
                                     id = o.id,
                                     questionId = questionDto.id,
-                                    text = o.elements
-                                        .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(o.text)) }
-                                        .toContentJson(json),
+                                    text = optionElements.toContentJson(json),
+                                    searchText = optionElements.searchableText,
                                     image = o.image,
                                     sortOrder = index
                                 )
@@ -504,22 +527,24 @@ class Importer(
                         finishedAt = attempt.finishedAt
                     )
                 )
-                db.attemptDao().insertResults(
-                    attempt.results.map { r ->
-                        com.mcqapp.data.local.QuestionResultEntity(
-                            attemptId = attemptId,
-                            questionId = r.questionId,
-                            categoryTitle = r.categoryTitle,
-                            text = r.text,
-                            optionsJson = normaliseOptionsJson(json, r.optionsJson),
-                            correctOptionIds = r.correctOptionIds,
-                            selectedOptionIds = r.selectedOptionIds,
-                            isCorrect = r.isCorrect,
-                            explanation = r.explanation,
-                            explanationImage = r.explanationImage,
-                            dwellSeconds = r.dwellSeconds
-                        )
-                    }
+                val restoredRows = attempt.results.map { r ->
+                    com.mcqapp.data.local.QuestionResultEntity(
+                        attemptId = attemptId,
+                        questionId = r.questionId,
+                        categoryTitle = r.categoryTitle,
+                        text = r.text,
+                        optionsJson = normaliseOptionsJson(json, r.optionsJson),
+                        correctOptionIds = r.correctOptionIds,
+                        selectedOptionIds = r.selectedOptionIds,
+                        isCorrect = r.isCorrect,
+                        explanation = r.explanation,
+                        explanationImage = r.explanationImage,
+                        dwellSeconds = r.dwellSeconds
+                    )
+                }
+                db.attemptDao().insertResults(restoredRows)
+                db.questionStatsDao().applyQuestionStats(
+                    attempt.paperId, attempt.title, attempt.finishedAt, restoredRows
                 )
                 restoredAttempts++
             }
@@ -582,22 +607,28 @@ class Importer(
      * the same inputs the question loop hashes (and the row stores), so the
      * collision prefetch and the per-question lookup always agree.
      */
-    private fun importHashes(): Set<String> = scaledForHashes?.papers.orEmpty()
+    private fun importHashes(): Set<String> = importedFile?.papers.orEmpty()
         .flatMap { paper ->
-            paper.categories.flatMap { it.questions } + paper.topLevelQuestions()
+            // Scale one paper at a time: only this paper's scaled twin and the
+            // hash set are live, never a second copy of the whole bank.
+            val scaled = paper.withDownscaledImages()
+            scaled.categories.flatMap { it.questions } + scaled.topLevelQuestions()
         }
         .mapTo(mutableSetOf()) { question ->
             ContentHash.of(question)
         }
-
-    /** The scaled twin of [importedFile], for [importHashes]. */
-    private var scaledForHashes: McqFileDto? = null
 
     /** The file being imported, kept so collision candidates can be gathered. */
     private var importedFile: McqFileDto? = null
 
     /** Questions this import has already written, by content hash. */
     private val writtenThisImport = mutableMapOf<String, MutableList<QuestionDto>>()
+
+    /**
+     * Counter for the gated per-question trace lines (one per 500 instead of
+     * one per row); reset with the per-import state below.
+     */
+    private var importProgressLogs = 0L
 
     /**
      * Passage ids whose rows this import has already written, so a passage
@@ -711,13 +742,18 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
  */
 internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
     passages = passages.map { passage -> passage.copy(image = ImageDownscale.downscaleDataUri(passage.image)) },
-    papers = papers.map { paper ->
-        paper.copy(
-            questions = paper.questions.map { it.withDownscaledImages() },
-            categories = paper.categories.map { category ->
-                category.copy(questions = category.questions.map { it.withDownscaledImages() })
-            }
-        )
+    papers = papers.map { it.withDownscaledImages() }
+)
+
+/**
+ * The single paper-level scaler, reused by the whole-file scaler above and by
+ * the import loop (which scales one paper at a time so a large bank never
+ * holds both the parsed and a fully scaled copy at once).
+ */
+internal fun PaperDto.withDownscaledImages(): PaperDto = copy(
+    questions = questions.map { it.withDownscaledImages() },
+    categories = categories.map { category ->
+        category.copy(questions = category.questions.map { it.withDownscaledImages() })
     }
 )
 

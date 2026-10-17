@@ -6,6 +6,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.passageSearchText
+import com.mcqapp.domain.searchableText
 
 @Database(
     entities = [
@@ -17,12 +20,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookmarkEntity::class,
         AttemptEntity::class,
         QuestionResultEntity::class,
+        QuestionStatsEntity::class,
         CardStateEntity::class,
         ReviewLogEntity::class,
         PassageEntity::class
     ],
-    version = 10,
-    exportSchema = false
+    version = 16,
+    // From v11 on the schema is exported to app/schemas so every index and
+    // column change is reviewable as a diff rather than discovered by a
+    // migration failure on a user's device.
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun paperDao(): PaperDao
@@ -32,6 +39,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun correctAnswerDao(): CorrectAnswerDao
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun attemptDao(): AttemptDao
+    abstract fun questionStatsDao(): QuestionStatsDao
     abstract fun cardStateDao(): CardStateDao
     abstract fun reviewLogDao(): ReviewLogDao
     abstract fun passageDao(): PassageDao
@@ -201,6 +209,294 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Indexes the large-collection queries that scanned before: dedup
+         * probes `questions.contentHash` on every import and preview
+         * refresh, the study/library counts filter `card_state` by paper
+         * and due time, and the statistics aggregates group `review_log` by
+         * paper and day. Pure index additions — no row moves, every table
+         * keeps its shape.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_questions_contentHash` " +
+                        "ON `questions` (`contentHash`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_dueAt` " +
+                        "ON `card_state` (`paperId`, `dueAt`)"
+                )
+                // The composite replaces the standalone paperId index: its
+                // paperId prefix serves every query the old one did.
+                db.execSQL("DROP INDEX IF EXISTS `index_review_log_paperId`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_review_log_paperId_reviewedAt` " +
+                        "ON `review_log` (`paperId`, `reviewedAt`)"
+                )
+            }
+        }
+
+        /**
+         * The remaining large-collection indexes: per-paper/per-state due
+         * counts (`card_state`), results tallies (`question_results`), and the
+         * title lookups imports and the paper list do (`papers`, `categories`).
+         * Index-only — no table changes shape, every row survives verbatim.
+         * The two composite indexes replace their standalone prefixes, which
+         * are dropped here.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_papers_title` " +
+                        "ON `papers` (`title`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_cardState_dueAt` " +
+                        "ON `card_state` (`paperId`, `cardState`, `dueAt`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_question_results_attemptId`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_question_results_attemptId_isCorrect` " +
+                        "ON `question_results` (`attemptId`, `isCorrect`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_categories_paperId`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_categories_paperId_title` " +
+                        "ON `categories` (`paperId`, `title`)"
+                )
+            }
+        }
+
+        /**
+         * Adds the `question_stats` lifetime aggregate and backfills it from
+         * `question_results` in one grouped statement. History's
+         * "hardest"/"weakest" cards become two indexed reads instead of
+         * loading every result row. Deleting an attempt intentionally does
+         * not shrink these counters (they are an all-time aggregate).
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `question_stats` (" +
+                        "`questionId` TEXT NOT NULL, `paperId` TEXT NOT NULL, " +
+                        "`paperTitle` TEXT NOT NULL, `categoryTitle` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, `totalAttempts` INTEGER NOT NULL, " +
+                        "`gradedCount` INTEGER NOT NULL, `correctCount` INTEGER NOT NULL, " +
+                        "`wrongCount` INTEGER NOT NULL, `skipCount` INTEGER NOT NULL, " +
+                        "`ungradedCount` INTEGER NOT NULL, `lastResultIsCorrect` INTEGER NOT NULL, " +
+                        "`lastFinishedAt` INTEGER NOT NULL, PRIMARY KEY(`questionId`))"
+                )
+                db.execSQL(
+                    "INSERT OR REPLACE INTO question_stats " +
+                        "(questionId, paperId, paperTitle, categoryTitle, text, " +
+                        "totalAttempts, gradedCount, correctCount, wrongCount, skipCount, " +
+                        "ungradedCount, lastResultIsCorrect, lastFinishedAt) " +
+                        "SELECT r.questionId, a.paperId, a.title, r.categoryTitle, r.text, " +
+                        "c.total, c.graded, c.correct, c.wrong, c.skip, c.ungraded, " +
+                        "r.isCorrect, a.finishedAt " +
+                        "FROM question_results r " +
+                        "INNER JOIN attempts a ON a.id = r.attemptId " +
+                        "INNER JOIN (" +
+                        "SELECT questionId, COUNT(*) AS total, " +
+                        "SUM(CASE WHEN correctOptionIds != '' THEN 1 ELSE 0 END) AS graded, " +
+                        "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds != '' " +
+                        "AND isCorrect THEN 1 ELSE 0 END) AS correct, " +
+                        "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds != '' " +
+                        "AND isCorrect = 0 THEN 1 ELSE 0 END) AS wrong, " +
+                        "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds = '' " +
+                        "THEN 1 ELSE 0 END) AS skip, " +
+                        "SUM(CASE WHEN correctOptionIds = '' THEN 1 ELSE 0 END) AS ungraded, " +
+                        "MAX(rowid) AS maxRow FROM question_results GROUP BY questionId" +
+                        ") c ON c.questionId = r.questionId " +
+                        "WHERE r.rowid = c.maxRow"
+                )
+            }
+        }
+
+        /**
+         * Rebuilds `card_state` to match the entity exactly. Two pieces of
+         * migration fallout are removed in one table rebuild (SQLite cannot
+         * drop a column default in place):
+         *
+         * - the four FSRS columns kept the `DEFAULT` that ALTER TABLE ADD
+         *   COLUMN required in 9->10, which Room reports as a schema drift;
+         * - `index_card_state_dueAt` is left over from 6->7, redundant now
+         *   that `(paperId, dueAt)` and `(paperId, cardState, dueAt)` exist.
+         *
+         * Every row survives verbatim; dropping the table also drops the
+         * stale index, and the three current indexes are recreated.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `card_state_new` (" +
+                        "`paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, " +
+                        "`ease` REAL NOT NULL, `intervalDays` INTEGER NOT NULL, " +
+                        "`dueAt` INTEGER NOT NULL, `reps` INTEGER NOT NULL, " +
+                        "`lapses` INTEGER NOT NULL, `leech` INTEGER NOT NULL, " +
+                        "`lastReviewedAt` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, " +
+                        "`difficulty` REAL NOT NULL, `stability` REAL NOT NULL, " +
+                        "`cardState` TEXT NOT NULL, `reviewCount` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`paperId`, `questionId`), " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "INSERT INTO `card_state_new` (`paperId`, `questionId`, `ease`, " +
+                        "`intervalDays`, `dueAt`, `reps`, `lapses`, `leech`, `lastReviewedAt`, " +
+                        "`contentHash`, `difficulty`, `stability`, `cardState`, `reviewCount`) " +
+                        "SELECT `paperId`, `questionId`, `ease`, `intervalDays`, `dueAt`, " +
+                        "`reps`, `lapses`, `leech`, `lastReviewedAt`, `contentHash`, " +
+                        "`difficulty`, `stability`, `cardState`, `reviewCount` FROM `card_state`"
+                )
+                db.execSQL("DROP TABLE `card_state`")
+                db.execSQL("ALTER TABLE `card_state_new` RENAME TO `card_state`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_questionId` " +
+                        "ON `card_state` (`questionId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_dueAt` " +
+                        "ON `card_state` (`paperId`, `dueAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_cardState_dueAt` " +
+                        "ON `card_state` (`paperId`, `cardState`, `dueAt`)"
+                )
+            }
+        }
+
+        /**
+         * Adds the flattened `searchText` columns (F4). Global search
+         * prefilters with `LIKE '%q%'`, which no index can serve, so it used
+         * to scan the elements *JSON* — markup, formulas and all — for every
+         * row. Matching the plain visible text instead is exact (it is the
+         * same string the in-memory filter tests) and much cheaper per row.
+         *
+         * Existing rows are backfilled from the JSON already on disk.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `questions` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `options` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `passages` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''"
+                )
+                backfillSearchText(db)
+            }
+        }
+
+        /** Rows filled per backfill round trip. */
+        private const val SEARCH_BACKFILL_BATCH = 2000
+
+        /**
+         * Adds the two indices Browse pages by, and drops the one the second
+         * replaces.
+         *
+         * Browse orders a paper's questions by
+         * *(category sortOrder, category title, question sortOrder, rowid)*.
+         * With no index providing that order, every page was the whole paper
+         * sorted into a temp B-tree before the LIMIT could throw the rest
+         * away — measured at a million questions, the first page of 60 rows
+         * took 2.3 s. With the two indices below the same page is ~5 ms,
+         * because the walk starts in category order and stops 60 rows later.
+         *
+         * `(categoryId, sortOrder)` also serves everything the standalone
+         * `index_questions_categoryId` did (it is the leftmost prefix), so
+         * that one is dropped rather than paid for twice on every import.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_categories_paperId_sortOrder_title` " +
+                        "ON `categories` (`paperId`, `sortOrder`, `title`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_questions_categoryId_sortOrder` " +
+                        "ON `questions` (`categoryId`, `sortOrder`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_questions_categoryId`")
+            }
+        }
+
+        /**
+         * Fills the `searchText` columns from the element JSON already stored.
+         * Keyset-paged by rowid — stable because the update never changes the
+         * key — so peak memory is one batch, not a whole 250k-question table.
+         */
+        private fun backfillSearchText(db: SupportSQLiteDatabase) {
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+            fun flattened(raw: String) = raw.parseContentElements(json).searchableText
+
+            var last = -1L
+            while (true) {
+                val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
+                db.query(
+                    "SELECT rowid, text FROM questions WHERE rowid > ? " +
+                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                    arrayOf(last)
+                ).use { c ->
+                    while (c.moveToNext()) batch += c.getLong(0) to c.getString(1)
+                }
+                if (batch.isEmpty()) break
+                for ((rowid, text) in batch) {
+                    db.execSQL(
+                        "UPDATE questions SET searchText = ? WHERE rowid = ?",
+                        arrayOf(flattened(text), rowid)
+                    )
+                    last = rowid
+                }
+            }
+
+            last = -1L
+            while (true) {
+                val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
+                db.query(
+                    "SELECT rowid, text FROM options WHERE rowid > ? " +
+                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                    arrayOf(last)
+                ).use { c ->
+                    while (c.moveToNext()) batch += c.getLong(0) to c.getString(1)
+                }
+                if (batch.isEmpty()) break
+                for ((rowid, text) in batch) {
+                    db.execSQL(
+                        "UPDATE options SET searchText = ? WHERE rowid = ?",
+                        arrayOf(flattened(text), rowid)
+                    )
+                    last = rowid
+                }
+            }
+
+            last = -1L
+            while (true) {
+                val batch = ArrayList<Triple<Long, String, String>>(SEARCH_BACKFILL_BATCH)
+                db.query(
+                    "SELECT rowid, title, text FROM passages WHERE rowid > ? " +
+                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                    arrayOf(last)
+                ).use { c ->
+                    while (c.moveToNext()) {
+                        batch += Triple(c.getLong(0), c.getString(1), c.getString(2))
+                    }
+                }
+                if (batch.isEmpty()) break
+                for ((rowid, title, text) in batch) {
+                    db.execSQL(
+                        "UPDATE passages SET searchText = ? WHERE rowid = ?",
+                        arrayOf(passageSearchText(title, text.parseContentElements(json)), rowid)
+                    )
+                    last = rowid
+                }
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -209,8 +505,19 @@ abstract class AppDatabase : RoomDatabase() {
                     "mcq.db"
                 ).addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
-                ).build().also { INSTANCE = it }
+                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
+                    MIGRATION_15_16
+                )
+                // WAL keeps readers (the browsed list, an open test session,
+                // the search screen) non-blocking while an import or bulk
+                // write holds the write lock — the screens observe the same
+                // database an import is writing to. Backups and restores read
+                // and write through Room inside transactions, so they see
+                // consistent snapshots either way; nothing copies the raw
+                // file, which is the operation WAL would have broken.
+                .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                .build().also { INSTANCE = it }
             }
     }
 }

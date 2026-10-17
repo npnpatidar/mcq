@@ -53,54 +53,131 @@ object StatsAggregator {
         val zoneOffsetMillis: Long
     )
 
-    fun build(input: Input, scopePaperId: String?, range: Range): StatsBundle {
-        val cfg = input.config
-        val zone = input.zoneOffsetMillis
-        val todayStart = DayBoundary.startOfDay(input.now, cfg.dayStartHour, zone)
-        val tomorrowStart = todayStart + DayBoundary.DAY_MS
-        val todayDay = studyEpochDay(todayStart, cfg, zone)
-        val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+    /**
+     * One build's shared inputs: the scope- and range-filtered log views, the
+     * scoped cards, and the day arithmetic. Sections take this instead of
+     * re-deriving it, which is what lets any one of them be built alone.
+     */
+    private class Context(
+        val input: Input,
+        val inScope: List<ReplayReview>,
+        val inRange: List<ReplayReview>,
+        val cards: List<CardSnapshot>,
+        val scopePaperId: String?,
+        val rangeStart: Long?,
+        val todayStart: Long,
+        val tomorrowStart: Long,
+        val todayDay: Long
+    ) {
+        val cfg: SchedulerConfig get() = input.config
+        val zone: Long get() = input.zoneOffsetMillis
 
-        val inScope = input.reviews.filter { scopePaperId == null || it.paperId == scopePaperId }
-        val inRange = inScope.filter { rangeStart == null || it.reviewedAt >= rangeStart }
-        val cards = input.cards.filter { scopePaperId == null || it.paperId == scopePaperId }
+        companion object {
+            fun of(input: Input, scopePaperId: String?, range: Range): Context {
+                val cfg = input.config
+                val zone = input.zoneOffsetMillis
+                val todayStart = DayBoundary.startOfDay(input.now, cfg.dayStartHour, zone)
+                val inScope = input.reviews.filter { scopePaperId == null || it.paperId == scopePaperId }
+                val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+                return Context(
+                    input = input,
+                    inScope = inScope,
+                    inRange = inScope.filter { rangeStart == null || it.reviewedAt >= rangeStart },
+                    cards = input.cards.filter { scopePaperId == null || it.paperId == scopePaperId },
+                    scopePaperId = scopePaperId,
+                    rangeStart = rangeStart,
+                    todayStart = todayStart,
+                    tomorrowStart = todayStart + DayBoundary.DAY_MS,
+                    todayDay = studyEpochDay(todayStart, cfg, zone)
+                )
+            }
+        }
+    }
 
-        val heatmap = heatmap(inScope, todayStart, cfg, zone)
-        val kpiRetention = trueRetention(inRange, todayStart, tomorrowStart, rangeStart, cfg, zone)
+    fun build(input: Input, scopePaperId: String?, range: Range): StatsBundle =
+        buildSections(input, scopePaperId, range).toBundle()
 
-        return StatsBundle(
-            today = today(inScope, cards, todayStart, tomorrowStart, todayDay, input.now, cfg, zone),
-            kpis = kpis(inRange, cards, kpiRetention, heatmap, input, cfg, zone),
-            retentionTable = retentionTable(inScope, todayStart, tomorrowStart, cfg, zone),
-            heatmap = heatmap,
-            fsrsStatus = FsrsStatus(
-                fitted = input.config.fsrsParameters != FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
-                reviewCount = input.reviews.size,
-                unlockReviews = FsrsOptimizer.MIN_REVIEWS,
-                desiredRetention = input.config.desiredRetention
+    /**
+     * Every tab's slice, each built by its own section function. [build] is
+     * this plus [toBundle], so the all-at-once payload and the per-tab one can
+     * never disagree; a tab that wants to load on its own calls the matching
+     * section builder rather than the whole page.
+     */
+    private fun buildSections(input: Input, scopePaperId: String?, range: Range): StatsSections {
+        val ctx = Context.of(input, scopePaperId, range)
+        // Heatmap and true retention are inputs to the overview KPIs, so they
+        // are computed once here and handed to both consumers rather than
+        // recomputed per tab.
+        val heatmap = heatmap(ctx.inScope, ctx.todayStart, ctx.cfg, ctx.zone)
+        val kpis = kpis(
+            inRange = ctx.inRange,
+            cards = ctx.cards,
+            rangeRetention = trueRetention(
+                ctx.inRange, ctx.todayStart, ctx.tomorrowStart, ctx.rangeStart, ctx.cfg, ctx.zone
             ),
-            retentionTrend = retentionTrend(inRange, rangeStart, todayDay, input, cfg, zone),
-            calibration = calibration(inRange),
-            groupRetention = groupRetention(inRange, input, scopePaperId),
-            weekdayRetention = weekdayRetention(inRange, todayStart, cfg, zone),
-            forecast = forecast(cards, todayStart, todayDay),
-            reviewsPerDay = reviewsPerDay(inRange, rangeStart, todayDay, cfg, zone),
-            timePerDay = timePerDay(inRange, rangeStart, todayDay, cfg, zone),
-            answerButtons = answerButtons(inRange),
-            hourly = hourly(inRange, zone),
-            responseTime = responseTime(inRange, cards, rangeStart, todayDay, cfg, zone),
-            stability = stabilityDistribution(cards),
-            difficulty = difficultyDistribution(cards),
-            retrievability = retrievabilityDistribution(cards, input.scheduler, input.now),
-            intervals = intervalDistribution(cards),
-            memoryGrowth = memoryGrowth(inScope, cfg, zone),
-            cardCounts = cardCounts(cards),
-            overdueAge = overdueAge(cards, input.now),
-            paperCounts = if (scopePaperId == null) paperCounts(cards, input) else emptyList(),
-            weakest = weakest(inRange, cards),
-            leeches = leeches(inScope, cards)
+            heatmap = heatmap,
+            input = ctx.input,
+            cfg = ctx.cfg,
+            zone = ctx.zone
+        )
+        return StatsSections(
+            overview = overviewOf(ctx, kpis, heatmap),
+            retention = retentionOf(ctx),
+            workload = workloadOf(ctx),
+            memory = memoryOf(ctx, kpis),
+            cards = cardsOf(ctx)
         )
     }
+
+    private fun overviewOf(ctx: Context, kpis: OverviewKpis, heatmap: HeatmapData): OverviewData =
+        OverviewData(
+            today = today(
+                ctx.inScope, ctx.cards, ctx.todayStart, ctx.tomorrowStart, ctx.todayDay,
+                ctx.input.now, ctx.cfg, ctx.zone
+            ),
+            kpis = kpis,
+            retentionTable = retentionTable(ctx.inScope, ctx.todayStart, ctx.tomorrowStart, ctx.cfg, ctx.zone),
+            heatmap = heatmap,
+            fsrsStatus = FsrsStatus(
+                fitted = ctx.cfg.fsrsParameters != FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+                reviewCount = ctx.input.reviews.size,
+                unlockReviews = FsrsOptimizer.MIN_REVIEWS,
+                desiredRetention = ctx.cfg.desiredRetention
+            ),
+            weakest = weakest(ctx.inRange, ctx.cards)
+        )
+
+    private fun retentionOf(ctx: Context): RetentionData = RetentionData(
+        retentionTrend = retentionTrend(ctx.inRange, ctx.rangeStart, ctx.todayDay, ctx.input, ctx.cfg, ctx.zone),
+        calibration = calibration(ctx.inRange),
+        groupRetention = groupRetention(ctx.inRange, ctx.input, ctx.scopePaperId),
+        weekdayRetention = weekdayRetention(ctx.inRange, ctx.todayStart, ctx.cfg, ctx.zone)
+    )
+
+    private fun workloadOf(ctx: Context): WorkloadData = WorkloadData(
+        forecast = forecast(ctx.cards, ctx.todayStart, ctx.todayDay),
+        reviewsPerDay = reviewsPerDay(ctx.inRange, ctx.rangeStart, ctx.todayDay, ctx.cfg, ctx.zone),
+        timePerDay = timePerDay(ctx.inRange, ctx.rangeStart, ctx.todayDay, ctx.cfg, ctx.zone),
+        answerButtons = answerButtons(ctx.inRange),
+        hourly = hourly(ctx.inRange, ctx.zone),
+        responseTime = responseTime(ctx.inRange, ctx.cards, ctx.rangeStart, ctx.todayDay, ctx.cfg, ctx.zone)
+    )
+
+    private fun memoryOf(ctx: Context, kpis: OverviewKpis): MemoryData = MemoryData(
+        kpis = kpis,
+        stability = stabilityDistribution(ctx.cards),
+        difficulty = difficultyDistribution(ctx.cards),
+        retrievability = retrievabilityDistribution(ctx.cards, ctx.input.scheduler, ctx.input.now),
+        intervals = intervalDistribution(ctx.cards),
+        memoryGrowth = memoryGrowth(ctx.inScope, ctx.cfg, ctx.zone)
+    )
+
+    private fun cardsOf(ctx: Context): CardsData = CardsData(
+        cardCounts = cardCounts(ctx.cards),
+        overdueAge = overdueAge(ctx.cards, ctx.input.now),
+        paperCounts = if (ctx.scopePaperId == null) paperCounts(ctx.cards, ctx.input) else emptyList(),
+        leeches = leeches(ctx.inScope, ctx.cards)
+    )
 
     // --- today strip -------------------------------------------------------
 

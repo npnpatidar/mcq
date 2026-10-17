@@ -167,12 +167,21 @@ object StatsAggregator {
         windowEnd: Long,
         cfg: SchedulerConfig,
         zone: Long
-    ): List<ReplayReview> =
-        reviews
-            .filter { it.reviewedAt >= windowStart && it.reviewedAt < windowEnd }
-            .filter { (it.intervalBeforeDays ?: 0) >= 1 }     // Anki: prev interval >= 1 day
-            .groupBy { it.questionId to studyEpochDay(it.reviewedAt, cfg, zone) }
-            .mapNotNull { (_, rows) -> rows.minByOrNull { it.reviewedAt } }
+    ): List<ReplayReview> {
+        // Single pass: keep the earliest qualifying review per (card, study
+        // day). The old `groupBy {}` + `minByOrNull` built a list per card-day
+        // purely to read one element back out of it, and no caller depends on
+        // the order of the result, only on the set.
+        val earliest = HashMap<Pair<String, Long>, ReplayReview>()
+        reviews.forEach { review ->
+            if (review.reviewedAt < windowStart || review.reviewedAt >= windowEnd) return@forEach
+            if ((review.intervalBeforeDays ?: 0) < 1) return@forEach
+            val key = review.questionId to studyEpochDay(review.reviewedAt, cfg, zone)
+            val current = earliest[key]
+            if (current == null || review.reviewedAt < current.reviewedAt) earliest[key] = review
+        }
+        return earliest.values.toList()
+    }
 
     private fun retentionRow(
         label: String,
@@ -198,17 +207,62 @@ object StatsAggregator {
         cfg: SchedulerConfig,
         zone: Long
     ): List<RetentionRow> {
-        val day = DayBoundary.DAY_MS
-        data class Window(val label: String, val start: Long, val end: Long = tomorrowStart)
-        return listOf(
-            Window("today", todayStart),
-            Window("yesterday", todayStart - day, todayStart),
-            Window("last7", todayStart - 6 * day),
-            Window("last30", todayStart - 29 * day),
-            Window("last90", todayStart - 89 * day),
-            Window("last365", todayStart - 364 * day),
-            Window("all", Long.MIN_VALUE / 2)
-        ).map { w -> retentionRow(w.label, firstOfDayReviews(inScope, w.start, w.end, cfg, zone)) }
+        val todayDay = studyEpochDay(todayStart, cfg, zone)
+        data class Window(val label: String, val fromDay: Long, val toDay: Long)
+
+        // One pass for all seven rows. Each row used to re-scan and re-group the
+        // whole scope for its own window - seven full passes over a 1M-row log.
+        // The windows are study-day ranges, and a (card, day) contributes its
+        // earliest qualifying review to whichever window asks, so the pass
+        // builds that map once and each row slices it. Rows are day ranges
+        // because the window starts are day boundaries: yesterday ends where
+        // today begins, so day membership decides membership exactly.
+        val earliest = HashMap<Pair<String, Long>, ReplayReview>()
+        inScope.forEach { review ->
+            if (review.reviewedAt >= tomorrowStart) return@forEach
+            if ((review.intervalBeforeDays ?: 0) < 1) return@forEach
+            val key = review.questionId to studyEpochDay(review.reviewedAt, cfg, zone)
+            val current = earliest[key]
+            if (current == null || review.reviewedAt < current.reviewedAt) earliest[key] = review
+        }
+        val windows = listOf(
+            Window("today", todayDay, todayDay + 1),
+            Window("yesterday", todayDay - 1, todayDay),
+            Window("last7", todayDay - 6, todayDay + 1),
+            Window("last30", todayDay - 29, todayDay + 1),
+            Window("last90", todayDay - 89, todayDay + 1),
+            Window("last365", todayDay - 364, todayDay + 1),
+            Window("all", Long.MIN_VALUE, todayDay + 1)
+        )
+        val all = IntArray(windows.size)
+        val allPasses = IntArray(windows.size)
+        val young = IntArray(windows.size)
+        val youngPasses = IntArray(windows.size)
+        val mature = IntArray(windows.size)
+        val maturePasses = IntArray(windows.size)
+        earliest.forEach { (key, review) ->
+            val reviewedDay = key.second
+            windows.forEachIndexed { i, window ->
+                if (reviewedDay < window.fromDay || reviewedDay >= window.toDay) return@forEachIndexed
+                all[i]++
+                if (review.passed) {
+                    allPasses[i]++
+                    if (review.matureAtReview) maturePasses[i]++ else youngPasses[i]++
+                }
+                if (review.matureAtReview) mature[i]++ else young[i]++
+            }
+        }
+        return windows.mapIndexed { i, window ->
+            RetentionRow(
+                label = window.label,
+                allReviews = all[i],
+                allPasses = allPasses[i],
+                youngReviews = young[i],
+                youngPasses = youngPasses[i],
+                matureReviews = mature[i],
+                maturePasses = maturePasses[i]
+            )
+        }
     }
 
     // --- overview kpis -----------------------------------------------------

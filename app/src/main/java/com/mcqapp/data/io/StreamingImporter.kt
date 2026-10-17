@@ -85,6 +85,27 @@ class StreamingImporter(
         source: () -> InputStream,
         onProgress: ((Int) -> Unit)? = null
     ): ImportReport = withContext(Dispatchers.IO) {
+        importHere(source, onProgress)
+    }
+
+    /**
+     * [import] on the caller's dispatcher.
+     *
+     * A caller that already holds a database transaction must use this one:
+     * [import]'s hop to [Dispatchers.IO] would take the batch writes off the
+     * thread that owns the transaction, so they would land outside it instead
+     * of joining it. The parse still happens on its own thread — that thread
+     * only reads the file.
+     */
+    suspend fun importInTransaction(
+        source: () -> InputStream,
+        onProgress: ((Int) -> Unit)? = null
+    ): ImportReport = importHere(source, onProgress)
+
+    private suspend fun importHere(
+        source: () -> InputStream,
+        onProgress: ((Int) -> Unit)?
+    ): ImportReport {
         val session = Session(db, json, updateAnswersOnDuplicate, batchSize, overrides, onProgress)
         val queue = ArrayBlockingQueue<StreamEvent>(16)
         val tailRef = AtomicReference<LegacyParser.StreamedFile>()
@@ -137,7 +158,7 @@ class StreamingImporter(
         }
         errorRef.get()?.let { throw it }
         tailRef.get()?.let { session.finish(it) }
-        session.report()
+        return session.report()
     }
 
     private fun offer(queue: ArrayBlockingQueue<StreamEvent>, event: StreamEvent) {

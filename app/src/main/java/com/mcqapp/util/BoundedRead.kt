@@ -62,8 +62,38 @@ fun readBounded(stream: InputStream, limit: Long = MAX_IMPORT_BYTES): ByteArray 
     return out.toByteArray()
 }
 
-/** The first [bytes] of a stream, and whether anything followed them. */
-class Prefix(val bytes: ByteArray, val truncated: Boolean)
+/**
+ * [stream] with [readBounded]'s cap enforced as it is read, for a caller that
+ * consumes the bytes instead of keeping them: reading past [limit] fails the
+ * same way, and nothing is buffered on the way.
+ */
+fun boundedStream(stream: InputStream, limit: Long = MAX_IMPORT_BYTES): InputStream =
+    object : InputStream() {
+        private var total = 0L
+
+        override fun read(): Int {
+            val b = stream.read()
+            if (b >= 0) counted(1)
+            return b
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val read = stream.read(b, off, len)
+            if (read > 0) counted(read.toLong())
+            return read
+        }
+
+        override fun close() {
+            stream.close()
+        }
+
+        private fun counted(bytes: Long) {
+            total += bytes
+            if (total > limit) throw ImportTooLargeException(limit, total)
+        }
+    }
+
+/** The first [bytes] of a stream, and whether anything followed them. */class Prefix(val bytes: ByteArray, val truncated: Boolean)
 
 /**
  * Reads at most [limit] bytes without failing, reporting whether the stream

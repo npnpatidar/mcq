@@ -12,7 +12,7 @@ import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.util.Logger
-import com.mcqapp.util.readBounded
+import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -361,27 +361,27 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                // A backup legitimately holds inline data-URI images, so it
-                // gets the zip expansion cap rather than the 64 MB bank
-                // import limit — and a message that talks about backups.
-                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    app.contentResolver.openInputStream(uri)?.use { stream ->
-                        readBounded(stream, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES)
-                    } ?: throw IllegalStateException("Could not read the file.")
-                }
-                val backup = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                    McqBackupFormat.read(bytes)
-                }
                 val updateAnswers = repository.updateAnswersOnDuplicate().first()
-                val report = BackupRestorer(repository.db()).restore(
-                    backup,
-                    updateAnswersOnDuplicate = updateAnswers,
-                    applySettings = { repository.settingsRestore(it) },
-                    applyInProgress = { snapshot ->
-                        if (snapshot != null) repository.saveTestProgress(snapshot)
-                        else repository.clearTestProgress()
+                // The backup is restored as it is read: the zip, the bank and
+                // the study table are never held, so a backup bigger than the
+                // heap restores instead of dying. The zip expansion cap still
+                // applies, as does a cap on the archive's own bytes.
+                val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val stream = app.contentResolver.openInputStream(uri)
+                        ?.let { boundedStream(it, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES) }
+                        ?: throw IllegalStateException("Could not read the file.")
+                    stream.use { input ->
+                        BackupRestorer(repository.db()).restoreStreaming(
+                            input,
+                            updateAnswersOnDuplicate = updateAnswers,
+                            applySettings = { repository.settingsRestore(it) },
+                            applyInProgress = { snapshot ->
+                                if (snapshot != null) repository.saveTestProgress(snapshot)
+                                else repository.clearTestProgress()
+                            }
+                        )
                     }
-                )
+                }
                 refreshStorage()
                 Logger.i("SETTINGS", "Backup restored: $report")
                 onDone(report)

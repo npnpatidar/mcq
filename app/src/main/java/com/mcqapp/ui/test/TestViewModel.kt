@@ -3,6 +3,10 @@ package com.mcqapp.ui.test
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.McqRepository
@@ -12,16 +16,20 @@ import com.mcqapp.domain.AutoAdvance
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SessionReviewPagingSource
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.TimerWarnings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.random.Random
@@ -67,8 +75,7 @@ data class TestUiState(
     val dwellPausedByUser: Boolean = false,
     val timeWarning: String? = null,
     val bookmarked: Set<String> = emptySet(),
-    /** Rows for the pre-submit review sheet, built per batch on open. */
-    val reviewRows: List<AnswerReview.Row> = emptyList(),
+    /** Whether the pre-submit review sheet is open; its rows page separately. */
     val reviewOpen: Boolean = false
 ) {
     /** The question on screen. */
@@ -79,6 +86,7 @@ data class TestUiState(
     val questionCount: Int get() = refs.size
 }
 
+@kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TestViewModel(
     application: Application,
     private val paperId: String,
@@ -92,6 +100,15 @@ class TestViewModel(
 
     private val _state = MutableStateFlow(TestUiState())
     val state: StateFlow<TestUiState> = _state.asStateFlow()
+
+    /**
+     * The pre-submit review rows, paged over the session order. Rows resolve
+     * only as the sheet scrolls, so reviewing a 250k-question session never
+     * holds more than a page of question content.
+     */
+    private val reviewPaging =
+        MutableStateFlow<Flow<PagingData<AnswerReview.Row>>>(flowOf(PagingData.empty()))
+    val reviewPagingData: Flow<PagingData<AnswerReview.Row>> = reviewPaging.flatMapLatest { it }
 
     /**
      * Seconds spent on the question currently on screen, ticking once a
@@ -118,8 +135,8 @@ class TestViewModel(
     private var resumeOrder: List<QuestionRef> = emptyList()
 
     private companion object {
-        /** Questions resolved per batch while building the review sheet. */
-        const val REVIEW_BATCH = 500
+        /** Questions resolved per review-sheet page. */
+        const val REVIEW_PAGE = 100
     }
     private var startTimestamp: Long = 0
     private var lastNavMillis: Long = 0
@@ -478,34 +495,29 @@ class TestViewModel(
     fun previous() = goTo(_state.value.currentIndex - 1)
 
     /**
-     * Opens the pre-submit review sheet. The rows are built in question
-     * batches, never from one full-paper load: each batch's questions are
-     * dropped as soon as its rows exist.
+     * Opens the pre-submit review sheet. Rows page over the session order:
+     * each page resolves just its slice's questions, so a huge session never
+     * holds every row.
      */
     fun openAnswerReview() {
         if (_state.value.reviewOpen) return
-        _state.update { it.copy(reviewOpen = true, reviewRows = emptyList()) }
-        viewModelScope.launch {
-            val state = _state.value
-            val rows = mutableListOf<AnswerReview.Row>()
-            var index = 0
-            for (batch in state.refs.map { it.id }.chunked(REVIEW_BATCH)) {
-                val entities = repository.db().questionDao().getByIdsChunked(batch)
-                    .associateBy { it.id }
-                val ordered = batch.mapNotNull { entities[it] }
-                rows += AnswerReview.rows(
-                    questions = repository.questionsOf(ordered),
-                    selections = state.selections,
-                    flagged = state.flagged
-                ).map { it.copy(number = index + it.number) }
-                index += ordered.size
-                _state.update { it.copy(reviewRows = rows.toList()) }
+        val state = _state.value
+        val refs = state.refs
+        val selections = state.selections
+        val flagged = state.flagged
+        reviewPaging.value = Pager(
+            PagingConfig(pageSize = REVIEW_PAGE, initialLoadSize = REVIEW_PAGE, enablePlaceholders = false)
+        ) {
+            SessionReviewPagingSource(refs, selections, flagged, REVIEW_PAGE) { ids ->
+                repository.questionsOf(repository.db().questionDao().getByIdsChunked(ids))
             }
-        }
+        }.flow.cachedIn(viewModelScope)
+        _state.update { it.copy(reviewOpen = true) }
     }
 
     fun dismissAnswerReview() {
         _state.update { it.copy(reviewOpen = false) }
+        reviewPaging.value = flowOf(PagingData.empty())
     }
 
     fun submit() {

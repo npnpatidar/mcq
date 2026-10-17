@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -619,15 +621,19 @@ fun TestSessionScreen(
     }
 
     if (state.reviewOpen) {
-        // Rows come from the ViewModel: built per question batch so a huge
-        // paper never loads its whole content for the dialog.
-        val reviewRows = state.reviewRows
+        // Rows page over the session order: only the visible slice's question
+        // content is resolved, so a huge paper never builds every row.
+        val reviewItems = viewModel.reviewPagingData.collectAsLazyPagingItems()
         AlertDialog(
             onDismissRequest = { viewModel.dismissAnswerReview() },
             title = { Text(stringResource(R.string.your_answers)) },
             text = {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
-                    items(state.reviewRows, key = { it.questionId }) { row ->
+                    items(
+                        count = reviewItems.itemCount,
+                        key = reviewItems.itemKey { it.questionId }
+                    ) { index ->
+                        val row = reviewItems[index] ?: return@items
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

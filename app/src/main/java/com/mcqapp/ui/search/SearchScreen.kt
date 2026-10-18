@@ -39,6 +39,7 @@ import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.previewText
 import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -135,7 +136,11 @@ fun SearchScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    hit.question.text.ifBlank { "(blank text)" },
+                                    // previewText, not text: the row shows the
+                                    // visible text (what the search matched),
+                                    // while `text` is the stored shape, markup
+                                    // and all.
+                                    hit.question.previewText.ifBlank { "(blank text)" },
                                     style = MaterialTheme.typography.bodyMedium,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis

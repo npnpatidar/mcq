@@ -137,6 +137,17 @@ val List<ContentElement>.searchableText: String
         }
     }.joinToString(" ").replace(WHITESPACE_RUNS, " ").trim()
 
+/**
+ * The one-line preview a list row shows for a question: the visible text with
+ * markup gone — the same string search matched on and the browse list shows
+ * from its stored `searchText` column.
+ *
+ * [Question.text] is the wrong basis: it concatenates the text elements as
+ * stored, so an imported stem keeps its inline markup and a row rendered
+ * "&lt;b&gt;Bold&lt;/b&gt; answer" instead of "Bold answer".
+ */
+val Question.previewText: String get() = elements.searchableText
+
 private val WHITESPACE_RUNS = Regex("\\s+")
 
 /**

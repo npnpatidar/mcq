@@ -4,7 +4,10 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionSearch
+import com.mcqapp.domain.previewText
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class QuestionSearchTest {
@@ -270,5 +273,37 @@ class QuestionSearchTest {
     @Test
     fun aQueryWithNoUsableWordFallsBackToItself() {
         assertEquals(">>>", QuestionSearch.prefilterKey(" >>> "))
+    }
+
+    /**
+     * A result row shows the *visible* text. `text` is the stored shape — the
+     * concatenated text elements as imported — so rendering it put an imported
+     * stem's inline markup on the screen ("<b>Bold</b> opening").
+     */
+    @Test
+    fun aRowPreviewIsTheVisibleTextWithoutMarkup() {
+        val question = Question(
+            id = "q1",
+            categoryId = "c",
+            elements = listOf(
+                ContentElement.TextElement("<b>Bold</b> opening &amp; closing"),
+                ContentElement.TableElement(listOf(listOf("cell <i>one</i>", "cell two"))),
+                ContentElement.MathElement("<math><mi>v</mi><mo>=</mo><mi>u</mi></math>")
+            ),
+            options = listOf(QuestionOption("a", "Venus")),
+            correctOptionIds = setOf("a")
+        )
+
+        val preview = question.previewText
+        assertFalse("markup leaked into the preview: $preview", preview.contains("<"))
+        assertFalse("an entity leaked into the preview: $preview", preview.contains("&amp;"))
+        // Tags and entities become separators, then runs collapse to one space.
+        assertTrue(preview.startsWith("Bold opening closing"))
+        assertTrue("a table cell is part of the visible text", preview.contains("cell one cell two"))
+        assertTrue("a formula reads as it is typed", preview.contains("v=u"))
+
+        // The raw concatenation still keeps the stored shape: it is what
+        // duplicate detection and the explanation comparison compare.
+        assertTrue(question.text.contains("<b>Bold</b>"))
     }
 }

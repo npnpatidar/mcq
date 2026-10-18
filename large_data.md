@@ -20,13 +20,18 @@ accepted).
 
 ## Parked / accepted (deliberate)
 
-- **A JSON backup picked through "Import questions"** is still parsed
-  whole-file: `ImportViewModel.loadLargeJson` falls back to `LegacyParser.parse`
-  when the bounded preview sees a backup, because that preview cannot represent
-  papers 2+ or review progress. The feature is deliberate and tested
-  (`ImportBackupRestoreTest` pins the file the Import button writes), so it is
-  not deleted; streaming it needs a multi-paper streaming reader the parser does
-  not have. Settings → Restore backup is the streaming path.
+- **The app's own "Export all" JSON, re-imported through "Import questions",
+  is parsed whole-file once it is large.** `LibraryViewModel.exportAll` writes
+  every paper plus scheduling/bookmarks/attempts (`Exporter.exportAllTo`,
+  `withScheduling = true`); `isBackupFile` (`ImportViewModel.kt:218`) calls any
+  multi-paper or scheduled file a backup, and above the 4 MB stream threshold —
+  or picked from a Uri — it skips the bounded preview and falls back to a
+  whole-file `LegacyParser.parse`. This is **not** the Settings zip backup: the
+  picker classifies that (`PickedArchive.BACKUP`) and refuses it with
+  "Restore it from Settings → Restore backup" (`LibraryScreen.kt:254-258`).
+  The JSON round-trip is deliberate (`ImportBackupRestoreTest` pins the file
+  the Import button writes); streaming it needs a multi-paper streaming reader
+  the parser does not have.
 - **Search is `LIKE '%q%'`** — a full scan. Instant search is on hold by request
   (FTS5 paused).
 - **`observeBookmarks()` full id list** in `TestViewModel.kt:~170` and

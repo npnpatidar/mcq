@@ -3,11 +3,14 @@ package com.mcqapp
 import androidx.compose.ui.graphics.Color
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
+import com.mcqapp.util.ContentHeightCache
 import com.mcqapp.util.MATHJAX_ASSET_URL
 import com.mcqapp.util.mixedContentHtml
 import com.mcqapp.util.stripMathAttributes
 import com.mcqapp.util.toCssRgba
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -47,6 +50,37 @@ class MathHtmlTest {
         val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")
         // Any remote script would reintroduce the offline failure.
         assertTrue(html.lines().none { it.contains("<script src=\"http") })
+    }
+
+    /**
+     * The page reports the height it settles at, not the height it has while
+     * MathJax is still replacing the MathML with SVG. A wrap-content WebView
+     * otherwise measures twice when a question appears, which is the "table
+     * and formula being built on screen" jump.
+     */
+    @Test
+    fun mixedPageReportsItsSettledHeight() {
+        val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")
+        assertTrue(html.contains(CONTENT_HEIGHT_BRIDGE))
+        // Waiting on MathJax's own promise is what makes the report final:
+        // the raw MathML and the typeset SVG do not have the same height.
+        assertTrue(html.contains("startup.promise"))
+        assertTrue(html.contains("typesetPromise"))
+        assertTrue(html.contains("body.scrollHeight"))
+        // A width change (rotation, font scale) reflows the page.
+        assertTrue(html.contains("addEventListener('resize'"))
+    }
+
+    @Test
+    fun settledHeightsAreCachedPerPage() {
+        val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")
+        ContentHeightCache.put(html, 321)
+        assertEquals(321, ContentHeightCache.get(html))
+        // Bounded: a long browsing session must not retain one HTML document
+        // per question.
+        for (i in 1..100) ContentHeightCache.put("page-$i", i)
+        assertNull(ContentHeightCache.get(html))
+        assertEquals(100, ContentHeightCache.get("page-100"))
     }
 
     @Test

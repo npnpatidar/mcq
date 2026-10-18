@@ -35,7 +35,7 @@ object ZipPaperWriter {
         fun ref(src: String?): String? {
             if (src == null) return null
             val img = parseDataUri(src) ?: return src
-            return uriToPath.getOrPut(src) {
+            return uriToPath.getOrPut(mediaKey(src)) {
                 counter++
                 val path = "images/img%03d.%s".format(counter, imageExtension(img.mimeType))
                 spool.add(path, img.bytes)

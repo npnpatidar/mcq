@@ -2,6 +2,7 @@ package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.MediaSpool
 import com.mcqapp.data.export.imageExtension
+import com.mcqapp.data.export.mediaKey
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.renderInlineHtml
@@ -31,7 +32,7 @@ class AnkiMediaPool : Closeable {
     /** The spooled media, numeric zip name -> temp file. */
     private val spool = MediaSpool()
 
-    /** data URI -> filename already assigned (dedupe). */
+    /** data URI digest -> filename already assigned (dedupe). */
     private val assigned = HashMap<String, String>()
 
     /** numeric zip name -> filename (the Anki media manifest). */
@@ -95,7 +96,7 @@ class AnkiMediaPool : Closeable {
         if (src.isNullOrBlank()) return ""
         val dataUri = parseDataUri(src)
         if (dataUri != null) {
-            val filename = assigned.getOrPut(src) {
+            val filename = assigned.getOrPut(mediaKey(src)) {
                 val name = safeName(spool.size, imageExtension(dataUri.mimeType))
                 mediaMap[spool.size.toString()] = name
                 spool.add(spool.size.toString(), dataUri.bytes)

@@ -792,7 +792,7 @@ object DocxPaperWriter {
                         "convert it to PNG for compatibility."
                 )
             }
-            val rid = uriToRid.getOrPut(src) {
+            val rid = uriToRid.getOrPut(mediaKey(src)) {
                 mediaCounter++
                 val target = "media/image$mediaCounter.${imageExtension(image.mimeType)}"
                 // Spooled, not kept: the body registers every picture the paper

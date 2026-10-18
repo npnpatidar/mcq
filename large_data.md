@@ -14,29 +14,7 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-### 1. Rich exports hold every image's data URI — `.apkg`, `.zip`, `.docx`
-The bytes stream: media is spooled to temp files by `MediaSpool`, one image
-decoded at a time. But each writer also keeps a **dedupe map keyed by the
-image's full data URI** (the base64 string):
-- `AnkiMediaPool.assigned` (`AnkiMediaPool.kt:~35`, `:~98`) — `.apkg`
-- `ZipPaperWriter.uriToPath` (`ZipPaperWriter.kt:~32`) — `.zip`
-- `DocxPaperWriter.uriToRid` (`DocxPaperWriter.kt:~772`) — `.docx`
-
-So a media-heavy paper holds every distinct image in memory again, as a String
-key — the very thing the spool was meant to avoid. A 1M-question paper with an
-image per question also builds O(media) manifest/spool maps (a temp file per
-image, plus ~100 MB+ of small strings), and each note batch of 500 holds its
-questions' image data URIs in the note fields (a bounded but large spike,
-`AnkiPackageWriter.kt:~127` / `AnkiMcqPayload.kt:~35`). Text-only papers export
-fine; media-heavy ones do not.
-
-Fix shape: key the dedupe on a compact digest of the data URI (or of the
-decoded bytes) instead of the URI itself, so the map is O(media) × 32 bytes.
-The manifest and spool-name maps are inherent to the format (an archive's media
-must all be named before the body referencing it is written); page or shrink
-them only if a million media files must be supported.
-
-### 2. Stats Workload / Memory / Cards tabs — whole card library + whole review log
+### 1. Stats Workload / Memory / Cards tabs — whole card library + whole review log
 `StatsViewModel.kt:~232` calls `inputOf(loadedLibrary(), loadedReviews(), now)`;
 both are cached for the ViewModel's life.
 - `StatsStore.loadCards()` (`StatsStore.kt:~159`) pages every `CardSnapshot`
@@ -50,20 +28,20 @@ At a million studied cards this is the largest remaining in-app construct.
 Fix shape: page the log/cards through the aggregators, or compute the three
 sections as SQL aggregates the way retention does.
 
-### 3. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
+### 2. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
 `PaperStore.kt:~121` and `:~139` call `getIdsByPaper(paperId)`, returning every
 question id before deleting (downstream `removeAllChunked` /
 `countForQuestionsChunked` chunk it, but the id list itself is the peak).
 
 Fix shape: chunk the id read too, or delete/count by `paperId` in SQL.
 
-### 4. `FsrsTuner.optimize` — whole review log
+### 3. `FsrsTuner.optimize` — whole review log
 `FsrsTuner.kt:~44`: `db.reviewLogDao().getAll()` then `buildFsrsTrainingCards`
 over it. Tuning on a million reviews holds the log.
 
 Fix shape: page the log into the fit.
 
-### 5. The legacy in-memory `Importer` reachable outside `.apkg`
+### 4. The legacy in-memory `Importer` reachable outside `.apkg`
 - `ImportViewModel.kt:~798` — the non-preview / edited-file path (a large bank
   takes the streamed path at `:~742`).
 - `LibraryViewModel.kt:~386` — "Load sample data" (tiny asset; harmless).
@@ -95,6 +73,13 @@ non-preview caller streams too.
 
 ## Fixed
 
+- **Rich exports held every image's data URI as a map key** — the writers
+  dedupe media so one picture is stored once, but keyed that map on the full data
+  URI, putting every image back in memory as a base64 string on top of the
+  spool. `AnkiMediaPool.assigned` (`.apkg`), `ZipPaperWriter.uriToPath` (`.zip`)
+  and `DocxPaperWriter.uriToRid` (`.docx`) now key on `mediaKey` — the URI's
+  SHA-256, 64 hex chars — so the map is O(media) × 32 bytes and the decision is
+  the same one it made before.
 - **`.apkg` import read the whole package** — the picker read the file to
   bytes and `AnkiPackageReader.read` expanded the archive into a
   `Map<String, ByteArray>`, inlined every picture into one DTO for the whole

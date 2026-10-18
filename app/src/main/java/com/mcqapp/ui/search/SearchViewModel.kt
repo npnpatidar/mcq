@@ -3,26 +3,44 @@ package com.mcqapp.ui.search
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.QuestionSearch
-import com.mcqapp.util.Logger
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 data class SearchUiState(
     val query: String = "",
-    val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL,
-    val searching: Boolean = false,
-    val searched: Boolean = false,
-    val hits: List<QuestionSearch.Hit> = emptyList()
+    val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL
 )
 
+private data class SearchRequest(val query: String, val scope: QuestionSearch.Scope)
+
+/**
+ * Cross-paper search, paged. The old path asked the repository for every hit
+ * at once, which for a one-letter query over a 250k-question bank
+ * materialised the entire match set (element JSON and base64 images included)
+ * before showing a single row. Here the first page paints after the 300 ms
+ * debounce and the rest streams in as the list is scrolled.
+ */
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -30,37 +48,46 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
 
-    private var searchJob: Job? = null
+    private val committed: Flow<SearchRequest> = combine(
+        _state.map { it.query }.debounce(SEARCH_DEBOUNCE_MS),
+        _state.map { it.scope }
+    ) { query, scope -> SearchRequest(query.trim(), scope) }
+        .distinctUntilChanged()
+
+    val debouncing: StateFlow<Boolean> = combine(
+        _state.map { it.query.trim() },
+        committed
+    ) { raw, request -> raw.isNotBlank() && raw != request.query }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val pagingData: Flow<PagingData<QuestionSearch.Hit>> = committed
+        .flatMapLatest { request ->
+            if (request.query.isBlank()) {
+                flowOf(PagingData.empty<QuestionSearch.Hit>())
+            } else {
+                Pager(
+                    PagingConfig(
+                        pageSize = SEARCH_PAGE,
+                        initialLoadSize = SEARCH_PAGE,
+                        enablePlaceholders = false
+                    )
+                ) {
+                    repository.searchPagingSource(request.query, request.scope)
+                }.flow
+            }
+        }
+        .cachedIn(viewModelScope)
 
     fun updateQuery(query: String) {
-        _state.update { it.copy(query = query, searched = false) }
-        rerun()
+        _state.update { it.copy(query = query) }
     }
 
     fun updateScope(scope: QuestionSearch.Scope) {
-        _state.update { it.copy(scope = scope, searched = false) }
-        rerun()
+        _state.update { it.copy(scope = scope) }
     }
 
-    private fun rerun() {
-        val query = _state.value.query
-        val scope = _state.value.scope
-        searchJob?.cancel()
-        if (query.isBlank()) {
-            _state.update { it.copy(searching = false, hits = emptyList()) }
-            return
-        }
-        searchJob = viewModelScope.launch {
-            delay(300)
-            _state.update { it.copy(searching = true) }
-            try {
-                val hits = repository.searchGlobal(query, scope)
-                Logger.d("SEARCHVM", "search('$query', $scope) -> ${hits.size} hits")
-                _state.update { it.copy(searching = false, searched = true, hits = hits) }
-            } catch (e: Exception) {
-                Logger.e("SEARCHVM", "search failed", e)
-                _state.update { it.copy(searching = false, searched = true) }
-            }
-        }
+    companion object {
+        private const val SEARCH_DEBOUNCE_MS = 300L
+        private const val SEARCH_PAGE = 30
     }
 }

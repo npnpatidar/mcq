@@ -8,7 +8,10 @@ import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -73,6 +76,78 @@ class RepositoryTest {
         assertTrue(repository.isBookmarked("q1"))
         repository.toggleBookmark("q1")
         assertFalse(repository.isBookmarked("q1"))
+    }
+
+    @Test
+    fun streamedSaveReportsProgressUpToTheTotal() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        val ids = (1..5).map { "q$it" }
+        ids.forEach { repository.saveQuestion(question(it, setOf("$it-a"))) }
+        val order = repository.getSessionOrderForPaper("p1")
+        assertEquals(ids, order.idsInOrder())
+        val progress = mutableListOf<Pair<Int, Int>>()
+        repository.saveAttemptStreamed(
+            paperId = "p1",
+            paperTitle = "Paper",
+            order = order,
+            selections = ids.associateWith { setOf("$it-a") },
+            negativeMarking = 0.0,
+            durationSeconds = 10,
+            finishedAt = System.currentTimeMillis(),
+            onProgress = { stored, total -> progress += stored to total }
+        )
+        // One batch here (BATCH = 500): a single report, already at the total.
+        assertEquals(listOf(ids.size to ids.size), progress)
+    }
+
+    /**
+     * The streamed save used to be handed the session's whole id list and to
+     * resolve every question twice — once to find the categories whose titles
+     * its result rows carry, once to build them. It now walks the order in
+     * batches and looks a category's title up when a batch first meets it, so
+     * this fixture puts a second category past the batch boundary: the ids come
+     * back in session order, and every batch's titles resolve.
+     */
+    @Test
+    fun streamedSaveWalksTheOrderAcrossBatchesAndResolvesTitlesLate() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat One")
+        // A second ensurePaperAndCategory would REPLACE the paper row and
+        // cascade-delete c1 (categories.paperId FK), so insert c2 directly, and
+        // with an explicit sortOrder so the session order is c1 then c2.
+        db.categoryDao().upsert(
+            CategoryEntity(id = "c2", paperId = "p1", title = "Cat Two", sortOrder = 1)
+        )
+        // Inserted c2-first so the session order is not the insertion order.
+        val second = (1..3).map { "b$it" }
+        val first = (1..500).map { "a$it" }
+        second.forEach { repository.saveQuestion(question(it, setOf("$it-a"), categoryId = "c2")) }
+        first.forEach { repository.saveQuestion(question(it, setOf("$it-a"), categoryId = "c1")) }
+        val order = repository.getSessionOrderForPaper("p1")
+        assertEquals(503, order.size)
+        val expected = order.idsInOrder()
+        assertTrue(
+            "the second batch has to meet the second category",
+            expected.drop(500).any { it.startsWith("b") }
+        )
+        val attemptId = repository.saveAttemptStreamed(
+            paperId = "p1",
+            paperTitle = "Paper",
+            order = order,
+            selections = expected.associateWith { setOf("${it}-a") },
+            negativeMarking = 0.0,
+            durationSeconds = 60,
+            finishedAt = System.currentTimeMillis()
+        )
+        val attempt = repository.getAttempt(attemptId)!!
+        assertEquals(503, attempt.totalQuestions)
+        assertEquals(503, attempt.correctCount)
+        val results = repository.getAttemptResults(attemptId)
+        assertEquals("results follow the session order", expected, results.map { it.questionId })
+        assertEquals(
+            "every batch's category title resolves, however late it is met",
+            expected.map { if (it.startsWith("a")) "Cat One" else "Cat Two" },
+            results.map { it.categoryTitle }
+        )
     }
 
     @Test
@@ -874,6 +949,16 @@ class RepositoryTest {
     }
 
     @Test
+    fun renamingACategoryKeepsItsQuestions() = runBlocking {
+        nestedPaper()
+        val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
+        assertTrue(repository.renameCategory(xId, "Ex"))
+        assertEquals("Ex", db.categoryDao().getById(xId)!!.title)
+        // A REPLACE-based upsert here would cascade-delete og-qx.
+        assertEquals(listOf("og-qx", "og-qy"), repository.getQuestionsForPaper("og").map { it.id })
+    }
+
+    @Test
     fun reparentRefusesCyclesAndRenamesWork() = runBlocking {
         nestedPaper()
         val xId = db.categoryDao().getByPaper("og").first { it.title == "X" }.id
@@ -961,5 +1046,61 @@ class RepositoryTest {
         val emission = db.questionDao().observeById("q1").first()
         assertEquals("q1", emission?.id)
         assertEquals(listOf("q1-a"), emission?.let { db.correctAnswerDao().getCorrectIds(it.id) })
+    }
+
+    /**
+     * Browse and the library used to watch a per-category `COUNT(*)` aggregate
+     * purely as a write trigger, which made every question write re-scan a
+     * million rows. They watch a one-row probe instead, and Room's invalidation
+     * is per table, so the refresh must be identical: this pins that a write
+     * still re-emits the list.
+     */
+    @Test
+    fun aQuestionWriteReemitsTheBrowseList() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+
+        val sizes = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val job = launch(Dispatchers.IO) {
+            repository.observeQuestionRefsForPaper("p1").collect { sizes += it.size }
+        }
+        try {
+            assertTrue("the first emission never arrived", awaitListSize(sizes, 1))
+            repository.saveQuestion(question("q2", setOf("q2-a")))
+            assertTrue(
+                "a question write must refresh the browse list",
+                awaitListSize(sizes, 2)
+            )
+        } finally {
+            job.cancel()
+        }
+    }
+
+    private suspend fun awaitListSize(sizes: List<Int>, expected: Int): Boolean {
+        repeat(400) {
+            if (sizes.contains(expected)) return true
+            delay(25)
+        }
+        return sizes.contains(expected)
+    }
+
+    /**
+     * A screen reads one paper's tree, so it counts that paper's categories
+     * only. The bank-wide `GROUP BY` this replaces scanned a million index
+     * entries (~90 ms warm) for the same answer; the filtered form is
+     * proportional to the paper.
+     */
+    @Test
+    fun aPaperReadCountsOnlyItsOwnQuestions() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
+        repository.saveQuestion(question("q3", setOf("q3-a"), categoryId = "c2"))
+
+        val paper = repository.getPaper("p1")!!
+        assertEquals(1, paper.totalQuestions)
+        assertEquals(1, paper.categories.single().questionCount)
+        assertEquals("the other paper keeps its own count", 2, repository.getPaper("p2")!!.totalQuestions)
     }
 }

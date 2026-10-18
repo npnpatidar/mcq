@@ -143,7 +143,11 @@ class StudyAndSelectionUiTest {
         )
         compose.setContent { McqNavHost(repository = repository) }
 
-        compose.onNodeWithText("Test", substring = false).performClick()
+        // By tag, not by the word: every paper card has a Test button, and these
+        // tests share the app database with the other instrumented classes, so
+        // matching on "Test" alone finds however many papers happen to be left
+        // on the library screen — which made this tap order-dependent.
+        compose.onNodeWithTag("paper-test-ui-test-clock").performClick()
         waitFor("Question 1 of")
 
         compose.onNodeWithTag("test-question-clock").performClick()

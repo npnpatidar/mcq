@@ -6,7 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.anki.AnkiPackageException
-import com.mcqapp.data.anki.AnkiPackageReader
+import com.mcqapp.data.io.AnkiApkgImporter
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.Importer
@@ -14,7 +14,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
-import kotlinx.coroutines.Dispatchers
+import java.io.InputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -126,8 +125,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
             try {
-                val json = Exporter(repository.db()).exportAll()
-                writeUri(uri, json)
+                // Streamed: the whole bank never lives in memory as a String.
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                    Exporter(repository.db()).exportAllTo(
+                        java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
+                    )
+                } ?: throw IllegalStateException("Could not open output stream")
                 _exportError.value = null
             } catch (e: Exception) {
                 _exportError.value = "Export failed: ${e.message}"
@@ -142,10 +145,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun exportPaperAs(uri: Uri, paperId: String, format: com.mcqapp.data.export.ExportFormat) {
         viewModelScope.launch {
             try {
-                val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportPaper(paperId, format, twoColumnPdf = repository.pdfTwoColumn().first())
-                Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
-                writeUriBytes(uri, result.bytes)
+                val file = writeExport(uri) { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportPaper(paperId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Exported ${file.fileName}")
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Export failed", e)
@@ -162,10 +166,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     ) {
         viewModelScope.launch {
             try {
-                val result = com.mcqapp.data.export.PaperExporter(repository.db())
-                    .exportCategory(paperId, categoryId, format, twoColumnPdf = repository.pdfTwoColumn().first())
-                Logger.i("LIBVM", "Exported ${result.fileName} (${result.bytes.size} bytes)")
-                writeUriBytes(uri, result.bytes)
+                val file = writeExport(uri) { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportCategory(paperId, categoryId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Exported ${file.fileName}")
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Export failed", e)
@@ -174,11 +179,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun writeUriBytes(uri: Uri, bytes: ByteArray) {
-        getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
-            it.write(bytes)
-        } ?: throw IllegalStateException("Could not open output stream")
-    }
+    /**
+     * Streams one export straight into [uri]: the exporter renders into the
+     * resolver's stream, so the finished file is never held in memory here.
+     */
+    private suspend fun writeExport(
+        uri: Uri,
+        export: suspend (java.io.OutputStream) -> com.mcqapp.data.export.ExportFile
+    ): com.mcqapp.data.export.ExportFile =
+        (
+            getApplication<Application>().contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("Could not open output stream")
+            ).use { export(it) }
 
     private suspend fun writeUri(uri: Uri, text: String) {
         getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
@@ -188,18 +200,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     fun dismissError() {
         _exportError.value = null
-    }
-
-    fun duplicatePaper(paperId: String) {
-        viewModelScope.launch {
-            try {
-                repository.duplicatePaper(paperId)
-                Logger.i("LIBVM", "Duplicated paper $paperId")
-            } catch (e: Exception) {
-                Logger.e("LIBVM", "Duplicate failed", e)
-                _exportError.value = "Duplicate failed: ${e.message}"
-            }
-        }
     }
 
     fun deletePaper(paperId: String) {
@@ -319,40 +319,32 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Imports an Anki `.apkg` straight into the database. Packages are read
-     * whole — a deck can hold thousands of notes — so this skips the Import
-     * screen's single-paper preview, which only makes sense for one hand-written
-     * JSON file. Merge decisions are the same ones that path makes: papers match
+     * Imports an Anki `.apkg` straight into the database. The package is read
+     * from [source] as it streams — neither the archive nor the bank is held
+     * whole — so a deck of any size within the archive caps imports the same
+     * way. Merge decisions are the same ones the JSON path makes: papers match
      * by id then title, questions by content hash.
      */
     fun importAnkiPackage(uri: Uri) {
         importAnkiPackage(uri.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg") {
             getApplication<Application>().contentResolver.openInputStream(uri)
-                ?.use { it.readBytes() }
         }
     }
 
     /**
-     * Imports a package whose bytes were already read while sniffing the
-     * picked file's format, so the archive is not fetched twice. [read]
-     * supplies the bytes lazily and may run on any dispatcher.
+     * Imports a package read from [source], which is opened once (on the IO
+     * dispatcher) and must return a fresh stream over the file.
      */
-    fun importAnkiPackage(title: String, read: suspend () -> ByteArray?) {
+    fun importAnkiPackage(title: String, source: () -> InputStream?) {
         viewModelScope.launch {
             try {
                 Logger.i("LIBVM", "Reading Anki package '$title'")
-                val bytes = withContext(Dispatchers.IO) { read() }
-                    ?: throw AnkiPackageException("Could not open $title.")
-
-                val read = withContext(Dispatchers.IO) { AnkiPackageReader.read(bytes) }
-                Logger.i(
-                    "LIBVM",
-                    "Package '${title}': ${read.deckCount} decks, ${read.noteCount} notes, " +
-                        "${read.recallCount} recall, ${read.file.papers.size} papers"
-                )
-
-                val report = Importer(repository.db(), repository.updateAnswersOnDuplicate().first())
-                    .import(read.file, read.scheduling)
+                val report = AnkiApkgImporter(
+                    repository.db(),
+                    repository.updateAnswersOnDuplicate().first()
+                ).import({
+                    source() ?: throw AnkiPackageException("Could not open $title.")
+                })
                 Logger.i(
                     "LIBVM",
                     "Anki import done: ${report.newPapers} new, ${report.updatedPapers} updated papers, " +

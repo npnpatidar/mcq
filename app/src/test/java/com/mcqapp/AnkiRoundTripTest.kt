@@ -1,6 +1,5 @@
 package com.mcqapp
 
-import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CategoryDto
@@ -57,7 +56,7 @@ class AnkiRoundTripTest {
             )
         )
 
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val read = AnkiPackageReader.read(apkg)
 
         assertEquals(0, read.recallCount)
@@ -114,7 +113,7 @@ class AnkiRoundTripTest {
             )
         )
 
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper), passages = passages)
+        val apkg = apkgOf(paper, passages = passages)
         val read = AnkiPackageReader.read(apkg)
 
         // The reader rebuilds the passage block from the payload blob, so the

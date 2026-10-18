@@ -1,7 +1,6 @@
 package com.mcqapp
 
 import android.database.sqlite.SQLiteDatabase
-import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiMediaPool
 import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CardScheduleDto
@@ -122,14 +121,12 @@ class AnkiPackageWriterTest {
     @Test
     fun reviewedQuestionsAreWrittenAsReviewCards() {
         val paper = samplePaper()
-        val questions = AnkiDtoMapper.flattenQuestions(paper)
-        val studied = questions.first()
+        val studiedId = questionIdsOf(paper).first()
         val now = System.currentTimeMillis()
-        val apkg = AnkiPackageWriter.write(
+        val apkg = apkgOf(
             paper,
-            questions,
             mapOf(
-                studied.id to CardScheduleDto(
+                studiedId to CardScheduleDto(
                     ease = 2.6,
                     intervalDays = 5,
                     dueAt = now + 5 * 86_400_000L,
@@ -169,7 +166,7 @@ class AnkiPackageWriterTest {
     @Test
     fun writesLegacyCollectionAtZipRoot() {
         val paper = samplePaper()
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val entries = entries(apkg)
 
         assertTrue("collection.anki2 must be present", "collection.anki2" in entries)
@@ -181,7 +178,7 @@ class AnkiPackageWriterTest {
     @Test
     fun collectionRowUsesSchemaElevenAndValidConfigBlobs() {
         val paper = samplePaper()
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             db.rawQuery("select ver, conf, models, decks, dconf, tags from col", null).use { c ->
@@ -226,7 +223,7 @@ class AnkiPackageWriterTest {
     @Test
     fun everyQuestionBecomesANoteWithFrontAndBackFields() {
         val paper = samplePaper()
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             db.rawQuery("select guid, tags, flds, sfld, csum from notes", null).use { n ->
@@ -277,7 +274,7 @@ class AnkiPackageWriterTest {
                 )
             )
         )
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             db.rawQuery("select flds from notes", null).use { n ->
@@ -296,9 +293,8 @@ class AnkiPackageWriterTest {
     @Test
     fun twoExportsNeverShareAnIdSequence() {
         val paper = samplePaper()
-        val questions = AnkiDtoMapper.flattenQuestions(paper)
-        val first = AnkiPackageWriter.write(paper, questions)
-        val second = AnkiPackageWriter.write(paper, questions)
+        val first = apkgOf(paper)
+        val second = apkgOf(paper)
         val firstIds = noteIds(first)
         val secondIds = noteIds(second)
         assertTrue(
@@ -331,7 +327,7 @@ class AnkiPackageWriterTest {
             question("q1", "Pick two", correct = listOf("a", "b")),
             question("q2", "Pick one", correct = listOf("b"))
         )
-        val apkg = AnkiPackageWriter.write(paper, questions)
+        val apkg = apkgOfQuestions(paper, questions)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             db.rawQuery("select flds from notes order by id", null).use { n ->
@@ -374,7 +370,7 @@ class AnkiPackageWriterTest {
             question("q2", "Second", image = png1x1),
             question("q3", "Explained", explanation = "why", explanationImage = png1x1)
         )
-        val apkg = AnkiPackageWriter.write(paper, questions)
+        val apkg = apkgOfQuestions(paper, questions)
         val entries = entries(apkg)
 
         // A single decoded image shared by three fields is stored once.
@@ -404,7 +400,7 @@ class AnkiPackageWriterTest {
     @Test
     fun aCardsDeckMatchesItsCategoriesSubdeck() {
         val paper = samplePaper()
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             val names = deckNames(db)
@@ -422,7 +418,7 @@ class AnkiPackageWriterTest {
     @Test
     fun anUncategorisedQuestionGoesInThePaperDeck() {
         val paper = PaperDto(id = "p", title = "Flat", questions = listOf(QuestionDto(id = "q1", text = "One")))
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             val names = deckNames(db)
@@ -483,7 +479,7 @@ class AnkiPackageWriterTest {
                 CategoryDto(id = "c1", title = "Cat", questions = listOf(question))
             )
         )
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             db.rawQuery("select flds from notes", null).use { n ->
@@ -506,7 +502,7 @@ class AnkiPackageWriterTest {
     }
 
     @Test
-    fun flattensCategoriesDepthFirstThenTopLevelQuestions() {
+    fun notesCategoriesInDocumentOrderThenTopLevelQuestions() {
         val paper = PaperDto(
             id = "p",
             title = "T",
@@ -526,7 +522,7 @@ class AnkiPackageWriterTest {
             ),
             questions = listOf(QuestionDto(id = "q3", text = "three"))
         )
-        val ids = AnkiDtoMapper.flattenQuestions(paper).map { it.id }
+        val ids = questionIdsOf(paper)
         assertEquals(listOf("q1", "q2", "q3"), ids)
     }
 

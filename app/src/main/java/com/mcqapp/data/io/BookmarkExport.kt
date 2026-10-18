@@ -11,6 +11,9 @@ object BookmarkExport {
 
     const val PAPER_TITLE = "Bookmarked Questions"
 
+    /** The exported paper's id; the streaming walk and the DTO builder share it. */
+    const val PAPER_ID = "paper-bookmarks"
+
     fun paperDto(
         questions: List<Question>,
         paperTitleByCategoryId: Map<String, String>
@@ -24,7 +27,7 @@ object BookmarkExport {
             )
         }
         return PaperDto(
-            id = "paper-bookmarks",
+            id = PAPER_ID,
             title = PAPER_TITLE,
             categories = categories
         )

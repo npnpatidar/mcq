@@ -18,10 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.CardCountsData
 import com.mcqapp.domain.stats.OverdueAgeData
 import com.mcqapp.domain.stats.PaperCardCounts
-import com.mcqapp.domain.stats.StatsBundle
 import com.mcqapp.domain.stats.StackedPoint
 import com.mcqapp.domain.stats.WeakCard
 import com.mcqapp.ui.stats.WeakCardRow
@@ -42,7 +42,7 @@ import java.util.Locale
  */
 @Composable
 internal fun CardsSection(
-    bundle: StatsBundle,
+    bundle: CardsData,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit
 ) {
@@ -51,13 +51,13 @@ internal fun CardsSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { CardCountsCard(bundle.cardCounts) }
-        item { OverdueAgeCard(bundle.overdueAge) }
+        item(contentType = "card-counts") { CardCountsCard(bundle.cardCounts) }
+        item(contentType = "overdue-age") { OverdueAgeCard(bundle.overdueAge) }
         if (bundle.paperCounts.isNotEmpty()) {
-            item { PaperCountsCard(bundle.paperCounts) }
+            item(contentType = "paper-counts") { PaperCountsCard(bundle.paperCounts) }
         }
         if (bundle.leeches.isNotEmpty()) {
-            item { LeechesCard(bundle, questionText, onOpenCard) }
+            item(contentType = "leeches") { LeechesCard(bundle, questionText, onOpenCard) }
         }
     }
 }
@@ -229,7 +229,7 @@ private fun PaperCountRow(paper: PaperCardCounts, maxTotal: Int) {
 
 @Composable
 private fun LeechesCard(
-    bundle: StatsBundle,
+    bundle: CardsData,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit
 ) {

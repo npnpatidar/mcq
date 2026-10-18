@@ -2,13 +2,26 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.countUngradedForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SessionOrder
+import com.mcqapp.domain.TestAnswer
+import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.MemoryData
+import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ReplayReview
+import com.mcqapp.domain.stats.RetentionData
+import com.mcqapp.domain.stats.StatsAggregator
+import com.mcqapp.domain.stats.WorkloadData
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -16,6 +29,7 @@ import kotlinx.coroutines.flow.Flow
  * ViewModel (and the JVM tests) already programs against stable:
  *
  * - [SettingsStore] — DataStore preferences, scheduler options, resume snapshot
+ * - [TestProgressStore] — the resume snapshot's answers, one row per answer
  * - [QuestionContentMapper] — entity <-> domain mapping and the content hash
  * - [QuestionStore] — question CRUD and bulk operations
  * - [PaperStore] — papers, categories, the library tree, paper deletion
@@ -32,11 +46,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
     private val passageStore = PassageStore(db, mapper, questionStore)
-    private val paperStore = PaperStore(db, questionStore, settings)
+    private val paperStore = PaperStore(db, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings)
+    private val testProgress = TestProgressStore(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -103,19 +118,97 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     // --- statistics ---
 
     /**
-     * The whole statistics input in one read: the replayed review log, every
-     * card's schedule and the grouping titles. The stats ViewModel slices this
-     * in memory per range and paper scope.
+     * Everything the list-based tabs need except the log: each card's schedule,
+     * the paper titles and the scheduler config. The stats ViewModel slices
+     * this in memory per range and paper scope.
      */
-    internal suspend fun statsRawData(): StatsStore.RawData = statsStore.load()
+    internal suspend fun statsLibrary(): StatsStore.Library = statsStore.loadLibrary()
+
+    /** The replayed review log, for the tabs that still slice it in memory. */
+    internal suspend fun statsReviews(): List<ReplayReview> = statsStore.loadReviews()
+
+    /**
+     * The retention tab alone, aggregated while the log streams past it. Unlike
+     * [statsReviews] this never holds the log.
+     */
+    internal suspend fun statsRetention(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): RetentionData = statsStore.loadRetention(scopePaperId, range, now)
+
+    /**
+     * The overview tab alone, aggregated while the log and the cards stream
+     * past it. [now] is the build's clock, so every tab on the page agrees on
+     * what "today" is.
+     */
+    internal suspend fun statsOverview(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): OverviewData = statsStore.loadOverview(scopePaperId, range, now)
+
+    /**
+     * The workload tab alone, streamed. Its per-question response-time roll-ups
+     * are the replay's own working set; the log and the cards are never listed.
+     */
+    internal suspend fun statsWorkload(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): WorkloadData = statsStore.loadWorkload(scopePaperId, range, now)
+
+    /**
+     * The memory tab alone, streamed: one replay feeds both the overview
+     * accumulator's KPIs and the memory accumulator's curves and histograms.
+     */
+    internal suspend fun statsMemory(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): MemoryData = statsStore.loadMemory(scopePaperId, range, now)
+
+    /** The cards tab alone, streamed: the cards first, then the log for leeches. */
+    internal suspend fun statsCards(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): CardsData = statsStore.loadCards(scopePaperId, range, now)
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =
         statsStore.reviewHistory(questionId)
 
-    suspend fun saveTestProgress(json: String) = settings.saveTestProgress(json)
-    suspend fun loadTestProgress(): String? = settings.loadTestProgress()
-    suspend fun clearTestProgress() = settings.clearTestProgress()
+    // --- in-progress test session (header in DataStore, answers in Room) ---
+
+    /** The header a killed test session left behind, or null. */
+    suspend fun loadTestSnapshot(): TestSnapshot? = testProgress.snapshot()
+
+    /** The header joined with its stored answers: what a resume would restore. */
+    suspend fun resumeOffer(paperId: String): TestSnapshot? = testProgress.offer(paperId)
+
+    /** Persists the header and the questions whose answer just changed. */
+    suspend fun saveTestProgress(snapshot: TestSnapshot, changed: List<TestAnswer>) =
+        testProgress.save(snapshot, changed)
+
+    /** Writes a legacy snapshot's inline answers as rows, so they are not dropped. */
+    suspend fun adoptTestAnswers(snapshot: TestSnapshot) = testProgress.adopt(snapshot)
+
+    /** Drops the snapshot and the answers of the paper it names. */
+    suspend fun clearTestProgress() = testProgress.clear()
+
+    /** Drops answers left behind by a session whose slot another paper took. */
+    suspend fun clearStaleTestAnswers(paperId: String) = testProgress.discardStale(paperId)
+
+    /** The backup's copy of the in-progress session, answers inlined. */
+    suspend fun testProgressForBackup(): String? = testProgress.forBackup()
+
+    /**
+     * Restores a backup's in-progress session: its document verbatim, with any
+     * rows it supersedes dropped. The answers inside it are adopted as rows the
+     * next time the session is offered.
+     */
+    suspend fun restoreTestProgress(document: String?) = testProgress.restore(document)
 
     /** Every preference, typed, for the backup's settings.json. */
     suspend fun settingsSnapshot() = settings.snapshot()
@@ -126,13 +219,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     // --- search & storage (no collaborator: they span everything) ---
 
-    /** Cross-paper search with paper provenance attached. */
-    suspend fun searchGlobal(
+    /**
+     * One window of cross-paper search. Phase 1 fetches a bounded window of
+     * SQL `LIKE` prefilter candidates (a superset, never a veto); phase 2 runs
+     * the real in-memory [com.mcqapp.domain.QuestionSearch.filter] over just
+     * that window and attaches provenance. Only the window is ever
+     * materialised, so a query matching a quarter of a million questions never
+     * loads them all — the old prefilter returned `questions.*` for every
+     * match, element JSON and base64 images included.
+     *
+     * [GlobalSearchPage.nextOffset] is non-null while more candidate windows
+     * remain.
+     */
+    suspend fun searchPage(
         query: String,
         scope: com.mcqapp.domain.QuestionSearch.Scope =
-            com.mcqapp.domain.QuestionSearch.Scope.ALL
-    ): List<com.mcqapp.domain.QuestionSearch.Hit> {
-        if (query.isBlank()) return emptyList()
+            com.mcqapp.domain.QuestionSearch.Scope.ALL,
+        offset: Int = 0,
+        limit: Int = SEARCH_WINDOW
+    ): GlobalSearchPage {
+        if (query.isBlank()) return GlobalSearchPage(emptyList(), null)
         // DAO prefilter must cover option texts whenever the scope needs them.
         // The prefilter is a SQL LIKE, so the user query is escaped first;
         // the in-memory post-filter below keeps matching the raw query.
@@ -145,28 +251,85 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val fragment = com.mcqapp.domain.QuestionSearch.escapeLike(
             com.mcqapp.domain.QuestionSearch.prefilterKey(query)
         )
-        val prefiltered = when (scope) {
-            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> db.questionDao().search(like, fragment)
-            else -> db.questionDao().searchIncludingOptions(like, fragment)
+        val raw = when (scope) {
+            com.mcqapp.domain.QuestionSearch.Scope.QUESTION ->
+                db.questionDao().search(like, fragment, limit, offset)
+            else ->
+                db.questionDao().searchIncludingOptions(like, fragment, limit, offset)
         }
+        if (raw.isEmpty()) return GlobalSearchPage(emptyList(), null)
         // Passage context rides into the post-filter so the DAO's passage
         // union survives it: a member found through its passage's text or
         // title must not be vetoed because that text is not on the question.
         val passageBodies = db.passageDao().getByIdsChunked(
-            prefiltered.mapNotNull { it.passageId }.distinct()
+            raw.mapNotNull { it.passageId }.distinct()
         ).associate { passage ->
             passage.id to (passage.title + "\n" + passage.text.parseContentElements(mapper.json).searchableText)
         }
-        val questions = mapper.toDomainBulk(prefiltered)
-            .let {
-                com.mcqapp.domain.QuestionSearch.filter(it, query, scope, passageBodies)
-            }
+        val questions = com.mcqapp.domain.QuestionSearch.filter(
+            mapper.toDomainBulk(raw),
+            query,
+            scope,
+            passageBodies
+        )
+        val next = if (raw.size == limit) offset + raw.size else null
+        return GlobalSearchPage(attachProvenance(questions), next)
+    }
+
+    /**
+     * Resolves paper titles for one page's categories only, in two chunked
+     * queries. The old path loaded the whole category and paper tables.
+     */
+    private suspend fun attachProvenance(
+        questions: List<Question>
+    ): List<com.mcqapp.domain.QuestionSearch.Hit> {
         if (questions.isEmpty()) return emptyList()
-        val papersById = db.paperDao().getAll().associateBy({ it.id }, { it.title })
-        val paperByCategory = db.categoryDao().getAll().associate { cat ->
+        val categories = db.categoryDao()
+            .getByIdsChunked(questions.map { it.categoryId }.distinct())
+        val papersById = db.paperDao()
+            .getByIdsChunked(categories.map { it.paperId }.distinct())
+            .associate { it.id to it.title }
+        val paperByCategory = categories.associate { cat ->
             cat.id to (cat.paperId to (papersById[cat.paperId] ?: "Paper"))
         }
         return com.mcqapp.domain.QuestionSearch.attach(questions, paperByCategory)
+    }
+
+    /**
+     * Cross-paper search as a [androidx.paging.PagingSource]. The two-phase
+     * pipeline (SQL candidate window, then the in-memory filter) cannot map
+     * one-to-one onto a SQL page, so this walks candidate windows until it has
+     * enough post-filtered hits — the key is the candidate offset, never an
+     * index into the filtered result, so no hit is skipped.
+     */
+    fun searchPagingSource(
+        query: String,
+        scope: com.mcqapp.domain.QuestionSearch.Scope =
+            com.mcqapp.domain.QuestionSearch.Scope.ALL
+    ): androidx.paging.PagingSource<Int, com.mcqapp.domain.QuestionSearch.Hit> =
+        SearchPagingSource(
+            window = SEARCH_WINDOW,
+            fetch = { offset, limit -> searchPage(query, scope, offset, limit) }
+        )
+
+    /**
+     * The whole result set at once. Kept for tests and small callers; pages
+     * internally so the prefilter never materialises every match in one go.
+     */
+    suspend fun searchGlobal(
+        query: String,
+        scope: com.mcqapp.domain.QuestionSearch.Scope =
+            com.mcqapp.domain.QuestionSearch.Scope.ALL
+    ): List<com.mcqapp.domain.QuestionSearch.Hit> {
+        if (query.isBlank()) return emptyList()
+        val out = mutableListOf<com.mcqapp.domain.QuestionSearch.Hit>()
+        var offset = 0
+        while (true) {
+            val page = searchPage(query, scope, offset)
+            out += page.hits
+            offset = page.nextOffset ?: break
+        }
+        return out
     }
 
     /** Storage breakdown for Settings: file size, row counts, per-paper weight. */
@@ -176,26 +339,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         } catch (e: Exception) {
             -1L
         }
+        // Every rollup comes from SQL: the old path materialised every
+        // question and every option just to size them per paper.
         val papers = db.paperDao().getAll()
-        val allQuestions = db.questionDao().getAll()
-        val optionsByQuestion = if (allQuestions.isEmpty()) {
-            emptyMap()
-        } else {
-            db.optionDao().getForQuestionsChunked(allQuestions.map { it.id }).groupBy { it.questionId }
-        }
-        val attempts = db.attemptDao().getAllAttempts().size
-        val bookmarks = db.bookmarkDao().getAll().size
+        val counts = db.questionDao().questionCountsByPaper()
+        val questionChars = db.questionDao().questionImageCharsByPaper()
+        val optionChars = db.questionDao().optionImageCharsByPaper()
         val perPaper = papers.map { paper ->
-            val catIds = db.categoryDao().getByPaper(paper.id).map { it.id }.toHashSet()
-            val questions = allQuestions.filter { it.categoryId in catIds }
-            com.mcqapp.domain.StorageInfo.usageForPaper(paper.id, paper.title, questions, optionsByQuestion)
+            com.mcqapp.domain.StorageInfo.PaperUsage(
+                paperId = paper.id,
+                title = paper.title,
+                questions = counts[paper.id] ?: 0,
+                imageChars = (questionChars[paper.id] ?: 0L) + (optionChars[paper.id] ?: 0L)
+            )
         }.sortedByDescending { it.imageChars }
         return com.mcqapp.domain.StorageInfo.Report(
             dbBytes = dbBytes,
             papers = papers.size,
-            questions = allQuestions.size,
-            attempts = attempts,
-            bookmarks = bookmarks,
+            questions = db.questionDao().countQuestions(),
+            attempts = db.attemptDao().countAll(),
+            bookmarks = db.bookmarkDao().countAll(),
             perPaper = perPaper
         )
     }
@@ -223,6 +386,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** The passage's members in their own category order, for its detail list. */
     suspend fun getPassageMembers(passageId: String): List<Question> =
         mapper.toDomainBulk(db.questionDao().getMembersByPassage(passageId))
+
+    /** A fresh pager over a passage's member rows (id + stem only). */
+    fun passageMembersSource(passageId: String): androidx.paging.PagingSource<Int, QuestionRef> =
+        db.questionDao().pagingRefsByPassage(passageId)
+
+    /** A passage's member ids in list order, for the editor's Prev/Next queue. */
+    suspend fun getPassageMemberIds(passageId: String): List<String> =
+        db.questionDao().getMemberIdsByPassage(passageId)
 
     suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) =
         passageStore.assignQuestions(questionIds, passageId)
@@ -255,7 +426,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperStore.renameCategory(categoryId, title)
     suspend fun moveCategory(categoryId: String, delta: Int): Boolean =
         paperStore.moveCategory(categoryId, delta)
-    suspend fun duplicatePaper(paperId: String): String? = paperStore.duplicatePaper(paperId)
 
     /** Existing names, for the import screen's title/category suggestions. */
     suspend fun existingPaperTitles(): List<String> = paperStore.allPaperTitles()
@@ -281,6 +451,132 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionStore.getQuestionsForCategories(categoryIds)
     suspend fun getQuestionsForPaper(paperId: String): List<Question> =
         questionStore.getQuestionsForPaper(paperId)
+
+    /**
+     * A session's order for a whole paper: ids and passage membership only,
+     * streamed out of the database, never a list of question content.
+     */
+    suspend fun getSessionOrderForPaper(paperId: String): SessionOrder =
+        questionStore.getOrderForPaper(paperId)
+
+    /** [getSessionOrderForPaper] over an explicit category selection. */
+    suspend fun getSessionOrderForCategories(categoryIds: List<String>): SessionOrder =
+        questionStore.getOrderForCategories(categoryIds)
+
+    /** Observed refs for browse: the list re-emits on any write. */
+    fun observeQuestionRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<QuestionRef>> =
+        questionStore.observeRefsForPaper(paperId)
+
+    /** Domain questions for already-loaded entities (batch surfaces only). */
+    suspend fun questionsOf(
+        entities: List<com.mcqapp.data.local.QuestionEntity>
+    ): List<Question> = questionStore.toDomain(entities)
+
+    // --- browse list paging ---
+
+    /**
+     * The browse filter set mapped once to its SQL form. The paging source,
+     * the count and the editor's cursor all describe the same scope through
+     * this, so they can never drift.
+     *
+     * Every field is one bind variable: the paper is named by id (its category
+     * list used to be bound one id at a time — a 1000-category paper is more
+     * than SQLite accepts in a single statement on Android 11 and below), and
+     * the category filter travels as a CSV the query matches with `INSTR`.
+     */
+    data class BrowseScope(
+        val paperId: String,
+        val query: String,
+        val noAnswer: Int,
+        val noExplanation: Int,
+        val uncategorized: Int,
+        val categoryFilter: Int,
+        val categoryFilterCsv: String
+    ) {
+        companion object {
+            fun of(
+                paperId: String,
+                query: String,
+                filter: BrowseListFilter,
+                categoryFilterIds: Set<String>?
+            ): BrowseScope = BrowseScope(
+                paperId = paperId,
+                query = com.mcqapp.domain.QuestionSearch.escapeLike(query.trim()),
+                noAnswer = if (filter == BrowseListFilter.NO_ANSWER) 1 else 0,
+                noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
+                uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,
+                categoryFilter = if (categoryFilterIds.isNullOrEmpty()) 0 else 1,
+                categoryFilterCsv = categoryFilterIds.orEmpty()
+                    .joinToString(separator = ",", prefix = ",", postfix = ",")
+            )
+        }
+    }
+
+    /**
+     * Fires when a question or passage write could change Browse's on-demand
+     * reorder contexts and passage-header lookups; the list itself pages with
+     * Room's own invalidation. Category-only writes (a sibling reorder or a
+     * rename) leave every context valid, so they are deliberately not observed:
+     * clearing on them dropped the section-move buttons mid-gesture.
+     *
+     * Both sides are one-row probes. Watching the `GROUP BY categoryId` counts
+     * and the whole passages table instead made every question write re-scan
+     * the paper (and load every passage) just to learn that something changed.
+     */
+    fun observeBrowseInvalidation(): Flow<Unit> = kotlinx.coroutines.flow.combine(
+        db.questionDao().observeAnyQuestion(),
+        db.passageDao().observeAnyPassage()
+    ) { _, _ -> Unit }
+
+    /**
+     * A fresh browse [androidx.paging.PagingSource] for one filter set. Room
+     * invalidates it on any question/category/answer write, the same
+     * refetch-on-write behaviour the observe-based list had.
+     */
+    fun browseRefsSource(scope: BrowseScope): androidx.paging.PagingSource<Int, QuestionRef> =
+        db.questionDao().pagingRefsByCategories(
+            paperId = scope.paperId,
+            query = scope.query,
+            noAnswer = scope.noAnswer,
+            noExplanation = scope.noExplanation,
+            uncategorized = scope.uncategorized,
+            categoryFilter = scope.categoryFilter,
+            categoryFilterCsv = scope.categoryFilterCsv
+        )
+
+    /** One category's refs in order. Reorder math works per category. */
+    suspend fun browseCategoryRefs(categoryId: String): List<QuestionRef> =
+        db.questionDao().getRefsByCategoryOrdered(categoryId)
+
+    /** The category's first and last question ids, for its section-edge buttons. */
+    suspend fun browseCategoryEdges(categoryId: String): Pair<String?, String?> =
+        db.questionDao().getFirstRefIdByCategory(categoryId) to
+            db.questionDao().getLastRefIdByCategory(categoryId)
+
+    /** The passage's first member in its own order (headers key off it). */
+    suspend fun browsePassageFirstRefId(passageId: String): String? =
+        db.questionDao().getFirstRefIdByPassage(passageId)
+
+    /** The scope's size, for the editor's "N of M" without listing every id. */
+    suspend fun browseFilteredCount(scope: BrowseScope): Int =
+        db.questionDao().countBrowseIds(
+            scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
+        )
+
+    /** The id at one position in the scope, for the editor's Prev/Next. */
+    suspend fun browseFilteredIdAt(offset: Int, scope: BrowseScope): String? =
+        db.questionDao().browseIdAtIndex(
+            offset, scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
+        )
+
+    /** The anchor's index in the scope, for the editor's "N of M". */
+    suspend fun browseFilteredIndexOf(anchorId: String, scope: BrowseScope): Int =
+        db.questionDao().browseIndexBefore(
+            anchorId, scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
+        )
     suspend fun getQuestion(questionId: String): Question? = questionStore.getQuestion(questionId)
     suspend fun getQuestionsByIds(ids: List<String>): List<Question> =
         questionStore.getQuestionsByIds(ids)
@@ -350,10 +646,24 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     // --- bookmarks, attempts, mistakes ---
 
     fun observeBookmarks(): Flow<List<String>> = historyStore.observeBookmarks()
+
+    /** A signal that the bookmark set changed, for paging the bookmarks screen. */
+    fun observeBookmarkChanges(): Flow<Unit> = historyStore.observeBookmarkChanges()
+
+    /** How many bookmarks there are, for the header count and the empty state. */
+    fun observeBookmarkCount(): Flow<Int> = historyStore.observeBookmarkCount()
     suspend fun toggleBookmark(questionId: String) = historyStore.toggleBookmark(questionId)
     suspend fun isBookmarked(questionId: String): Boolean = historyStore.isBookmarked(questionId)
+
+    /**
+     * Every bookmarked question, with its paper. Linear in the bank, so it is
+     * the tests' oracle — the screen pages its rows with
+     * [bookmarkedPagingSource] — and `NoDeadCodeTest` refuses a production call.
+     */
     suspend fun getBookmarkedQuestions(): List<com.mcqapp.domain.BookmarkedQuestion> =
         historyStore.getBookmarkedQuestions()
+    fun bookmarkedPagingSource(): androidx.paging.PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion> =
+        historyStore.bookmarkedPagingSource()
     suspend fun saveAttempt(
         paperId: String,
         paperTitle: String,
@@ -367,18 +677,142 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId, paperTitle, questions, selections, negativeMarking,
         durationSeconds, finishedAt, dwellSeconds
     )
+
+    /**
+     * Same save, but every question is resolved from the database in batches,
+     * straight off the session's order: a full-paper test of a huge paper never
+     * holds every question at once, and never materialises its id list either.
+     */
+    suspend fun saveAttemptStreamed(
+        paperId: String,
+        paperTitle: String,
+        order: SessionOrder,
+        selections: Map<String, Set<String>>,
+        negativeMarking: Double,
+        durationSeconds: Long,
+        finishedAt: Long,
+        dwellSeconds: Map<String, Long> = emptyMap(),
+        onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
+    ): Long = historyStore.saveAttemptStreamed(
+        paperId, paperTitle, order, selections, negativeMarking,
+        durationSeconds, finishedAt, dwellSeconds, onProgress
+    )
     fun observeAttempts(): Flow<List<com.mcqapp.domain.Attempt>> = historyStore.observeAttempts()
     suspend fun getAttempt(attemptId: Long): com.mcqapp.domain.Attempt? =
         historyStore.getAttempt(attemptId)
+    /**
+     * Every result row of an attempt, in one list. Linear in the attempt, so it
+     * is the tests' oracle — the screen pages its rows with
+     * [resultPagingSource] and reads the header from the SQL aggregates — and
+     * `NoDeadCodeTest` refuses a production call.
+     */
     suspend fun getAttemptResults(attemptId: Long): List<com.mcqapp.domain.QuestionResult> =
         historyStore.getAttemptResults(attemptId)
+    fun resultPagingSource(
+        attemptId: Long,
+        filter: String,
+        bookmarked: Set<String>
+    ): androidx.paging.PagingSource<ResultPageKey, com.mcqapp.domain.NumberedResult> =
+        historyStore.resultPagingSource(attemptId, filter, bookmarked)
+    suspend fun getResultAggregates(attemptId: Long) =
+        historyStore.getResultAggregates(attemptId)
+    suspend fun getResultCategoryBreakdown(attemptId: Long) =
+        historyStore.getResultCategoryBreakdown(attemptId)
     suspend fun getAllQuestionResults(): List<com.mcqapp.domain.QuestionResult> =
         historyStore.getAllQuestionResults()
+    suspend fun getHardestQuestions(limit: Int = 5): List<com.mcqapp.domain.QuestionStats.Stat> =
+        historyStore.getHardestQuestions(limit)
+    suspend fun getWeakestCategories(limit: Int = 5): List<com.mcqapp.domain.Mastery.CategoryMastery> =
+        historyStore.getWeakestCategories(limit)
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
-    suspend fun getMistakenQuestions(paperId: String): List<Question> =
+    /** Mistaken questions as a session order: content is fetched when one is opened. */
+    suspend fun getMistakenQuestionOrder(paperId: String): SessionOrder =
+        SessionOrder.of(historyStore.getMistakenQuestionRefs(paperId))
+
+    /**
+     * How many of these questions have no answer key — excluded from scoring.
+     * Ids only: never loads question content to count them. Only the sampled
+     * sessions (a drill, mistakes-only) count by id, where the session's
+     * questions are bounded by what was asked for; whole-paper and category
+     * sessions use the aggregates below.
+     */
+    suspend fun countUngraded(questionIds: List<String>): Int {
+        if (questionIds.isEmpty()) return 0
+        val withKeys = db.correctAnswerDao().getQuestionIdsWithKeysChunked(questionIds)
+        return questionIds.count { it !in withKeys }
+    }
+
+    /** Ungraded questions of a whole paper: one aggregate, no ids read. */
+    suspend fun countUngradedForPaper(paperId: String): Int =
+        db.questionDao().countUngradedForPaper(paperId)
+
+    /** [countUngradedForPaper] over an explicit category selection. */
+    suspend fun countUngradedForCategories(categoryIds: List<String>): Int =
+        if (categoryIds.isEmpty()) 0
+        else db.questionDao().countUngradedForCategoriesChunked(categoryIds)
+
+suspend fun getMistakenQuestions(paperId: String): List<Question> =
         historyStore.getMistakenQuestions(paperId)
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? =
         historyStore.getBookmarkExportDto()
     suspend fun deleteAttempt(attemptId: Long) = historyStore.deleteAttempt(attemptId)
+}
+
+/** One window of [McqRepository.searchPage]. */
+data class GlobalSearchPage(
+    val hits: List<com.mcqapp.domain.QuestionSearch.Hit>,
+    /** Next prefilter offset, or null once the candidate set is exhausted. */
+    val nextOffset: Int?
+)
+
+/**
+ * Candidate questions fetched (and then post-filtered) per search window.
+ * Small enough that a page of matches is never heavy, large enough that a
+ * typical query needs one read.
+ */
+private const val SEARCH_WINDOW = 200
+
+/** Browse's chip filter, translated to the paging query's flags. */
+enum class BrowseListFilter { ALL, NO_ANSWER, NO_EXPLANATION, UNCATEGORIZED }
+
+/**
+ * Pages [McqRepository.searchPage]: walks candidate windows until a page holds
+ * `loadSize` post-filtered hits (or the candidates run out). The returned key
+ * is the next candidate offset, so the phase-2 filter can drop rows without
+ * shifting any later hit's position.
+ */
+private class SearchPagingSource(
+    private val window: Int,
+    private val fetch: suspend (offset: Int, limit: Int) -> GlobalSearchPage
+) : androidx.paging.PagingSource<Int, com.mcqapp.domain.QuestionSearch.Hit>() {
+
+    override suspend fun load(
+        params: androidx.paging.PagingSource.LoadParams<Int>
+    ): androidx.paging.PagingSource.LoadResult<Int, com.mcqapp.domain.QuestionSearch.Hit> {
+        var offset = params.key ?: 0
+        val target = params.loadSize.coerceAtLeast(1)
+        val out = mutableListOf<com.mcqapp.domain.QuestionSearch.Hit>()
+        var nextKey: Int? = null
+        return try {
+            while (out.size < target) {
+                val page = fetch(offset, window)
+                out += page.hits
+                val advanced = page.nextOffset ?: break
+                offset = advanced
+                nextKey = advanced
+            }
+            androidx.paging.PagingSource.LoadResult.Page(
+                data = out,
+                prevKey = null,
+                nextKey = nextKey
+            )
+        } catch (e: Exception) {
+            androidx.paging.PagingSource.LoadResult.Error(e)
+        }
+    }
+
+    override fun getRefreshKey(
+        state: androidx.paging.PagingState<Int, com.mcqapp.domain.QuestionSearch.Hit>
+    ): Int? = null
 }

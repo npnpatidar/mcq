@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
+import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.repository.McqRepository
@@ -67,10 +68,22 @@ class BackupSchedulingTest {
         )
     }
 
+    /**
+     * The whole-bank JSON as a string, for the parsers that read it. The
+     * exporter writes into a stream, so the test reads it back out of one.
+     */
+    private fun exportAllJson(): String {
+        val text = java.io.StringWriter()
+        val out = java.io.BufferedWriter(text)
+        runBlocking { Exporter(db).exportAllTo(out) }
+        out.flush()
+        return text.toString()
+    }
+
     @Test
     fun theBackupCarriesReviewProgress() = runBlocking {
         studyOnce()
-        val json = Exporter(db).exportAll()
+        val json = exportAllJson()
         val file = LegacyParser.parse(json)
         assertTrue(
             "the backup should carry q1's schedule",
@@ -84,7 +97,7 @@ class BackupSchedulingTest {
     fun aRestoredBackupKeepsTheSchedule() = runBlocking {
         studyOnce()
         val before = repository.cardState("p1", "q1")!!
-        val json = Exporter(db).exportAll()
+        val json = exportAllJson()
 
         // Fresh database: nothing but the file.
         db.close()
@@ -109,6 +122,40 @@ class BackupSchedulingTest {
         assertEquals(before.reviewCount, after.reviewCount)
     }
 
+    /**
+     * The import screen now streams a large "Export all" JSON instead of
+     * holding it as one DTO; that path must keep the review progress the export
+     * carries, exactly as the whole-file restore does.
+     */
+    @Test
+    fun aStreamedBackupKeepsTheSchedule() = runBlocking {
+        studyOnce()
+        val before = repository.cardState("p1", "q1")!!
+        val json = exportAllJson()
+
+        // Fresh database: nothing but the file.
+        db.close()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        repository = McqRepository(db, context)
+
+        StreamingImporter(db, captureSchedules = true)
+            .import({ java.io.ByteArrayInputStream(json.toByteArray()) })
+
+        val after = repository.cardState("p1", "q1")
+        assertTrue("the card should exist after a streamed restore", after != null)
+        assertEquals(before.reps, after!!.reps)
+        assertEquals(before.ease, after.ease, 0.0001)
+        assertEquals(before.intervalDays, after.intervalDays)
+        assertEquals(before.lastReviewedAt, after.lastReviewedAt)
+        assertEquals(before.difficulty, after.difficulty, 0.0001)
+        assertEquals(before.stability, after.stability, 0.0001)
+        assertEquals(before.state, after.state)
+        assertEquals(before.reviewCount, after.reviewCount)
+    }
+
     @Test
     fun anUntouchedQuestionIsNotGivenASchedule() = runBlocking {
         repository.saveQuestion(
@@ -121,7 +168,7 @@ class BackupSchedulingTest {
             )
         )
         studyOnce()
-        val file = LegacyParser.parse(Exporter(db).exportAll())
+        val file = LegacyParser.parse(exportAllJson())
         assertEquals(setOf("q1"), file.scheduling.keys)
     }
 
@@ -135,5 +182,28 @@ class BackupSchedulingTest {
         val report = Importer(db).import(LegacyParser.parse(json))
         assertEquals(1, report.newQuestions)
         assertEquals(0, db.cardStateDao().getAll().size)
+    }
+
+    /**
+     * The streaming export writes the bookmark array one id at a time (it used
+     * to encode the whole list into a single String). The document must still
+     * parse and still carry the bookmarks.
+     */
+    @Test
+    fun theStreamedExportCarriesBookmarks() = runBlocking {
+        repository.saveQuestion(
+            Question(
+                id = "q2",
+                categoryId = "c1",
+                text = "3 + 3?",
+                options = listOf(QuestionOption("a", "5"), QuestionOption("b", "6")),
+                correctOptionIds = setOf("b")
+            )
+        )
+        db.bookmarkDao().add(com.mcqapp.data.local.BookmarkEntity("q1", createdAt = 5))
+        db.bookmarkDao().add(com.mcqapp.data.local.BookmarkEntity("q2", createdAt = 9))
+
+        val file = LegacyParser.parse(exportAllJson())
+        assertEquals(setOf("q1", "q2"), file.bookmarks.toSet())
     }
 }

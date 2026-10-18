@@ -20,6 +20,10 @@ class AnkiHtmlTest {
 
     private val pool = AnkiMediaPool()
 
+    /** The pool spools its pictures to temp files; they go with the test. */
+    @org.junit.After
+    fun closePool() = pool.close()
+
     private fun roundTrip(text: String): String = AnkiHtml.toPlainText(pool.html(text))
 
     @Test
@@ -193,14 +197,14 @@ class AnkiHtmlTest {
         val second = pool.htmlField("b", uri)
         assertTrue(first, "<img src=\"mcqapp-0.png\">" in first)
         assertTrue(second, "<img src=\"mcqapp-0.png\">" in second)
-        assertEquals(1, pool.entries.size)
+        assertEquals(1, pool.size)
     }
 
     @Test
     fun aRemoteUrlIsPassedThroughUntouched() {
         val html = pool.htmlField("Look", "https://example.com/a.png")
         assertEquals("""Look <img src="https://example.com/a.png">""", html)
-        assertTrue("nothing downloaded", pool.entries.isEmpty())
+        assertFalse("nothing downloaded", pool.isNotEmpty)
     }
 
     private fun letterFor(index: Int): String {

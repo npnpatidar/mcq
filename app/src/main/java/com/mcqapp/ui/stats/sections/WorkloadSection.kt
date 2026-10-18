@@ -22,8 +22,8 @@ import com.mcqapp.R
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.stats.AnswerButtonsData
 import com.mcqapp.domain.stats.StackedPoint
-import com.mcqapp.domain.stats.StatsBundle
 import com.mcqapp.domain.stats.WeakCard
+import com.mcqapp.domain.stats.WorkloadData
 import com.mcqapp.ui.stats.WeakCardRow
 import com.mcqapp.ui.stats.charts.ChartCard
 import com.mcqapp.ui.stats.charts.ChartEmpty
@@ -44,7 +44,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 internal fun WorkloadSection(
-    bundle: StatsBundle,
+    bundle: WorkloadData,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit
 ) {
@@ -53,17 +53,17 @@ internal fun WorkloadSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { ForecastCard(bundle) }
-        item { ReviewsPerDayCard(bundle) }
-        item { TimePerDayCard(bundle) }
-        item { AnswerButtonsCard(bundle) }
-        item { HourlyCard(bundle) }
-        item { ResponseTimeCard(bundle, questionText, onOpenCard) }
+        item(contentType = "forecast") { ForecastCard(bundle) }
+        item(contentType = "reviews-per-day") { ReviewsPerDayCard(bundle) }
+        item(contentType = "time-per-day") { TimePerDayCard(bundle) }
+        item(contentType = "answer-buttons") { AnswerButtonsCard(bundle) }
+        item(contentType = "hourly") { HourlyCard(bundle) }
+        item(contentType = "response-time") { ResponseTimeCard(bundle, questionText, onOpenCard) }
     }
 }
 
 @Composable
-private fun ForecastCard(bundle: StatsBundle) {
+private fun ForecastCard(bundle: WorkloadData) {
     val forecast = bundle.forecast
     ChartCard(
         testTag = "stats-forecast",
@@ -126,7 +126,7 @@ private fun ForecastCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun ReviewsPerDayCard(bundle: StatsBundle) {
+private fun ReviewsPerDayCard(bundle: WorkloadData) {
     ChartCard(
         testTag = "stats-reviews-per-day",
         title = { ChartTitle(R.string.stats_reviews_per_day) }
@@ -151,7 +151,7 @@ private fun ReviewsPerDayCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun TimePerDayCard(bundle: StatsBundle) {
+private fun TimePerDayCard(bundle: WorkloadData) {
     ChartCard(
         testTag = "stats-time-per-day",
         title = { ChartTitle(R.string.stats_time_per_day) }
@@ -172,7 +172,7 @@ private fun TimePerDayCard(bundle: StatsBundle) {
 }
 
 @Composable
-private fun AnswerButtonsCard(bundle: StatsBundle) {
+private fun AnswerButtonsCard(bundle: WorkloadData) {
     ChartCard(
         testTag = "stats-answer-buttons",
         title = { ChartTitle(R.string.stats_answer_buttons) },
@@ -245,7 +245,7 @@ private fun answerGroupLabel(kind: AnswerButtonsData.Kind): String = when (kind)
 }
 
 @Composable
-private fun HourlyCard(bundle: StatsBundle) {
+private fun HourlyCard(bundle: WorkloadData) {
     ChartCard(
         testTag = "stats-hourly",
         title = { ChartTitle(R.string.stats_hourly) },
@@ -268,7 +268,7 @@ private fun HourlyCard(bundle: StatsBundle) {
 
 @Composable
 private fun ResponseTimeCard(
-    bundle: StatsBundle,
+    bundle: WorkloadData,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit
 ) {

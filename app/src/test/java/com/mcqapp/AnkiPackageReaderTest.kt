@@ -1,7 +1,6 @@
 package com.mcqapp
 
 import android.database.sqlite.SQLiteDatabase
-import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CardScheduleDto
@@ -93,7 +92,7 @@ class AnkiPackageReaderTest {
             title = "Biology",
             categories = listOf(CategoryDto(id = "c1", title = "Basics", questions = questions.map { it.toDto() }))
         )
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
 
         val result = AnkiPackageReader.read(apkg)
 
@@ -146,7 +145,7 @@ class AnkiPackageReaderTest {
         )
 
         val imported = AnkiPackageReader.read(
-            AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+            apkgOf(paper)
         )
 
         assertEquals("nothing to choose between, so it counts as a recall", 1, imported.recallCount)
@@ -172,8 +171,8 @@ class AnkiPackageReaderTest {
         )
         val paper = PaperDto(id = "p1", title = "P", questions = questions.map { it.toDto() })
 
-        val first = guidsOf(AnkiPackageWriter.write(paper, questions))
-        val second = guidsOf(AnkiPackageWriter.write(paper, questions))
+        val first = guidsOf(apkgOf(paper))
+        val second = guidsOf(apkgOf(paper))
 
         assertEquals(first, second)
     }
@@ -198,7 +197,7 @@ class AnkiPackageReaderTest {
                 )
             )
         )
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
 
         val result = AnkiPackageReader.read(apkg)
 
@@ -692,7 +691,7 @@ class AnkiPackageReaderTest {
                 )
             )
         )
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
 
         val imported = AnkiPackageReader.read(apkg).file.papers.single()
 
@@ -756,7 +755,7 @@ class AnkiPackageReaderTest {
                 )
             )
         )
-        val apkg = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper))
+        val apkg = apkgOf(paper)
 
         val imported = AnkiPackageReader.read(apkg).file.papers.single()
 
@@ -840,9 +839,8 @@ class AnkiPackageReaderTest {
             title = "Maths",
             categories = listOf(CategoryDto(id = "c1", title = "Basics", questions = questions.map { it.toDto() }))
         )
-        val apkg = AnkiPackageWriter.write(
+        val apkg = apkgOf(
             paper,
-            AnkiDtoMapper.flattenQuestions(paper),
             mapOf(
                 "q1" to CardScheduleDto(
                     ease = 2.6,

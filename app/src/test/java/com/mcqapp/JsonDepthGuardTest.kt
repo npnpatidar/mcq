@@ -7,10 +7,13 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * `parseToJsonElement` recurses once per nesting level, so a small file of
- * `[[[[...` blew the stack. StackOverflowError is an `Error`, so the import
- * screen's `catch (e: Exception)` never saw it and the app crashed instead of
- * reporting a parse failure.
+ * The parser streams now, so the depth budget lives in the slice reader: a
+ * slice nested deeper than the limit is refused, and the token walk beneath
+ * it iterates instead of recursing one level per document level. A hostile
+ * `[[[[...` document of 200k levels used to blow either the stack or — via
+ * a whole-document DOM — the heap; both are Errors the import screen's
+ * `catch (e: Exception)` never saw, so the app crashed instead of reporting
+ * a parse failure.
  */
 class JsonDepthGuardTest {
 
@@ -19,20 +22,23 @@ class JsonDepthGuardTest {
 
     @Test
     fun ordinaryFilesAreUnaffected() {
-        LegacyParser.requireNestingDepth("""{"papers":[{"categories":[{"questions":[]}]}]}""")
-        LegacyParser.requireNestingDepth("[]")
-        LegacyParser.requireNestingDepth("")
+        LegacyParser.parse("""{"papers":[{"categories":[{"questions":[]}]}]}""")
+        LegacyParser.parse("[]")
+        LegacyParser.parse("")
     }
 
     @Test
     fun nestingAtTheLimitIsAccepted() {
-        LegacyParser.requireNestingDepth(nest(LegacyParser.MAX_NESTING_DEPTH))
+        val file = LegacyParser.parse(nest(LegacyParser.MAX_NESTING_DEPTH))
+        assertTrue(file.papers.isNotEmpty())
     }
 
     @Test
     fun nestingBeyondTheLimitIsRejected() {
+        // The root array the parser opens itself spends one bracket, so the
+        // slice budget runs out two brackets deeper than the raw count.
         val e = runCatching {
-            LegacyParser.requireNestingDepth(nest(LegacyParser.MAX_NESTING_DEPTH + 1))
+            LegacyParser.parse(nest(LegacyParser.MAX_NESTING_DEPTH + 3))
         }.exceptionOrNull()
         assertTrue("expected a rejection, got $e", e is IllegalArgumentException)
         assertTrue(e!!.message!!.contains("${LegacyParser.MAX_NESTING_DEPTH}"))
@@ -42,15 +48,15 @@ class JsonDepthGuardTest {
     fun deepNestingIsRejectedRatherThanOverflowingTheStack() {
         // The real failure mode: 200k levels would recurse until the stack died.
         val bomb = nest(200_000)
-        val e = runCatching { LegacyParser.requireNestingDepth(bomb) }.exceptionOrNull()
+        val e = runCatching { LegacyParser.parse(bomb) }.exceptionOrNull()
         assertTrue("expected a clean rejection, got $e", e is IllegalArgumentException)
     }
 
     @Test
     fun bracesInsideStringsDoNotCountAsNesting() {
         // A question may legitimately contain JSON as text.
-        LegacyParser.requireNestingDepth("""{"text":"[[[[[[[[[[ not nesting"}""")
-        LegacyParser.requireNestingDepth("""{"text":"escaped \" quote [[[ "}""")
+        LegacyParser.parse("""{"text":"[[[[[[[[[[ not nesting"}""")
+        LegacyParser.parse("""{"text":"escaped \" quote [[[ "}""")
     }
 
     @Test

@@ -25,9 +25,9 @@ import org.robolectric.annotation.Config
  * `Paper.totalQuestions` — so that count has to be the real number of questions
  * in the paper, nested categories included.
  *
- * `McqRepository.getPaper` maps a paper with an *empty* count map and therefore
- * reports zero, so this goes through `observePapers`, which is what the library
- * screen actually reads.
+ * The library reads `observePapers`, which counts every paper's categories at
+ * once; `getPaper` counts only the one paper it returns. Both have to report the
+ * same total (see `RepositoryTest.aPaperReadCountsOnlyItsOwnQuestions`).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])

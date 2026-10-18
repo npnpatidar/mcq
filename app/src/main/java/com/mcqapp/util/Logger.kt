@@ -29,6 +29,15 @@ object Logger {
     var activePath: String = "not initialized"
         private set
 
+    /**
+     * Per-item tracing for bulk work (import loops over 100k questions,
+     * batched saves). Off by default: string building and file IO inside a
+     * hot loop cost O(items), and the batch summary lines already tell the
+     * whole story. Callers inside per-item loops read this flag; one-off
+     * logs never check it.
+     */
+    var verbose: Boolean = false
+
     fun init(context: Context) {
         val candidates = listOf(
             File(context.getExternalFilesDir(null), "logs"),

@@ -7,9 +7,12 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -176,10 +179,53 @@ class MigrationTest {
                 AppDatabase.MIGRATION_6_7,
                 AppDatabase.MIGRATION_7_8,
                 AppDatabase.MIGRATION_8_9,
-                AppDatabase.MIGRATION_9_10
+                AppDatabase.MIGRATION_9_10,
+                AppDatabase.MIGRATION_10_11,
+                AppDatabase.MIGRATION_11_12,
+                AppDatabase.MIGRATION_12_13,
+                AppDatabase.MIGRATION_13_14,
+                AppDatabase.MIGRATION_14_15,
+                AppDatabase.MIGRATION_15_16,
+                AppDatabase.MIGRATION_16_17
             )
             .allowMainThreadQueries()
             .build()
+
+    /**
+     * Builds a genuine v15 file by replaying the production 6->15 migrations,
+     * with a category and a question seeded: a 15->16 test then proves both
+     * that the indices land and that the data under them survives.
+     */
+    private fun createV15WithSeed() {
+        createV6(
+            insertPaper(),
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                "VALUES ('c1','p1','Cat',NULL,0)",
+            "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage," +
+                "difficulty,marks,tags,sortOrder,contentHash) VALUES " +
+                "('q1','c1','Q one',NULL,'because',NULL,'medium',2.0,'tag',0,'hash1')"
+        )
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            AppDatabase.MIGRATION_9_10.migrate(raw)
+            AppDatabase.MIGRATION_10_11.migrate(raw)
+            AppDatabase.MIGRATION_11_12.migrate(raw)
+            AppDatabase.MIGRATION_12_13.migrate(raw)
+            AppDatabase.MIGRATION_13_14.migrate(raw)
+            AppDatabase.MIGRATION_14_15.migrate(raw)
+            raw.version = 15
+        }
+    }
 
     /**
      * Builds a genuine v9 file: the v6 schema plus the *real* 6->7, 7->8 and
@@ -374,7 +420,8 @@ class MigrationTest {
             // A passage round-trips through the migrated schema.
             db.passageDao().upsert(
                 com.mcqapp.data.local.PassageEntity(
-                    id = "p1", categoryId = "c1", title = "T", text = "[]", image = null
+                    id = "p1", categoryId = "c1", title = "T", text = "[]", searchText = "T",
+                    image = null
                 )
             )
             assertEquals("T", db.passageDao().getById("p1")!!.title)
@@ -475,11 +522,18 @@ class MigrationTest {
                     AppDatabase.MIGRATION_6_7,
                     AppDatabase.MIGRATION_7_8,
                     AppDatabase.MIGRATION_8_9,
-                    AppDatabase.MIGRATION_9_10
+                    AppDatabase.MIGRATION_9_10,
+                    AppDatabase.MIGRATION_10_11,
+                    AppDatabase.MIGRATION_11_12,
+                    AppDatabase.MIGRATION_12_13,
+                    AppDatabase.MIGRATION_13_14,
+                    AppDatabase.MIGRATION_14_15,
+                    AppDatabase.MIGRATION_15_16,
+                    AppDatabase.MIGRATION_16_17
                 )
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->10; Room validates the final schema.
+            // One open exercises 3->4->...->17; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)
@@ -489,6 +543,248 @@ class MigrationTest {
             assertEquals(1.0, question.marks, 0.0001)
             db.close()
             context.deleteDatabase("chain-test.db")
+        }
+    }
+
+    @Test
+    fun `migration 11 to 12 lands the aggregate and title indexes`() {
+        runBlocking {
+            createV6(insertPaper())
+            val db = openMigrated()
+            // Opening ran the whole chain to v12 and Room validated the schema.
+            db.cardStateDao().getByPaper("p1")
+            db.close()
+            val check = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("migration-test.db").path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            fun indexExists(name: String): Boolean = check.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                arrayOf(name)
+            ).use { it.moveToFirst() }
+            assertTrue("papers(title)", indexExists("index_papers_title"))
+            assertTrue(
+                "card_state(paperId,cardState,dueAt)",
+                indexExists("index_card_state_paperId_cardState_dueAt")
+            )
+            assertTrue(
+                "question_results(attemptId,isCorrect)",
+                indexExists("index_question_results_attemptId_isCorrect")
+            )
+            assertTrue(
+                "categories(paperId,title)",
+                indexExists("index_categories_paperId_title")
+            )
+            // The composite replaces the standalone prefix.
+            assertEquals(false, indexExists("index_question_results_attemptId"))
+            assertEquals(false, indexExists("index_categories_paperId"))
+            // The stale card_state dueAt index is dropped by the 13->14 rebuild.
+            assertEquals(false, indexExists("index_card_state_dueAt"))
+            check.close()
+        }
+    }
+
+    @Test
+    fun `migration 12 to 13 backfills question_stats from existing results`() {
+        runBlocking {
+            createV6(
+                insertPaper(),
+                "INSERT INTO attempts (id,paperId,title,totalQuestions,correctCount," +
+                    "wrongCount,skippedCount,score,maxScore,durationSeconds,finishedAt) " +
+                    "VALUES (1,'p1','Paper',3,1,1,0,1.0,2.0,60,2000)",
+                "INSERT INTO question_results (id,attemptId,questionId,categoryTitle,text," +
+                    "optionsJson,correctOptionIds,selectedOptionIds,isCorrect,explanation," +
+                    "explanationImage,dwellSeconds) VALUES " +
+                    "(1,1,'q1','Cat','Q1','[]','a','a',1,'',NULL,0)",
+                "INSERT INTO question_results (id,attemptId,questionId,categoryTitle,text," +
+                    "optionsJson,correctOptionIds,selectedOptionIds,isCorrect,explanation," +
+                    "explanationImage,dwellSeconds) VALUES " +
+                    "(2,1,'q1','Cat','Q1b','[]','a','b',0,'',NULL,0)",
+                // Ungraded: no answer key, so it must not rank as hardest.
+                "INSERT INTO question_results (id,attemptId,questionId,categoryTitle,text," +
+                    "optionsJson,correctOptionIds,selectedOptionIds,isCorrect,explanation," +
+                    "explanationImage,dwellSeconds) VALUES " +
+                    "(3,1,'q2','Cat','Q2','[]','','x',0,'',NULL,0)"
+            )
+            val db = openMigrated()
+            val hardest = db.questionStatsDao().getHardestQuestions(5)
+            assertEquals(1, hardest.size)
+            val q1 = hardest.first()
+            assertEquals("q1", q1.questionId)
+            assertEquals(2, q1.attempts)
+            assertEquals(1, q1.correct)
+            assertEquals(1, q1.wrong)
+            // The last result row's text is what the aggregate carries.
+            assertEquals("Q1b", q1.text)
+            val weakest = db.questionStatsDao().getWeakestCategories(5)
+            assertEquals(1, weakest.size)
+            assertEquals("p1", weakest.first().paperId)
+            assertEquals("Paper", weakest.first().paperTitle)
+            assertEquals(1, weakest.first().correct)
+            assertEquals(2, weakest.first().graded)
+            db.close()
+        }
+    }
+
+    /**
+     * 14->15 adds the flattened `searchText` columns the prefilter scans.
+     * Rows written before the upgrade carry only the elements JSON, so the
+     * migration must derive the column from it; otherwise every question that
+     * predates the upgrade would be stored with an empty string and silently
+     * disappear from search.
+     */
+    @Test
+    fun migration14To15BackfillsFlattenedSearchText() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val questionText = listOf(
+            ContentElement.TextElement("Net <b>external</b> force"),
+            // No space around the operator, so "v=u" stays searchable as typed.
+            ContentElement.MathElement("<math><mi>v</mi><mo>=</mo><mi>u</mi></math>")
+        ).toContentJson(json)
+        val optionText = listOf(ContentElement.TextElement("m/s<sup>2</sup>")).toContentJson(json)
+
+        v6Schema.forEach { dbFile.execSQL(it) }
+        dbFile.execSQL(insertPaper())
+        dbFile.execSQL(
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                "VALUES ('c1','p1','Cat',NULL,0)"
+        )
+        dbFile.execSQL(
+            "INSERT INTO questions (id,categoryId,text,image,explanation,difficulty,marks,tags," +
+                "sortOrder,contentHash) VALUES ('q1','c1',?,NULL,'why','medium',2.0,'net',0,'h1')",
+            arrayOf(questionText)
+        )
+        dbFile.execSQL(
+            "INSERT INTO options (questionId,id,text,image,sortOrder) " +
+                "VALUES ('q1','o1',?,NULL,0)",
+            arrayOf(optionText)
+        )
+        dbFile.close()
+
+        val db = openMigrated()
+        try {
+            runBlocking {
+                val question = db.questionDao().getById("q1")!!
+                // Markup dropped, the formula kept as typed, elements joined
+                // by a single space — exactly what the in-memory filter sees.
+                assertEquals("Net external force v=u", question.searchText)
+                assertEquals("m/s 2", db.optionDao().getByQuestion("q1").single().searchText)
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Builds a genuine v16 file by replaying the production 6->16 migrations,
+     * with a paper and a question seeded: a 16->17 test then proves the new
+     * table lands and that its rows hang off the paper.
+     */
+    private fun createV16WithSeed() {
+        createV6(
+            insertPaper(),
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                "VALUES ('c1','p1','Cat',NULL,0)",
+            "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage," +
+                "difficulty,marks,tags,sortOrder,contentHash) VALUES " +
+                "('q1','c1','Q one',NULL,'because',NULL,'medium',2.0,'tag',0,'hash1')"
+        )
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            AppDatabase.MIGRATION_9_10.migrate(raw)
+            AppDatabase.MIGRATION_10_11.migrate(raw)
+            AppDatabase.MIGRATION_11_12.migrate(raw)
+            AppDatabase.MIGRATION_12_13.migrate(raw)
+            AppDatabase.MIGRATION_13_14.migrate(raw)
+            AppDatabase.MIGRATION_14_15.migrate(raw)
+            AppDatabase.MIGRATION_15_16.migrate(raw)
+            raw.version = 16
+        }
+    }
+
+    /**
+     * 16->17 adds `test_progress`: the in-progress session's answers, one row per
+     * question, so writing an answer no longer re-serialises every answer so far.
+     */
+    @Test
+    fun `migration 16 to 17 adds the session answers table`() {
+        runBlocking {
+            createV16WithSeed()
+            val db = openMigrated()
+            try {
+                // Opening ran 16->17; Room's identity check on open is what
+                // proves the migrated schema matches the entity.
+                db.testProgressDao().upsertAll(
+                    listOf(
+                        com.mcqapp.data.local.TestProgressEntity(
+                            paperId = "p1",
+                            questionId = "q1",
+                            selection = "q1-a",
+                            revealed = true,
+                            flagged = true,
+                            dwellSeconds = 7
+                        )
+                    )
+                )
+                val stored = db.testProgressDao().getForPaper("p1").single()
+                assertEquals("q1-a", stored.selection)
+                assertTrue(stored.revealed)
+                assertEquals(7L, stored.dwellSeconds)
+                // The answers belong to the paper: deleting it takes them with it.
+                db.paperDao().deleteById("p1")
+                assertTrue(db.testProgressDao().getForPaper("p1").isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 15 to 16 lands the browse order indexes`() {
+        runBlocking {
+            createV15WithSeed()
+            val db = openMigrated()
+            try {
+                // Opening ran 15->16; Room's identity check on open is what
+                // proves the migrated schema matches the entities.
+                val repository = com.mcqapp.data.repository.McqRepository(db, context)
+                assertEquals("Q one", repository.getQuestionsForPaper("p1").first().text)
+            } finally {
+                db.close()
+            }
+            val check = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("migration-test.db").path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            val sql = { name: String ->
+                check.rawQuery(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                    arrayOf(name)
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }
+            val categories = sql("index_categories_paperId_sortOrder_title")
+            assertTrue("categories order index should exist: $categories",
+                categories != null && categories.contains("sortOrder"))
+            val questions = sql("index_questions_categoryId_sortOrder")
+            assertTrue("questions order index should exist: $questions",
+                questions != null && questions.contains("sortOrder"))
+            assertNull(
+                "the standalone categoryId index is subsumed by (categoryId, sortOrder)",
+                sql("index_questions_categoryId")
+            )
+            check.close()
         }
     }
 }

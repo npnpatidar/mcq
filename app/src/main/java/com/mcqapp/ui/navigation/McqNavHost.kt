@@ -176,9 +176,10 @@ fun McqNavHost(repository: McqRepository) {
             SettingsScreen(repository = repository, navController = navController)
         }
         composable("import/direct") {
-            val text = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText
-            Logger.i("NAV", "import screen: direct text import")
-            ImportScreen(importText = text, navController = navController)
+            val bytes = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes
+            val uri = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri
+            Logger.i("NAV", "import screen: direct json import, ${bytes?.size ?: 0} bytes, uri=$uri")
+            ImportScreen(importBytes = bytes, importUri = uri, navController = navController)
         }
     }
     }

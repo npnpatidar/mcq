@@ -10,6 +10,8 @@ Screenshots/
 .gradle/
 build/
 local.properties
+# Kotlin compiler session scratch (appears after a Gradle build)
+.kotlin/
 
 # Android
 *.iml

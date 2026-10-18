@@ -110,7 +110,7 @@ fun QuestionEditorScreen(
     // again, so Save/Prev/Next stayed disabled however much was typed.
     val canProceed = state.canSave
     val queueIndex = EditorSession.index
-    val queueSize = EditorSession.ids.size
+    val queueSize = EditorSession.size
     val prevId = EditorSession.prevId
     val nextId = EditorSession.nextId
 
@@ -200,17 +200,19 @@ fun QuestionEditorScreen(
             // group has to occur together, and its members share the
             // passage's category. The list follows the chosen category, and
             // changing category drops an assignment that no longer fits.
-            state.passages
-                .filter { it.categoryId == state.categoryId }
-                .takeIf { it.isNotEmpty() }
-                ?.let { categoryPassages ->
-                    PassageDropdown(
-                        passages = categoryPassages,
-                        selectedId = state.passageId,
-                        onSelect = { viewModel.updatePassage(it) }
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
+            // Memoized: the editor recomposes on every keystroke and this
+            // walked every passage in the paper each time.
+            val categoryPassages = remember(state.passages, state.categoryId) {
+                state.passages.filter { it.categoryId == state.categoryId }
+            }
+            if (categoryPassages.isNotEmpty()) {
+                PassageDropdown(
+                    passages = categoryPassages,
+                    selectedId = state.passageId,
+                    onSelect = { viewModel.updatePassage(it) }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
 
             Text(stringResource(R.string.question), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))

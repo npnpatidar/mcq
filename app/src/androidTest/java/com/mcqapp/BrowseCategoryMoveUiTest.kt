@@ -95,6 +95,10 @@ class BrowseCategoryMoveUiTest {
         // the row text above it still passes, but a tap at an off-window
         // coordinate is dropped without error — scroll the card into view
         // first, like the delete-paper test.
+        // The section buttons need the category's reorder refs, which Browse
+        // loads with the viewport window rather than from the row: wait for
+        // the button instead of assuming the row label implies it is ready.
+        awaitSectionMove("Move the whole category up")
         compose.onNode(hasContentDescription("Move the whole category up") and isEnabled())
             .performScrollTo()
             .performClick()
@@ -104,6 +108,7 @@ class BrowseCategoryMoveUiTest {
         }
         // And back down for symmetry: after the swap the enabled down move
         // belongs to the section that is now first.
+        awaitSectionMove("Move the whole category down")
         compose.onNode(hasContentDescription("Move the whole category down") and isEnabled())
             .performScrollTo()
             .performClick()
@@ -112,5 +117,13 @@ class BrowseCategoryMoveUiTest {
                 listOf("ub-q1", "ub-q2")
         }
         assertTrue(true)
+    }
+
+    /** Waits until a section-move button exists and is enabled. */
+    private fun awaitSectionMove(description: String) {
+        compose.waitUntil(15_000) {
+            compose.onAllNodes(hasContentDescription(description) and isEnabled())
+                .fetchSemanticsNodes().isNotEmpty()
+        }
     }
 }

@@ -8,6 +8,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -148,14 +149,16 @@ class DeletePaperCascadeTest {
         seedPaper("p1", "c1")
         seedPaper("p2", "c2")
         repository.saveTestProgress(
-            TestSnapshot(paperId = "p1", categoryIds = listOf("c1"), questionIds = listOf("q-p1-1"))
-                .toJson()
+            TestSnapshot(paperId = "p1", categoryIds = listOf("c1"), questionIds = listOf("q-p1-1")),
+            listOf(TestAnswer(questionId = "q-p1-1", selection = setOf("q-p1-1-a")))
         )
 
         repository.deletePaper("p1")
 
-        // Resuming would present an empty paper, so the snapshot has to go.
-        assertNull(repository.loadTestProgress())
+        // Resuming would present an empty paper, so the snapshot has to go: the
+        // header by hand (one global slot) and the answers with the paper row.
+        assertNull(repository.loadTestSnapshot())
+        assertTrue(db.testProgressDao().getForPaper("p1").isEmpty())
     }
 
     @Test
@@ -163,26 +166,32 @@ class DeletePaperCascadeTest {
         seedPaper("p1", "c1")
         seedPaper("p2", "c2")
         repository.saveTestProgress(
-            TestSnapshot(paperId = "p2", categoryIds = listOf("c2"), questionIds = listOf("q-p2-1"))
-                .toJson()
+            TestSnapshot(paperId = "p2", categoryIds = listOf("c2"), questionIds = listOf("q-p2-1")),
+            listOf(TestAnswer(questionId = "q-p2-1", selection = setOf("q-p2-1-a")))
         )
 
         repository.deletePaper("p1")
 
+        assertEquals("p2", repository.loadTestSnapshot()?.paperId)
         assertEquals(
-            "p2",
-            TestSnapshot.fromJson(repository.loadTestProgress()!!)?.paperId
+            "the surviving session keeps its answers",
+            listOf("q-p2-1"),
+            repository.resumeOffer("p2")!!.selections.keys.toList()
         )
     }
 
     @Test
     fun anUnparseableSnapshotIsClearedRatherThanLeftToRot() = runBlocking {
         seedPaper("p1", "c1")
-        repository.saveTestProgress("not json at all")
+        repository.restoreTestProgress("not json at all")
+
+        // Reading it is what discards it — leaving it would mean re-parsing a
+        // dead document on every load of the screen.
+        assertNull(repository.loadTestSnapshot())
 
         repository.deletePaper("p1")
 
-        assertNull(repository.loadTestProgress())
+        assertNull(repository.loadTestSnapshot())
     }
 
     @Test

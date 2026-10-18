@@ -7,17 +7,21 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.QuestionOrderRow
 import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
+import com.mcqapp.data.local.getRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SessionOrder
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -39,12 +43,15 @@ internal class QuestionStore(
     fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
         // Bulk load (one options + one answers query for all rows) and map off
         // the main thread: the per-row re-fetch version stalled Browse badly.
-        // One IN query replaces the per-category fetch; the triggers are
-        // global so any question write refreshes this paper's list, and any
-        // CATEGORIES write refreshes it too — a category moved in the drawer
-        // or inline changes the section order, and the questions follow it.
+        // One IN query replaces the per-category fetch; Room's invalidation
+        // works per table, so a one-row probe (`observeAnyQuestion`) refreshes
+        // this paper's list on any question write exactly like the aggregate
+        // did — without re-scanning a million rows to produce a value nobody
+        // here reads. Any CATEGORIES write refreshes it too: a category moved
+        // in the drawer or inline changes the section order, and the questions
+        // follow it.
         kotlinx.coroutines.flow.combine(
-            db.questionDao().observeCategoryCounts(),
+            db.questionDao().observeAnyQuestion(),
             db.categoryDao().observeAll()
         ) { _, _ -> Unit }
             .map {
@@ -77,6 +84,73 @@ internal class QuestionStore(
         val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
         return getQuestionsForCategories(categoryIds)
     }
+
+    /** Observed refs for browse: the list re-emits on any write (probe, not aggregate). */
+    fun observeRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<com.mcqapp.data.local.QuestionRef>> =
+        kotlinx.coroutines.flow.combine(
+            db.questionDao().observeAnyQuestion(),
+            db.categoryDao().observeAll()
+        ) { _, _ -> Unit }
+            .map {
+                val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+                if (categoryIds.isEmpty()) emptyList()
+                else db.questionDao().getRefsByCategoriesChunked(categoryIds)
+            }
+            .flowOn(kotlinx.coroutines.Dispatchers.IO)
+
+    /**
+     * The paper's questions as a session order — the ids it is answered by and
+     * the passages they move with, never the stem, options or explanation. A
+     * session walks this by index and resolves the one question on screen by
+     * id.
+     */
+    suspend fun getOrderForPaper(paperId: String): SessionOrder {
+        val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
+        return loadOrder(categoryIds)
+    }
+
+    /**
+     * [getOrderForPaper] over an explicit category selection, ordered the way
+     * the old paper-wide join ordered it: by `(categories.sortOrder,
+     * categories.title)`, then `(questions.sortOrder, rowid)` inside each.
+     */
+    suspend fun getOrderForCategories(categoryIds: List<String>): SessionOrder {
+        val ordered = db.categoryDao().getByIds(categoryIds)
+            .sortedWith(compareBy({ it.sortOrder }, { it.title }))
+            .map { it.id }
+        return loadOrder(ordered)
+    }
+
+    /**
+     * Streams one category at a time into [SessionOrder.Builder], a keyset
+     * page at a time, so the refs are never all in memory at once: a
+     * million-question paper is a byte pool and two IntArrays, not a million
+     * objects. The keyset cursor is the last row's `(sortOrder, rowid)`, and
+     * the sentinel is below every stored value, so one query serves the first
+     * page too.
+     */
+    private suspend fun loadOrder(categoryIds: List<String>): SessionOrder {
+        val builder = SessionOrder.Builder()
+        for (categoryId in categoryIds) {
+            var afterSortOrder = Int.MIN_VALUE
+            var afterRowId = Long.MIN_VALUE
+            while (true) {
+                val page = db.questionDao().pageSessionRefsByCategory(
+                    categoryId, afterSortOrder, afterRowId, ORDER_PAGE
+                )
+                for (row in page) builder.add(row.id, row.passageId)
+                if (page.size < ORDER_PAGE) break
+                val last = page.last()
+                afterSortOrder = last.sortOrder
+                afterRowId = last.rowId
+            }
+        }
+        return builder.build()
+    }
+
+    /** Domain questions for entities a batch surface already loaded. */
+    suspend fun toDomain(entities: List<QuestionEntity>): List<Question> =
+        mapper.toDomainBulk(entities)
 
     suspend fun getQuestion(questionId: String): Question? {
         Logger.d("REPO", "getQuestion($questionId)")
@@ -117,10 +191,7 @@ internal class QuestionStore(
                 ?: ((db.questionDao().getMaxSortOrder(question.categoryId) ?: -1) + 1)
             Logger.d("REPO", "saveQuestion(id=${question.id}): existing=${existing != null}, " +
                 "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
-            val contentHash = mapper.computeContentHash(
-                question.text, question.options.map { it.text }, question.options.map { it.image },
-                question.passageId
-            )
+            val contentHash = mapper.contentHashOf(question)
             Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
             db.questionDao().upsert(
                 QuestionEntity(
@@ -128,6 +199,7 @@ internal class QuestionStore(
                     categoryId = question.categoryId,
                     passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
+                    searchText = question.elements.searchableText,
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
                     explanationImage = question.explanationImage,
@@ -146,6 +218,7 @@ internal class QuestionStore(
                         id = o.id,
                         questionId = question.id,
                         text = o.elements.toContentJson(mapper.json),
+                        searchText = o.elements.searchableText,
                         image = o.image,
                         sortOrder = index
                     )
@@ -198,6 +271,7 @@ internal class QuestionStore(
                 categoryId = q.categoryId,
                 passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
+                searchText = q.elements.searchableText,
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
                 explanationImage = q.explanationImage,
@@ -214,6 +288,7 @@ internal class QuestionStore(
                     questionId = q.id,
                     id = o.id,
                     text = o.elements.toContentJson(mapper.json),
+                    searchText = o.elements.searchableText,
                     image = o.image,
                     sortOrder = index
                 )
@@ -371,7 +446,7 @@ internal class QuestionStore(
     suspend fun renumberQuestions(categoryId: String, orderedIds: List<String>): Boolean {
         if (orderedIds.isEmpty()) return false
         return db.withTransaction {
-            val rows = db.questionDao().getByCategory(categoryId).associateBy { it.id }
+            val rows = db.questionDao().getOrderByCategory(categoryId).associateBy { it.id }
             if (orderedIds.any { it !in rows } || rows.size != orderedIds.size) {
                 Logger.w("REPO", "renumberQuestions($categoryId): id set mismatch, refusing")
                 return@withTransaction false
@@ -394,14 +469,16 @@ internal class QuestionStore(
      */
     internal suspend fun moveAfterAnchor(questionId: String, anchorId: String): Boolean {
         return db.withTransaction {
-            val moved = db.questionDao().getById(questionId) ?: return@withTransaction false
-            val anchor = db.questionDao().getById(anchorId) ?: return@withTransaction false
-            if (moved.categoryId != anchor.categoryId) return@withTransaction false
-            val ordered = mutableListOf<QuestionEntity>()
-            for (row in db.questionDao().getByCategory(anchor.categoryId)) {
+            val movedCategory = db.questionDao().getCategoryIdById(questionId)
+                ?: return@withTransaction false
+            val anchorCategory = db.questionDao().getCategoryIdById(anchorId)
+                ?: return@withTransaction false
+            if (movedCategory != anchorCategory) return@withTransaction false
+            val ordered = mutableListOf<QuestionOrderRow>()
+            for (row in db.questionDao().getOrderByCategory(anchorCategory)) {
                 if (row.id == questionId) continue
                 ordered += row
-                if (row.id == anchorId) ordered += moved
+                if (row.id == anchorId) ordered += QuestionOrderRow(questionId, 0)
             }
             if (ordered.none { it.id == questionId }) return@withTransaction false
             ordered.forEachIndexed { index, row ->
@@ -439,5 +516,14 @@ internal class QuestionStore(
         if (moveAfterAnchor(member.id, anchor.id)) {
             Logger.i("REPO", "placeWithGroup(${member.id} after ${anchor.id})")
         }
+    }
+
+    private companion object {
+        /**
+         * Session rows read per keyset page. An ordinary category is one page
+         * (a thousand questions); a category a million rows deep pages
+         * through without rescanning.
+         */
+        const val ORDER_PAGE = 2000
     }
 }

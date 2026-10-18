@@ -23,12 +23,13 @@ class StorageInfoTest {
             id = "q1",
             categoryId = "c1",
             text = "Q?",
+            searchText = "",
             image = "12345",
             explanationImage = "123"
         )
         val options = listOf(
-            OptionEntity(questionId = "q1", id = "a", text = "A", image = "12"),
-            OptionEntity(questionId = "q1", id = "b", text = "B")
+            OptionEntity(questionId = "q1", id = "a", text = "A", searchText = "", image = "12"),
+            OptionEntity(questionId = "q1", id = "b", text = "B", searchText = "")
         )
         assertEquals(10L, StorageInfo.imageCharsOf(question, options))
     }
@@ -36,11 +37,13 @@ class StorageInfoTest {
     @Test
     fun usageForPaperAggregates() {
         val questions = listOf(
-            QuestionEntity(id = "q1", categoryId = "c1", text = "Q1", image = "1234"),
-            QuestionEntity(id = "q2", categoryId = "c1", text = "Q2")
+            QuestionEntity(id = "q1", categoryId = "c1", text = "Q1", searchText = "Q1", image = "1234"),
+            QuestionEntity(id = "q2", categoryId = "c1", text = "Q2", searchText = "Q2")
         )
         val byQuestion = mapOf(
-            "q1" to listOf(OptionEntity(questionId = "q1", id = "a", text = "A", image = "12"))
+            "q1" to listOf(
+                OptionEntity(questionId = "q1", id = "a", text = "A", searchText = "A", image = "12")
+            )
         )
         val usage = StorageInfo.usageForPaper("p1", "Paper", questions, byQuestion)
         assertEquals(2, usage.questions)

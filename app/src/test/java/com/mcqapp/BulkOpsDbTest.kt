@@ -98,33 +98,6 @@ class BulkOpsDbTest {
     }
 
     @Test
-    fun duplicatePaperClonesIntoTheCopyNamespace() = runBlocking {
-        assertEquals("p1-copy", repository.duplicatePaper("p1"))
-        // q1-copy is taken by another paper's question, so q1 chains onward.
-        val clone = repository.getQuestion("q1-copy-2")
-        assertNotNull(clone)
-        assertEquals("p1-copy-c1", clone!!.categoryId)
-        assertEquals(PNG, clone.explanationImage)
-        assertEquals(Difficulty.HARD, clone.difficulty)
-        // Clones start at 0 in the fresh category, in the source's order.
-        assertEquals(0, db.questionDao().getById("q1-copy-2")?.sortOrder)
-        assertEquals(1, db.questionDao().getById("q2-copy")?.sortOrder)
-        // Options and key land with the clone, not just the question row.
-        assertEquals(listOf("a", "b"), clone.options.map { it.id })
-        assertEquals(setOf("a"), clone.correctOptionIds)
-        assertEquals(listOf("tq1"), clone.tags)
-        assertEquals(2.0, clone.marks, 0.0)
-        assertEquals("why q1", clone.explanation)
-        // q2 has no collision and takes the first suffix.
-        assertEquals("q2-copy", repository.getQuestion("q2-copy")?.id)
-        assertEquals("Paper 1 (copy)", db.paperDao().getById("p1-copy")?.title)
-        // The originals are untouched.
-        assertEquals("c1", repository.getQuestion("q1")?.categoryId)
-        assertEquals(0, db.questionDao().getById("q1")?.sortOrder)
-        assertEquals(1, db.questionDao().getById("q2")?.sortOrder)
-    }
-
-    @Test
     fun copyAppendsAfterTheTargetTailAndKeepsChildren() = runBlocking {
         // c2 already holds q1-copy at sortOrder 0.
         repository.copyQuestionsToCategory(listOf("q2", "q1"), "c2")
@@ -147,22 +120,6 @@ class BulkOpsDbTest {
             db.questionDao().getById("q1")?.contentHash,
             db.questionDao().getById("q1-copy-2")?.contentHash
         )
-    }
-
-    @Test
-    fun aSecondDuplicateLeavesTheFirstClonesIntact() = runBlocking {
-        assertEquals("p1-copy", repository.duplicatePaper("p1"))
-        assertEquals("p1-copy-2", repository.duplicatePaper("p1"))
-        // The first run's clones keep their options and key: the second run
-        // chained onto the namespace instead of replacing them.
-        val first = repository.getQuestion("q1-copy-2")!!
-        assertEquals(listOf("a", "b"), first.options.map { it.id })
-        assertEquals(setOf("a"), first.correctOptionIds)
-        assertEquals(0, db.questionDao().getById("q1-copy-2")?.sortOrder)
-        val second = repository.getQuestion("q1-copy-3")!!
-        assertEquals("p1-copy-2-c1", second.categoryId)
-        assertEquals(listOf("a", "b"), second.options.map { it.id })
-        assertEquals(0, db.questionDao().getById("q1-copy-3")?.sortOrder)
     }
 
     @Test

@@ -27,6 +27,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -61,7 +62,8 @@ import com.mcqapp.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
-    importText: String?,
+    importBytes: ByteArray?,
+    importUri: android.net.Uri?,
     navController: NavController,
     viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
@@ -177,13 +179,18 @@ fun ImportScreen(
             val pendingName = com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = null
             viewModel.loadDocx(pendingDocx, pendingName)
-        } else if (importText != null) {
-            viewModel.loadJsonText(importText)
-            // Drop the global copy once consumed: the VM owns the text now
-            // (fingerprint-gated), and a 25k-question file is ~9MB retained.
+        } else if (importBytes != null) {
+            viewModel.loadJsonBytes(importBytes)
+            // Drop the global copy once consumed: the VM owns the parse now
+            // (fingerprint-gated), and a 25k-question bank is ~9MB retained.
             // Identity-guarded so a newer pick made meanwhile is never lost.
-            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText === importText) {
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonText = null
+            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes === importBytes) {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = null
+            }
+        } else if (importUri != null) {
+            viewModel.loadJsonUri(importUri)
+            if (com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri == importUri) {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri = null
             }
         } else {
             // Process death: the static holder is empty and no text was passed,
@@ -239,7 +246,7 @@ fun ImportScreen(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                item {
+                item(contentType = "form") {
                     Text(stringResource(R.string.paper_details), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     SuggestionTextField(
@@ -284,7 +291,27 @@ fun ImportScreen(
                     )
                 }
 
-                item {
+                if (state.previewTruncated) {
+                    item(contentType = "notice") {
+                        Spacer(Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Text(
+                                "Large bank: previewing the first ${state.questions.size} of " +
+                                    "${state.totalQuestionCount} questions. Edits and deletions apply " +
+                                    "to the previewed ones; the rest import exactly as they are in the file.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+                item(contentType = "list-header") {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "New questions (${newQuestions.size}) — will be added",
@@ -300,7 +327,7 @@ fun ImportScreen(
                 val skippedNotes = warningGroups.skipped
                 val advisoryNotes = warningGroups.notes
                 if (skippedNotes.isNotEmpty()) {
-                    item {
+                    item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Skipped (${skippedNotes.size}) — content dropped from the file",
@@ -313,7 +340,7 @@ fun ImportScreen(
                     // same advisory text many times (eight identical equation
                     // notes crashed the preview with a duplicate-key
                     // IllegalArgumentException), and these lists never reorder.
-                    itemsIndexed(skippedNotes.take(20), key = { i, _ -> "skip|$i" }) { _, warning ->
+                    itemsIndexed(skippedNotes.take(20), key = { i, _ -> "skip|$i" }, contentType = { _, _ -> "warning" }) { _, warning ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -328,7 +355,7 @@ fun ImportScreen(
                         }
                     }
                     if (skippedNotes.size > 20) {
-                        item {
+                        item(contentType = "more") {
                             Text(
                                 "+${skippedNotes.size - 20} more skipped",
                                 style = MaterialTheme.typography.labelSmall,
@@ -338,7 +365,7 @@ fun ImportScreen(
                     }
                 }
                 if (advisoryNotes.isNotEmpty()) {
-                    item {
+                    item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Notes from the file (${advisoryNotes.size}) — nothing was dropped",
@@ -346,7 +373,7 @@ fun ImportScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    itemsIndexed(advisoryNotes.take(20), key = { i, _ -> "note|$i" }) { _, note ->
+                    itemsIndexed(advisoryNotes.take(20), key = { i, _ -> "note|$i" }, contentType = { _, _ -> "warning" }) { _, note ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -361,7 +388,7 @@ fun ImportScreen(
                         }
                     }
                     if (advisoryNotes.size > 20) {
-                        item {
+                        item(contentType = "more") {
                             Text(
                                 "+${advisoryNotes.size - 20} more notes",
                                 style = MaterialTheme.typography.labelSmall,
@@ -371,7 +398,7 @@ fun ImportScreen(
                     }
                 }
                 if (warnings.isNotEmpty()) {
-                    item {
+                    item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Warnings (${warnings.size}) — imports fine, but check these",
@@ -380,7 +407,7 @@ fun ImportScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    itemsIndexed(warnings.take(20), key = { i, w -> "warn|${w.questionId}|$i" }) { _, warning ->
+                    itemsIndexed(warnings.take(20), key = { i, w -> "warn|${w.questionId}|$i" }, contentType = { _, _ -> "warning" }) { _, warning ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -407,7 +434,7 @@ fun ImportScreen(
                         }
                     }
                     if (warnings.size > 20) {
-                        item {
+                        item(contentType = "more") {
                             Text(
                                 "+${warnings.size - 20} more warnings",
                                 style = MaterialTheme.typography.labelSmall,
@@ -416,7 +443,7 @@ fun ImportScreen(
                         }
                     }
                 }
-                items(newQuestions, key = { it.id }) { question ->
+                items(newQuestions, key = { it.id }, contentType = { "preview-question" }) { question ->
                     PreviewQuestionCard(
                         question = question,
                         dimmed = false,
@@ -427,7 +454,7 @@ fun ImportScreen(
                 }
 
                 if (changedQuestions.isNotEmpty()) {
-                    item {
+                    item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Changed (${changedQuestions.size}) — will update the existing question",
@@ -436,7 +463,7 @@ fun ImportScreen(
                         Spacer(Modifier.height(4.dp))
                     }
 
-                    items(changedQuestions, key = { it.id }) { question ->
+                    items(changedQuestions, key = { it.id }, contentType = { "preview-question" }) { question ->
                         PreviewQuestionCard(
                             question = question,
                             dimmed = false,
@@ -448,7 +475,7 @@ fun ImportScreen(
                 }
 
                 if (dupQuestions.isNotEmpty()) {
-                    item {
+                    item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Duplicates (${dupQuestions.size}) — already in library, will be skipped",
@@ -461,7 +488,7 @@ fun ImportScreen(
                         Spacer(Modifier.height(4.dp))
                     }
 
-                    items(dupQuestions, key = { it.id }) { question ->
+                    items(dupQuestions, key = { it.id }, contentType = { "preview-question" }) { question ->
                         PreviewQuestionCard(
                             question = question,
                             dimmed = true,
@@ -473,12 +500,32 @@ fun ImportScreen(
                 }
             }
 
+            if (state.importing && state.previewTruncated) {
+                LinearProgressIndicator(
+                    progress = {
+                        if (state.totalQuestionCount <= 0) {
+                            0f
+                        } else {
+                            (state.importedQuestions.toFloat() / state.totalQuestionCount)
+                                .coerceIn(0f, 1f)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Importing ${state.importedQuestions} of ${state.totalQuestionCount} questions…",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = { viewModel.import() },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = state.paperTitle.isNotBlank() &&
-                    (newQuestions.isNotEmpty() || changedQuestions.isNotEmpty()) &&
+                    (state.previewTruncated ||
+                        newQuestions.isNotEmpty() || changedQuestions.isNotEmpty()) &&
                     !state.importing
             ) {
                 if (state.importing) {
@@ -489,7 +536,11 @@ fun ImportScreen(
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
-                    if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
+                    if (state.importing && state.previewTruncated) {
+                        "Importing…"
+                    } else if (state.previewTruncated) {
+                        "Import ${state.totalQuestionCount} questions"
+                    } else if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
                         "Nothing new to import"
                     } else if (changedQuestions.isEmpty()) {
                         "Import ${newQuestions.size} new questions"

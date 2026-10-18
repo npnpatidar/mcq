@@ -82,6 +82,50 @@ class SafeZipTest {
     }
 
     @Test
+    fun streamHandsOverEveryEntryUnderTheSameCaps() = kotlinx.coroutines.runBlocking {
+        val zip = zipOf("a.txt" to "one".toByteArray(), "b.bin" to ByteArray(1000) { it.toByte() })
+        val names = mutableListOf<String>()
+        val sizes = mutableListOf<Int>()
+        SafeZip.stream(java.io.ByteArrayInputStream(zip)) { name, entry ->
+            names += name
+            sizes += entry.readBytes().size
+        }
+        assertEquals(listOf("a.txt", "b.bin"), names)
+        assertEquals(listOf(3, 1000), sizes)
+    }
+
+    @Test
+    fun streamRefusesTooManyEntries() {
+        val entries = (0 until SafeZip.MAX_ENTRIES + 5).map { "f$it.txt" to ByteArray(1) }.toTypedArray()
+        val zip = zipOf(*entries)
+        val e = runCatching {
+            kotlinx.coroutines.runBlocking {
+                SafeZip.stream(java.io.ByteArrayInputStream(zip)) { _, _ -> }
+            }
+        }.exceptionOrNull()
+        assertTrue("expected ZipLimitException, got $e", e is ZipLimitException)
+        assertTrue(e!!.message!!.contains("more than ${SafeZip.MAX_ENTRIES}"))
+    }
+
+    /**
+     * The cap has to hold even when the visitor never reads a byte of the
+     * entry: a caller who only wants the manifest must not be able to walk
+     * past a member that expands to hundreds of megabytes.
+     */
+    @Test
+    fun streamRefusesAnEntryPastTheCapEvenWhenItIsNotRead() {
+        val bomb = ByteArray(200 * 1024 * 1024)
+        val zip = zipOf("payload.bin" to bomb)
+        val e = runCatching {
+            kotlinx.coroutines.runBlocking {
+                SafeZip.stream(java.io.ByteArrayInputStream(zip)) { _, _ -> }
+            }
+        }.exceptionOrNull()
+        assertTrue("expected ZipLimitException, got $e", e is ZipLimitException)
+        assertTrue(e!!.message!!.contains("expands to more than"))
+    }
+
+    @Test
     fun limitsAreSane() {
         assertEquals(4096, SafeZip.MAX_ENTRIES)
         assertEquals(64L * 1024 * 1024, SafeZip.MAX_ENTRY_BYTES)

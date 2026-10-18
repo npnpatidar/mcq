@@ -42,19 +42,121 @@ class NoDeadCodeTest {
         }
     }
 
+    /**
+     * `getStudyQueue(leechesOnly = false)` materialises every eligible card, so
+     * it is linear in the paper — a million cards on a paper nobody has studied.
+     * It stays because it is the study tests' oracle: it is what "the badge and
+     * the session agree" is asserted against, and what daily caps were removed
+     * against. No screen may call it. The session pulls one card at a time
+     * (`getNextStudyCard`), and the drill asks for leeches (`leechesOnly = true`,
+     * bounded by the schedules on file).
+     */
+    @Test
+    fun theLinearStudyQueueHasNoProductionCaller() {
+        // A 200-character window covers a call whose arguments wrap.
+        val window = 200
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "McqRepository.kt" && it.name != "StudyStore.kt" }
+            .forEach { file ->
+                val text = file.readText()
+                var at = text.indexOf("getStudyQueue(")
+                while (at >= 0) {
+                    val call = text.substring(at, minOf(text.length, at + window))
+                    if (!call.contains("leechesOnly = true")) {
+                        val line = text.count { it == '\n' } + 1
+                        offenders += "${file.name}:$line"
+                    }
+                    at = text.indexOf("getStudyQueue(", at + 1)
+                }
+            }
+        assertTrue(
+            "these ask for the linear full study queue: $offenders",
+            offenders.isEmpty()
+        )
+    }
+
+    /**
+     * Two readers materialise a whole table: every result row of an attempt and
+     * every bookmarked question. Both screens page instead
+     * (`resultPagingSource`, `bookmarkedPagingSource`), so they stay as the
+     * tests' oracles — the list a streamed save is asserted against, and the
+     * provenance a bookmark is asserted against — and no production path may
+     * ask for them.
+     */
+    @Test
+    fun theWholeTableReadersHaveNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "McqRepository.kt" && it.name != "HistoryStore.kt" }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("getBookmarkedQuestions()", "getAttemptResults(")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read a whole table: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * `getLatestStandings` materialises one standing per question ever graded in
+     * the whole bank; `getBookmarkExportDto` builds every bookmark as one DTO.
+     * Both are linear in the bank. They stay as the tests' oracles — the
+     * mistake order and the bookmark grouping are asserted against them — and
+     * no production path may call them: the badges count in SQL
+     * (`countMistakesByPaper`), the mistakes session asks for one paper
+     * (`getMistakenQuestionIdsForPaper`), and the export walks pages
+     * (`Exporter.bookmarkStream`).
+     */
+    @Test
+    fun theStandingAndBookmarkOraclesHaveNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name !in setOf("Daos.kt", "McqRepository.kt", "HistoryStore.kt") }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("getLatestStandings()", "getBookmarkExportDto()")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read the whole bank: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * `AnkiPackageReader.read` expands the whole archive into memory as a
+     * `Map<String, ByteArray>`, inlines every picture into one DTO for the whole
+     * bank, and hands that to a whole-file importer. `.apkg` now streams
+     * (`AnkiApkgImporter` -> `AnkiPackageReader.stream`), so it stays as the
+     * equivalence test's oracle — the database the streamed import is asserted
+     * against — and no production file may call it.
+     */
+    @Test
+    fun theWholeFileAnkiReaderHasNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "AnkiPackageReader.kt" }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("AnkiPackageReader.read(", "packageReader.read(")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read the whole .apkg: $offenders", offenders.isEmpty())
+    }
+
     @Test
     fun imageScalingHasOneImplementation() {
-        // The file-level scaler is the single copy of the mapping and the
-        // import path calls it; the paper-level twin of it is the dead code
-        // the audit found.
+        // The paper-level scaler is the single copy of the mapping; the
+        // file-level scaler delegates to it so there is no second mapping,
+        // and the import path scales one paper at a time.
         val importer = sourceOf("Importer.kt")
         assertTrue(
-            "the import path scales the whole file",
-            importer.contains("file.withDownscaledImages()")
+            "the file-level scaler delegates to the paper-level one",
+            importer.contains("papers.map { it.withDownscaledImages() }")
         )
-        assertFalse(
-            "Importer.kt still declares the paper-level duplicate",
-            importer.contains("fun PaperDto.withDownscaledImages(")
+        assertTrue(
+            "the import path scales one paper at a time",
+            importer.contains("paperDto.withDownscaledImages()")
         )
     }
 

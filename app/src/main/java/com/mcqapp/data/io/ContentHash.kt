@@ -3,6 +3,7 @@ package com.mcqapp.data.io
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.Question
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import java.security.MessageDigest
@@ -51,23 +52,53 @@ object ContentHash {
         elements.filterIsInstance<ContentElement.ImageElement>().map { it.src } +
             listOfNotNull(scalar)
 
+    /**
+     * One option's picture as the hash sees it: [optionImageSrcs] joined by
+     * commas, or the literal "null" when there is no picture — exactly what a
+     * raw `List<String?>` rendered (Kotlin spells a null element "null"), so
+     * hashes stored by earlier versions still match.
+     */
+    private fun optionImageValue(elements: List<ContentElement>, scalar: String?): String {
+        val srcs = optionImageSrcs(elements, scalar)
+        return if (srcs.isEmpty()) "null" else srcs.joinToString(",")
+    }
+
+    /**
+     * The text a question or an option is *stored* with: the elements JSON when
+     * there are elements, otherwise one text element holding the flat string —
+     * exactly what the importer and [QuestionStore.saveQuestion] write. Reading
+     * a row back yields `textContent` of that, so deriving the hash the same
+     * way keeps a file DTO and a loaded question on one value.
+     */
+    private fun storedText(elements: List<ContentElement>, flat: String): String =
+        elements.ifEmpty { listOf(ContentElement.TextElement(flat)) }.textContent
+
     fun of(dto: QuestionDto): String =
         of(
-            dto.text,
-            dto.options.map { it.text },
-            dto.options.map { option ->
-                val srcs = option.elements.filterIsInstance<ContentElement.ImageElement>()
-                    .map { it.src }
-                if (srcs.isEmpty()) {
-                    // Exactly what the raw scalar list rendered (Kotlin
-                    // joinToString spells a null element "null"), so hashes
-                    // stored by earlier versions still match.
-                    option.image ?: "null"
-                } else {
-                    (srcs + listOfNotNull(option.image)).joinToString(",")
-                }
-            },
+            storedText(dto.elements, dto.text),
+            dto.options.map { storedText(it.elements, it.text) },
+            dto.options.map { optionImageValue(it.elements, it.image) },
             dto.passageId
+        )
+
+    /**
+     * The same hash for a *stored* question, read back as a [Question].
+     *
+     * The importer and the import preview hash a file's [QuestionDto], while
+     * the study layer compares that stored hash against the question it loads:
+     * a difference means "the content was edited, so reset the card". Hashing
+     * only the scalar image made the two disagree for every option whose
+     * picture the importer had folded into `options_elements`, so such a card
+     * was reset as edited and re-served on every pull — the review counter
+     * climbed while the same question stayed on screen. Both shapes must hash
+     * to one value, so both go through [optionImageValue].
+     */
+    fun of(question: Question): String =
+        of(
+            question.text,
+            question.options.map { it.text },
+            question.options.map { optionImageValue(it.elements, it.image) },
+            question.passageId
         )
 
     /**

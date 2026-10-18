@@ -70,7 +70,7 @@ internal fun DrawerContent(
         )
         Divider()
         LazyColumn(modifier = Modifier.weight(1f)) {
-            item {
+            item(contentType = "action") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -86,7 +86,7 @@ internal fun DrawerContent(
                     Text(stringResource(R.string.history))
                 }
             }
-            item {
+            item(contentType = "action") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -102,7 +102,7 @@ internal fun DrawerContent(
                     Text(stringResource(R.string.stats))
                 }
             }
-            item {
+            item(contentType = "action") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -118,7 +118,7 @@ internal fun DrawerContent(
                     Text(stringResource(R.string.bookmarks))
                 }
             }
-            item {
+            item(contentType = "action") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -134,7 +134,7 @@ internal fun DrawerContent(
                     Text(stringResource(R.string.search))
                 }
             }
-            item {
+            item(contentType = "action") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -150,7 +150,7 @@ internal fun DrawerContent(
                     Text(stringResource(R.string.passages))
                 }
             }
-            item {
+            item(contentType = "action") {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -166,8 +166,8 @@ internal fun DrawerContent(
                     Text(stringResource(R.string.settings))
                 }
             }
-            item { Divider() }
-            items(papers, key = { it.id }) { paper ->
+            item(contentType = "divider") { Divider() }
+            items(papers, key = { it.id }, contentType = { "paper" }) { paper ->
                 Column {
                     Row(
                         modifier = Modifier

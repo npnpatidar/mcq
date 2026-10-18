@@ -1,0 +1,1107 @@
+# Scaling plan: every screen at hundreds of thousands of questions
+
+Goal: the app stays smooth (no jank, freeze, hang, crash, OOM) with papers of
+100k–500k+ questions, while every existing feature keeps behaving exactly as
+it does today. Nothing here changes what the user can do; it changes how much
+data any single operation is allowed to touch at once.
+
+Written from the actual hot paths (files and problems are named per screen)
+and from how Anki/AnkiDroid survive collections that large.
+
+---
+
+## 1. Ground rules (learned from Anki, applied here)
+
+References:
+
+- **AnkiDroid never runs "massive queries and processes them in memory"; it
+  does "queries as required per note"** (AnkiDroid issue #2547, "Deleting
+  decks and importing cards from apkg is too slow"). This is the single most
+  important rule, and this codebase already follows it in its best paths
+  (`QuestionRef`, chunked queries, per-question content fetch). Every
+  violation below is a place where a screen still asks for everything.
+- **Anki got big-collection wins by lazy loading** (ankitects/anki #5171
+  "lazy-loading MathJax" for reviewer init; Anki 2.1.50–59 "Improved
+  performance with large selections in the Browse screen"). Anything a screen
+  *may* show but is not showing right now must not be loaded, parsed or
+  hashed.
+- **The reviewer prefetches only the next card** (Anki's card queue). The rest
+  of the day's work is derived from indexes and counts, never materialised.
+- **Android/Room**: list surfaces page through `room-paging` `PagingSource`
+  (invalidation is automatic), heavy aggregation belongs in SQL (`GROUP BY`
+  over indexed columns), and WAL journal mode keeps readers non-blocking
+  while a write is in flight.
+
+Constraints in this repo:
+
+- Features stay as-is: same buttons, same orderings, same filters, same FSRS
+  semantics, same Anki interop contract.
+- No test dependency additions; no SQLite driver library (project decision).
+- Linux aarch64 cannot run Robolectric SQLite tests locally; CI (x86_64) is
+  authoritative. Perf gates must therefore be pure-JVM where possible.
+
+Measurable definition of "smooth" (each screen's section ends with targets):
+
+| Metric | Target at a 250k-question paper |
+|---|---|
+| Cold list first frame (Browse / test palette) | < 800 ms, rows streamed |
+| Keystroke → first results (search) | < 350 ms p95 |
+| Tap → next/prev cards | < 120 ms p95 |
+| Long frames while scrolling a list | 0 |
+| Peak heap importing a 100k bank | < 60 % of max heap |
+| Submit a 250k attempt | streamed, no ANR, no OOM |
+| Study pull (next card) | < 150 ms p95 |
+| Stats open with 1 M review_log rows | < 3 s first paint |
+
+---
+
+## 2. What is already in place (keep; do not regress)
+
+- `QuestionRef` (`data/local/Daos.kt`): list surfaces order ids + preview
+  stems only; content is fetched per on-screen question. This is the app's
+  Anki-style "queries as required" backbone.
+- `ChunkedQueries.kt`: every `IN (:ids)` is chunked under the 999-bind cap
+  (API 26). Extend it; never bypass it.
+- `HistoryStore.saveAttemptStreamed`: attempt reads/writes in 500-row batches
+  inside one transaction.
+- `StudyStore.getNextStudyCard` + `Study.eligibility`: pull-based session, no
+  prebuilt queue.
+- `TestViewModel`: resolves only the on-screen question; review sheet built in
+  batches; streamed save on submit.
+- `Importer`: one collision-candidate prefetch, image downscale outside the
+  write transaction, chunked matchers, truncated log lines for big files.
+- UI: `LazyColumn` everywhere, hoisted `remember` work, block-aware drill
+  sampling (`PassageBlocks`), dwell/time-loop states split so a 1 s tick does
+  not invalidate whole question cards.
+
+---
+
+## 3. Foundations (do these first; every screen rides on them)
+
+### F1. Finish the half-migrated Browse branch (P0 correctness gate)
+
+`BrowseScreen.kt` and `BrowseViewModel.kt` currently reference a
+`questions` property that no longer exists on `BrowseUiState`
+(`BrowseScreen.kt:232`, `BrowseViewModel.kt:172` in the working tree; the
+state carries `refs`). Verify with `:app:assembleDebug` on CI and finish the
+`List<Question>` → `List<QuestionRef>` migration in:
+
+- `BrowseViewModel.exportSelection` — it must re-resolve the selected ids
+  through `getQuestionsByIds(...)`, not filter a stale full-content list.
+- Anything else in the two files still touching pre-migration fields.
+
+No scale work lands until the branch compiles and screens render from refs
+end to end.
+
+### F2. Index the queries that scan today
+
+`Entities.kt` has no index on `questions.contentHash`, yet the dedup path
+(`getMatchesByContentHashesChunked`, `getIdByContentHash`) probes it for every
+import and every preview refresh → a full table scan per chunk today. Add:
+
+- `questions(contentHash)` — import dedup, duplicate classification.
+- `card_state(paperId, cardState, dueAt)` — per-paper due counts in one
+  grouped query (Library badges, study eligibility).
+- `review_log(paperId, reviewedAt)` — per-day heatmap aggregates.
+- `question_results(attemptId, isCorrect)` — results-screen tallies.
+- `papers(title)` and `categories(paperId, title)` — title-match imports and
+  the `(sortOrder, title)` ordering used by `getByCategories`.
+
+Ship as migration v11 with `exportSchema = true` from now on so schema drift
+is reviewed.
+
+### F3. Room housekeeping
+
+- `AppDatabase.get(...)`: `.setJournalMode(WAL)` — imports and bulk writes stop
+  fighting readers (browse/test/search screens observe the DB while an import
+  writes).
+- Delete or confine `QuestionDao.observeAll()` / `getAll()`-style
+  whole-table `SELECT *` queries: at 250k questions with element JSON these
+  are an OOM waiting for a caller. Keep only column-narrow variants
+  (`getIdCategories`, hashes-only, etc.).
+- Keep `exportSchema = true` + a schema-version guard test (there is already a
+  `VersionCodeGuardTest` habit) so indexes/tables survive future migrations.
+
+### F4. Search-text column (FTS) instead of LIKE over element JSON
+
+`questions.text` stores kotlinx-serialised element JSON with markup, so
+`LIKE '%' || :q || '%'` on it is both slow (no index possible) and semantically
+mushy (that is why `QuestionSearch.prefilterKey` exists). Add, at save time:
+
+- `questions.searchText` — plain flattened text of stem + tags (the same
+  `textContent`/`searchableText` output the in-memory filters already use),
+  refreshed in `saveQuestion`, `Importer`, `updateBulkFields`, `rename` paths.
+- A `@Fts4` shadow entity over `searchText` (Room supports `@Fts4` directly).
+- `questions.searchText` indexed (FTS is), and the DAO search switches from
+  LIKE to `searchText MATCH` for the stem/tags/option/passage hit union.
+
+Backfill the column in migration v11 with a plain string built off
+`parseContentElements(...).searchableText` (batched, off the main thread).
+This is the enabler for Search (§4.6), Browse in-paper search (§4.1) and the
+browse-screen in-memory filter less clearly needed at all.
+
+### F5. Streaming exports
+
+`BrowseViewModel.exportSelection` / `BookmarksViewModel.exportBookmarks`
+build the whole export in memory as `result.bytes` before writing. A 100k
+selection is tens of MB. Change `PaperExporter` (and `AnkiPackageWriter`) to
+accept an `OutputStream` and write progressively: JSON gets a segmenting
+writer, PDF/DOCX already stream from POJOs. Same for the backup writer in
+`Backup.kt`. Feature set unchanged; memory ceiling removed.
+
+### F6. Logging cost under bulk work
+
+`Importer` logs several lines *per question*. At 100k questions that is
+~500k string builds and I/O inside the transaction loop. Gate per-question
+logs behind a verbose flag (keep the batch summary lines), so logging cost is
+constant, not O(file size).
+
+---
+
+## 4. Screen-by-screen plan
+
+### 4.1 Browse
+
+**Today's hot paths** (`ui/browse/BrowseScreen.kt`, `BrowseViewModel.kt`,
+`QuestionStore.observeRefsForPaper`):
+
+- Whole-list refetch: the observer re-runs `getRefsByCategoriesChunked` for
+  the whole paper on every category/question write. At 250k that re-emits
+  hundreds of thousands of `QuestionRef` objects (`text` + `explanation`
+  stems included) after every save/delete/renumber.
+- Main-thread filtering: `searched = questions.filter { ref ->
+  ref.text.contains(...) }` runs *during composition* (`remember` block) and
+  scans every stem per keystroke. This is the freeze at scale.
+- `questionContent(questionId)` fetches the *full* question (options, key,
+  explanation, image) for every row as it composes — full scanning makes each
+  row's first climb expensive and momentarily heavy.
+- `EditorSession.start(ids = filteredIds, ...)` hands the editor a full
+  List<String> of paper ids (~5–27 MB) just to support prev/next.
+- Passage bodies for the filter are all preloaded (`getPassagesForPaper`).
+
+**Plan**
+
+1. Refs → **Paging 3**:
+   - `QuestionDao` gets a `PagingSource` variant of `getRefsByCategories`
+     (ordering preserved from the SQL `ORDER BY`; Room's
+     `LimitOffsetPagingSource` serves it as `LIMIT ? OFFSET ?` — see §8 Open 4
+     for that limitation).
+   - `BrowseViewModel` exposes `Pager(PAGING_SIZE = ~60)` +
+     `cachedIn(viewModelScope)`.
+   - Screen keeps the LazyColumn, swaps `itemsIndexed(filtered, ...)` for
+     `LazyPagingItems`. Item count for the header/summary comes from a cheap
+     `COUNT(*)` query, not from materialising the list.
+   - Deletion/move/etc. invalidation comes free from Room's invalidation
+     tracker (same refetch-on-write behaviour the screen relies on today).
+2. Move search off the main thread and into SQL:
+   - In-paper search uses the FTS column (F4): `MATCH :query` constrained by
+     `categoryId IN (...)`, chunked, emitting a `PagingSource` keyed identically.
+     - falls back to LIKE on `searchText` on devices where FTS works fine
+       (it always does; LIKE remains only as a migration fallback).
+   - The "No answer"/"No explanation"/"Uncategorized" chips become WHERE
+     predicates in the same `PagingSource` (`answerKeyCount = 0` is a
+     correlated subquery today; keep the semantics, execute it in SQL).
+   - The category dropdown filter adds `categoryId = :id` (subtree id list
+     resolved in the ViewModel, chunked).
+3. Reorder-controls math stays, but computed on **window data + cached
+   context**, not the unfiltered full list:
+   - `PassageReorder.moveQuestion/movePassageBlock` operates on one category's
+     list. Fetch that category's id list from the DB when a move control on
+     screen (they are the only rows whose reorder math needs more than the
+     visible page). At 1–2k rows per category this is cheap and no longer
+     requires the full paper list in memory.
+   - `categoryBounds` / section-edge buttons: derive from the same
+     per-category ordered lists (first/last elements), not from full-list
+     indices. Disabled-under-filter contract (the comment at the section
+     logic) is preserved exactly.
+4. Row content: `questionContent()` keeps its per-row fetch but drops the
+   fields lists never show (nothing to change functionally; ensure the DAO
+   select does not pull `explanation`+`explanationImage` when the row's
+   collapsed state hides it). Add `Image`/text-image caching via the existing
+   `QuestionImage` (`BitmapDecoder`) with an LRU memory cache sized ~1 screen.
+5. **Passage headers**: today every visible first-member row triggers a
+   look-up. Fine under paging; make sure `passagesById` remains a small map
+   (only ids for visible groups), not `getPassagesForPaper` for the whole
+   paper.
+6. **EditorSession**: replace the full `ids` list with a scope descriptor
+   (`paperId`, `categoryId?`, `anchorId`) plus a DAO cursor ("id at index ± 1
+   in this scope order and id keyset"). Prev/next keeps working from anywhere,
+   including from an import-preview list (which stays in memory and keeps
+   using the reader/writer lambdas).
+7. Bulk ops: already chunked + single-statement (`updateBulkFieldsChunked`,
+   `updateCategoryChunked`); no change. Selection UI keeps ids in a Set —
+   fine (user-selected, bounded).
+
+**Targets**: opening a 250k-question paper first-frames < 800 ms with a
+streamed list; scroll (fast fling) causes no long frames; per-bar filtering
+runs in SQL; moving a question inside its category responds < 300 ms.
+
+**Tests**: pure-JVM tests for the PagingSource ordering across chunked
+category sets; a CI Robolectric test that inserts ≥ 3k questions (three
+chunk-size multiples), page-walks the list forward and back, and asserts
+order, filters and reorder semantics match today's behaviour.
+
+### 4.2 Test session (and everything it shares: check, pacing, drill)
+
+**Today's hot paths** (`TestViewModel.kt`, `TestSessionScreen.kt`):
+
+- ~~`refs` state still contains `text` + `explanation` stems for the *whole*
+  paper (`TestUiState.refs`)~~ — fixed: the session's own reader
+  (`getSessionRefsByCategories` / `getSessionRefsByIds`) returns
+  `SessionRef(id, passageId)`, which cannot carry a preview or an explanation.
+  The grep was the argument: nothing in `ui/test` reads any other field, while
+  the bundled bank's real questions average 89 B of stem preview + 306 B of
+  explanation elements JSON — ~395 MB of strings for a million questions, and
+  an explanation can hold a data-URI image, so a row can be kilobytes. The
+  full `QuestionRef` readers stay for the browse and passage list surfaces,
+  which do render the preview (`QuestionRefTextTest`).
+- ~~`refs` is still one `SessionRef` object per question~~ — fixed:
+  `SessionOrder` holds the order as one UTF-8 pool of the ids (authored order)
+  plus `IntArray`s — per-row start offsets, the presentation order the shuffle
+  permutes, and a passage index. Measured on this host for a million
+  15-character ids: the ref list retained 80 MB, the order retains 27 MB, and a
+  shuffle or drill copy is one 4 MB `IntArray` where the ref list copied the
+  whole list and built one block list per question. Nothing needed a per-row
+  object: the palette and the review sheet read status by index or by id, and
+  the question on screen is resolved by id.
+- ~~`TestSnapshot.persistProgress` no longer serialises the paper's `questionIds`
+  — it stores the shuffle and drill seeds and rebuilds the order — so a write is
+  proportional to the *answered* part (`selections`, `revealed`, `flagged`,
+  `dwellSeconds`), not to the paper.~~ — and the *answered part* is off the
+  document now too: it keeps only the session's header (scope, seeds, index,
+  timers — a few hundred bytes whatever the paper), while each answer is one
+  `test_progress` row written by the action that changed it. Answering is a
+  constant-size write; reading the offer is one pass over the rows, once, on
+  screen entry.
+- `openAnswerReview` accumulates `reviewRows` for the entire session (only
+  rows, in batches — good — but the final list is full-session-sized and a
+  giant opened dialog).
+- The palette `LazyVerticalGrid(items(order))` is virtualised and fine, but
+  the `flagged`/`bookmarked` sets are O(answered) per lookup in compositional
+  lambdas; fine. No change.
+
+**Plan**
+
+1. **Slim refs** — done, and past the plan. The session reader returns slim rows
+   (`SessionRef`), and the order is no longer a list of those: `SessionOrder` is
+   one id pool plus `IntArray`s, built by streaming a category at a time out of
+   a keyset query — no paper-wide join, no 1000-id `IN` list, no OFFSET. The
+   palette reads status by index and the review sheet resolves one page of ids
+   at a time, so nothing needs a per-question object. Rowid-keyed navigation was
+   considered and dropped: ids are what every reader already takes, and the pool
+   gets the same memory without giving a question a second identity.
+2. **Snapshot workload** — done, and past the plan: the header is all that stays
+   in the snapshot document (DataStore keeps one small global slot), and the
+   answers are `test_progress` rows written one upsert per action, so nothing is
+   re-serialised. The old shape of this item — a `resume_snapshot` row holding
+   selections "by deltas" — turned out to be a worse fit than a row per answer:
+   deltas still need a replay pass and a compaction story, while a keyed row per
+   question is idempotent and cascades with its paper.
+   - Resume-by-category-selection semantics are unchanged: the seed + the
+     selected category ids reproduce the order, and a changed DB item silently
+     falls out — same behaviour as `TestSnapshot.matches(...)` today.
+   - The document a snapshot *was* is still readable: a snapshot written before
+     the rows existed, or restored from a backup (whose format has one inlined
+     document), inlines its answers and is adopted into rows as it resumes.
+3. Review sheet: already streams. Change only the retention scale:
+   - Move to DB-backed review rows: insert rows into the `answer_review` side
+     table (or reuse nothing new — actually reuse nothing new: build rows for
+     batch, store, delete when sheet closes) and let sheet UI page (paging).
+   - Sheet rows beyond the current batch shouldn't exist in memory.
+4. Timer + dwell: already isolated state. Keep.
+5. **Prefetch like Anki's reviewer**: when question N resolves, background-
+   resolve question N+1's content (a read ahead of time — no prefetch of any
+   parts other than the next card) in the FSRS/Anki spirit (#5171 class of
+   lazy loading but for the "next" object). Cheap, keeps tap-to-cards < 120 ms.
+6. **Submit** — done: `saveAttemptStreamed` takes the session's `SessionOrder`
+   and walks it in 500-row batches, so the ~80 MB id list the caller used to
+   build for it is gone and the progress indicator comes straight from the batch
+   loop. The category titles its result rows carry used to cost a second pass
+   over every question row; a batch now resolves the categories it meets for the
+   first time, which the order's grouping by category makes at most one lookup
+   per category. `selections` stays as-is (already just the answered questions).
+
+**Targets**: opening a 250k session < 1 s first frame (session order known,
+content lazily resolved); navigation p95 < 120 ms with the next-card
+prefetch; answering/flagging writes a KB-scale snapshot delta, not MB JSON;
+submit of a 250k attempt finishes without OOM (streaming preserved) with
+progress shown.
+
+**Tests**: JVM test that a 10k-question session's `persistProgress` JSON
+stays bounded by answered count, not pool size; TestSnapshot resume roundtrips
+already exist — extend them with `SessionRef` migration + seed-based
+reconstruction; review-sheet paging order test (batch boundaries).
+
+### 4.3 Drill (`Get drill` dialog / estudio-only session)
+
+Today the drill already:
+- Samples `SessionOrder.sampled(count, seed)` off the order only (cheap);
+- Reuses the whole test session VM (`drillCount > 0` path).
+
+**Plan**
+
+- Same slim-refs change as Test (§4.2). Nothing else.
+- The drill dialog (`num questions` picker) can show `totalQuestions` from
+  the library counts: make sure the paper count it shows is from the
+  aggregate `counts` map, not from loading questions.
+
+### 4.4 Study
+
+**Today's hot paths** (`StudyViewModel.kt`, `StudyStore.kt`):
+
+- `nextCard → getNextStudyCard` runs `studyInputs(paperId)` — full
+  `getRefsByCategoriesChunked` (250k `QuestionRef`s with stems) — **plus**
+  `resolveStudyStates` which loads `card_state.getByPaper` (up to 250k rows)
+  and allocates a `CardState` domain object per row, **on every single card
+  pull**. On a mid phone this is potentially > 500 ms per grade → visible
+  studder in the study flow.
+- `getStudyCounts` (badge) does the same two loads per paper — and the
+  library screen does it **per paper** (N papers ⇒ N× paper cost).
+- `resolveStudyStates` re-checks `contentHash` for every row every time.
+
+**Plan**
+
+1. **Session-scoped resolved-state cache** (the Anki card queue analog):
+   - On session start, resolve the four pool membership *once* (learning /
+     due / fresh / suspension) from a **pair of aggregate queries**:
+     `card_state WHERE paperId = :p AND cardState = ... AND dueAt <= now`
+     plus a `COUNT(*)` for fresh (questions w/o card_state rows, expressed
+     with `LEFT JOIN` on `card_state.paperId = :p`).
+   - Keep an in-memory `Map<questionId, CardState>` only for cards actually
+     served this session (pull + preview + grade path). Invalidate only the
+     served card's row on grade — never re-parse the whole pools.
+   - `pullCard` serves from cached pools via `Study.selectNext` with the
+     remaining eligible ids; falls back to a single DB pull when the cache is
+     cold or invalidated (first pull, external changes, resume).
+2. **Hash-reset check applies lazily**: hash-mismatch reset is verified for a
+   card **when it is served**, not for the whole paper on every read. The
+   stored `contentHash` column comparison is one `WHERE` on the served row.
+3. **Counts in SQL** (Library badge): `getStudyCounts` switches to the two
+   aggregate queries above; the per-paper loops in `LibraryViewModel` go from
+   O(Σ paper sizes) to O(number of papers). Keep eligibility semantics
+   identical: `due`, fresh-introduction pacing (`reviewsSinceNew`) only
+   affects session depacing — badge counts stay on the same pool definitions
+   (the app's guarantee the badge and the session agree).
+4. Keep `getStudyQueue` (tricky drill list) building only `leech` pool via the
+   same aggregates; its `List<StudyCard>` is bounded by leech count, which
+   stays small by definition.
+5. Study screen: `pullCard` loop already skips vanished questions; keep.
+   `question` load stays per-card only.
+
+**Targets**: per-pull cost after first pull < 150 ms p95 (cache hit);
+grading writes one card row + one log row; opening a study session does O(1)
+aggregate reads, not per-question reads; a paper with 250k questions but a
+210k-learning session still pulls with the same constant cost.
+
+**Tests**: pool-cache invalidation test (grade only invalidates that card);
+fresh count query test vs the in-memory implementation (both agree on a
+fixture with nested categories); distinct-elapsed test for the depacing
+counter.
+
+### 4.5 Search
+
+**Today's hot paths** (`SearchViewModel.kt`, `McqRepository.searchGlobal`,
+`QuestionDao.search/searchIncludingOptions`):
+
+- The DAO prefilter returns **full `QuestionEntity` rows for every match**:
+  a query like "a" over 250k questions with element JSON + base64 image
+  strings materialises the entire match set — the single worst OOM/jank in
+  the app at scale.
+- `QuestionSearch.filter` then runs full content parsing on every row
+  (`toDomainBulk`) off-screen.
+- No pagination: `hits` is a full List; SearchScreen renders it all with
+  `LazyColumn`.
+
+**Plan**
+
+1. Two-phase search, column-slim:
+   - Phase 1 (DAO, column-slim): id + categoryId + passageId + preview stem
+     only, `LIMIT` via `PagingSource`; FTS over `searchText` + `options.searchText`
+     (add a tiny `options.searchText` column, refreshed at save/import) +
+     `passages.searchText`.
+   - Phase 2 (in-memory term logic): only for the rows a page is about to
+     show, run the existing `QuestionSearch.filter` for quirks the SQL can't
+     express (multi-word phrase across tags/element boundaries — the reason
+     `prefilterKey` exists). Mismatches are dropped client-side; page sizes
+     stay small (e.g. 30). Results ordering preserved (rowid/id order as
+     today).
+2. `SearchViewModel` exposes `Flow<PagingData<Hit>>` (cached);
+   the debounced 300 ms rerun stays (it is already right).
+3. Provenance attach (`paperTitle` per hit) becomes a per-page chunked
+   category/paper lookup (2 chunked queries), not whole-table reads.
+4. Keep scopes QUESTION / QUESTION_AND_OPTIONS semantics by changing the FTS
+   **source set**, not the post-filter.
+
+**Targets**: keystroke→results < 350 ms p95 at 250k; any result volume keeps
+memory flat (paged); "a" returns the same hits, in the same order, just
+streamed.
+
+**Tests**: pure-JVM ordering/set equality between the old full-materialised
+search and the new two-phase version on a synthetic bank (use `QuestionSearch`
+fixtures); paging boundary test (page size crossing chunk boundaries).
+
+### 4.6 Import
+
+**Today's hot paths** (`ImportViewModel.kt`, `Importer.kt`, `LegacyParser`,
+`DataHolder`):
+
+- `ImportUiState.questions` holds the entire picked bank as `QuestionDto`s;
+  the preview list and `refreshDuplicates` iterate them in memory (off-main,
+  chunked — but all rows in RAM at once). A 48 MB JSON becomes ~OW-size in
+  DOM + DTOs held simultaneously.
+- `Importer.import` runs one giant transaction for the whole file. Correct
+  for atomicity, expensive at 100k rows (lock time, memory of the compiled
+  statement set, and it fights readers).
+- The whole-file "existing hashes" snapshot uses `questionDao.getAll()` →
+  F3 removes this shape (replace with a chunked hash-id stream or
+  `SELECT contentHash FROM questions` only).
+- Per-question logging (F6).
+- `refreshDuplicates` already classifies off-main with a hash-set; fine, keep,
+  but base the "interesting" id/hash probe on the FTS-less content-hash index
+  (F2) so it is cheap at scale.
+
+**Plan**
+
+1. **Stream the parse**: convert `LegacyParser.parse` to an incremental JSON
+   reader (the project already has the pattern in `JsonPull`/`BoundedRead`):
+   emit questions one at a time (or per-batch of 500) into
+   `MutableSharedFlow`/`Channel`; the ViewModel consumes into a bounded page
+   list (e.g. the first 500 for preview) and counts the rest. Preview shows a
+   count + a first-N sample + search/sort over the stream; edits to previewed
+   questions behave as today (the `originalFile` needs a streamed backing —
+   keep a temp-file cache of the parsed stream so `buildImportFile` re-reads
+   it, not RAM).
+2. **Chunk the write transaction**: import advances in per-paper (or per-batch
+   of 2k rows) transactions with a `import_run`-style journal row (`stage`,
+   `paperIndex`, counts). On failure crash, "Import continued from where it
+   stopped" can resume; on success, one final commit-totals row. Semantics to
+   preserve:
+   - duplicates/update answers decision logic unchanged;
+   - order of papers/categories/questions in the file unchanged;
+   - passages same first-member-wins category assignment;
+   - backup restore of bookmarks/attempts deduplicated the same way.
+   Atomicity shrinks from whole-file to per-chunk — document this in the
+   import report (an aborted import leaves only committed chunks; the resume
+   row says so).
+3. **Memory ceiling**: `existingHashes` becomes a paged/id-scan stream into a
+   Bloom-ish `Set` (plain `HashSet` is fine at 250k strings, ~50 MB) — build
+   with a `SELECT contentHash` column query in batches. Optionally cap it and
+   fall back to per-batch `contentHash IN (...)` lookups (the current behavior)
+   if the set is too large.
+4. **ImportScreen preview paging**: `LazyColumn` over the preview stays, but
+   the `remember` blocks that filter `state.questions` three times (new /
+   changed / dup partitions) become three `PagingSource`-style or stateful
+   page views over the stream; duplicates badge stays computed per chunk.
+5. Docx/Anki importers route through the same stream shape
+   (`AnkiPackageReader` already streams from the zip).
+6. Keep the process-death paths already fixed (`setNoSourceError`,
+   fingerprint dedup).
+
+**Targets**: 100k-question JSON bank imports with peak heap < 60 % and no
+main-thread freeze; preview shows first 500 instantly with a running count;
+UI stays interactive during the import (main thread only sees paging +
+progress events).
+
+**Tests**: JVM fixture tests on the streaming parser (same warnings/rows as
+the current tests, driven through the stream); ImportSchedulingTest extended
+to mid-file failure + resume behavior; heap-instrumented CI run (prints peak
+RSS of the test JVM for a 50k bank) as the perf gate.
+
+### 4.7 Results screen
+
+**Today's hot paths** (`ResultsViewModel.kt`):
+
+- ~~`getAttemptResults(attemptId)` maps **every** `QuestionResultEntity` (full
+  element JSON, options JSON, explanation) into `QuestionResult` objects in
+  memory at once. Plus `categoryBreakdown` uses the same in-memory list.~~ —
+  fixed: the screen pages (`resultPagingSource`, keyed on the last scanned
+  `rowid` plus the skipped count so a filter chip drops rows without shifting
+  the numbering) and reads its header from SQL (`getResultAggregates`,
+  `getResultCategoryBreakdown`). `getAttemptResults` stays as the tests' oracle
+  of a streamed save, and `NoDeadCodeTest` refuses a production call.
+- ~~ResultsScreen renders all rows in `LazyColumn` (fine) but the model is
+  still O(attempt size) in memory.~~ — fixed by the paging above. The one set it
+  does hold is the bookmarked id list, which is what marks a row as saved
+  (§8 Open 3 keeps that shape).
+
+**Plan**
+
+1. `question_results` for one attempt becomes a `PagingSource` (rows paged,
+   order preserved as `rowid`); `ResultsViewModel` exposes paging + a slim
+   aggregate for the header:
+   - `categoryBreakdown` → one SQL
+     `SELECT categoryTitle, SUM(isCorrect), COUNT(*)... GROUP BY categoryTitle`
+     with the "graded" predicate from `correctOptionIds != ''` in SQL.
+2. The per-detail sheet (explanation, dwell) reads **that row only** on
+   expand (it is already `QuestionResult`-shaped; the paging row carries
+   enough to render collapsed state).
+3. Keep the "attempt → results screen" route; paging survives process death
+   (attemptId in the route).
+
+**Targets**: opening a 250k attempt's results < 800 ms with rows streamed;
+memory flat while scrolling; categoryBreakdown computed in one query.
+
+### 4.8 History
+
+**Today's hot paths** (`HistoryViewModel.kt`, `HistoryStore.kt`):
+
+- `getAllQuestionResults()` loads **all** result rows for **all** attempts
+  (each row with options JSON) into memory, then aggregates in Kotlin — the
+  "hardest questions" and "weakest categories" lists are tiny; the cost is
+  the whole scan.
+- `Trends.perPaper(attempts)` is O(attempts) in memory (fine — attempts are
+  headers).
+- `observeAttempts()` streams all attempts (fine — headers, indexed).
+
+**Plan**
+
+1. Add a maintained aggregate table `question_stats`:
+   `questionId PK, categoryId, gradedCount, wrongCount, skipCount,
+   lastResultIsCorrect, lastFinishedAt` — updated inside the same transaction
+   as `insertResults` in `saveAttemptStreamed` (upsert per batch), so it
+   never drifts.
+2. `HistoryViewModel` reads hardest/weakest from aggregates over that table
+   (SQL `ORDER BY wrongCount/gradedCount LIMIT k`), in one indexed query, and
+   drops `getAllQuestionResults()` entirely.
+3. Weakest categories: same table + a category-join aggregate.
+4. Backfill the table in migration v12 from `question_results` in batches
+   (one-time cost, off-main, guarded by `INSERT ... SELECT` in SQL if
+   possible).
+5. Attempt history deletes cascade — deleting an attempt must also **not**
+   touch `question_stats` (it's a lifetime aggregate; matches "hardest ever"
+   semantics today). Confirm with a migration test.
+
+**Targets**: History first paint is two indexed queries; memory O(results
+shown); "hardest/weakest" numbers identical to today's Kotlin aggregation on
+a fixture.
+
+### 4.9 Statistics
+
+**Today's hot paths** (`StatsStore.kt`, `StatsViewModel.kt`):
+
+- `StatsStore.load()` is a whole-table read of `review_log` (replayed
+  through the FSRS scheduler in memory), `card_state` (all rows → domain), plus
+  `getAllIdCategories`, `categoryDao.getAll`, `paperDao.getAll`. At 1M log
+  rows / 250k card rows this both OOMs and multiplies CPU.
+- Aggregate/slicing happens in `StatsAggregator` over the fully loaded rows.
+
+**Plan**
+
+1. **SQL-first aggregates** with the same outputs:
+   - Heatmap/day counts: `SELECT reviewedAt/86400000 AS day, COUNT(*)` from
+     `review_log` with the `(paperId, reviewedAt)` index (F2), per scope.
+     Range filtering and paper scoping happen in SQL.
+   - Workload (future due load): from `card_state` grouped by `dueAt` bucket
+     per paper (indexed in F2). Retention/stability histograms read the
+     domain columns as aggregates, not per-row materialisation.
+   - Response times / "slowest": `review_log.elapsedSeconds` aggregates with
+     `ORDER BY elapsedSeconds LIMIT k` per group.
+   - Card snapshot list (drill-down candidates) use indexed, LIMITed queries
+     with the existing names/orderings.
+2. **FSRS replay is capped**: keep `FsrsReplay` for the fitting/optimizer
+   (FsrsTuner already loads the whole log — for fitting this is fine at
+   hundreds of thousands of reviews; it streams with `onProgress` already).
+   For the *stats screen*, replace the replay-based projections with the
+   aggregate queries above (the replayed numbers the screen shows must be
+   reproducible from `stabilityAfter/difficultyAfter` columns already stored
+   per review — derive histograms from columns instead of re-running FSRS).
+3. `StatsViewModel` splits `_state.bundle` per section and loads sections
+   lazily (screen sections already exist: Overview/Workload/Memory/Retention/
+   Cards), each backed by its own query.
+4. Keep the drill-down sheet per-card reads (already per-question).
+
+**Targets**: stats screen with 1M log rows paints < 3 s; memory flat; every
+graph's numbers exactly match today's on a replay fixture (regression test:
+run old pipeline + new pipeline over the same log, assert equal outputs).
+
+### 4.10 Passage screen (editor/passages list)
+
+**Today's hot paths** (`ui/editor/PassagesScreen.kt`, `PassageStore`,
+`McqRepository.getPassageMembers`):
+
+- `memberCountsByPassage` already aggregates in SQL (good, keep).
+- `getMembersByPassage(passageId)` loads full Question rows for the member
+  list (a passage is usually ≤ dozens of members; fine).
+- `getPassagesForPaper(paperId)` is used by Browse — replaced there (§4.1).
+
+**Plan**
+
+1. Members list → `PagingSource` (id, stem, sortOrder) same shape as browse.
+2. Passage text load stays one row.
+3. Delete guard, reorder, member counts keep their SQL aggregates.
+4. Passage editor's question-assignment flow already chunked; keep.
+
+**Targets**: a paper with 5k passages lists smoothly; a passage with 2k
+members pages.
+
+### 4.11 Bookmarks
+
+**Today's hot paths** (`BookmarksViewModel.kt`, `HistoryStore.getBookmarkedQuestions`):
+
+- ~~Loads **all** bookmarked questions with full content + a category/paper
+  lookup, into one List. Bookmarks are user-curated so usually small — but the
+  app explicitly supports "bookmark everything".~~ — fixed: the screen pages
+  its rows (`bookmarkedPagingSource`, one page of content decoded per scroll),
+  rebuilds them off the `bookmarks` table's *invalidation* rather than the id
+  list, and counts them with one `COUNT(*)`. `getBookmarkedQuestions` stays as
+  the tests' oracle of bookmark provenance, and `NoDeadCodeTest` refuses a
+  production call.
+- ~~Export goes through the streaming exporter (F5, §8) rather than building the
+  file in memory; the LazyColumn is virtualised.~~ — that was already true and
+  still is (§8 Fixed).
+
+**Plan**
+
+1. Bookmark list becomes a `PagingSource`:
+   `SELECT question.id, stem-fields FROM bookmarks JOIN questions ... ORDER BY bookmarks.createdAt DESC`.
+   Content resolves per visible row as today.
+2. Remove-all/counts paths already chunked; keep.
+3. ~~Export goes through the streaming exporter (F5) with batched content
+   loads (300 rows per batch).~~ — done: `Exporter.bookmarkStream()` walks the
+   bookmarked questions a keyset page at a time, grouped by the paper each came
+   from, so the export never builds the paper DTO. `getBookmarkExportDto` stays
+   as the tests' oracle (`BookmarkExportStreamTest` asserts the walk equals it),
+   and `NoDeadCodeTest` refuses a production call.
+
+**Targets**: 50k bookmarks streams; export does not build whole file in RAM.
+
+---
+
+## 5. Everything else (the screens not listed above, but on the same data)
+
+### 5.1 Library screen + drawer + paper cards
+
+- `LibraryViewModel` currently hits `getStudyCounts(paperId)` per paper
+  (full ref + card_state reads). After §4.4's SQL counts, this is one
+  aggregate per paper; further, load them in **one** grouped query across
+  papers (bonus, not required).
+- `LibraryPaperCard` questionCount comes from `observeCategoryCounts`
+  aggregate — already cheap.
+- `LibraryDialogs` delete-confirmation counts already use aggregate
+  queries via `deleteImpact`; keep.
+- Drawer category reorder mutates `sortOrder` — keep; it is O(siblings).
+
+### 5.2 Settings / Storage report
+
+- `McqRepository.storageReport` loads `questionDao.getAll()` **and** every
+  `OptionEntity`, then sizes the DB file in Kotlin. Replace with SQL:
+  `SELECT categoryId, SUM(LENGTH(text)) ...`, `SELECT questionId, SUM(LENGTH(text)) ... GROUP BY`
+  and one `COUNT` per paper from the aggregates (no materialisation).
+- FSRS tuner `optimize` already loads the whole review log once with
+  progress callbacks — acceptable for "hundreds of thousands"; add the same
+  memory hint as `StatsStore` (stream batches into the fitter rather than
+  one list) if profiling says so.
+
+### 5.3 Question editor
+
+- Uses `EditorSession` scope-fix from §4.1 step 6.
+- `saveQuestion` is already transactional with per-row work — fine; add the
+  `searchText` maintenance (F4) inside the same transaction.
+- Import-preview editing (`importReader/importWriter`) keeps working; its
+  queue is the bounded preview page (§4.6), not the whole file.
+
+### 5.4 Backup / restore
+
+- `Backup.kt` currently builds the whole backup payload in memory. Apply F5
+  (streamed writes) — the file is already zipped; write members as you go.
+- Restore is `Importer` (§4.6 stream + chunked transactions).
+- Keep the backup format bytes-identical for Anki/tests (round-trip tests
+  already cover this).
+
+### 5.5 Anki interop (apkg import/export)
+
+- `AnkiPackageReader` extracts the collection into a temp sqlite file, but it
+  expands the whole archive into a `Map<String, ByteArray>` first and returns
+  the whole bank as one DTO, which `Importer` then holds beside a whole-bank
+  hash set (`getAllContentHashes`). A 1M-note package is therefore either
+  refused at the 256 MB expansion cap or built whole in memory. This is the
+  remaining apkg gap; see §8 Open 4.
+- `AnkiPackageWriter` gets the streaming write (F5); schema-11 export must
+  stay legacy-compatible (three fields, filename-keyed media) — the
+  `AnkiRoundTripTest` fixtures are the gate.
+- Export of a 100k deck builds notes in batches of 500 and inserts into the
+  export temp DB progressively rather than all at once.
+
+### 5.6 Paper exporters (PDF/DOCX/HTML/ZIP)
+
+- `PaperExporter`/`PdfPaperWriter`/`DocxPaperWriter` should take a stream and
+  process question batches as today's `LegacyParserLargeBankTest`-scale
+  fixtures do; same output bytes as now (verified by `ExportWritersTest`).
+- PDF with base64 images already downscales at import; ensure decode uses
+  `BitmapDecoder` with `inSampleSize` bound at export too.
+
+### 5.7 Cross-cutting UI hygiene for huge lists
+
+- Every `LazyColumn`/`LazyVerticalGrid` gets `key` (already mostly true) and
+  `contentType` where heterogeneous rows exist (headers vs cards in Browse,
+  palette cells vs. review rows) so recycling stays tight.
+- No UI-lambda construction that allocates per cell per recomposition
+  (sort/`group by` in `remember` keyed on the exact inputs — the pattern the
+  codebase already settled on).
+- State updates that can grow (selections, flagged, dwellSeconds maps) keep
+  growing boundedly (only touched questions) — fine. Do not add per-second
+  `state.update` copies of big lists (the dwell split already prevents
+  that).
+
+### 5.8 Start-up
+
+- `McqApplication`/`MainActivity` do not need the DB at compose time.
+  Verify nothing initialises the repository eagerly on the main thread; if
+  it does, defer to first navigation (measure with a startup trace on CI).
+
+---
+
+## 6. Implementation order
+
+1. **P0 — branch correctness**: finish the ref migration in Browse (F1),
+   CI compile pass, no feature change.
+2. **Foundations**: F2 (indexes) + F3 (WAL, schema export, remove whole-table
+   DAO queries) + F6 (log gating). Small, high leverage, no feature change.
+3. **Biggest jank wins, in order of user pain:**
+   1. Study session/thread + badge counts (§4.4, per-pull cost → constant).
+   2. Search two-phase + FTS (§4.5 + F4 backfill in the same migration).
+   3. Browse → Paging + SQL filters + per-page reorder context (§4.1).
+   4. Test snapshot deltas + slim refs + review-sheet paging (§4.2) — refs and
+      the snapshot are done; the review sheet's full-session `reviewRows` list
+      and its paging are what is left of this step.
+4. **Aggregate tables**: `question_stats` (§4.8) + SQL-first statistics
+   (§4.9). Both touch stored data → migration + backfill.
+5. **Results + Bookmarks page their rows** (§4.7, §4.11) — done (§8 Fixed).
+6. **Import streaming + chunked transactions + preview paging** (§4.6) +
+   export streaming (F5) + Anki writer streaming (§5.5).
+7. **Hygiene batch**: StorageInfo SQL (§5.2), `contentType`s, startup trace,
+   editor session cursor (§5.3).
+
+Each numbered step is independently shippable; nothing later depends on a
+feature change earlier, only on the foundations.
+
+---
+
+## 7. Verification strategy
+
+- **Synthetic fixtures**: a JVM bank generator (tests only) producing
+  parametric banks (1k / 50k / 250k / 500k questions with realistic stems,
+  options, passages, tags). Reused by: search parity, paging order, stats
+  aggregates, import streaming, snapshot budget.
+- **Pure-JVM perf guards** (run in CI's x86_64): assertions like
+  "aggregate due count over 250k card rows < X ms", "FTS search parity with
+  the legacy walk", "the resume document stays header-sized however much was
+  answered" (`TestSnapshotTest` pins it at under 500 bytes with 5k answers) —
+  cheap, deterministic, no Robolectric.
+- **Robolectric behavior tests** (CI only, per AGENTS.md): list paging order
+  vs. legacy order, stats regressions, chunk-boundary paging.
+- **Manual matrix on device** (ARM64 host: install the `app-debug` CI
+  artifact and drive the app): open 250k paper / scroll fling / search /
+  test 500-question drill / study pull / import 100k bank / submit / stats.
+  Watch `adb logcat` for `Choreographer` skips and `Logger` timings (these
+  are already in place for Browse/Test first-loads).
+- **Heap gate**: a CI log capture from the import fixture run (heap
+  before/after) as a regression signal (pattern already used in
+  `BrowseViewModel` and `Importer` heap logging).
+
+Feature invariance: every column of behaviour today (ordering rules, filter
+semantics, FSRS scheduling, backup/Anki format) keeps its existing tests —
+the plan's changes are only about *how much* is read at once; each section
+names the test that already pins the behaviour that must not change.
+
+---
+
+## 8. Verification at the stated minimum: 1,000,000 questions, 1000 categories
+
+An audit of every screen and every DAO query against the app's real schema, plus
+measurements from an ad-hoc SQLite harness (the entity/index shapes copied, 1M
+questions + 4M options, run through the host's SQLite — a mid-range phone is
+slower, so the numbers below are a floor).
+
+### Holds up today
+
+| Surface | Why it is safe |
+|---|---|
+| Browse, Search, Bookmarks, Results, passage members | paged (`room-paging`), one window at a time |
+| Import / restore | streamed (4 MB threshold), chunked matchers behind the 999-bind cap |
+| Storage report, category counts | SQL aggregates, no materialisation |
+| ZIP / PDF export, Anki writer | streamed to the sink; notes batched |
+| 1000-category tree build, reorder, drawer | in-memory over the category table only |
+
+### Measured costs (1M questions)
+
+| Query | Cost |
+|---|---|
+| search prefilter window, 200 rows, no FTS | 0.6–1.1 s |
+| same, option scope (4M option rows) | 5.3 s |
+| browse first page, 1000-category `IN` list | 0.5 s and, on Android ≤ 11, past the bind cap |
+| browse first page, paper-scoped, no order index | 2.3 s (whole paper into a temp B-tree) |
+| browse first page, paper-scoped, with the order indexes | 5 ms |
+| browse count for the page, with the order indexes | 60 ms |
+| deep-link jump by index (OFFSET 500k) | 1.4 s, inherent to `LIMIT 1 OFFSET n` |
+| `GROUP BY categoryId` over the whole table | 0.12 s, now only the library badge asks for it |
+| the same counts filtered to one paper's categories | 1.6 ms for 10k questions |
+| resume snapshot write, per answer | constant: a ~300 B header + one upsert (was O(answered): MB-scale by the end of a sitting) |
+| an exported paper's pictures | one image in memory (spooled to a temp file), was every distinct image the paper embeds |
+
+Search is not instant and cannot be while it is `LIKE '%q%'` with no FTS
+index: every window is a full scan, and a rare term walks several windows
+inside one page load. Making it instant means a maintained n-gram/FTS shadow
+over `searchText` (§4.5 + F4).
+
+### Fixed
+
+- **Browse 1000-category crash** — the four browse queries bound the paper's
+  whole category list as an `IN` list (1000 bind variables against SQLite's
+  999-variable cap on API ≤ 30). The paper is now named by id through the
+  existing category join, passage matches are a subquery over
+  `passages.searchText`, the category filter travels as one `INSTR`-matched
+  CSV, and the passage-first read is `LIMIT 1` instead of loading the whole
+  passage (commit `41f1d76`, CI green).
+- **Browse reorder contexts** — one whole-category ref list was held per
+  category *forever*, so a pass down a 1000-category paper ended up resident.
+  Contexts are now scoped to the viewport window and evicted with it.
+- **Browse row loading** — a row fetched its card, passage and reorder context
+  from the row composable, i.e. after it had been laid out: the card grew under
+  the finger and a passage header was inserted late and pushed the rows below it
+  down. All of it is read for the viewport window (with a margin) before the
+  rows are visible, and the placeholder is card-shaped so a page landing does
+  not resize rows.
+- **Browse invalidation signal** — was a `GROUP BY categoryId` aggregate plus a
+  whole-passages load per write; now a one-row probe per table.
+- **Browse page order** — nothing indexed the order Browse pages in
+  (category `sortOrder`/`title`, question `sortOrder`, rowid), so every page
+  sorted the whole paper into a temp B-tree first: 2.3 s for the first 60 rows
+  of a million-row paper. `categories(paperId, sortOrder, title)` and
+  `questions(categoryId, sortOrder)` make it an index walk that stops after the
+  page (5 ms); the standalone `questions(categoryId)` index is subsumed by the
+  new one and dropped (migration 15→16).
+- **Browse evicted-row reload** — the window loader kept a content hash for
+  every card it had ever read but pruned only the cards, so a row that scrolled
+  away and came back answered "hash unchanged, nothing to read" with its card
+  gone: the row sat showing its stem and no options. Presence is now checked as
+  well as the hash, the hash table is pruned with the cards it describes (it
+  grew one entry per row ever scrolled past), the stand-in is card-shaped, and
+  a row on screen without its card asks for it directly (`requestRow`), which
+  covers a landing between two windows whose row sets are equal (commit
+  `99d353a`).
+- **Study/Library: whole-paper model, and a row written per unstudied
+  question** (§4.4, §5.1). The library asks for the badge counts **once per
+  paper**, and each call resolved a `CardState` for every question of that
+  paper — ids, hashes and states, several hundred MB at a million questions —
+  and **wrote a `card_state` row for every question it had not seen**, so
+  merely opening the library wrote a million rows before it could show a
+  badge. The same model was rebuilt behind every study pull and the drill.
+  Everything is now read from the rows that describe study history:
+  - the badge and the eligibility read are one aggregate query
+    (`countsForPaper`) whose predicates are `Study.pools`': a card is new while
+    it has no row, its row is still new, *or* its stored hash no longer matches
+    its question (an edit reschedules it, so counting it as due first would
+    advertise a card the pull then resets); a due leech counts as a leech and
+    never also as due; the join through questions drops a schedule whose
+    question is gone;
+  - the pull reads only the schedules that are **due** (`dueForPaper`, bounded
+    by the paper's study history) plus **the first** unanswered question in
+    authored order (`firstNewQuestionForPaper`), and takes the pull order from
+    `Study.pickNext` — the pool order still lives in one pure place, so the
+    badge and the session cannot disagree;
+  - the drill reads the due leeches, which are bounded by the schedules on
+    file rather than by the paper;
+  - a question nobody has studied is no longer seeded a schedule row. The
+    reset for an **edited** question is still written out (bounded by how many
+    questions were edited), so the stored row keeps matching what is served and
+    the statistics and exports stay truthful;
+  - the per-paper resolution cache and its invalidation observer are gone with
+    the model they cached.
+- **Study served the same question forever** — the reported "the question
+  number increases but the question stays the same". A stored card's hash is
+  compared against the question it was scheduled for on every pull, and a
+  difference reads as an edit, so the card is reset to new: the two sides must
+  derive one value per question. They did not, for an option whose picture
+  rides the elements. The importer folds a picture into `options_elements` (the
+  bundled bank's `q-vis-*` questions carry an image element with no scalar
+  mirror) and hashed it tolerantly, while the study path hashed the scalar
+  alone, i.e. `null`. Every pull reset `q-vis-1` and served it again — 37
+  grades of one question in a row in the device log, with `advanceStats`
+  counting each. `ContentHash` is now the one derivation for both shapes: a
+  shared `optionImageValue`/`storedText`, a new `of(question)` beside `of(dto)`,
+  and every writer routed through it (`saveQuestion`, `QuestionStore.clone`, the
+  legacy importer's content-hash-only paper check and its restored schedules).
+  Pinned by `StoredQuestionHashTest` (every question of the bundled bank must
+  hash alike as a file DTO and as a stored row) and by `StudyCountsInputTest`
+  comparing a graded card's hash against the question *row*, plus a
+  picture-bearing question that must not come straight back after AGAIN.
+
+- **Submit handed the attempt one id per question** (§4.2) — `submit()` built
+  `order.idsInOrder()`, ~80 MB of strings at a million questions, and held it for
+  the length of the save, and `saveAttemptStreamed` read every question row twice:
+  once to collect the categories whose titles its result rows carry, once to score
+  them. It now takes the `SessionOrder` itself, walks it in 500-row batches, and
+  resolves a category's title the first time a batch meets it — the order is
+  grouped by category, so that is at most one lookup per category. One pass over
+  the questions, no id list. `RepositoryTest` pins the cross-batch walk: a second
+  category that only appears past the batch boundary still sets every one of its
+  rows' titles.
+
+- **Test session order held one object per question** (§4.2) — the follow-on to
+  the bullet above. Even slim, a list of a million refs is one object plus one
+  id `String` each: measured 80 MB retained on this host, and the shuffle and
+  drill cut each built another list (8 MB) plus one block list per question
+  (~50 MB transient). The order is now `SessionOrder`: one UTF-8 pool of the
+  ids in authored order, plus an `IntArray` of per-row start offsets, an
+  `IntArray` presentation order that the shuffle permutes, and an `IntArray`
+  passage index. Measured for a million ids: 27 MB retained, 4 MB per shuffle
+  copy, no block lists. The ids are never all materialised either — the load
+  streams one category at a time through `pageSessionRefsByCategory`, a keyset
+  walk on `(sortOrder, rowid)` whose sentinel serves the first page, into a
+  builder. Presentation is unchanged: `PassageBlocksTest` pins the block draw
+  against `List.shuffled(Random)` itself, and `SessionOrderTest` pins the rules
+  — a passage's members together, authored order intact inside a block, a drill
+  never cutting a passage in half — which is what lets an existing snapshot's
+  seed resume into the order the session presented. The ungraded count for a
+  paper or a category selection is one aggregate query instead of a count over a
+  million ids.
+
+- **Test session refs carried content** (§4.2) — the session's ref reader
+  selected `searchText` and `explanation` (the elements JSON) per question,
+  fields no session code reads: the order is walked by index and the question
+  on screen is resolved by id. On the bundled bank's real questions that is
+  ~395 MB of strings for a million questions, before object overhead, and an
+  explanation can carry a data-URI image. `SessionRef(id, passageId)` replaces
+  it on the session readers (`getSessionRefsByCategories`,
+  `getSessionRefsByIds`, mistakes-only included), the type cannot carry the
+  heavy fields, and the full `QuestionRef` readers stay for the list surfaces
+  that do render previews. `Exporter`'s passage-collection read moved to the
+  slim query too.
+
+- **Exports built the document in memory** (F5, §5.6) — every paper exporter
+  took the whole paper as a `PaperDto` and handed back the whole document as a
+  `String` or `ByteArray`, so a million-question paper meant the question graph,
+  the serialized document and the encoded bytes alive at once; the Anki writer
+  additionally read the paper's whole `card_state` (one entity per studied card)
+  before it wrote a note. The writers now take a `PaperStream` and write into
+  the caller's `OutputStream`. Everything outside the questions — title,
+  category headings, passages, the question *count* — is small enough to be
+  known up front, and the questions arrive one category at a time off a keyset
+  walk (`QuestionDao.pageByCategory`, 500-row pages on `(sortOrder, rowid)`) and
+  are released as the writer moves on. A writer that needs something it cannot
+  know until the first pass — DOCX's hidden payload, PDF's answer key, the
+  .apkg's deck list — walks a second time and pays a re-read rather than a
+  second in-memory copy. `PaperJsonWriter` is the one streamed envelope, shared
+  by `JSON_INLINE`, the ZIP's `paper.json` and the DOCX payload (compact: the
+  importer parses either shape); an `Appendable` writer sends a document through
+  one buffered UTF-8 encode instead of a `String` plus its bytes. The apkg
+  writer notes one question at a time, asks for scheduling per batch
+  (`getForQuestionsChunked`) instead of the whole paper's `card_state`, and
+  writes the `col` row *after* the notes so no pass is spent finding out which
+  categories become decks. The render runs on `Dispatchers.IO`. The pictures a
+  paper embeds (DOCX `word/media`, the ZIP's image entries, the Anki media pool)
+  are the one thing a writer cannot write as it meets them — all three formats
+  name their media before the body that draws it, and a zip's entries cannot be
+  interleaved — so they are spooled to temp files (`MediaSpool`) instead of
+  held: one image in memory at a time, whatever the paper embeds. A killed
+  process's spool is swept at startup with the rest of the temp staging.
+  `ExportTestSupport.kt` drives the writers from a fixture; the content
+  assertions live in `ExportWritersTest`/`DocxPaperWriterTest`/
+  `PdfPaperWriterTest`, the byte-level round trips in `DocxRoundTripTest`.
+
+- **Bank-wide counts on every screen entry** (§8 Open 2) — `getPaper` answered
+  each one-paper read (Study, Editor and Test on entry) with a `GROUP BY
+  categoryId` over the whole bank, and the two browse flows watched that same
+  aggregate purely as a write trigger, so every question write re-scanned a
+  million index entries (~90 ms warm) to produce a value they never read. The
+  read is now `getCategoryCountsFor("... WHERE categoryId IN (:categoryIds)
+  GROUP BY categoryId")`, bounded by the paper being read — 1.6 ms for ten
+  thousand questions, microseconds for a small paper — and the trigger-only
+  flows watch `observeAnyQuestion()`, a one-row probe. That swap is safe by
+  construction: Room invalidates per *table*, so the refresh on a question write
+  is identical, and `RepositoryTest` pins it. One aggregate deliberately stays:
+  the library badge reads `observeCategoryCounts`, because the library shows
+  every paper at once and one covering-index scan still beats a query per paper.
+
+- **The resume snapshot rewrote the whole sitting on every tap** (§4.2) — the
+  snapshot document carried every answer, so the hundred-thousandth tap
+  re-serialised everything answered before it into one DataStore string. The
+  document is now the session's *header* only — scope, order seeds, index,
+  timers, a few hundred bytes whatever the paper — and each answer is one
+  `test_progress` row (`selection`, `revealed`, `flagged`, `dwellSeconds`),
+  written by the action that changed it, cascading with its paper. `persistProgress`
+  writes the header plus the one question whose answer moved (`goTo` names the
+  question it is leaving, so its banked dwell goes with it), and the offer joins
+  the rows back into the snapshot on screen entry — one pass, once. The backup
+  needs no format change: `testProgressForBackup()` materialises the legacy
+  inlined document at export time, and a restored document is adopted into rows
+  the moment it resumes. `TestSnapshotTest` pins the header size, the round trip
+  and the row-wins merge; `TestProgressStoreTest` pins the document size after
+  300 answers, the backup document and the cleared state; `TestSessionResumeTest`
+  answers through the view model, rebuilds it and resumes.
+
+- **Results and bookmarks held whole tables** (§4.7, §4.11) — opening an attempt
+  mapped every result row (element JSON, options JSON, explanation) into memory
+  before the first card, and the bookmarks screen loaded every bookmarked
+  question with its paper and worked out the count from the same list. Both
+  page now: results keyed on the last scanned `rowid` plus the rows a filter
+  chip skipped, so the numbering survives a filter; bookmarks one page of
+  decoded content per scroll. The bookmarks screen's *trigger* is the
+  `bookmarks` table's invalidation and its count is one `COUNT(*)`, so neither a
+  refresh nor the header reads an id list any more. The two linear readers stay
+  as the tests' oracles — `RepositoryTest` asserts a streamed save's order,
+  category titles and dwell against `getAttemptResults`, `BulkQueryTest` asserts
+  a bookmark's paper against `getBookmarkedQuestions` — and `NoDeadCodeTest`
+  now refuses a production call to either.
+
+- **Search rows showed the stored markup** (§4.5) — a result row rendered
+  `Question.text`, which concatenates the text elements as they were imported,
+  so an imported stem showed its inline tags on screen ("&lt;b&gt;Bold&lt;/b&gt;
+  question"). The row shows `previewText` now: the flattened, markup-free
+  visible text — the string the search actually matched on, and the same one
+  every other list row shows from its stored `searchText` column.
+  `QuestionSearchTest` pins that a preview carries no tag or entity, and that
+  `text` still does, because duplicate detection compares that.
+
+- **The library's mistake badges read one standing per graded question** (§5.1)
+  — `getMistakeCounts` called `getLatestStandings()` (one object per question
+  ever graded, in every paper) and grouped it in Kotlin, on the collector that
+  reruns after every finished test. `countMistakesByPaper` counts the same
+  latest-standing rule in SQL and returns at most one row per paper; the
+  mistakes session asks for its paper only
+  (`getMistakenQuestionIdsForPaper`) instead of filtering the whole bank.
+  `getLatestStandings` + `Mistakes.mistakenIdsByPaper` stay as the tests' oracle
+  (`LatestStandingsTest` asserts the SQL reads equal them across two papers) and
+  `NoDeadCodeTest` refuses a production call.
+
+- **The bookmark export was assembled as one DTO** (§4.11) — exporting
+  bookmarks read every bookmark id, decoded every bookmarked question and built
+  one `PaperDto` before a byte was written. `Exporter.bookmarkStream()` walks
+  the same grouping a keyset page at a time (titles and the count read up
+  front), through `PaperExporter.exportStream`. `getBookmarkExportDto` stays as
+  the oracle. The whole-bank JSON export also stopped encoding its bookmark
+  list into a single `String` — it writes ids one keyset page at a time
+  (`BookmarkDao.pageIdsAfter`).
+
+### Open (in pain order)
+
+1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is
+   linear in the paper — every eligible card, so a million-question paper that
+   has never been studied builds a million cards. It is kept deliberately: it is
+   the study tests' oracle for "the badge and the session agree" and for the
+   removal of daily caps, neither of which the one-card pull can express. No
+   production path asks for it, and `NoDeadCodeTest` now refuses the call if one
+   ever appears (the drill asks `leechesOnly = true`, bounded by the schedules on
+   file). The pull and the badge are bounded (§8 Fixed).
+2. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
+3. The bookmarked id set: Test and Results observe **every** bookmark id
+   (`observeBookmarks()`) to mark rows as saved, which is a million strings on a
+   "bookmark everything" bank. The mark has to stay live — a bookmark taken on
+   another screen updates a visible row — so the fix is the bookmarks screen's
+   shape applied per row: `EXISTS(SELECT 1 FROM bookmarks WHERE questionId = …)`
+   in the page query, one `isBookmarked(id)` for the toggle, and the table's
+   invalidation to rebuild. Left because it is three call sites and the paging
+   sources are already the right shape.
+4. Browse paging is still `LimitOffsetPagingSource` (§3, `getRefsByCategories`):
+   Room serves each page as `LIMIT ? OFFSET ?`, so a deep jump walks the
+   ordered index up to the offset — the measured `OFFSET 500k` on the
+   reference host is ~1.4 s. Nothing crashes and memory stays one page, but a
+   deep fling on a million-question paper pauses visibly. The fix is keyset
+   paging on `(categories.sortOrder, categories.title, questions.sortOrder,
+   rowid)`, which changes the paging key from an `Int` offset to a tuple and
+   touches every jump/scroll path; left as its own change rather than folded
+   into the streaming work. (The `.apkg` import is no longer on this list: it
+   streams through the same writer as JSON — see §5.5 and
+   `AnkiApkgImporter`.)
+

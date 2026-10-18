@@ -163,7 +163,7 @@ class DocxRoundTripTest {
     // ------------------------------------------------------------------
 
     private fun export(paper: PaperDto, file: McqFileDto): ByteArray =
-        DocxPaperWriter.paperToDocxBytes(paper, file.passages)
+        docxOf(paper, file.passages)
 
     @Test
     fun firstPassPreservesEverythingTheFormatCarries() {
@@ -318,7 +318,7 @@ class DocxRoundTripTest {
                 elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Body beta."))
             )
         )
-        val bytes = DocxPaperWriter.paperToDocxBytes(paper, passages)
+        val bytes = docxOf(paper, passages)
         val parsed = parseDocx(bytes)
         // An untouched export carries the payload, so the original ids and
         // passage ids come straight back.
@@ -482,7 +482,7 @@ class DocxRoundTripTest {
             marks = 3.0
         )
         val paper = PaperDto(id = "p", title = "Remote Paper", questions = listOf(question))
-        val bytes = DocxPaperWriter.paperToDocxBytes(paper)
+        val bytes = docxOf(paper)
         val parsed = parseDocx(bytes)
         assertTrue(
             "a remote-only image is not an edit: ${parsed.warnings}",
@@ -577,7 +577,7 @@ class DocxRoundTripTest {
         val rtPassages = sampleFile.passages.map { p ->
             p.copy(elements = rt(p.elements))
         }
-        val bytes = DocxPaperWriter.paperToDocxBytes(rtPaper, rtPassages)
+        val bytes = docxOf(rtPaper, rtPassages)
         val parsed = parseDocx(bytes)
         assertTrue(
             "db round-tripped export must not warn about stale payload: ${parsed.warnings}",

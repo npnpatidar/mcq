@@ -102,6 +102,70 @@ object FsrsReplay {
         }
     }
 
+    /**
+     * A one-pass replayer for a log read in `id` order. **Append order is
+     * authoritative here**: rows are replayed in the order [accept] is fed, and
+     * the statistics store feeds them by ascending `id`, which is also each
+     * card's own append order.
+     *
+     * This keeps only per-card state — [CardState] plus the interval carried
+     * out of the last review, one entry per card — instead of the two
+     * row-keyed maps [replay] needs for an arbitrarily ordered list: a
+     * quarter of the size for the 1M-review/250k-card target, and it never
+     * holds a whole page's enriched rows.
+     *
+     * Unlike [replay], which sorts each card's history by `(reviewedAt, id)`,
+     * this does **not** order by `reviewedAt`: if a row was appended with an
+     * earlier timestamp than the row before it (a clock rollback, or a
+     * restored log), the two compute different pre-answer predictions. The
+     * divergence is deliberate — append order is the order the app wrote, and
+     * the scheduler only ever sees the row it is given, so no card's schedule
+     * depends on this choice. `FsrsReplayStreamTest` pins both the monotonic
+     * agreement and the non-monotonic append-order rule.
+     */
+    class Stream(private val scheduler: FsrsScheduler) {
+        private val states = HashMap<String, CardState>()
+        private val previousIntervals = HashMap<String, Int>()
+
+        fun accept(row: RawReview): ReplayReview {
+            val pre = states[row.questionId]
+            val predicted = pre
+                ?.takeIf {
+                    it.state == CardStateKind.REVIEW || it.state == CardStateKind.RELEARNING
+                }
+                ?.takeIf { it.stability > 0.0 }
+                ?.let { scheduler.retention(it, row.reviewedAt) }
+            val intervalBefore = previousIntervals[row.questionId]
+            // A seeded history's first row has no knowable pre-state: it is the
+            // record of memory that predates the log. Its post-state, which the
+            // row itself carries, seeds everything after it.
+            val post = if (pre == null && isSeeded(row)) {
+                seedState(row)
+            } else {
+                scheduler.next(
+                    pre ?: scheduler.initial(row.questionId),
+                    gradeOf(row.rating),
+                    row.reviewedAt
+                )
+            }
+            states[row.questionId] = post
+            previousIntervals[row.questionId] = post.intervalDays
+            return ReplayReview(
+                paperId = row.paperId,
+                questionId = row.questionId,
+                rating = row.rating,
+                reviewedAt = row.reviewedAt,
+                elapsedSeconds = row.elapsedSeconds,
+                stateBefore = row.stateBefore,
+                stabilityAfter = row.stabilityAfter,
+                difficultyAfter = row.difficultyAfter,
+                intervalDaysAfter = row.intervalDaysAfter,
+                predictedRetention = predicted,
+                intervalBeforeDays = intervalBefore
+            )
+        }
+    }
+
     private fun isSeeded(row: RawReview): Boolean =
         row.stateBefore != null &&
             row.stateBefore != CardStateKind.NEW &&

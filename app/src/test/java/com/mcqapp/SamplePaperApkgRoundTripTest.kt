@@ -1,6 +1,5 @@
 package com.mcqapp
 
-import com.mcqapp.data.anki.AnkiDtoMapper
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.LegacyParser
@@ -75,7 +74,7 @@ class SamplePaperApkgRoundTripTest {
     private fun write(
         paper: PaperDto,
         passages: Map<String, com.mcqapp.domain.Passage> = domainPassages(sampleFile)
-    ) = AnkiPackageWriter.write(paper, AnkiDtoMapper.flattenQuestions(paper), passages = passages)
+    ) = apkgOf(paper, passages = passages)
 
     private fun allQuestions(paper: PaperDto): List<QuestionDto> =
         paper.questions + paper.categories.flatMap { category -> category.questions }

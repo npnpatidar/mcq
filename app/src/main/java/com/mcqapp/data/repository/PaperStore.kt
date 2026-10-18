@@ -4,10 +4,7 @@ import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
-import com.mcqapp.data.local.COPY_ID_PROBE
-import com.mcqapp.data.local.countForQuestionsChunked
-import com.mcqapp.data.local.likePrefixPattern
-import com.mcqapp.data.local.removeAllChunked
+import com.mcqapp.data.local.getCategoryCountsForChunked
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
@@ -16,14 +13,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 /**
- * Papers and categories: the library tree, paper lifecycle (save, duplicate,
- * delete, delete impact) and category management. Split out of
+ * Papers and categories: the library tree, paper lifecycle (save, delete,
+ * delete impact) and category management. Split out of
  * [McqRepository]; question deep-copies go through [QuestionStore], and
  * deleting a paper drops the resume snapshot through [SettingsStore].
  */
 internal class PaperStore(
     private val db: AppDatabase,
-    private val questions: QuestionStore,
     private val settings: SettingsStore
 ) {
 
@@ -57,8 +53,7 @@ internal class PaperStore(
      */
     private suspend fun PaperEntity.toDomain(countMap: Map<String, Int>? = null): Paper {
         val categories = db.categoryDao().getByPaper(id)
-        val counts = countMap
-            ?: db.questionDao().getCategoryCounts().associate { it.categoryId to it.cnt }
+        val counts = countMap ?: countsFor(categories)
         return Paper(
             id = id,
             title = title,
@@ -68,6 +63,16 @@ internal class PaperStore(
             categories = buildTree(categories, counts)
         )
     }
+
+    /**
+     * One paper's category counts, read over that paper's questions only. The
+     * bank-wide query this replaces was a covering-index scan of a million
+     * entries (~90 ms warm) for a tree that shows one paper.
+     */
+    private suspend fun countsFor(categories: List<CategoryEntity>): Map<String, Int> =
+        if (categories.isEmpty()) emptyMap()
+        else db.questionDao().getCategoryCountsForChunked(categories.map { it.id })
+            .associate { it.categoryId to it.cnt }
 
     private fun buildTree(
         categories: List<CategoryEntity>,
@@ -108,12 +113,12 @@ internal class PaperStore(
      * makes a single unconfirmed tap expensive.
      */
     suspend fun deleteImpact(paperId: String): McqRepository.DeleteImpact {
-        val questionIds = db.questionDao().getIdsByPaper(paperId)
+        // Counted, not listed: a million-question paper's id list was read only
+        // to take its size, for a dialog that shows four numbers.
         return McqRepository.DeleteImpact(
-            questions = questionIds.size,
+            questions = db.questionDao().countByPaper(paperId),
             attempts = db.attemptDao().countByPaper(paperId),
-            bookmarks = if (questionIds.isEmpty()) 0
-            else db.bookmarkDao().countForQuestionsChunked(questionIds),
+            bookmarks = db.bookmarkDao().countByPaper(paperId),
             schedules = db.cardStateDao().countByPaper(paperId)
         )
     }
@@ -125,9 +130,9 @@ internal class PaperStore(
         // must land together, or a crash midway leaves the database claiming a
         // test was taken against questions that no longer exist.
         db.withTransaction {
-            // Collect first: deleting the paper cascades its questions away.
-            val questionIds = db.questionDao().getIdsByPaper(paperId)
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
+            // The cascade below removes the paper's questions, and this cleanup
+            // resolves them by join, so it has to run first.
+            db.bookmarkDao().removeAllByPaper(paperId)
             // History and SM-2 cards have no path to the paper except this
             // paperId column, so a plain cascade leaves them behind as orphans:
             // attempts would still show up in History under a title that no
@@ -176,8 +181,9 @@ internal class PaperStore(
                 fromParentId = categoryId,
                 toParentId = category.parentId
             )
-            val questionIds = db.questionDao().getIdsByCategory(categoryId)
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
+            // Before the delete cascades this category's questions away; the
+            // relation is a join, so a million-question category is not listed.
+            db.bookmarkDao().removeAllByCategory(categoryId)
             db.categoryDao().deleteById(categoryId)
         }
     }
@@ -345,52 +351,13 @@ internal class PaperStore(
         val trimmed = title.trim()
         if (trimmed.isBlank()) return false
         val category = db.categoryDao().getById(categoryId) ?: return false
-        db.categoryDao().upsert(category.copy(title = trimmed))
+        // A targeted UPDATE, never upsert: `@Upsert` compiles to INSERT OR
+        // REPLACE, and questions.categoryId cascades on delete, so replacing
+        // the category row would wipe every question in it.
+        db.categoryDao().updateFields(
+            category.id, category.paperId, trimmed, category.parentId, category.sortOrder
+        )
         Logger.i("REPO", "renameCategory($categoryId -> '$trimmed')")
         return true
-    }
-
-    /** Deep-clones a paper (categories, questions, options, keys, marks). */
-    suspend fun duplicatePaper(paperId: String): String? {
-        // One transaction: a partial clone must not leave a paper shell with
-        // half its questions.
-        return db.withTransaction {
-            val paper = db.paperDao().getById(paperId) ?: return@withTransaction null
-            // Only the -copy namespace can collide with the generated paper id.
-            val existingPaperIds = db.paperDao()
-                .getIdsLike(likePrefixPattern("$paperId-copy")).toSet()
-            val newPaperId = com.mcqapp.data.io.PaperClone.copyPaperId(existingPaperIds, paperId)
-            db.paperDao().insertIgnore(
-                paper.copy(
-                    id = newPaperId,
-                    title = "${paper.title} (copy)",
-                    createdAt = System.currentTimeMillis()
-                )
-            )
-            val remapped = com.mcqapp.data.io.PaperClone.remapCategories(
-                db.categoryDao().getByPaper(paperId),
-                newPaperId
-            )
-            remapped.values.forEach { db.categoryDao().insertIgnore(it) }
-            // The clone mints `-copy` ids, so the probe scan covers every id a
-            // candidate can collide with; ids minted below join the same set.
-            val existingQ = db.questionDao().getIdsLike(COPY_ID_PROBE).toMutableSet()
-            val questionsByCategory = questions.getQuestionsForCategories(remapped.keys.toList())
-                .groupBy { it.categoryId }
-            val clones = mutableListOf<com.mcqapp.domain.Question>()
-            for ((oldCatId, newCat) in remapped) {
-                for (q in questionsByCategory[oldCatId].orEmpty()) {
-                    val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
-                    existingQ.add(newQId)
-                    clones += q.copy(id = newQId, categoryId = newCat.id)
-                }
-            }
-            // Ids are minted for the whole clone first, then written in one
-            // pass: the rows are known fresh, so no getQuestion/saveQuestion
-            // round-trip is needed to prove each one absent before writing.
-            questions.insertCopies(clones)
-            Logger.i("REPO", "duplicatePaper($paperId -> $newPaperId)")
-            newPaperId
-        }
     }
 }

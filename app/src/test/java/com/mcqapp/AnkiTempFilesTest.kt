@@ -38,4 +38,25 @@ class AnkiTempFilesTest {
             dir.deleteRecursively()
         }
     }
+
+    /**
+     * The export media spool is a directory of pictures, so the sweep has to
+     * take it whole — and only it.
+     */
+    @Test
+    fun cleanupRemovesTheExportMediaSpool() {
+        val dir = createTempDir()
+        try {
+            val spool = File(dir, "mcq-media123").apply { mkdirs() }
+            File(spool, "img001.png").writeText("x")
+            val unrelated = File(dir, "mcq-notours").apply { mkdirs() }
+
+            assertEquals(1, AnkiTempFiles.cleanup(dir))
+
+            assertTrue("the spool removed", !spool.exists())
+            assertTrue("an unrelated directory kept", unrelated.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

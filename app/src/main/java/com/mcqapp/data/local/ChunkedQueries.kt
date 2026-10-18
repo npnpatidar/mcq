@@ -21,16 +21,51 @@ suspend fun OptionDao.getForQuestionsChunked(questionIds: List<String>): List<Op
 suspend fun CorrectAnswerDao.getForQuestionsChunked(questionIds: List<String>): List<CorrectAnswerEntity> =
     questionIds.chunks().flatMap { getForQuestions(it) }
 
+suspend fun CorrectAnswerDao.getQuestionIdsWithKeysChunked(questionIds: List<String>): Set<String> =
+    questionIds.chunks().flatMap { getQuestionIdsWithKeys(it) }.toHashSet()
+
 suspend fun QuestionDao.getByIdsChunked(ids: List<String>): List<QuestionEntity> =
     ids.chunks().flatMap { getByIds(it) }
 
 suspend fun QuestionDao.getByCategoriesChunked(categoryIds: List<String>): List<QuestionEntity> =
     categoryIds.chunks().flatMap { getByCategories(it) }
 
+suspend fun QuestionDao.getRefsByCategoriesChunked(categoryIds: List<String>): List<QuestionRef> =
+    categoryIds.chunks().flatMap { getRefsByCategories(it) }
+
+suspend fun QuestionDao.getSessionRefsByIdsChunked(ids: List<String>): List<SessionRef> =
+    ids.chunks().flatMap { getSessionRefsByIds(it) }
+
+suspend fun QuestionDao.countUngradedForCategoriesChunked(categoryIds: List<String>): Int =
+    categoryIds.chunks().sumOf { countUngradedForCategories(it) }
+
+suspend fun QuestionDao.countInCategoriesChunked(categoryIds: List<String>): Int =
+    categoryIds.chunks().sumOf { countInCategories(it) }
+
+/**
+ * Per-category counts for one paper's categories. The chunks are disjoint, so
+ * concatenating them keeps every category's count whole — no summing needed.
+ */
+suspend fun QuestionDao.getCategoryCountsForChunked(
+    categoryIds: List<String>
+): List<CategoryCountEntity> =
+    categoryIds.chunks().flatMap { getCategoryCountsFor(it) }
+
+suspend fun QuestionDao.getHashInputsByCategoriesChunked(
+    categoryIds: List<String>
+): List<QuestionIdHash> =
+    categoryIds.chunks().flatMap { getHashInputsByCategories(it) }
+
+suspend fun QuestionDao.getRefsByIdsChunked(ids: List<String>): List<QuestionRef> =
+    ids.chunks().flatMap { getRefsByIds(it) }
+
 suspend fun QuestionDao.getMatchesByContentHashesChunked(
     hashes: Collection<String>
 ): List<ContentHashMatch> =
     hashes.toList().chunks().flatMap { getMatchesByContentHashes(it) }
+
+suspend fun QuestionDao.getExistingIdsChunked(ids: Collection<String>): List<String> =
+    ids.toList().chunks().flatMap { getExistingIds(it) }
 
 suspend fun BookmarkDao.removeAllChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { removeAll(it) }
@@ -44,6 +79,9 @@ suspend fun CategoryDao.getByIdsChunked(ids: List<String>): List<CategoryEntity>
 
 suspend fun PassageDao.getByIdsChunked(ids: List<String>): List<PassageEntity> =
     ids.chunks().flatMap { getByIds(it) }
+
+suspend fun CardStateDao.getForQuestionsChunked(ids: List<String>): List<CardStateEntity> =
+    ids.chunks().flatMap { getForQuestions(it) }
 
 suspend fun PaperDao.getByIdsChunked(ids: List<String>): List<PaperEntity> =
     ids.chunks().flatMap { getByIds(it) }
@@ -80,10 +118,9 @@ fun likePrefixPattern(prefix: String): String =
 
 /**
  * Matches every id containing "-copy" — the substring all generated copy ids
- * share (`q1-copy`, `q1-copy-2`, …, via BulkOps.copyId and
- * PaperClone.copyPaperId), so these are the only existing ids a copy candidate
- * can collide with. One scan with this pattern replaces materializing every id
- * in the table; extra `-copy`-shaped ids it returns merely over-block, which
- * the full-table id set it replaces did too.
+ * share (`q1-copy`, `q1-copy-2`, …, via BulkOps.copyId), so these are the only
+ * existing ids a copy candidate can collide with. One scan with this pattern
+ * replaces materializing every id in the table; extra `-copy`-shaped ids it
+ * returns merely over-block, which the full-table id set it replaces did too.
  */
 const val COPY_ID_PROBE = "%-copy%"

@@ -12,7 +12,7 @@ import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.util.Logger
-import com.mcqapp.util.readBounded
+import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -269,13 +269,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun exportAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val json = Exporter(repository.db()).exportAll()
+                // Streamed: the whole bank never lives in memory as a String.
                 val outputStream = getApplication<Application>().contentResolver.openOutputStream(uri)
                 if (outputStream == null) {
                     onError("Could not open file for writing")
                 } else {
-                    outputStream.use { it.write(json.toByteArray()) }
-                    Logger.i("SETTINGS", "Exported all data (${json.length} chars)")
+                    outputStream.use { out ->
+                        Exporter(repository.db()).exportAllTo(
+                            java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
+                        )
+                    }
+                    Logger.i("SETTINGS", "Exported all data (streamed)")
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Export failed", e)
@@ -284,40 +288,68 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Writes the full backup zip; assembly and the file write stay off Main. */
+    /** Writes the full backup zip; every entry streams, nothing is held whole. */
     fun backupAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     val appVersion = try {
                         app.packageManager.getPackageInfo(app.packageName, 0).versionName
                     } catch (_: Exception) {
                         null
                     }
-                    val backup = BackupSource(repository.db())
-                        .collect(appVersion, repository.loadTestProgress())
-                        .copy(settings = repository.settingsSnapshot())
-                    McqBackupFormat.write(
-                        manifest = backup.manifest,
-                        content = backup.content,
-                        study = backup.study,
-                        settings = backup.settings
-                    )
-                }
-                val written = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val outputStream = app.contentResolver.openOutputStream(uri)
-                    if (outputStream == null) {
-                        -1
-                    } else {
-                        outputStream.use { it.write(bytes) }
-                        bytes.size
+                    val db = repository.db()
+                    val paperRows = db.paperDao().getAll()
+                    val paperCreated = paperRows.map {
+                        McqBackupFormat.PaperCreated(it.id, it.createdAt)
                     }
-                }
-                if (written < 0) {
-                    onError("Could not open file for writing")
-                } else {
-                    Logger.i("SETTINGS", "Backup written ($written bytes)")
+                    // The session's answers are rows; the backup carries them
+                    // inlined in the one document the format has always had.
+                    val inProgressTest = repository.testProgressForBackup()
+                    val manifest = McqBackupFormat.Manifest(
+                        dbVersion = db.openHelper.readableDatabase.version,
+                        appVersion = appVersion,
+                        exportedAt = System.currentTimeMillis(),
+                        papers = paperRows.size,
+                        questions = db.questionDao().countQuestions(),
+                        attempts = db.attemptDao().getAllAttempts().size,
+                        // Counted in SQL: the rows are streamed below, never listed.
+                        reviews = db.reviewLogDao().countAll()
+                    )
+                    val settings = McqBackupFormat.SettingsFile(
+                        preferences = repository.settingsSnapshot().preferences
+                    )
+                    val output = app.contentResolver.openOutputStream(uri)
+                    if (output == null) {
+                        onError("Could not open file for writing")
+                        return@withContext
+                    }
+                    output.use { out ->
+                        McqBackupFormat.writeTo(
+                            output = out,
+                            manifest = manifest,
+                            content = { w ->
+                                // The zip carries the rows verbatim in
+                                // study.json, so the question-keyed map would
+                                // only duplicate them.
+                                com.mcqapp.data.io.Exporter(db)
+                                    .exportAllTo(w, withScheduling = false)
+                            },
+                            study = { w ->
+                                val source = com.mcqapp.data.backup.BackupSource(db)
+                                McqBackupFormat.writeStudyRows(
+                                    w = w,
+                                    cardState = { emit -> source.emitCards(emit) },
+                                    reviewLog = { emit -> source.emitReviews(emit) },
+                                    paperCreated = paperCreated,
+                                    inProgressTest = inProgressTest
+                                )
+                            },
+                            settings = settings
+                        )
+                    }
+                    Logger.i("SETTINGS", "Backup written (streamed)")
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)
@@ -335,27 +367,26 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
-                // A backup legitimately holds inline data-URI images, so it
-                // gets the zip expansion cap rather than the 64 MB bank
-                // import limit — and a message that talks about backups.
-                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    app.contentResolver.openInputStream(uri)?.use { stream ->
-                        readBounded(stream, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES)
-                    } ?: throw IllegalStateException("Could not read the file.")
-                }
-                val backup = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                    McqBackupFormat.read(bytes)
-                }
                 val updateAnswers = repository.updateAnswersOnDuplicate().first()
-                val report = BackupRestorer(repository.db()).restore(
-                    backup,
-                    updateAnswersOnDuplicate = updateAnswers,
-                    applySettings = { repository.settingsRestore(it) },
-                    applyInProgress = { snapshot ->
-                        if (snapshot != null) repository.saveTestProgress(snapshot)
-                        else repository.clearTestProgress()
+                // The backup is restored as it is read: the zip, the bank and
+                // the study table are never held, so a backup bigger than the
+                // heap restores instead of dying. The zip expansion cap still
+                // applies, as does a cap on the archive's own bytes.
+                val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val stream = app.contentResolver.openInputStream(uri)
+                        ?.let { boundedStream(it, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES) }
+                        ?: throw IllegalStateException("Could not read the file.")
+                    stream.use { input ->
+                        BackupRestorer(repository.db()).restoreStreaming(
+                            input,
+                            updateAnswersOnDuplicate = updateAnswers,
+                            applySettings = { repository.settingsRestore(it) },
+                            applyInProgress = { snapshot ->
+                                repository.restoreTestProgress(snapshot)
+                            }
+                        )
                     }
-                )
+                }
                 refreshStorage()
                 Logger.i("SETTINGS", "Backup restored: $report")
                 onDone(report)

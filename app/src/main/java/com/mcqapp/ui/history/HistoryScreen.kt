@@ -96,21 +96,21 @@ fun HistoryScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (trends.isNotEmpty()) {
-                    item {
+                    item(contentType = "header") {
                         Text(stringResource(R.string.trends), style = MaterialTheme.typography.titleSmall)
                     }
-                    items(trends, key = { "trend-${it.paperId}" }) { trend ->
+                    items(trends, key = { "trend-${it.paperId}" }, contentType = { "trend" }) { trend ->
                         TrendCard(trend = trend)
                     }
-                    item {
+                    item(contentType = "header") {
                         Text(stringResource(R.string.attempts), style = MaterialTheme.typography.titleSmall)
                     }
                 }
                 if (weakest.isNotEmpty()) {
-                    item {
+                    item(contentType = "header") {
                         Text(stringResource(R.string.weakest_categories), style = MaterialTheme.typography.titleSmall)
                     }
-                    items(weakest, key = { "weak-${it.paperId}-${it.categoryTitle}" }) { mastery ->
+                    items(weakest, key = { "weak-${it.paperId}-${it.categoryTitle}" }, contentType = { "weakest" }) { mastery ->
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(
                                 modifier = Modifier
@@ -137,10 +137,10 @@ fun HistoryScreen(
                     }
                 }
                 if (hardest.isNotEmpty()) {
-                    item {
+                    item(contentType = "header") {
                         Text(stringResource(R.string.hardest_questions), style = MaterialTheme.typography.titleSmall)
                     }
-                    items(hardest, key = { "hard-${it.questionId}" }) { stat ->
+                    items(hardest, key = { "hard-${it.questionId}" }, contentType = { "hardest" }) { stat ->
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(
                                 modifier = Modifier
@@ -163,7 +163,7 @@ fun HistoryScreen(
                         }
                     }
                 }
-                items(attempts, key = { it.id }) { attempt ->
+                items(attempts, key = { it.id }, contentType = { "attempt" }) { attempt ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()

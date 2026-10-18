@@ -55,7 +55,7 @@ class PdfPaperWriterTest {
 
     @Test
     fun producesARealPdfFile() {
-        val bytes = PdfPaperWriter.paperToPdfBytes(paper())
+        val bytes = pdfOf(paper())
         assertTrue("too small to be a PDF: ${bytes.size}", bytes.size > 400)
         assertTrue(
             "missing PDF header",
@@ -67,14 +67,14 @@ class PdfPaperWriterTest {
     @Test
     fun anEmptyPaperStillProducesAValidFile() {
         val empty = PaperDto(id = "p1", title = "Empty", categories = emptyList())
-        val bytes = PdfPaperWriter.paperToPdfBytes(empty)
+        val bytes = pdfOf(empty)
         assertTrue(bytes.copyOfRange(0, 5).asLatin1() == "%PDF-")
     }
 
     @Test
     fun answersAtEndKeepsTheBodyAndTheKeyLayout() {
-        val inline = PdfPaperWriter.paperToPdfBytes(paper())
-        val atEnd = PdfPaperWriter.paperToPdfBytes(paper(), answersAtEnd = true)
+        val inline = pdfOf(paper())
+        val atEnd = pdfOf(paper(), answersAtEnd = true)
 
         assertTrue("inline export produced nothing", inline.isNotEmpty())
         assertTrue("answers-at-end export produced nothing", atEnd.isNotEmpty())
@@ -87,14 +87,14 @@ class PdfPaperWriterTest {
 
     @Test
     fun aTwoColumnExportStillProducesAValidFile() {
-        val bytes = PdfPaperWriter.paperToPdfBytes(paper(questionCount = 6), twoColumn = true)
+        val bytes = pdfOf(paper(questionCount = 6), twoColumn = true)
         assertTrue(bytes.copyOfRange(0, 5).asLatin1() == "%PDF-")
         assertTrue(bytes.asLatin1().contains("%%EOF"))
     }
 
     @Test
     fun largePapersArePaginatedRatherThanDropped() {
-        val bytes = PdfPaperWriter.paperToPdfBytes(paper(questionCount = 40))
+        val bytes = pdfOf(paper(questionCount = 40))
         assertTrue(bytes.asLatin1().contains("%%EOF"))
         // 40 questions cannot fit one page; the writer must have paginated.
         assertTrue("expected more than one page object", bytes.asLatin1().contains("/Type /Page"))

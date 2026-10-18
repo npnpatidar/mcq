@@ -19,19 +19,21 @@ object QuestionSearch {
      * happens to satisfy a user-typed wildcard.
      */
     /**
-     * The term to look for in the SQL prefilter.
+     * The longest single alphanumeric run of the query, ORed into the SQL
+     * prefilter beside the whole query.
      *
-     * Cross-paper search prefilters with `LIKE` against `questions.text`, which
-     * stores the elements *JSON* — markup included. A phrase whose words sit
-     * either side of a tag ("net <em>external</em> force"), or either side of two
-     * table cells, or spread across MathML tags, is not present there as a
-     * literal, so the row was discarded before [filter] ever saw it. Browsing
-     * one paper found those questions and searching across papers did not.
+     * It exists because the prefilter once ran `LIKE` against
+     * `questions.text`, which stores the elements *JSON* — markup included — so
+     * a phrase whose words sat either side of a tag ("net <em>external</em>
+     * force"), either side of two table cells, or across MathML tags was not
+     * present there as a literal, and the row was discarded before [filter] ever
+     * saw it.
      *
-     * Words are contiguous *within* a tag, so the longest alphanumeric run of
-     * the query is always present verbatim when the query is present at all.
-     * Returning that makes the prefilter a superset instead of a veto. The
-     * caller still ORs in the whole query, and [filter] remains the authority.
+     * The prefilter now runs against the flattened `questions.searchText`
+     * column ([List<ContentElement>.searchableText]), which already joins those
+     * words with a single space, so the whole query normally matches on its own
+     * and this is a cheap superset kept as a safety net. [filter] remains the
+     * authority.
      */
     fun prefilterKey(query: String): String {
         val trimmed = query.trim()
@@ -93,6 +95,15 @@ object QuestionSearch {
         questions: List<Question>,
         titlesByCategoryId: Map<String, String>
     ): List<Question> =
+        questions.filter { q ->
+            q.categoryId.isBlank() || titlesByCategoryId[q.categoryId] == "Uncategorized"
+        }
+
+    /** [filterUncategorized] over browse's lightweight refs. */
+    fun filterUncategorizedRefs(
+        questions: List<com.mcqapp.data.local.QuestionRef>,
+        titlesByCategoryId: Map<String, String>
+    ): List<com.mcqapp.data.local.QuestionRef> =
         questions.filter { q ->
             q.categoryId.isBlank() || titlesByCategoryId[q.categoryId] == "Uncategorized"
         }

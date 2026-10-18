@@ -1,7 +1,11 @@
 package com.mcqapp.data.anki
 
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.mcqapp.data.SafeZip
+import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
+import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
@@ -14,8 +18,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.Closeable
 import java.io.File
-import java.util.zip.ZipInputStream
+import java.io.InputStream
 
 /** What a package contained, for the import report. */
 data class AnkiReadResult(
@@ -58,15 +63,10 @@ object AnkiPackageReader {
     private val ZSTD_MAGIC = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val COLLECTION_NAMES = listOf(
-        "collection.anki2",
-        "collection.anki21",
-        "collection.anki21b"
-    )
     private const val DEFAULT_DECK_ID = 1L
     private const val SEPARATOR = AnkiPackageWriter.FIELD_SEPARATOR
 
-    fun read(bytes: ByteArray): AnkiReadResult {
+    fun read(bytes: ByteArray, nowMillis: Long = System.currentTimeMillis()): AnkiReadResult {
         val entries = unzip(bytes)
         val collectionName = entries.keys.firstOrNull { it in COLLECTION_NAMES }
             ?: throw AnkiPackageException(
@@ -81,13 +81,13 @@ object AnkiPackageReader {
             )
         }
 
-        val media = MediaIndex(entries["media"]?.let { String(it, Charsets.UTF_8) }, entries)
+        val media = MediaIndex(entries["media"]?.let { String(it, Charsets.UTF_8) }, { name -> entries[name] }, cache = true)
         val file = File.createTempFile("anki-import", ".anki2")
         return try {
             file.writeBytes(collectionBytes)
             val db = SQLiteDatabase.openOrCreateDatabase(file, null)
             try {
-                readCollection(db, media)
+                readCollection(db, media, nowMillis)
             } finally {
                 db.close()
             }
@@ -106,11 +106,19 @@ object AnkiPackageReader {
         }
     }
 
-    private fun readCollection(db: SQLiteDatabase, media: MediaIndex): AnkiReadResult {
-        val col = db.rawQuery("select ver, models, decks, crt from col", null).use { c ->
+    /** The single `col` row: schema version, the schema-11 JSON blobs, the epoch. */
+    private fun readColMeta(db: SQLiteDatabase): ColMeta =
+        db.rawQuery("select ver, models, decks, crt from col", null).use { c ->
             if (!c.moveToFirst()) throw AnkiPackageException("The Anki collection is empty")
             ColMeta(c.getInt(0), c.getString(1), c.getString(2), c.getLong(3))
         }
+
+    private fun readCollection(
+        db: SQLiteDatabase,
+        media: MediaIndex,
+        nowMillis: Long
+    ): AnkiReadResult {
+        val col = readColMeta(db)
         val ver = col.version
         Logger.i("IMPORT", "Reading Anki collection, schema version $ver")
 
@@ -150,7 +158,8 @@ object AnkiPackageReader {
                         reps = card.reps,
                         lapses = card.lapses,
                         crtSeconds = col.crtSeconds,
-                        lastReviewedAtMillis = lastReviews[card.id] ?: 0L
+                        lastReviewedAtMillis = lastReviews[card.id] ?: 0L,
+                        nowMillis = nowMillis
                     )
                     if (state == null) unscheduled++ else scheduling[parsed.question.id] = state
                 }
@@ -189,6 +198,376 @@ object AnkiPackageReader {
             deckCount = decks.size,
             scheduling = scheduling
         )
+    }
+
+    // ---- streaming (.apkg straight to per-batch writes) ----
+
+    /**
+     * Receives a package while it is read, in the same order the whole-file
+     * [read] builds: a paper, then its categories, then each category's
+     * questions in batches. The callbacks run inline on the importing
+     * coroutine, so a sink must not retain the batches it is handed.
+     */
+    interface StreamSink {
+        suspend fun onPaper(header: LegacyParser.PaperHeader)
+        suspend fun onCategory(category: CategoryDto)
+        suspend fun onQuestions(
+            categoryId: String,
+            questions: List<QuestionDto>,
+            schedules: Map<String, CardScheduleDto>
+        )
+    }
+
+    /** What a streamed read produced, for the import report and its log line. */
+    data class AnkiStreamTail(
+        val passages: List<PassageDto>,
+        val deckCount: Int,
+        val noteCount: Int,
+        val recallCount: Int
+    )
+
+    /**
+     * Reads a package by streaming it into [sink], without ever holding the
+     * archive or the bank: the zip's entries are copied to temp files (under
+     * [SafeZip]'s caps), each picture is spooled rather than kept as a data
+     * URI, and the collection is walked one deck at a time so only a page of
+     * notes and one batch of questions is ever live. It reproduces [read]'s
+     * papers, categories, questions and schedules; the equivalence test pins
+     * the two against each other over the fixtures.
+     *
+     * [read] stays as the whole-file reader — the tests' oracle now that no
+     * production path calls it.
+     */
+    suspend fun stream(
+        input: InputStream,
+        sink: StreamSink,
+        batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
+        nowMillis: Long = System.currentTimeMillis()
+    ): AnkiStreamTail {
+        require(batchSize > 0) { "batchSize must be positive" }
+        val work = AnkiImportWork()
+        try {
+            work.extract(input)
+            val collectionFile = work.collectionFile
+                ?: throw AnkiPackageException(
+                    "No Anki collection found in this package (looked for ${COLLECTION_NAMES.joinToString()})"
+                )
+            if (startsWithZstd(collectionFile)) {
+                throw AnkiPackageException(
+                    "This is a zstd-compressed .colpkg, which needs Anki 2.1.50+ to unpack. " +
+                        "Export the deck as .apkg from Anki and import that instead."
+                )
+            }
+            val db = try {
+                SQLiteDatabase.openOrCreateDatabase(collectionFile, null)
+            } catch (e: Exception) {
+                throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
+            }
+            try {
+                return streamCollection(db, work.mediaIndex(), sink, batchSize, nowMillis)
+            } catch (e: AnkiPackageException) {
+                throw e
+            } catch (e: OutOfMemoryError) {
+                throw AnkiPackageException("This package needs more memory than this device has.", e)
+            } catch (e: Exception) {
+                throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
+            } finally {
+                db.close()
+            }
+        } finally {
+            work.close()
+        }
+    }
+
+    private suspend fun streamCollection(
+        db: SQLiteDatabase,
+        media: MediaIndex,
+        sink: StreamSink,
+        batchSize: Int,
+        nowMillis: Long
+    ): AnkiStreamTail {
+        val col = readColMeta(db)
+        Logger.i("IMPORT", "Streaming Anki collection, schema version ${col.version}")
+        val notetypes = if (col.version >= SCHEMA_14) readNotetypes14(db) else readNotetypes11(col.models)
+        val decks = if (col.version >= SCHEMA_14) readDecks14(db) else readDecks11(col.decks)
+        if (decks.isEmpty()) throw AnkiPackageException("The Anki collection has no decks")
+        if (countRows(db, "notes") == 0L) throw AnkiPackageException("The Anki collection has no notes")
+
+        // Deck ids in the order their first question appears — the whole-file
+        // reader's `questionsByDeck` key order, and therefore which orphan
+        // decks fold into one paper (only the last survives) as well as which
+        // papers and categories exist at all.
+        val scan = scanDecks(db, notetypes)
+        val referenced = scan.order
+        val referencedSet = scan.counts.keys
+        val byId = decks.associateBy { it.id }
+        val allDecks = decks + referenced.filter { it !in byId }.map { AnkiDeck(it, "Imported") }
+        val idByName = allDecks.associateBy { it.name }
+        val allNames = allDecks.map { it.name }
+        val roots = LinkedHashSet<String>()
+        allDecks.forEach { deck ->
+            deck.name.split("::").firstOrNull { it.isNotBlank() }?.let { roots += it }
+        }
+        val revlog = hasRevlog(db)
+
+        val passages = LinkedHashMap<String, PassageDto>()
+        var noteCount = 0
+        var recallCount = 0
+        for (root in roots) {
+            val rootDeck = idByName[root]
+            val paperDeckIds = allDecks
+                .filter { it.name == root || it.name.startsWith("$root::") }
+                .map { it.id }
+            // A paper with no question in any of its decks is dropped, exactly
+            // as buildPapers filters it.
+            if (paperDeckIds.none { it in referencedSet }) continue
+            val childNames = allNames.filter { it != root && it.startsWith("$root::") }
+            val nodes = buildCategories(
+                prefix = root,
+                childDeckNames = childNames,
+                idByName = idByName,
+                hasQuestions = { deck -> deck != null && deck.id in referencedSet }
+            )
+            val paperId = "anki-${rootDeck?.id ?: root}"
+            sink.onPaper(LegacyParser.PaperHeader(paperId, root, "", 0, 0.0))
+            if (nodes.isEmpty()) {
+                // The paper's own deck is uncategorised, so the whole-file
+                // importer synthesises "Uncategorized" for it.
+                val categoryId = "$paperId-uncat"
+                sink.onCategory(CategoryDto(id = categoryId, title = "Uncategorized"))
+                val counts = streamDeck(db, notetypes, media, col, revlog, passages, rootDeck?.id, categoryId, sink, batchSize, nowMillis)
+                noteCount += counts.total
+                recallCount += counts.recall
+            } else {
+                for (node in nodes) {
+                    // A level with no deck row of its own holds no questions.
+                    sink.onCategory(node.dto)
+                    val counts = streamDeck(db, notetypes, media, col, revlog, passages, node.deck?.id, node.dto.id, sink, batchSize, nowMillis)
+                    noteCount += counts.total
+                    recallCount += counts.recall
+                }
+            }
+        }
+        Logger.i(
+            "IMPORT",
+            "Streamed Anki package: ${decks.size} decks, $noteCount questions, $recallCount without options"
+        )
+        return AnkiStreamTail(passages.values.toList(), decks.size, noteCount, recallCount)
+    }
+
+    private class DeckCounts(val total: Int, val recall: Int)
+
+    /** Which decks hold a question ([order] is first-question order), and how many. */
+    private class DeckScan(val order: List<Long>, val counts: Map<Long, Int>)
+
+    /**
+     * Streams one deck's questions. A note's cards decide its instances (one
+     * per card, as Anki's cloze deletions are); only cards in [deckId] are
+     * considered, which is the restriction the whole-file reader applies when
+     * it assigns each question to its card's deck. [DEFAULT_DECK_ID] also takes
+     * notes with no card at all, which the whole-file reader files there.
+     */
+    private suspend fun streamDeck(
+        db: SQLiteDatabase,
+        notetypes: Map<Long, AnkiNotetype>,
+        media: MediaIndex,
+        col: ColMeta,
+        revlog: Boolean,
+        passages: LinkedHashMap<String, PassageDto>,
+        deckId: Long?,
+        categoryId: String,
+        sink: StreamSink,
+        batchSize: Int,
+        nowMillis: Long
+    ): DeckCounts {
+        if (deckId == null) return DeckCounts(0, 0)
+        var total = 0
+        var recall = 0
+        val batch = ArrayList<QuestionDto>()
+        val schedules = HashMap<String, CardScheduleDto>()
+        var after = 0L
+        while (true) {
+            val page = noteIdsForDeck(db, deckId, after, NOTE_PAGE)
+            if (page.isEmpty()) break
+            after = page.last()
+            val notes = readNotesByIds(db, page)
+            val cards = readCardsForNotes(db, page)
+            val cardsByNote = cards.groupBy { it.nid }
+            val lastReviews = if (revlog) readLastReviewTimesFor(db, cards.map { it.id }) else emptyMap()
+            for (nid in page) {
+                val note = notes[nid] ?: continue
+                val deckCards = cardsByNote[nid].orEmpty().filter { it.did == deckId }
+                val instances: List<Int?> =
+                    if (deckCards.isEmpty()) listOf(null) else deckCards.map { it.ord }
+                for (ord in instances) {
+                    val parsed = toQuestion(note, notetypes[note.mid], ord, media) ?: continue
+                    if (parsed.isRecall) recall++
+                    total++
+                    parsed.question.passageId?.let { passageId ->
+                        recordPassage(note, passageId, passages)
+                    }
+                    val card = ord?.let { o -> deckCards.firstOrNull { it.ord == o } }
+                    if (card != null) {
+                        AnkiScheduling.fromAnki(
+                            type = card.type,
+                            queue = card.queue,
+                            due = card.due,
+                            ivl = card.ivl,
+                            factor = card.factor,
+                            reps = card.reps,
+                            lapses = card.lapses,
+                            crtSeconds = col.crtSeconds,
+                            lastReviewedAtMillis = lastReviews[card.id] ?: 0L,
+                            nowMillis = nowMillis
+                        )?.let { schedules[parsed.question.id] = it }
+                    }
+                    batch += parsed.question
+                    if (batch.size >= batchSize) {
+                        sink.onQuestions(categoryId, batch, schedules)
+                        batch.clear()
+                        schedules.clear()
+                    }
+                }
+            }
+        }
+        if (batch.isNotEmpty()) sink.onQuestions(categoryId, batch, schedules)
+        return DeckCounts(total, recall)
+    }
+
+    /**
+     * Files a passage the note's payload carries, first note wins. The content
+     * is repeated on every member note by construction, so the first one seen
+     * is the whole passage.
+     */
+    private fun recordPassage(note: AnkiNote, passageId: String, passages: LinkedHashMap<String, PassageDto>) {
+        if (passageId in passages) return
+        val payload = payloadFromField(note.fields.getOrNull(2)) ?: return
+        if (payload.passageId != passageId) return
+        passages[passageId] = PassageDto(
+            id = passageId,
+            title = payload.passageTitle.orEmpty().ifBlank { "Passage" },
+            elements = payload.passageElements,
+            image = payload.passageImage
+        )
+    }
+
+    // ---- bounded reads used by the streamed walk ----
+
+    private fun countRows(db: SQLiteDatabase, table: String): Long =
+        db.rawQuery("select count(*) from $table", null).use { c ->
+            if (c.moveToFirst()) c.getLong(0) else 0L
+        }
+
+    /**
+     * Which decks hold at least one question, in the order their first question
+     * appears — the whole-file reader's `questionsByDeck` keys. A deck Anki
+     * lists whose notes all fail to become a question (a blank front, say) is
+     * absent here exactly as it is absent there, which is what keeps the
+     * streamed grouping to the same papers and categories; and the order is
+     * what decides which of several unlisted decks folds into the one
+     * "Imported" paper.
+     *
+     * The scan answers only that question, so it resolves no media: a data URI
+     * cannot change whether a field is blank, and inlining every picture twice
+     * would cost as much as the import itself.
+     */
+    private fun scanDecks(db: SQLiteDatabase, notetypes: Map<Long, AnkiNotetype>): DeckScan {
+        val order = ArrayList<Long>()
+        val counts = HashMap<Long, Int>()
+        var after = 0L
+        while (true) {
+            val page = noteIdsAfter(db, after, NOTE_PAGE)
+            if (page.isEmpty()) break
+            after = page.last()
+            val notes = readNotesByIds(db, page)
+            val cards = readCardsForNotes(db, page)
+            val cardsByNote = cards.groupBy { it.nid }
+            for (nid in page) {
+                val note = notes[nid] ?: continue
+                val noteCards = cardsByNote[nid].orEmpty()
+                val instances: List<Int?> =
+                    if (noteCards.isEmpty()) listOf(null) else noteCards.map { it.ord }
+                for (ord in instances) {
+                    if (toQuestion(note, notetypes[note.mid], ord, PROBE_MEDIA) == null) continue
+                    val card = ord?.let { o -> noteCards.firstOrNull { it.ord == o } }
+                    val deckId = card?.did ?: DEFAULT_DECK_ID
+                    if (deckId !in counts) order += deckId
+                    counts[deckId] = (counts[deckId] ?: 0) + 1
+                }
+            }
+        }
+        return DeckScan(order, counts)
+    }
+
+    /** Every note id above [after], in order: one page of the whole-bank scans. */
+    private fun noteIdsAfter(db: SQLiteDatabase, after: Long, limit: Int): List<Long> {
+        val out = ArrayList<Long>(limit)
+        db.rawQuery(
+            "select id from notes where id > ? order by id limit ?",
+            arrayOf(after.toString(), limit.toString())
+        ).use { c -> while (c.moveToNext()) out += c.getLong(0) }
+        return out
+    }
+
+    /** One page of a deck's note ids, in note order. */
+    private fun noteIdsForDeck(db: SQLiteDatabase, deckId: Long, after: Long, limit: Int): List<Long> {
+        val out = ArrayList<Long>(limit)
+        db.rawQuery(
+            "select n.id from notes n where n.id > ? and (" +
+                "exists (select 1 from cards c where c.nid = n.id and c.did = $deckId) " +
+                "or ($deckId = $DEFAULT_DECK_ID and not exists (select 1 from cards c2 where c2.nid = n.id))) " +
+                "order by n.id limit ?",
+            arrayOf(after.toString(), limit.toString())
+        ).use { c -> while (c.moveToNext()) out += c.getLong(0) }
+        return out
+    }
+
+    private fun readNotesByIds(db: SQLiteDatabase, ids: List<Long>): Map<Long, AnkiNote> {
+        val out = HashMap<Long, AnkiNote>(ids.size * 2)
+        for (chunk in ids.chunked(IN_CHUNK)) {
+            val placeholders = chunk.joinToString(",") { "?" }
+            db.rawQuery(
+                "select id, guid, mid, tags, flds from notes where id in ($placeholders)",
+                chunk.map { it.toString() }.toTypedArray()
+            ).use { c -> while (c.moveToNext()) { val note = cursorToNote(c); out[note.id] = note } }
+        }
+        return out
+    }
+
+    private fun readCardsForNotes(db: SQLiteDatabase, nids: List<Long>): List<AnkiCard> {
+        val out = mutableListOf<AnkiCard>()
+        for (chunk in nids.chunked(IN_CHUNK)) {
+            val placeholders = chunk.joinToString(",") { "?" }
+            db.rawQuery(
+                "select id, nid, did, ord, type, queue, due, ivl, factor, reps, lapses from cards " +
+                    "where nid in ($placeholders) order by id",
+                chunk.map { it.toString() }.toTypedArray()
+            ).use { c -> while (c.moveToNext()) out += cursorToCard(c) }
+        }
+        return out
+    }
+
+    private fun readLastReviewTimesFor(db: SQLiteDatabase, cardIds: List<Long>): Map<Long, Long> {
+        if (cardIds.isEmpty()) return emptyMap()
+        val out = HashMap<Long, Long>()
+        for (chunk in cardIds.chunked(IN_CHUNK)) {
+            val placeholders = chunk.joinToString(",") { "?" }
+            db.rawQuery(
+                "select cid, max(time) from revlog where cid in ($placeholders) group by cid",
+                chunk.map { it.toString() }.toTypedArray()
+            ).use { c ->
+                while (c.moveToNext()) {
+                    if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1) * 1000L
+                }
+            }
+        }
+        return out
+    }
+
+    private fun hasRevlog(db: SQLiteDatabase): Boolean = try {
+        db.rawQuery("select 1 from revlog limit 1", null).use { true }
+    } catch (e: Exception) {
+        false
     }
 
     // ---- schema 11 (col.models / col.decks JSON) ----
@@ -283,21 +662,21 @@ object AnkiPackageReader {
     private fun readNotes(db: SQLiteDatabase, media: MediaIndex): List<AnkiNote> {
         val out = mutableListOf<AnkiNote>()
         db.rawQuery("select id, guid, mid, tags, flds from notes order by id", null).use { c ->
-            while (c.moveToNext()) {
-                out += AnkiNote(
-                    id = c.getLong(0),
-                    guid = c.getString(1).orEmpty(),
-                    mid = c.getLong(2),
-                    tags = parseTags(c.getString(3).orEmpty()),
-                    rawTags = c.getString(3).orEmpty()
-                        .split(' ', '\t', '\n')
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() },
-                    fields = c.getString(4).orEmpty().split(SEPARATOR)
-                )
-            }
+            while (c.moveToNext()) out += cursorToNote(c)
         }
         return out
+    }
+
+    private fun cursorToNote(c: Cursor): AnkiNote {
+        val rawTags = c.getString(3).orEmpty()
+        return AnkiNote(
+            id = c.getLong(0),
+            guid = c.getString(1).orEmpty(),
+            mid = c.getLong(2),
+            tags = parseTags(rawTags),
+            rawTags = rawTags.split(' ', '\t', '\n').map { it.trim() }.filter { it.isNotEmpty() },
+            fields = c.getString(4).orEmpty().split(SEPARATOR)
+        )
     }
 
     private fun readCards(db: SQLiteDatabase): List<AnkiCard> {
@@ -307,24 +686,24 @@ object AnkiPackageReader {
                 "from cards order by id",
             null
         ).use { c ->
-            while (c.moveToNext()) {
-                out += AnkiCard(
-                    id = c.getLong(0),
-                    nid = c.getLong(1),
-                    did = c.getLong(2),
-                    ord = c.getInt(3),
-                    type = c.getInt(4),
-                    queue = c.getInt(5),
-                    due = c.getInt(6),
-                    ivl = c.getInt(7),
-                    factor = c.getInt(8),
-                    reps = c.getInt(9),
-                    lapses = c.getInt(10)
-                )
-            }
+            while (c.moveToNext()) out += cursorToCard(c)
         }
         return out
     }
+
+    private fun cursorToCard(c: Cursor): AnkiCard = AnkiCard(
+        id = c.getLong(0),
+        nid = c.getLong(1),
+        did = c.getLong(2),
+        ord = c.getInt(3),
+        type = c.getInt(4),
+        queue = c.getInt(5),
+        due = c.getInt(6),
+        ivl = c.getInt(7),
+        factor = c.getInt(8),
+        reps = c.getInt(9),
+        lapses = c.getInt(10)
+    )
 
     /**
      * Each card's most recent review time, in millis, from the review log. The
@@ -643,6 +1022,9 @@ object AnkiPackageReader {
 
     // ---- decks -> papers and categories ----
 
+    /** A category plus the deck its questions live in (null for a level with no deck row). */
+    private data class CategoryNode(val dto: CategoryDto, val deck: AnkiDeck?)
+
     private fun buildPapers(
         decks: List<AnkiDeck>,
         questionsByDeck: Map<Long, List<QuestionDto>>
@@ -667,6 +1049,12 @@ object AnkiPackageReader {
         return roots.map { root ->
             val deck = idByName[root]
             val childNames = allNames.filter { it != root && it.startsWith("$root::") }
+            val categories = buildCategories(
+                prefix = root,
+                childDeckNames = childNames,
+                idByName = idByName,
+                hasQuestions = { d -> d != null && questionsByDeck[d.id].orEmpty().isNotEmpty() }
+            )
             PaperDto(
                 id = "anki-${deck?.id ?: root}",
                 title = root,
@@ -674,12 +1062,9 @@ object AnkiPackageReader {
                 // They used to become a category named after the deck, which
                 // gave every paper a category sharing its own name.
                 questions = questionsByDeck[deck?.id].orEmpty(),
-                categories = buildCategories(
-                    prefix = root,
-                    childDeckNames = childNames,
-                    idByName = idByName,
-                    questionsByDeck = questionsByDeck
-                )
+                categories = categories.map {
+                    it.dto.copy(questions = questionsByDeck[it.deck?.id].orEmpty())
+                }
             )
         }
             // A paper needs at least one question to be worth importing.
@@ -708,36 +1093,30 @@ object AnkiPackageReader {
         prefix: String,
         childDeckNames: List<String>,
         idByName: Map<String, AnkiDeck>,
-        questionsByDeck: Map<Long, List<QuestionDto>>,
+        hasQuestions: (AnkiDeck?) -> Boolean,
         parentId: String? = null
-    ): List<CategoryDto> {
+    ): List<CategoryNode> {
         // The next segment below the prefix, in the order the decks appear.
         val segments = LinkedHashSet<String>()
         childDeckNames.forEach { name ->
             segments += name.removePrefix("$prefix::").substringBefore("::")
         }
-        val out = mutableListOf<CategoryDto>()
+        val out = mutableListOf<CategoryNode>()
         segments.forEach { segment ->
             val fullName = "$prefix::$segment"
             val deck = idByName[fullName]
             val id = categoryId(fullName, deck)
-            val questions = questionsByDeck[deck?.id].orEmpty()
             val children = buildCategories(
                 prefix = fullName,
                 childDeckNames = childDeckNames.filter { it.startsWith("$fullName::") },
                 idByName = idByName,
-                questionsByDeck = questionsByDeck,
+                hasQuestions = hasQuestions,
                 parentId = id
             )
             // An empty deck Anki happened to include, with nothing under it, is
             // not worth a category.
-            if (questions.isNotEmpty() || children.isNotEmpty()) {
-                out += CategoryDto(
-                    id = id,
-                    title = segment,
-                    parentId = parentId,
-                    questions = questions
-                )
+            if (hasQuestions(deck) || children.isNotEmpty()) {
+                out += CategoryNode(CategoryDto(id = id, title = segment, parentId = parentId), deck)
                 out += children
             }
         }
@@ -771,6 +1150,22 @@ object AnkiPackageReader {
         }
         if (out.isEmpty()) throw AnkiPackageException("This file is not a readable Anki package")
         return out
+    }
+
+    /** Whether the collection file begins with zstd's magic (a `.colpkg`). */
+    private fun startsWithZstd(file: File): Boolean = try {
+        file.inputStream().use { stream ->
+            val head = ByteArray(4)
+            var read = 0
+            while (read < 4) {
+                val n = stream.read(head, read, 4 - read)
+                if (n < 0) break
+                read += n
+            }
+            read == 4 && ZSTD_MAGIC.indices.all { head[it] == ZSTD_MAGIC[it] }
+        }
+    } catch (e: Exception) {
+        false
     }
 
     /**
@@ -834,16 +1229,52 @@ private val IMG_TAG =
     Regex("<img\\s+[^>]*src\\s*=\\s*\"([^\"]+)\"[^>]*>", RegexOption.IGNORE_CASE)
 
 /**
+ * The collection entry names Anki has used, in the order they are preferred
+ * when a package somehow carries more than one.
+ */
+private val COLLECTION_NAMES = listOf(
+    "collection.anki2",
+    "collection.anki21",
+    "collection.anki21b"
+)
+
+/** Notes fetched per page while a streamed import walks a deck. */
+private const val NOTE_PAGE = 2000
+
+/** Rows per `IN (...)` chunk; SQLite's bound-variable default is 999. */
+private const val IN_CHUNK = 900
+
+/** The `media` manifest entry: a JSON map, not the pictures themselves. */
+private const val MEDIA_MANIFEST = "media"
+private const val IMPORT_MEDIA_PREFIX = "mcq-media-import"
+private const val TEMP_COLLECTION_PREFIX = "anki-import"
+
+/**
+ * A media index that resolves nothing. Used by the deck scan, which only needs
+ * to know whether a field becomes a question: an image's src — a zip name or a
+ * data URI — never changes that, and decoding every picture a second time to
+ * find out would cost as much as the import itself.
+ */
+private val PROBE_MEDIA = MediaIndex(null, { _ -> null }, cache = false)
+
+/**
  * Resolves `<img src>` references to inline data URIs.
  *
  * A legacy package references media by the numeric zip entry name; a modern one
  * references it by the stored filename. Both are looked up in the `media`
- * manifest, and an entry that is missing from the manifest but present in the
- * zip is used directly.
+ * manifest, and an entry missing from the manifest but present in the package
+ * is used directly.
+ *
+ * [lookup] hands back the bytes for a name, so the whole-file reader answers
+ * from its entry map and the streamed reader from its spooled files. [cache]
+ * remembers resolved data URIs — on for the whole-file reader, off for the
+ * streamed one, where a cache keyed by the encoded picture is the whole
+ * package held in memory again.
  */
 private class MediaIndex(
     manifestJson: String?,
-    private val entries: Map<String, ByteArray>
+    private val lookup: (String) -> ByteArray?,
+    cache: Boolean
 ) {
     /** zip entry name -> original filename. */
     private val byZipName: Map<String, String> = try {
@@ -852,11 +1283,11 @@ private class MediaIndex(
         emptyMap()
     }
 
-    private val byFilename: Map<String, ByteArray> = byZipName.mapNotNull { (zipName, filename) ->
-        entries[zipName]?.let { filename to it }
-    }.toMap()
+    /** original filename -> zip entry name, so a filename resolves in O(1). */
+    private val zipNameByFilename: Map<String, String> =
+        byZipName.entries.associate { (zip, filename) -> filename to zip }
 
-    private val cache = HashMap<String, String?>()
+    private val resolved: HashMap<String, String?>? = if (cache) HashMap() else null
 
     fun rewrite(html: String?): String? {
         if (html == null || !html.contains("<img", ignoreCase = true)) return html
@@ -867,40 +1298,106 @@ private class MediaIndex(
         }
     }
 
-    private fun dataUri(src: String): String? = cache.getOrPut(src) {
-        val bytes = byFilename[src] ?: entries[src] ?: entries[byZipName.entries
-            .firstOrNull { it.value == src }?.key]
-        bytes?.let { "data:${mimeOf(it)};base64,${Base64.encode(it)}" }
+    private fun dataUri(src: String): String? {
+        val cache = resolved ?: return encode(src)
+        return cache.getOrPut(src) { encode(src) }
     }
 
-    private fun mimeOf(bytes: ByteArray): String = when {
-        // Full signatures, not prefixes: PNG's 8-byte magic, JPEG's SOI plus
-        // the first marker byte, GIF's versioned header, and RIFF plus the
-        // form type at offset 8 (a bare RIFF is not necessarily WebP).
-        bytes.size >= 8 &&
-            bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() &&
-            bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte() &&
-            bytes[4] == 0x0D.toByte() && bytes[5] == 0x0A.toByte() &&
-            bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte() -> "image/png"
-        bytes.size >= 3 &&
-            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "image/jpeg"
-        bytes.size >= 6 &&
-            bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() &&
-            bytes[3] == '8'.code.toByte() && (bytes[4] == '7'.code.toByte() || bytes[4] == '9'.code.toByte()) &&
-            bytes[5] == 'a'.code.toByte() -> "image/gif"
-        bytes.size >= 12 &&
-            String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" &&
-            String(bytes, 8, 4, Charsets.US_ASCII) == "WEBP" -> "image/webp"
-        // Unrecognised bytes: still labelled as an image so the data URI
-        // renders (decoders sniff the real format); the extension follows.
-        else -> "image/jpeg"
+    private fun encode(src: String): String? {
+        val zipName = zipNameByFilename[src] ?: src
+        val bytes = lookup(zipName) ?: return null
+        return "data:${mimeOf(bytes)};base64,${Base64.encode(bytes)}"
     }
-
-    private fun jsonObjectOf(text: String): Map<String, String> =
-        kotlinx.serialization.json.Json.parseToJsonElement(text)
-            .let { it as kotlinx.serialization.json.JsonObject }
-            .mapValues { (_, v) -> v.jsonPrimitive.content }
 }
+
+/**
+ * The archive's entries on disk while a streamed import runs: the collection in
+ * a temp file, media spooled into a temp directory, and the `media` manifest
+ * kept as text (it is a map, not the pictures). [close] removes both; the
+ * startup sweep in [AnkiTempFiles] covers a process killed mid-way.
+ */
+private class AnkiImportWork : Closeable {
+
+    private var dir: File? = null
+    private val collectionFiles = LinkedHashMap<String, File>()
+    private var manifest: String? = null
+    private val media = LinkedHashMap<String, File>()
+
+    private val directory: File
+        get() = dir ?: File.createTempFile(IMPORT_MEDIA_PREFIX, "").let {
+            it.delete()
+            it.mkdirs()
+            it.also { made -> dir = made }
+        }
+
+    /** The collection, preferring the names in [COLLECTION_NAMES] order. */
+    val collectionFile: File?
+        get() = COLLECTION_NAMES.firstNotNullOfOrNull { collectionFiles[it] }
+
+    suspend fun extract(input: InputStream) {
+        SafeZip.stream(input) { name, entry ->
+            when {
+                name in COLLECTION_NAMES -> {
+                    if (name !in collectionFiles) {
+                        val file = File.createTempFile(TEMP_COLLECTION_PREFIX, ".anki2")
+                        file.outputStream().use { entry.copyTo(it) }
+                        collectionFiles[name] = file
+                    }
+                }
+                name == MEDIA_MANIFEST -> manifest = entry.readBytes().toString(Charsets.UTF_8)
+                // A media entry (the numeric zip name) or a foreign member: a
+                // temp file either way. The manifest decides what is used.
+                else -> {
+                    val file = File(directory, "e${media.size}")
+                    file.outputStream().use { entry.copyTo(it) }
+                    media[name] = file
+                }
+            }
+        }
+    }
+
+    fun mediaIndex(): MediaIndex =
+        MediaIndex(manifest, { name -> media[name]?.readBytes() }, cache = false)
+
+    override fun close() {
+        dir?.deleteRecursively()
+        dir = null
+        for (file in collectionFiles.values) {
+            if (!file.delete()) {
+                Logger.w("ANKI", "Could not delete temp collection ${file.absolutePath}")
+            }
+        }
+        collectionFiles.clear()
+    }
+}
+
+private fun mimeOf(bytes: ByteArray): String = when {
+    // Full signatures, not prefixes: PNG's 8-byte magic, JPEG's SOI plus
+    // the first marker byte, GIF's versioned header, and RIFF plus the
+    // form type at offset 8 (a bare RIFF is not necessarily WebP).
+    bytes.size >= 8 &&
+        bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() &&
+        bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte() &&
+        bytes[4] == 0x0D.toByte() && bytes[5] == 0x0A.toByte() &&
+        bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte() -> "image/png"
+    bytes.size >= 3 &&
+        bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "image/jpeg"
+    bytes.size >= 6 &&
+        bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() &&
+        bytes[3] == '8'.code.toByte() && (bytes[4] == '7'.code.toByte() || bytes[4] == '9'.code.toByte()) &&
+        bytes[5] == 'a'.code.toByte() -> "image/gif"
+    bytes.size >= 12 &&
+        String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" &&
+        String(bytes, 8, 4, Charsets.US_ASCII) == "WEBP" -> "image/webp"
+    // Unrecognised bytes: still labelled as an image so the data URI
+    // renders (decoders sniff the real format); the extension follows.
+    else -> "image/jpeg"
+}
+
+private fun jsonObjectOf(text: String): Map<String, String> =
+    kotlinx.serialization.json.Json.parseToJsonElement(text)
+        .let { it as kotlinx.serialization.json.JsonObject }
+        .mapValues { (_, v) -> v.jsonPrimitive.content }
 
 private object Base64 {
     fun encode(bytes: ByteArray): String = java.util.Base64.getEncoder().encodeToString(bytes)

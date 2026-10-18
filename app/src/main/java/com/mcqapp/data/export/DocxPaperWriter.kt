@@ -14,7 +14,9 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
-import java.io.ByteArrayOutputStream
+import java.io.Closeable
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -38,102 +40,182 @@ import java.util.zip.ZipOutputStream
  */
 object DocxPaperWriter {
 
-    fun paperToDocxBytes(paper: PaperDto, passages: List<PassageDto> = emptyList()): ByteArray {
+    /**
+     * Renders the document straight to [out]. The body is streamed into
+     * `word/document.xml` as the paper is walked, the hidden payload is
+     * streamed into `docProps/custom.xml` by a second walk, and the finished
+     * package never exists as a second copy of either. The pictures the paper
+     * embeds are the one thing held back — they are `word/media` entries, so
+     * they have to be named and written before the body that draws them — and
+     * they are spooled to temp files rather than kept in memory ([MediaPool]).
+     */
+    suspend fun writeDocx(stream: PaperStream, out: OutputStream) {
         val warnings = mutableListOf<String>()
         val media = MediaPool()
-        val body = StringBuilder()
+        try {
+            val bySection = flattenCategories(stream.categories).associateBy { it.dto.id }
 
-        // The hidden payload: the full paper DTO as a custom document
-        // property. It is invisible in Word (File > Info > Advanced
-        // Properties aside) and survives Word's own saves, so a file the
-        // app wrote and nobody edited re-imports with ids, marks,
-        // difficulty and tags intact instead of duplicating everything the
-        // visible markers cannot carry. The parser falls back to the
-        // markers when the payload no longer matches the visible text,
-        // and grafts the image srcs back from the word/media entries the
-        // payload deliberately does not duplicate.
-        val payload = payloadJsonFormat.encodeToString(
-            McqFileDto.serializer(),
-            McqFileDto(
-                version = 1,
-                papers = listOf(stripPayloadImages(paper)),
-                passages = passages.map { stripPayloadImages(it) }
-            )
-        )
+            ZipOutputStream(out).use { zip ->
+                // [Content_Types].xml comes first: the OPC spec asks for it, and
+                // strict readers look for it there.
+                writeEntry(zip, "[Content_Types].xml", contentTypesXml())
+                writeEntry(zip, "_rels/.rels", rootRelsXml())
 
-        body.append(headingPara(1, paper.title.ifBlank { "Paper" }))
-        if (paper.description.isNotBlank()) {
-            body.append(para(listOf(RunSpec(paper.description, RunFlags()))))
-        }
-        val meta = buildList {
-            if (paper.durationMinutes > 0) add("${paper.durationMinutes} min")
-            if (paper.negativeMarking > 0) add("negative marking ${paper.negativeMarking}")
-        }
-        if (meta.isNotEmpty()) {
-            body.append(para(listOf(RunSpec(meta.joinToString(" • "), RunFlags(italic = true)))))
-        }
+                zip.putNextEntry(ZipEntry("word/document.xml"))
+                val body = OutputStreamWriter(zip, Charsets.UTF_8)
+                body.append(documentHead())
+                writeBody(body, stream, bySection, media, warnings)
+                body.append(documentTail())
+                // Flush, never close: closing would take the zip with it.
+                body.flush()
+                zip.closeEntry()
 
+                writeEntry(zip, "word/styles.xml", stylesXml())
+                // After the body: it lists the media the body registered.
+                writeEntry(zip, "word/_rels/document.xml.rels", documentRelsXml(media))
+
+                // The hidden payload: the full paper DTO as a custom document
+                // property. It is invisible in Word (File > Info > Advanced
+                // Properties aside) and survives Word's own saves, so a file the
+                // app wrote and nobody edited re-imports with ids, marks,
+                // difficulty and tags intact instead of duplicating everything the
+                // visible markers cannot carry. The parser falls back to the
+                // markers when the payload no longer matches the visible text,
+                // and grafts the image srcs back from the word/media entries the
+                // payload deliberately does not duplicate. It is streamed with the
+                // same writer the JSON export uses, with the images blanked.
+                zip.putNextEntry(ZipEntry("docProps/custom.xml"))
+                val props = OutputStreamWriter(zip, Charsets.UTF_8)
+                props.append(customPropsHead())
+                PaperJsonWriter.writePaperJson(
+                    XmlEscapingAppendable(props),
+                    stream,
+                    json = payloadJsonFormat,
+                    question = { stripPayloadImages(it) },
+                    passage = { stripPayloadImages(it) }
+                )
+                props.append(customPropsTail())
+                props.flush()
+                zip.closeEntry()
+
+                for (target in media.targets) {
+                    zip.putNextEntry(ZipEntry("word/$target"))
+                    media.copyTo(target, zip)
+                    zip.closeEntry()
+                }
+            }
+        } finally {
+            media.close()
+        }
+        for (warning in warnings) Logger.w("DOCX", warning)
+    }
+
+    private fun writeEntry(zip: ZipOutputStream, name: String, xml: String) {
+        zip.putNextEntry(ZipEntry(name))
+        zip.write(xml.toByteArray(Charsets.UTF_8))
+        zip.closeEntry()
+    }
+
+    /**
+     * The document flow, one walk: each section heading, then its questions,
+     * with the passages printed once above their groups. Question numbering
+     * runs across the whole document, so it stays a document of one paper.
+     */
+    private suspend fun writeBody(
+        out: Appendable,
+        stream: PaperStream,
+        bySection: Map<String, CatNode>,
+        media: MediaPool,
+        warnings: MutableList<String>
+    ) {
+        val passagesById = stream.passages.associateBy { it.id }
         var number = 0
-        fun emitQuestion(q: QuestionDto, last: Boolean) {
-            number++
-            body.append(questionBlocks(q, number, media, warnings).joinToString(""))
-            // Two blank lines between questions: the next question's marker
-            // stays line-anchored either way, and the reader drops blank
-            // paragraphs on re-import.
-            if (!last) body.append("<w:p/><w:p/>")
+        var openPassageId: String? = null
+        // Two blank paragraphs go between questions (the next question's
+        // marker stays line-anchored either way, and the reader drops blank
+        // paragraphs on re-import) but never after the last: the separator is
+        // written before whatever follows, so a streamed body produces the
+        // same document a look-ahead one did.
+        var pendingSeparator = false
+
+        suspend fun flushSeparator() {
+            if (!pendingSeparator) return
+            out.append("<w:p/><w:p/>")
+            pendingSeparator = false
         }
 
-        fun emitPassageAbove(question: QuestionDto, openPassageId: String?): String? {
+        suspend fun flow(text: String) {
+            flushSeparator()
+            out.append(text)
+        }
+
+        suspend fun passageAbove(question: QuestionDto): String? {
             val wanted = question.passageId
             if (wanted == openPassageId ||
                 (wanted.isNullOrBlank() && openPassageId.isNullOrBlank())
             ) {
                 return openPassageId
             }
-            val passage = passages.firstOrNull { it.id == wanted }
+            val passage = passagesById[wanted]
             if (passage != null) {
-                body.append(passageBlocks(passage, media, warnings).joinToString(""))
+                flow(passageBlocks(passage, media, warnings).joinToString(""))
             } else if (wanted.isNullOrBlank()) {
                 // A standalone question after a passage's members: a bare
                 // `Passage:` line is the marker grammar's end-of-passage
                 // reset, so the question does not re-bind to the block
                 // above it on re-import.
-                body.append(
-                    "<w:p><w:r><w:t xml:space=\"preserve\">Passage:</w:t></w:r></w:p>"
-                )
+                flow("<w:p><w:r><w:t xml:space=\"preserve\">Passage:</w:t></w:r></w:p>")
             }
             return wanted
         }
 
-        var openPassageId: String? = null
-        val allSections = flattenCategories(paper.categories)
-        val lastSectionQuestionId = allSections.lastOrNull()?.dto?.questions?.lastOrNull()?.id
-        val lastTopLevelId = paper.questions.lastOrNull()?.id
-        for (node in allSections) {
-            body.append(headingPara((node.depth + 2).coerceAtMost(9), node.title))
-            // Reset per section: the sectioned parser binds passages within
-            // a section only, so a passage shared with a later section is
-            // re-emitted above its members there instead of silently lost.
-            openPassageId = null
-            for (question in node.dto.questions) {
-                openPassageId = emitPassageAbove(question, openPassageId)
-                emitQuestion(question, question.id == lastSectionQuestionId)
-            }
-        }
-        // Top-level questions (the bookmarks/selection export shape). With
-        // categories present they get their own section, so they do not
-        // silently join the last one.
-        if (paper.questions.isNotEmpty()) {
-            if (paper.categories.isNotEmpty()) body.append(headingPara(2, "Uncategorized"))
-            openPassageId = null
-            for (question in paper.questions) {
-                openPassageId = emitPassageAbove(question, openPassageId)
-                emitQuestion(question, question.id == lastTopLevelId)
-            }
+        suspend fun question(question: QuestionDto) {
+            number++
+            flushSeparator()
+            out.append(questionBlocks(question, number, media, warnings).joinToString(""))
+            pendingSeparator = true
         }
 
-        for (warning in warnings) Logger.w("DOCX", warning)
-        return assembleZip(body.toString(), media, payload)
+        out.append(headingPara(1, stream.title.ifBlank { "Paper" }))
+        if (stream.description.isNotBlank()) {
+            out.append(para(listOf(RunSpec(stream.description, RunFlags()))))
+        }
+        val meta = buildList {
+            if (stream.durationMinutes > 0) add("${stream.durationMinutes} min")
+            if (stream.negativeMarking > 0) add("negative marking ${stream.negativeMarking}")
+        }
+        if (meta.isNotEmpty()) {
+            out.append(para(listOf(RunSpec(meta.joinToString(" • "), RunFlags(italic = true)))))
+        }
+
+        stream.walk(
+            onCategory = { category ->
+                // Reset per section: the sectioned parser binds passages
+                // within a section only, so a passage shared with a later
+                // section is re-emitted above its members there instead of
+                // silently lost.
+                openPassageId = null
+                val depth = bySection[category.id]?.depth ?: 0
+                flow(headingPara((depth + 2).coerceAtMost(9), category.title))
+            },
+            onQuestion = { row ->
+                openPassageId = passageAbove(row)
+                question(row)
+            }
+        )
+
+        // Top-level questions, a shape a foreign file can carry. With
+        // categories present they get their own section, so they do not
+        // silently join the last one.
+        val loose = stream.looseQuestions
+        if (loose.isNotEmpty()) {
+            if (stream.categories.isNotEmpty()) flow(headingPara(2, "Uncategorized"))
+            openPassageId = null
+            for (row in loose) {
+                openPassageId = passageAbove(row)
+                question(row)
+            }
+        }
     }
 
     private val payloadJsonFormat = Json { encodeDefaults = false }
@@ -680,9 +762,13 @@ object DocxPaperWriter {
     // Media: data URIs to word/media entries
     // ------------------------------------------------------------------
 
-    private class MediaPool {
-        val files = LinkedHashMap<String, ByteArray>()
+    private class MediaPool : Closeable {
+        private val spool = MediaSpool()
         val rels = LinkedHashMap<String, String>()
+
+        /** The `media/…` targets, in the order the body met them. */
+        val targets: List<String> get() = spool.names
+
         private val uriToRid = HashMap<String, String>()
         private var mediaCounter = 0
         private var docPrCounter = 0
@@ -706,10 +792,12 @@ object DocxPaperWriter {
                         "convert it to PNG for compatibility."
                 )
             }
-            val rid = uriToRid.getOrPut(src) {
+            val rid = uriToRid.getOrPut(mediaKey(src)) {
                 mediaCounter++
                 val target = "media/image$mediaCounter.${imageExtension(image.mimeType)}"
-                files[target] = image.bytes
+                // Spooled, not kept: the body registers every picture the paper
+                // has, and the entries are written after it.
+                spool.add(target, image.bytes)
                 val rid = "rIdMedia$mediaCounter"
                 rels[rid] = target
                 rid
@@ -723,6 +811,10 @@ object DocxPaperWriter {
             }
             return Pic(rid, cx, cy, ++docPrCounter)
         }
+
+        fun copyTo(target: String, out: OutputStream) = spool.copyTo(target, out)
+
+        override fun close() = spool.close()
     }
 
     private fun drawingXml(pic: Pic): String =
@@ -790,36 +882,6 @@ object DocxPaperWriter {
     // Package assembly
     // ------------------------------------------------------------------
 
-    private fun assembleZip(bodyContent: String, media: MediaPool, payload: String): ByteArray {
-        val out = ByteArrayOutputStream()
-        ZipOutputStream(out).use { zip ->
-            zip.putNextEntry(ZipEntry("[Content_Types].xml"))
-            zip.write(contentTypesXml().toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            zip.putNextEntry(ZipEntry("_rels/.rels"))
-            zip.write(rootRelsXml().toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            zip.putNextEntry(ZipEntry("docProps/custom.xml"))
-            zip.write(customPropsXml(payload).toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            zip.putNextEntry(ZipEntry("word/document.xml"))
-            zip.write(documentXml(bodyContent).toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            zip.putNextEntry(ZipEntry("word/_rels/document.xml.rels"))
-            zip.write(documentRelsXml(media).toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            zip.putNextEntry(ZipEntry("word/styles.xml"))
-            zip.write(stylesXml().toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            for ((target, bytes) in media.files) {
-                zip.putNextEntry(ZipEntry("word/$target"))
-                zip.write(bytes)
-                zip.closeEntry()
-            }
-        }
-        return out.toByteArray()
-    }
-
     private fun contentTypesXml(): String {
         val defaults = buildString {
             for (ext in listOf("rels", "xml", "png", "jpeg", "jpg", "gif", "bmp", "webp")) {
@@ -849,18 +911,19 @@ object DocxPaperWriter {
             "</Relationships>"
 
     /**
-     * The custom-properties part. `pid` must be 2 or above (1 is reserved);
-     * the JSON rides as a plain string. Everything XML-significant in the
-     * JSON — quotes are fine in element text — is escaped.
+     * The custom-properties part, in two halves because the payload streams
+     * between them. `pid` must be 2 or above (1 is reserved); the JSON rides
+     * as a plain string, and everything XML-significant in it is escaped as it
+     * is appended.
      */
-    private fun customPropsXml(payload: String): String =
+    private fun customPropsHead(): String =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
             "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/custom-properties\" " +
             "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">" +
             "<property fmtid=\"{D5CDD505-2E9C-101B-9397-08002B2CF9AE}\" pid=\"2\" " +
-            "name=\"$PAYLOAD_PROPERTY\"><vt:lpwstr>" +
-            escapeXmlText(payload) +
-            "</vt:lpwstr></property></Properties>"
+            "name=\"$PAYLOAD_PROPERTY\"><vt:lpwstr>"
+
+    private fun customPropsTail(): String = "</vt:lpwstr></property></Properties>"
 
     private fun documentRelsXml(media: MediaPool): String {
         val sb = StringBuilder()
@@ -878,7 +941,7 @@ object DocxPaperWriter {
         return sb.toString()
     }
 
-    private fun documentXml(bodyContent: String): String =
+    private fun documentHead(): String =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
             "<w:document" +
             " xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
@@ -887,8 +950,10 @@ object DocxPaperWriter {
             " xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"" +
             " xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"" +
             " xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"" +
-            "><w:body>$bodyContent" +
-            "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>" +
+            "><w:body>"
+
+    private fun documentTail(): String =
+        "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>" +
             "<w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"" +
             " w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>" +
             "<w:docGrid w:linePitch=\"360\"/></w:sectPr>" +
@@ -917,6 +982,41 @@ object DocxPaperWriter {
         }
         sb.append("</w:styles>")
         return sb.toString()
+    }
+}
+
+/**
+ * XML-escapes text as it is appended, so a part written straight into a zip
+ * entry never exists as an escaped copy of itself. Only `&`, `<` and `>` are
+ * escaped, exactly as [escapeXmlText] does — an entity is never split across
+ * two appends, so escaping chunk by chunk is the same as escaping the whole.
+ */
+private class XmlEscapingAppendable(private val out: Appendable) : Appendable {
+
+    override fun append(csq: CharSequence?): Appendable = append(csq, 0, csq?.length ?: 0)
+
+    override fun append(csq: CharSequence?, start: Int, end: Int): Appendable {
+        if (csq == null) return this
+        var runStart = start
+        for (index in start until end) {
+            val char = csq[index]
+            if (char == '&' || char == '<' || char == '>') {
+                if (runStart < index) out.append(csq, runStart, index)
+                out.append(escaped(char))
+                runStart = index + 1
+            }
+        }
+        if (runStart < end) out.append(csq, runStart, end)
+        return this
+    }
+
+    override fun append(c: Char): Appendable = out.append(escaped(c))
+
+    private fun escaped(c: Char): String = when (c) {
+        '&' -> "\u0026amp;"
+        '<' -> "\u0026lt;"
+        '>' -> "\u0026gt;"
+        else -> c.toString()
     }
 }
 

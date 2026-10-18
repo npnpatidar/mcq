@@ -24,6 +24,11 @@ jobs:
     # only ship x86_64 Linux binaries, so the DB-backed unit tests run
     # here (they cannot run on ARM64 Linux hosts).
     runs-on: ubuntu-latest
+    # Hard backstop above setup (~5 min) plus the Gradle test task's own
+    # 10-minute timeout. It must stay above that sum: at 15 minutes the job
+    # timeout preempted the Gradle one, killing the job before the test task
+    # could report which test wedged.
+    timeout-minutes: 25
     steps:
       - name: Check out
         uses: actions/checkout@v4

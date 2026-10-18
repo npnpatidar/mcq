@@ -87,7 +87,7 @@ class DeviceExportedFileTest {
     fun deviceShapedExportReimportKeepsEveryId() {
         val device = dbRoundTrip(sampleFile)
         val paper = device.papers.single()
-        val bytes = DocxPaperWriter.paperToDocxBytes(paper, device.passages)
+        val bytes = docxOf(paper, device.passages)
 
         val parsed = parseDocx(bytes)
         assertTrue(

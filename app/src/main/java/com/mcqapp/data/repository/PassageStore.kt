@@ -58,15 +58,9 @@ internal class PassageStore(
         Logger.d("REPO", "savePassage(id=$id, category=${passage.categoryId}, title='${passage.title}')")
         db.withTransaction {
             val existing = db.passageDao().getById(id)
+            val content = mapper.toEntity(passage.copy(id = id))
             db.passageDao().upsert(
-                PassageEntity(
-                    id = id,
-                    categoryId = passage.categoryId,
-                    title = passage.title,
-                    text = mapper.toEntity(passage.copy(id = id)).text,
-                    image = passage.image,
-                    sortOrder = existing?.sortOrder ?: passage.sortOrder
-                )
+                content.copy(sortOrder = existing?.sortOrder ?: passage.sortOrder)
             )
             // A passage's members must live in its category (the group is
             // only meaningful together). Moving the passage to another

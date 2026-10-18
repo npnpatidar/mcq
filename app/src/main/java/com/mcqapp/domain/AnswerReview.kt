@@ -22,17 +22,27 @@ object AnswerReview {
         selections: Map<String, Set<String>>,
         flagged: Set<String>
     ): List<Row> = questions.mapIndexed { index, q ->
-        val selected = selections[q.id].orEmpty()
-        val byId = q.options.associate { it.id to it.text }
-        Row(
-            number = index + 1,
-            questionId = q.id,
+        row(index + 1, q, selections, flagged)
+    }
+
+    /** One question's row at its 1-based [number] in the session. */
+    fun row(
+        number: Int,
+        question: Question,
+        selections: Map<String, Set<String>>,
+        flagged: Set<String>
+    ): Row {
+        val selected = selections[question.id].orEmpty()
+        val byId = question.options.associate { it.id to it.text }
+        return Row(
+            number = number,
+            questionId = question.id,
             status = when {
-                q.correctOptionIds.isEmpty() -> Status.UNGRADED
+                question.correctOptionIds.isEmpty() -> Status.UNGRADED
                 selected.isEmpty() -> Status.UNANSWERED
                 else -> Status.ANSWERED
             },
-            flagged = q.id in flagged,
+            flagged = question.id in flagged,
             summary = if (selected.isEmpty()) "—"
             else selected.map { byId[it] ?: it }.joinToString(", ")
         )

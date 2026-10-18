@@ -20,8 +20,8 @@ import org.robolectric.annotation.Config
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Duplicating a paper or copying a selection reads the questions it clones
- * once, then writes the clones. The write side used to run a
+ * Copying a selection reads the questions it clones once, then writes the
+ * clones. The write side used to run a
  * getQuestion/saveQuestion round-trip per clone — a read of the row, a read of
  * the category's tail and four writes inside one transaction — so the reads
  * grew with the selection. Counts are measured through Room's query callback
@@ -93,18 +93,6 @@ class CopyQueryCountTest {
      * SQLite driver may each issue one or two catalog reads of their own
      * depending on warm-up, so the bound allows a couple and nothing near 180.
      */
-    @Test
-    fun duplicatingTenOrAHundredQuestionsReadsTheSame() {
-        val atTen = selectsFor(10) { repository, _ -> repository.duplicatePaper("p1") }
-        val atHundred = selectsFor(100) { repository, _ -> repository.duplicatePaper("p1") }
-        println("COPY-COUNT duplicate at10=$atTen at100=$atHundred")
-        assertTrue(
-            "ninety more questions added ${atHundred - atTen} selects " +
-                "(at 10 it was $atTen), which is per-question behaviour",
-            atHundred - atTen <= 5
-        )
-    }
-
     @Test
     fun copyingTenOrAHundredQuestionsReadsTheSame() {
         val atTen = selectsFor(10) { repository, ids -> repository.copyQuestionsToCategory(ids, "c1b") }

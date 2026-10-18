@@ -1,198 +1,194 @@
 package com.mcqapp.data.export
 
 import com.mcqapp.data.io.OptionDto
-import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.renderInlineHtml
 import com.mcqapp.domain.ContentElement
 
 /**
- * Renders a paper as a single self-contained HTML page. Data-URI images
- * are embedded as-is; remote URLs are referenced in the markup but the
- * page's CSP blocks loading them, so a shared export never phones home.
+ * Renders a paper as a single self-contained HTML page, question by question
+ * into the caller's [Appendable]. Data-URI images are embedded as-is; remote
+ * URLs are referenced in the markup but the page's CSP blocks loading them, so
+ * a shared export never phones home.
+ *
+ * The page used to be assembled as one String first — a gigabyte at a million
+ * questions — and then encoded, so it existed twice before it reached the
+ * file. Now it goes out as it is written; a shared `java.io.Writer` over the
+ * caller's stream means one encode and one buffer.
  */
 object HtmlPaperWriter {
 
-    fun paperToHtml(paper: PaperDto, passages: List<PassageDto> = emptyList()): String {
-        val sb = StringBuilder()
-        sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
-        sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-        // A shared export opens in the recipient's browser, so it must never
-        // reach the network: data-URI images render, remote image URLs in the
-        // bank stay inert (same containment as the in-app math page). The
-        // static page runs no script; the quiz page's inline script is
-        // allowed explicitly in its own meta below.
-        sb.append("<meta http-equiv=\"Content-Security-Policy\" ")
-            .append("content=\"default-src 'none'; script-src 'none'; ")
-            .append("style-src 'unsafe-inline'; img-src data:;\">\n")
-        sb.append("<title>").append(esc(paper.title)).append("</title>\n<style>\n")
-        sb.append(CSS)
-        sb.append("</style>\n</head>\n<body>\n")
-        sb.append("<h1>").append(esc(paper.title)).append("</h1>\n")
-        if (paper.description.isNotBlank()) {
-            sb.append("<p class=\"meta\">").append(esc(paper.description)).append("</p>\n")
-        }
-        val total = paper.categories.sumOf { it.questions.size }
-        sb.append("<p class=\"meta\">")
-        if (paper.durationMinutes > 0) sb.append(esc("${paper.durationMinutes} min • "))
-        if (paper.negativeMarking > 0) sb.append(esc("negative marking ${paper.negativeMarking} • "))
-        sb.append(esc("$total questions"))
-        sb.append("</p>\n")
-
-        var number = 0
-        for (category in paper.categories) {
-            sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
-            // The passage prints once above its group, not above every
-            // member: contiguity is the invariant, and a document is read
-            // linearly. A new run (or a group resumed in another category)
-            // prints its header again.
-            var openPassageId: String? = null
-            for (question in category.questions) {
-                number++
-                if (question.passageId != openPassageId) {
-                    openPassageId = question.passageId
-                    appendPassageBlock(sb, question, passages)
-                }
-                appendQuestion(sb, number, question)
-            }
-        }
-        sb.append("</body>\n</html>\n")
-        return sb.toString()
+    suspend fun writeHtml(stream: PaperStream, out: Appendable) {
+        head(stream, out, quiz = false)
+        body(stream, out, quiz = false)
+        out.append("</body>\n</html>\n")
     }
 
     /**
      * Quiz mode: correct answers and explanations are hidden until the reader
      * taps "Show answer". Fully self-contained (inline CSS + JS, no network).
      */
-    fun paperToQuizHtml(paper: PaperDto, passages: List<PassageDto> = emptyList()): String {
-        val sb = StringBuilder()
-        sb.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
-        sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-        // The quiz page runs inline script (the answer toggles), so
-        // script-src allows inline — and nothing else: a shared export must
-        // not load remote resources or exfiltrate. Same containment as the
-        // static page, which forbids script entirely.
-        sb.append("<meta http-equiv=\"Content-Security-Policy\" ")
-            .append("content=\"default-src 'none'; script-src 'unsafe-inline'; ")
-            .append("style-src 'unsafe-inline'; img-src data:;\">\n")
-        sb.append("<title>").append(esc(paper.title)).append("</title>\n<style>\n")
-        sb.append(CSS)
-        sb.append("</style>\n</head>\n<body>\n")
-        sb.append("<h1>").append(esc(paper.title)).append("</h1>\n")
-        sb.append("<p class=\"meta\">Quiz mode — answers are hidden. ")
-            .append("Tap &quot;Show answer&quot; on any question to reveal it.</p>\n")
-        sb.append("<p><button class=\"toggle\" onclick=\"toggleAll(true)\">Show all answers</button>\n")
-        sb.append("<button class=\"toggle\" onclick=\"toggleAll(false)\">Hide all answers</button></p>\n")
-        sb.append("<script>\n").append(QUIZ_JS).append("</script>\n")
+    suspend fun writeQuizHtml(stream: PaperStream, out: Appendable) {
+        head(stream, out, quiz = true)
+        out.append("<p><button class=\"toggle\" onclick=\"toggleAll(true)\">Show all answers</button>\n")
+        out.append("<button class=\"toggle\" onclick=\"toggleAll(false)\">Hide all answers</button></p>\n")
+        out.append("<script>\n").append(QUIZ_JS).append("</script>\n")
+        body(stream, out, quiz = true)
+        out.append("</body>\n</html>\n")
+    }
 
+    /** The head both pages share; only the CSP and the meta line differ. */
+    private fun head(stream: PaperStream, out: Appendable, quiz: Boolean) {
+        out.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+        out.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+        // A shared export opens in the recipient's browser, so it must never
+        // reach the network: data-URI images render, remote image URLs in the
+        // bank stay inert (same containment as the in-app math page). The
+        // static page runs no script; the quiz page's answer toggles are
+        // allowed explicitly and nothing else is.
+        out.append("<meta http-equiv=\"Content-Security-Policy\" ")
+        out.append(
+            if (quiz) {
+                "content=\"default-src 'none'; script-src 'unsafe-inline'; "
+            } else {
+                "content=\"default-src 'none'; script-src 'none'; "
+            }
+        )
+        out.append("style-src 'unsafe-inline'; img-src data:;\">\n")
+        out.append("<title>").append(esc(stream.title)).append("</title>\n<style>\n")
+        out.append(CSS)
+        out.append("</style>\n</head>\n<body>\n")
+        out.append("<h1>").append(esc(stream.title)).append("</h1>\n")
+        if (quiz) {
+            out.append("<p class=\"meta\">Quiz mode — answers are hidden. ")
+                .append("Tap &quot;Show answer&quot; on any question to reveal it.</p>\n")
+            return
+        }
+        if (stream.description.isNotBlank()) {
+            out.append("<p class=\"meta\">").append(esc(stream.description)).append("</p>\n")
+        }
+        out.append("<p class=\"meta\">")
+        if (stream.durationMinutes > 0) out.append(esc("${stream.durationMinutes} min • "))
+        if (stream.negativeMarking > 0) {
+            out.append(esc("negative marking ${stream.negativeMarking} • "))
+        }
+        out.append(esc("${stream.totalQuestions} questions"))
+        out.append("</p>\n")
+    }
+
+    /** The question flow, shared by the answers-shown and quiz pages. */
+    private suspend fun body(stream: PaperStream, out: Appendable, quiz: Boolean) {
         var number = 0
-        for (category in paper.categories) {
-            sb.append("<h2>").append(esc(category.title)).append("</h2>\n")
-            // Same run-detection as the answers-shown page.
-            var openPassageId: String? = null
-            for (question in category.questions) {
+        var openPassageId: String? = null
+        stream.walk(
+            onCategory = { category ->
+                out.append("<h2>").append(esc(category.title)).append("</h2>\n")
+                // The passage prints once above its group, not above every
+                // member: contiguity is the invariant, and a document is read
+                // linearly. A new run (or a group resumed in another category)
+                // prints its header again.
+                openPassageId = null
+            },
+            onQuestion = { question ->
                 number++
                 if (question.passageId != openPassageId) {
                     openPassageId = question.passageId
-                    appendPassageBlock(sb, question, passages)
+                    appendPassageBlock(out, question, stream.passages)
                 }
-                appendQuizQuestion(sb, number, question)
+                if (quiz) appendQuizQuestion(out, number, question)
+                else appendQuestion(out, number, question)
             }
-        }
-        sb.append("</body>\n</html>\n")
-        return sb.toString()
+        )
     }
 
-    private fun appendQuizQuestion(
-        sb: StringBuilder,
-        number: Int,
-        question: QuestionDto
-    ) {
-        sb.append("<div class=\"q\">\n")
-        sb.append("<p class=\"qt\">Q").append(number).append(". ")
+    private fun appendQuizQuestion(out: Appendable, number: Int, question: QuestionDto) {
+        out.append("<div class=\"q\">\n")
+        out.append("<p class=\"qt\">Q").append(number.toString()).append(". ")
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
-            sb.append("<ul class=\"opts\">\n")
-            for (option in question.options) {
-                appendOption(sb, option, isCorrect = false)
+            out.append("<ul class=\"opts\">\n")
+            question.options.forEachIndexed { index, option ->
+                appendOption(out, index, option, isCorrect = false)
             }
-            sb.append("</ul>\n")
+            out.append("</ul>\n")
         }
-        sb.append("<button class=\"toggle\" onclick=\"toggle('ans")
-            .append(number).append("')\">Show answer</button>\n")
-        sb.append("<div id=\"ans").append(number).append("\" class=\"ans\" style=\"display:none\">\n")
-        val correct = question.options.filter { it.id in question.correctOptionIds }
-        if (correct.isNotEmpty()) {
-            sb.append("<p class=\"answer\">Answer: ")
-                .append(correct.joinToString(", ") { renderInlineHtml(it.text) })
+        out.append("<button class=\"toggle\" onclick=\"toggle('ans")
+            .append(number.toString()).append("')\">Show answer</button>\n")
+        out.append("<div id=\"ans").append(number.toString())
+            .append("\" class=\"ans\" style=\"display:none\">\n")
+        val answer = answerLabels(question.options, question.correctOptionIds)
+        if (answer.isNotEmpty()) {
+            out.append("<p class=\"answer\">Answer: ")
+                .append(answer.joinToString(", "))
                 .append("</p>\n")
         }
         if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
-            sb.append("<p class=\"expl\">Explanation: ")
-                .append(
-                    if (question.explanationElements.isNotEmpty())
-                        elementsToHtml(question.explanationElements, question.explanationImage)
-                    else renderInlineHtml(question.explanation) + imageTag(question.explanationImage)
-                ).append("</p>\n")
+            out.append("<p class=\"expl\">Explanation: ")
+                .append(explanationHtml(question)).append("</p>\n")
         }
-        sb.append("</div>\n</div>\n")
+        out.append("</div>\n</div>\n")
     }
 
-    private fun appendQuestion(sb: StringBuilder, number: Int, question: QuestionDto) {
-        sb.append("<div class=\"q\">\n")
-        sb.append("<p class=\"qt\">Q").append(number).append(". ")
+    private fun appendQuestion(out: Appendable, number: Int, question: QuestionDto) {
+        out.append("<div class=\"q\">\n")
+        out.append("<p class=\"qt\">Q").append(number.toString()).append(". ")
             .append(questionText(question)).append(marksSuffix(question)).append("</p>\n")
         if (question.options.isNotEmpty()) {
-            sb.append("<ul class=\"opts\">\n")
-            for (option in question.options) {
-                appendOption(sb, option, option.id in question.correctOptionIds)
+            out.append("<ul class=\"opts\">\n")
+            question.options.forEachIndexed { index, option ->
+                appendOption(out, index, option, option.id in question.correctOptionIds)
             }
-            sb.append("</ul>\n")
+            out.append("</ul>\n")
         }
-        val correct = question.options.filter { it.id in question.correctOptionIds }
-        if (correct.isNotEmpty()) {
-            sb.append("<p class=\"answer\">Answer: ")
-                .append(correct.joinToString(", ") { renderInlineHtml(it.text) })
+        val answer = answerLabels(question.options, question.correctOptionIds)
+        if (answer.isNotEmpty()) {
+            out.append("<p class=\"answer\">Answer: ")
+                .append(answer.joinToString(", "))
                 .append("</p>\n")
         }
         if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
-            sb.append("<p class=\"expl\">Explanation: ")
-                .append(
-                    if (question.explanationElements.isNotEmpty())
-                        elementsToHtml(question.explanationElements, question.explanationImage)
-                    else renderInlineHtml(question.explanation) + imageTag(question.explanationImage)
-                ).append("</p>\n")
+            out.append("<p class=\"expl\">Explanation: ")
+                .append(explanationHtml(question)).append("</p>\n")
         }
-        sb.append("</div>\n")
+        out.append("</div>\n")
     }
+
+    private fun explanationHtml(question: QuestionDto): String =
+        if (question.explanationElements.isNotEmpty()) {
+            elementsToHtml(question.explanationElements, question.explanationImage)
+        } else {
+            renderInlineHtml(question.explanation) + imageTag(question.explanationImage)
+        }
 
     /**
      * The shared context printed once above a passage group's first member
      * (the caller's run-detection decides when); the members follow it
      * contiguously, so a document reads like the app's Browse.
      */
-    private fun appendPassageBlock(sb: StringBuilder, question: QuestionDto, passages: List<PassageDto>) {
+    private fun appendPassageBlock(out: Appendable, question: QuestionDto, passages: List<PassageDto>) {
         val passage = passages.firstOrNull { it.id == question.passageId } ?: return
-        sb.append("<div class=\"passage\">\n")
-        sb.append("<p class=\"passage-title\">").append(esc(passage.title.ifBlank { "Passage" })).append("</p>\n")
+        out.append("<div class=\"passage\">\n")
+        out.append("<p class=\"passage-title\">")
+            .append(esc(passage.title.ifBlank { "Passage" })).append("</p>\n")
         if (passage.elements.isNotEmpty()) {
-            sb.append(elementsToHtml(passage.elements, passage.image))
+            out.append(elementsToHtml(passage.elements, passage.image))
         }
-        sb.append("</div>\n")
+        out.append("</div>\n")
     }
 
-    private fun appendOption(sb: StringBuilder, option: OptionDto, isCorrect: Boolean) {
-        sb.append("<li")
-        if (isCorrect) sb.append(" class=\"correct\"")
-        sb.append(">")
-        sb.append(if (isCorrect) "✓ " else "○ ")
-        sb.append(esc(option.id)).append(") ")
-        .append(
-            if (option.elements.isNotEmpty()) elementsToHtml(option.elements, option.image)
-            else renderInlineHtml(option.text) + imageTag(option.image)
-        )
-        sb.append("</li>\n")
+    private fun appendOption(out: Appendable, index: Int, option: OptionDto, isCorrect: Boolean) {
+        out.append("<li")
+        if (isCorrect) out.append(" class=\"correct\"")
+        out.append(">")
+        out.append(if (isCorrect) "✓ " else "○ ")
+        // By position, so the label always matches the letter the answer names.
+        out.append(optionLetter(index)).append(") ")
+            .append(
+                if (option.elements.isNotEmpty()) elementsToHtml(option.elements, option.image)
+                else renderInlineHtml(option.text) + imageTag(option.image)
+            )
+        out.append("</li>\n")
     }
 
     private fun appendImage(sb: StringBuilder, src: String?) {

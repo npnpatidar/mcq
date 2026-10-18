@@ -17,9 +17,8 @@ import android.text.style.SubscriptSpan
 import android.text.style.SuperscriptSpan
 import android.text.style.UnderlineSpan
 import android.text.TextPaint
-import com.mcqapp.data.io.PaperDto
 import com.mcqapp.domain.ContentElement
-import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 
 /**
  * Renders a paper as a PDF (A4) with questions, options, correct answers and
@@ -34,140 +33,164 @@ object PdfPaperWriter {
     private val BOTTOM = (PAGE_H - MARGIN).toFloat()
 
     /**
+     * Renders the document straight to [out]: `PdfDocument.writeTo` already
+     * writes progressively, so the finished file never exists as a second copy.
+     *
+     * The questions themselves are never held either — they come off the
+     * [PaperStream] walk, and [PdfDocument] keeps the finished pages the way it
+     * already did. With [answersAtEnd] the paper is walked a second time for
+     * the key, which costs a re-read and saves holding every answer and
+     * explanation until the end.
+     *
      * @param answersAtEnd when true, questions print without correct marks and
      * all answers + explanations move to an "Answer Key" section at the end,
      * so the paper can be attempted without seeing answers.
      * @param twoColumn flow content down the left column, then the right,
      * then the next page (single-column pagination is otherwise untouched).
      */
-    fun paperToPdfBytes(
-        paper: PaperDto,
+    suspend fun writePdf(
+        stream: PaperStream,
+        out: OutputStream,
         answersAtEnd: Boolean = false,
         twoColumn: Boolean = false
-    ): ByteArray {
+    ) {
         val doc = PdfDocument()
         try {
             val w = Writer(doc, twoColumn)
-            w.paragraph(paper.title, 20f, Typeface.BOLD, Color.BLACK, spaceAfter = 4f)
+            w.paragraph(stream.title, 20f, Typeface.BOLD, Color.BLACK, spaceAfter = 4f)
             val meta = buildList {
-                if (paper.description.isNotBlank()) add(paper.description)
+                if (stream.description.isNotBlank()) add(stream.description)
                 val bits = mutableListOf<String>()
-                if (paper.durationMinutes > 0) bits.add("${paper.durationMinutes} min")
-                if (paper.negativeMarking > 0) bits.add("negative marking ${paper.negativeMarking}")
-                bits.add("${paper.categories.sumOf { it.questions.size }} questions")
+                if (stream.durationMinutes > 0) bits.add("${stream.durationMinutes} min")
+                if (stream.negativeMarking > 0) bits.add("negative marking ${stream.negativeMarking}")
+                bits.add("${stream.totalQuestions} questions")
                 add(bits.joinToString(" • "))
             }.joinToString("\n")
             w.paragraph(meta, 10f, Typeface.NORMAL, Color.GRAY, spaceAfter = 12f)
 
-            data class KeyEntry(
-                val number: Int,
-                val answer: CharSequence,
-                val explanationElements: List<ContentElement>,
-                val explanationImage: String?
-            )
-            val key = mutableListOf<KeyEntry>()
+            questions(w, stream, answersAtEnd)
+            if (answersAtEnd) answerKey(w, stream)
+            w.finish()
+            doc.writeTo(out)
+        } finally {
+            doc.close()
+        }
+    }
 
-            var number = 0
-            for (category in paper.categories) {
+    /** The question flow: every category heading, then its questions. */
+    private suspend fun questions(w: Writer, stream: PaperStream, answersAtEnd: Boolean) {
+        val passagesById = stream.passages.associateBy { it.id }
+        var number = 0
+        var openPassageId: String? = null
+        stream.walk(
+            onCategory = { category ->
                 w.paragraph(category.title, 14f, Typeface.BOLD, Color.BLACK, spaceBefore = 10f)
                 // The passage prints once above its group, not above every
                 // member: contiguity is the invariant, and a reader reads a
                 // document linearly. A new run (or a resumed group in another
                 // category) prints its header again.
-                var openPassageId: String? = null
-                for (question in category.questions) {
-                    number++
-                    w.ensureSpace(120f)
-                    if (question.passageId != openPassageId) {
-                        openPassageId = question.passageId
-                        paper.passages.firstOrNull { it.id == question.passageId }
-                            ?.let { passage ->
-                                w.paragraph(
-                                    stripInlineHtml(passage.title.ifBlank { "Passage" }),
-                                    11f, Typeface.BOLD, Color.rgb(70, 70, 70), spaceBefore = 6f
-                                )
-                                w.elements(passage.elements, passage.image, indent = 0f)
-                            }
+                openPassageId = null
+            },
+            onQuestion = { question ->
+                number++
+                w.ensureSpace(120f)
+                if (question.passageId != openPassageId) {
+                    openPassageId = question.passageId
+                    passagesById[question.passageId]?.let { passage ->
+                        w.paragraph(
+                            stripInlineHtml(passage.title.ifBlank { "Passage" }),
+                            11f, Typeface.BOLD, Color.rgb(70, 70, 70), spaceBefore = 6f
+                        )
+                        w.elements(passage.elements, passage.image, indent = 0f)
                     }
-                    // The number prefixes the body flow itself ("Q1. text…"
-                    // in one paragraph) instead of a title line, so the
-                    // question never prints twice nor starts below its
-                    // number. Not bold, or <b> inside would not show.
-                    val marker = buildString {
-                        append("Q$number. ")
-                        if (question.marks != 1.0) {
-                            val display = if (question.marks == kotlin.math.floor(question.marks)) {
-                                question.marks.toLong().toString()
-                            } else {
-                                question.marks.toString()
-                            }
-                            append("[$display marks] ")
+                }
+                // The number prefixes the body flow itself ("Q1. text…"
+                // in one paragraph) instead of a title line, so the
+                // question never prints twice nor starts below its
+                // number. Not bold, or <b> inside would not show.
+                val marker = buildString {
+                    append("Q$number. ")
+                    if (question.marks != 1.0) {
+                        val display = if (question.marks == kotlin.math.floor(question.marks)) {
+                            question.marks.toLong().toString()
+                        } else {
+                            question.marks.toString()
                         }
+                        append("[$display marks] ")
                     }
-                    val body = question.elements.ifEmpty {
-                        if (question.text.isNotBlank()) listOf(ContentElement.TextElement(question.text))
+                }
+                val body = question.elements.ifEmpty {
+                    if (question.text.isNotBlank()) listOf(ContentElement.TextElement(question.text))
+                    else emptyList()
+                }
+                w.elements(
+                    listOf(ContentElement.TextElement(marker)) + body,
+                    question.image,
+                    indent = 0f
+                )
+                question.options.forEachIndexed { index, option ->
+                    val isCorrect = !answersAtEnd && option.id in question.correctOptionIds
+                    val marker = ContentElement.TextElement(
+                        // By position, so the label always matches the
+                        // letter the answer names.
+                        (if (isCorrect) "✓ " else "○ ") + "${optionLetter(index)}) "
+                    )
+                    val body = option.elements.ifEmpty {
+                        if (option.text.isNotBlank()) listOf(ContentElement.TextElement(option.text))
                         else emptyList()
                     }
-                    w.elements(
-                        listOf(ContentElement.TextElement(marker)) + body,
-                        question.image,
-                        indent = 0f
-                    )
-                    for (option in question.options) {
-                        val isCorrect = !answersAtEnd && option.id in question.correctOptionIds
-                        val marker = ContentElement.TextElement(
-                            (if (isCorrect) "✓ " else "○ ") + "${option.id}) "
+                    w.elements(listOf(marker) + body, option.image, indent = 12f)
+                }
+                val answer = answerLabels(question.options, question.correctOptionIds)
+                // With the answers at the end, nothing is revealed here: the
+                // marks above are already suppressed and the key prints later.
+                if (!answersAtEnd) {
+                    if (answer.isNotEmpty()) {
+                        w.paragraph(
+                            SpannableStringBuilder("Answer: ")
+                                .append(SpannableStringBuilder(answer.joinToString(", "))),
+                            11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
                         )
-                        val body = option.elements.ifEmpty {
-                            if (option.text.isNotBlank()) listOf(ContentElement.TextElement(option.text))
-                            else emptyList()
-                        }
-                        w.elements(listOf(marker) + body, option.image, indent = 12f)
                     }
-                    val correct = question.options.filter { it.id in question.correctOptionIds }
-                    val answerText = SpannableStringBuilder()
-                    correct.forEachIndexed { index, option ->
-                        if (index > 0) answerText.append(", ")
-                        answerText.append(spannedFromInlineHtml(option.text))
-                    }
-                    if (answersAtEnd) {
-                        if (answerText.isNotEmpty() || question.explanationElements.isNotEmpty()) {
-                            key.add(
-                                KeyEntry(
-                                    number = number,
-                                    answer = answerText,
-                                    explanationElements = question.explanationElements,
-                                    explanationImage = question.explanationImage
-                                )
-                            )
-                        }
-                    } else {
-                        if (correct.isNotEmpty()) {
-                            w.paragraph(
-                                SpannableStringBuilder("Answer: ").append(answerText),
-                                11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
-                            )
-                        }
-                        w.elements(question.explanationElements, question.explanationImage, question.explanation)
-                    }
+                    w.elements(
+                        question.explanationElements,
+                        question.explanationImage,
+                        question.explanation
+                    )
                 }
             }
-            if (answersAtEnd && key.isNotEmpty()) {
-                w.paragraph("Answer Key", 16f, Typeface.BOLD, Color.BLACK, spaceBefore = 16f)
-                for (entry in key) {
-                    val line = SpannableStringBuilder("Q${entry.number}. ")
-                    if (entry.answer.isBlank()) line.append("—") else line.append(entry.answer)
+        )
+    }
+
+    /**
+     * The key, printed from a second walk: only the questions that actually
+     * have an answer or an explanation are listed, and the heading waits for
+     * the first of them — exactly what collecting them all and checking
+     * `isNotEmpty()` produced, without holding a million answers in the heap.
+     */
+    private suspend fun answerKey(w: Writer, stream: PaperStream) {
+        var number = 0
+        var headingWritten = false
+        stream.walk(
+            onCategory = {},
+            onQuestion = { question ->
+                number++
+                val answerText = SpannableStringBuilder(
+                    answerLabels(question.options, question.correctOptionIds).joinToString(", ")
+                )
+                val hasEntry = answerText.isNotEmpty() || question.explanationElements.isNotEmpty()
+                if (hasEntry) {
+                    if (!headingWritten) {
+                        w.paragraph("Answer Key", 16f, Typeface.BOLD, Color.BLACK, spaceBefore = 16f)
+                        headingWritten = true
+                    }
+                    val line = SpannableStringBuilder("Q$number. ")
+                    if (answerText.isBlank()) line.append("—") else line.append(answerText)
                     w.paragraph(line, 11f, Typeface.NORMAL, Color.rgb(46, 125, 50), spaceBefore = 6f)
-                    w.elements(entry.explanationElements, entry.explanationImage)
+                    w.elements(question.explanationElements, question.explanationImage)
                 }
             }
-            w.finish()
-            val out = ByteArrayOutputStream()
-            doc.writeTo(out)
-            return out.toByteArray()
-        } finally {
-            doc.close()
-        }
+        )
     }
 
     private class Writer(private val doc: PdfDocument, private val twoColumn: Boolean) {

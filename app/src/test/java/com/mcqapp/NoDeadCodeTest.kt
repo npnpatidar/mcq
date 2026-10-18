@@ -122,6 +122,28 @@ class NoDeadCodeTest {
         assertTrue("these read the whole bank: $offenders", offenders.isEmpty())
     }
 
+    /**
+     * `AnkiPackageReader.read` expands the whole archive into memory as a
+     * `Map<String, ByteArray>`, inlines every picture into one DTO for the whole
+     * bank, and hands that to a whole-file importer. `.apkg` now streams
+     * (`AnkiApkgImporter` -> `AnkiPackageReader.stream`), so it stays as the
+     * equivalence test's oracle — the database the streamed import is asserted
+     * against — and no production file may call it.
+     */
+    @Test
+    fun theWholeFileAnkiReaderHasNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "AnkiPackageReader.kt" }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("AnkiPackageReader.read(", "packageReader.read(")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read the whole .apkg: $offenders", offenders.isEmpty())
+    }
+
     @Test
     fun imageScalingHasOneImplementation() {
         // The paper-level scaler is the single copy of the mapping; the

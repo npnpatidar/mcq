@@ -54,7 +54,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.R
-import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
@@ -195,44 +194,54 @@ fun LibraryScreen(
                 prefix.bytes[1] == 'K'.code.toByte()
 
             if (isZip) {
-                // The backup check runs on the prefix, before the whole
-                // archive is read. A backup says what it is in its first few
-                // hundred bytes, and a backup with images in it is often over
-                // the size cap — "too large to import" would be the wrong
-                // thing to tell someone who picked a file that was never
-                // meant to be imported at all.
-                if (McqBackupFormat.isBackupArchive(prefix.bytes)) {
-                    Logger.i("LIB", "picked library backup: not an import")
-                    viewModel.showError(backupNotABankMessage())
-                    return@launch
-                }
-                // Zips are read whole; the images inside make them large, so
-                // the cap stays and tells the user what to do about it.
-                val bytes = try {
+                // Classify by streaming the archive's entry names, so the file
+                // is never read whole. Both .apkg and .docx are zips; a Word
+                // file is told apart by its word/document.xml entry, a backup
+                // by its manifest. A backup with images in it is often over the
+                // old size cap — "too large to import" would be the wrong thing
+                // to tell someone who picked a file that was never meant to be
+                // imported at all.
+                val kind = try {
                     withContext(Dispatchers.IO) {
                         context.contentResolver.openInputStream(picked)?.use { stream ->
-                            com.mcqapp.util.readBounded(stream)
+                            classifyPickedArchive(stream)
                         }
                     }
                 } catch (e: Exception) {
                     Logger.e("LIB", "Failed to read import file", e)
-                    viewModel.showError(
-                        if (e is com.mcqapp.util.ImportTooLargeException) {
-                            com.mcqapp.util.tooLargeMessage(
-                                e.atLeastBytes,
-                                com.mcqapp.util.MAX_IMPORT_BYTES
-                            )
-                        } else {
-                            "Could not read the file: ${e.message}"
-                        }
-                    )
+                    viewModel.showError("Could not read the file: ${e.message}")
                     return@launch
                 } ?: run {
                     viewModel.showError("Could not read the file.")
                     return@launch
                 }
-                when (classifyPickedArchive(bytes)) {
+                when (kind) {
                     PickedArchive.DOCX -> {
+                        // A Word bank is small and the parser wants its bytes,
+                        // so read it now, under the same cap as before.
+                        val bytes = try {
+                            withContext(Dispatchers.IO) {
+                                context.contentResolver.openInputStream(picked)?.use { stream ->
+                                    com.mcqapp.util.readBounded(stream)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Logger.e("LIB", "Failed to read import file", e)
+                            viewModel.showError(
+                                if (e is com.mcqapp.util.ImportTooLargeException) {
+                                    com.mcqapp.util.tooLargeMessage(
+                                        e.atLeastBytes,
+                                        com.mcqapp.util.MAX_IMPORT_BYTES
+                                    )
+                                } else {
+                                    "Could not read the file: ${e.message}"
+                                }
+                            )
+                            return@launch
+                        } ?: run {
+                            viewModel.showError("Could not read the file.")
+                            return@launch
+                        }
                         Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
                         com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
                         // The file name becomes the paper title (the document rarely
@@ -243,18 +252,18 @@ fun LibraryScreen(
                         navController.navigate("import/direct")
                     }
                     PickedArchive.BACKUP -> {
-                        // Fallback for an archive whose manifest the prefix did
-                        // not reach (a re-pack). Restore is the reverse of
-                        // export: it replaces the whole library, while import
-                        // only adds papers.
+                        // Restore is the reverse of export: it replaces the
+                        // whole library, while import only adds papers.
                         Logger.i("LIB", "picked library backup: not an import")
                         viewModel.showError(backupNotABankMessage())
                     }
                     PickedArchive.OTHER -> {
-                        // The bytes are already in hand; hand them over rather than
-                        // reading the same archive a second time.
+                        // The deck is streamed straight from the Uri by the
+                        // importer, so the archive is never held as bytes.
                         val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
-                        viewModel.importAnkiPackage(title) { bytes }
+                        viewModel.importAnkiPackage(title) {
+                            context.contentResolver.openInputStream(picked)
+                        }
                     }
                 }
                 return@launch

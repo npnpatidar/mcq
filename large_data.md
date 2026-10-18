@@ -14,23 +14,7 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-### 1. `.apkg` import (the one non-streamed import)
-`LibraryViewModel.importAnkiPackage` (`LibraryViewModel.kt:~353`) reads the whole
-file to bytes → `AnkiPackageReader.read(bytes)` expands the entire archive into a
-`Map<String, ByteArray>` and returns every paper as one `McqFileDto` → `Importer`
-holds that DTO beside a whole-bank hash set (`getAllContentHashes`).
-
-Effect: a large deck is refused at the 256 MB expansion cap (`SafeZip.MAX_TOTAL_BYTES`,
-`SafeZip.kt:25`) or OOMs under it.
-
-Fix shape: extract entries to temp files under the same caps, drive the reader
-per paper (decks are known up front; a deck's cards are a scoped `(nid, id)`
-query), spool media to temp files, and feed the existing per-batch writer,
-applying each paper's schedules as it is written. Needs an equivalence test over
-the existing apkg fixtures (streamed import must produce the same database as
-the whole-file reader) before it can land. Full plan: `scaling.md` §5.5 / §8 Open 4.
-
-### 2. Rich exports hold every image's data URI — `.apkg`, `.zip`, `.docx`
+### 1. Rich exports hold every image's data URI — `.apkg`, `.zip`, `.docx`
 The bytes stream: media is spooled to temp files by `MediaSpool`, one image
 decoded at a time. But each writer also keeps a **dedupe map keyed by the
 image's full data URI** (the base64 string):
@@ -52,7 +36,7 @@ The manifest and spool-name maps are inherent to the format (an archive's media
 must all be named before the body referencing it is written); page or shrink
 them only if a million media files must be supported.
 
-### 3. Stats Workload / Memory / Cards tabs — whole card library + whole review log
+### 2. Stats Workload / Memory / Cards tabs — whole card library + whole review log
 `StatsViewModel.kt:~232` calls `inputOf(loadedLibrary(), loadedReviews(), now)`;
 both are cached for the ViewModel's life.
 - `StatsStore.loadCards()` (`StatsStore.kt:~159`) pages every `CardSnapshot`
@@ -66,27 +50,27 @@ At a million studied cards this is the largest remaining in-app construct.
 Fix shape: page the log/cards through the aggregators, or compute the three
 sections as SQL aggregates the way retention does.
 
-### 4. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
+### 3. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
 `PaperStore.kt:~121` and `:~139` call `getIdsByPaper(paperId)`, returning every
 question id before deleting (downstream `removeAllChunked` /
 `countForQuestionsChunked` chunk it, but the id list itself is the peak).
 
 Fix shape: chunk the id read too, or delete/count by `paperId` in SQL.
 
-### 5. `FsrsTuner.optimize` — whole review log
+### 4. `FsrsTuner.optimize` — whole review log
 `FsrsTuner.kt:~44`: `db.reviewLogDao().getAll()` then `buildFsrsTrainingCards`
 over it. Tuning on a million reviews holds the log.
 
 Fix shape: page the log into the fit.
 
-### 6. The legacy in-memory `Importer` reachable outside `.apkg`
+### 5. The legacy in-memory `Importer` reachable outside `.apkg`
 - `ImportViewModel.kt:~798` — the non-preview / edited-file path (a large bank
   takes the streamed path at `:~742`).
 - `LibraryViewModel.kt:~386` — "Load sample data" (tiny asset; harmless).
 
 So the whole-bank hash set (`getAllContentHashes`) and whole-DTO are not solely
-an apkg concern. Fix shape: finishes with item 1 (delete the legacy reader once
-everything streams).
+an apkg concern. Fix shape: delete the legacy reader once the JSON path's last
+non-preview caller streams too.
 
 ## Parked / accepted (deliberate)
 
@@ -111,6 +95,17 @@ everything streams).
 
 ## Fixed
 
+- **`.apkg` import read the whole package** — the picker read the file to
+  bytes and `AnkiPackageReader.read` expanded the archive into a
+  `Map<String, ByteArray>`, inlined every picture into one DTO for the whole
+  bank, and handed that to a whole-file `Importer` beside a whole-bank hash set.
+  Now the picker classifies by streaming (`classifyPickedArchive`) and
+  `AnkiApkgImporter` streams: entries go to temp files under `SafeZip`'s caps,
+  media is spooled, and the collection is walked one deck at a time into the
+  shared per-batch writer (`StreamingImportSession`), with review schedules
+  applied per batch. `AnkiPackageReader.read` stays as the equivalence test's
+  oracle (`AnkiStreamEquivalenceTest`), and `NoDeadCodeTest` refuses a
+  production call to it.
 - **Library mistake badges read one standing per graded question** — replaced by
   `AttemptDao.countMistakesByPaper()` (SQL, one row per paper) and
   `getMistakenQuestionIdsForPaper(paperId)`; `getLatestStandings` +

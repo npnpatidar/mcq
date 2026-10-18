@@ -75,6 +75,32 @@ object McqBackupFormat {
     /** The files this app's own writer puts in a backup. */
     private val PART_NAMES = setOf(MANIFEST, CONTENT, STUDY, SETTINGS)
 
+    /**
+     * The cap [isBackupArchive] reads the manifest under, so the picker's
+     * streamed classifier can read it the same way.
+     */
+    internal const val MANIFEST_LIMIT_BYTES: Long = MAX_PART_BYTES
+
+    /**
+     * Whether [name] is a member one of our backups can carry (or a note a file
+     * manager dropped in). The picker's streamed classifier walks an archive's
+     * entries with this before deciding the file is not one of ours, so a
+     * foreign archive is never inflated to be told so.
+     */
+    internal fun isBackupMemberName(name: String): Boolean =
+        name in PART_NAMES || name.startsWith("__MACOSX/")
+
+    /**
+     * The `format` field of a manifest entry as it was written — not decoded
+     * through the serializer, which is lenient and would call any JSON object a
+     * backup. Null when the entry is not readable JSON or has no field.
+     */
+    internal fun manifestFormat(text: String): String? = try {
+        json.parseToJsonElement(text).jsonObject["format"]?.jsonPrimitive?.content
+    } catch (e: Exception) {
+        null
+    }
+
     @Serializable
     data class Manifest(
         val format: String = FORMAT,
@@ -499,22 +525,9 @@ object McqBackupFormat {
                     if (!entry.isDirectory && entry.name == MANIFEST) {
                         val text = readBounded(zip, limit = MAX_PART_BYTES)
                             .toString(Charsets.UTF_8)
-                        // Read the field as it was written rather than through
-                        // the serializer: [Manifest] is deliberately lenient
-                        // (unknown keys ignored, `format` defaulted to ours),
-                        // so decoding would call any JSON object a backup.
-                        val named = try {
-                            json.parseToJsonElement(text)
-                                .jsonObject["format"]
-                                ?.jsonPrimitive
-                                ?.content
-                        } catch (e: Exception) {
-                            null
-                        }
-                        return named == FORMAT
+                        return manifestFormat(text) == FORMAT
                     }
-                    val ours = entry.isDirectory || entry.name in PART_NAMES ||
-                        entry.name.startsWith("__MACOSX/")
+                    val ours = entry.isDirectory || isBackupMemberName(entry.name)
                     if (!ours) return false
                     zip.closeEntry()
                     entry = zip.nextEntry

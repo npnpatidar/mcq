@@ -6,7 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.anki.AnkiPackageException
-import com.mcqapp.data.anki.AnkiPackageReader
+import com.mcqapp.data.io.AnkiApkgImporter
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.Importer
@@ -14,7 +14,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
-import kotlinx.coroutines.Dispatchers
+import java.io.InputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -320,40 +319,32 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Imports an Anki `.apkg` straight into the database. Packages are read
-     * whole — a deck can hold thousands of notes — so this skips the Import
-     * screen's single-paper preview, which only makes sense for one hand-written
-     * JSON file. Merge decisions are the same ones that path makes: papers match
+     * Imports an Anki `.apkg` straight into the database. The package is read
+     * from [source] as it streams — neither the archive nor the bank is held
+     * whole — so a deck of any size within the archive caps imports the same
+     * way. Merge decisions are the same ones the JSON path makes: papers match
      * by id then title, questions by content hash.
      */
     fun importAnkiPackage(uri: Uri) {
         importAnkiPackage(uri.lastPathSegment?.substringAfterLast('/') ?: "deck.apkg") {
             getApplication<Application>().contentResolver.openInputStream(uri)
-                ?.use { it.readBytes() }
         }
     }
 
     /**
-     * Imports a package whose bytes were already read while sniffing the
-     * picked file's format, so the archive is not fetched twice. [read]
-     * supplies the bytes lazily and may run on any dispatcher.
+     * Imports a package read from [source], which is opened once (on the IO
+     * dispatcher) and must return a fresh stream over the file.
      */
-    fun importAnkiPackage(title: String, read: suspend () -> ByteArray?) {
+    fun importAnkiPackage(title: String, source: () -> InputStream?) {
         viewModelScope.launch {
             try {
                 Logger.i("LIBVM", "Reading Anki package '$title'")
-                val bytes = withContext(Dispatchers.IO) { read() }
-                    ?: throw AnkiPackageException("Could not open $title.")
-
-                val read = withContext(Dispatchers.IO) { AnkiPackageReader.read(bytes) }
-                Logger.i(
-                    "LIBVM",
-                    "Package '${title}': ${read.deckCount} decks, ${read.noteCount} notes, " +
-                        "${read.recallCount} recall, ${read.file.papers.size} papers"
-                )
-
-                val report = Importer(repository.db(), repository.updateAnswersOnDuplicate().first())
-                    .import(read.file, read.scheduling)
+                val report = AnkiApkgImporter(
+                    repository.db(),
+                    repository.updateAnswersOnDuplicate().first()
+                ).import({
+                    source() ?: throw AnkiPackageException("Could not open $title.")
+                })
                 Logger.i(
                     "LIBVM",
                     "Anki import done: ${report.newPapers} new, ${report.updatedPapers} updated papers, " +

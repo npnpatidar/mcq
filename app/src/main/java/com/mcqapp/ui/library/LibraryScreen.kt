@@ -420,7 +420,6 @@ fun LibraryScreen(
                                     showExportFormatDialog = true
                                 },
                                 onDelete = { viewModel.requestDelete(paper.id, paper.title) },
-                                onDuplicate = { viewModel.duplicatePaper(paper.id) },
                                 onAddCategory = {
                                     categoryDialogPaperId = paper.id
                                     categoryDialogParentId = null

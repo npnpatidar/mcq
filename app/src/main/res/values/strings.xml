@@ -39,7 +39,6 @@
     <string name="dismiss">Dismiss</string>
     <string name="done">Done</string>
     <string name="drill">Drill</string>
-    <string name="duplicate">Duplicate</string>
     <string name="duplicate_question">Duplicate question</string>
     <string name="duration_min">Duration (min)</string>
     <string name="duration_minutes_0_untimed">Duration (minutes, 0 = untimed)</string>

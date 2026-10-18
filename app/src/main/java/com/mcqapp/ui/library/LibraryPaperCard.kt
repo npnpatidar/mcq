@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -58,7 +57,6 @@ internal fun PaperCard(
     onBrowse: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
-    onDuplicate: () -> Unit,
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
@@ -295,11 +293,6 @@ internal fun PaperCard(
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
                             Text(stringResource(R.string.add_category))
-                        }
-                        TextButton(onClick = onDuplicate, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.duplicate))
                         }
                         TextButton(
                             onClick = onDelete,

@@ -43,7 +43,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
     private val passageStore = PassageStore(db, mapper, questionStore)
-    private val paperStore = PaperStore(db, questionStore, settings)
+    private val paperStore = PaperStore(db, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
     private val fsrsTuner = FsrsTuner(db, settings)
@@ -396,7 +396,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperStore.renameCategory(categoryId, title)
     suspend fun moveCategory(categoryId: String, delta: Int): Boolean =
         paperStore.moveCategory(categoryId, delta)
-    suspend fun duplicatePaper(paperId: String): String? = paperStore.duplicatePaper(paperId)
 
     /** Existing names, for the import screen's title/category suggestions. */
     suspend fun existingPaperTitles(): List<String> = paperStore.allPaperTitles()

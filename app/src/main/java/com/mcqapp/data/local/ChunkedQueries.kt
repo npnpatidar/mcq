@@ -118,10 +118,9 @@ fun likePrefixPattern(prefix: String): String =
 
 /**
  * Matches every id containing "-copy" — the substring all generated copy ids
- * share (`q1-copy`, `q1-copy-2`, …, via BulkOps.copyId and
- * PaperClone.copyPaperId), so these are the only existing ids a copy candidate
- * can collide with. One scan with this pattern replaces materializing every id
- * in the table; extra `-copy`-shaped ids it returns merely over-block, which
- * the full-table id set it replaces did too.
+ * share (`q1-copy`, `q1-copy-2`, …, via BulkOps.copyId), so these are the only
+ * existing ids a copy candidate can collide with. One scan with this pattern
+ * replaces materializing every id in the table; extra `-copy`-shaped ids it
+ * returns merely over-block, which the full-table id set it replaces did too.
  */
 const val COPY_ID_PROBE = "%-copy%"

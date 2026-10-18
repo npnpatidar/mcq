@@ -4,10 +4,8 @@ import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
-import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.countForQuestionsChunked
 import com.mcqapp.data.local.getCategoryCountsForChunked
-import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Paper
@@ -17,14 +15,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 /**
- * Papers and categories: the library tree, paper lifecycle (save, duplicate,
- * delete, delete impact) and category management. Split out of
+ * Papers and categories: the library tree, paper lifecycle (save, delete,
+ * delete impact) and category management. Split out of
  * [McqRepository]; question deep-copies go through [QuestionStore], and
  * deleting a paper drops the resume snapshot through [SettingsStore].
  */
 internal class PaperStore(
     private val db: AppDatabase,
-    private val questions: QuestionStore,
     private val settings: SettingsStore
 ) {
 
@@ -363,49 +360,5 @@ internal class PaperStore(
         )
         Logger.i("REPO", "renameCategory($categoryId -> '$trimmed')")
         return true
-    }
-
-    /** Deep-clones a paper (categories, questions, options, keys, marks). */
-    suspend fun duplicatePaper(paperId: String): String? {
-        // One transaction: a partial clone must not leave a paper shell with
-        // half its questions.
-        return db.withTransaction {
-            val paper = db.paperDao().getById(paperId) ?: return@withTransaction null
-            // Only the -copy namespace can collide with the generated paper id.
-            val existingPaperIds = db.paperDao()
-                .getIdsLike(likePrefixPattern("$paperId-copy")).toSet()
-            val newPaperId = com.mcqapp.data.io.PaperClone.copyPaperId(existingPaperIds, paperId)
-            db.paperDao().insertIgnore(
-                paper.copy(
-                    id = newPaperId,
-                    title = "${paper.title} (copy)",
-                    createdAt = System.currentTimeMillis()
-                )
-            )
-            val remapped = com.mcqapp.data.io.PaperClone.remapCategories(
-                db.categoryDao().getByPaper(paperId),
-                newPaperId
-            )
-            remapped.values.forEach { db.categoryDao().insertIgnore(it) }
-            // The clone mints `-copy` ids, so the probe scan covers every id a
-            // candidate can collide with; ids minted below join the same set.
-            val existingQ = db.questionDao().getIdsLike(COPY_ID_PROBE).toMutableSet()
-            val questionsByCategory = questions.getQuestionsForCategories(remapped.keys.toList())
-                .groupBy { it.categoryId }
-            val clones = mutableListOf<com.mcqapp.domain.Question>()
-            for ((oldCatId, newCat) in remapped) {
-                for (q in questionsByCategory[oldCatId].orEmpty()) {
-                    val newQId = com.mcqapp.domain.BulkOps.copyId(existingQ, q.id)
-                    existingQ.add(newQId)
-                    clones += q.copy(id = newQId, categoryId = newCat.id)
-                }
-            }
-            // Ids are minted for the whole clone first, then written in one
-            // pass: the rows are known fresh, so no getQuestion/saveQuestion
-            // round-trip is needed to prove each one absent before writing.
-            questions.insertCopies(clones)
-            Logger.i("REPO", "duplicatePaper($paperId -> $newPaperId)")
-            newPaperId
-        }
     }
 }

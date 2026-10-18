@@ -14,13 +14,7 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-### 1. `FsrsTuner.optimize` — whole review log
-`FsrsTuner.kt:~44`: `db.reviewLogDao().getAll()` then `buildFsrsTrainingCards`
-over it. Tuning on a million reviews holds the log.
-
-Fix shape: page the log into the fit.
-
-### 2. The legacy in-memory `Importer` reachable outside `.apkg`
+### 1. The legacy in-memory `Importer` reachable outside `.apkg`
 - `ImportViewModel.kt:~798` — the non-preview / edited-file path (a large bank
   takes the streamed path at `:~742`).
 - `LibraryViewModel.kt:~386` — "Load sample data" (tiny asset; harmless).
@@ -52,6 +46,16 @@ non-preview caller streams too.
 
 ## Fixed
 
+- **FSRS tuning held the whole review log** — `FsrsTuner.optimize` called
+  `reviewLogDao.getAll()` (the log as one `List<ReviewLogEntity>`) and
+  `buildFsrsTrainingCards` grouped it into a second full-bank structure beside
+  the training cards. `buildTrainingCards` now pages the log a set of questions
+  at a time (`pageQuestionIdsAfter` + `rowsForQuestions`, one page of entities
+  live), and the cards are re-sorted by each question's minimum row id to keep
+  the exact order `groupBy` produced. `buildFsrsTrainingCards` stays as the
+  test oracle; `FsrsTrainingLogStreamTest` pins the paged build to it at page
+  sizes down to one. (The fit itself is still a batch over every card, by
+  design — see `scaling.md` §5.2.)
 - **Deleting a paper or category read the whole id list first** —
   `PaperStore.deletePaper` / `deleteImpact` called `questionDao.getIdsByPaper`
   (and `deleteCategory` `getIdsByCategory`), materialising every question id of

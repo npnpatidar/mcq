@@ -1251,6 +1251,29 @@ interface ReviewLogDao {
     @Query("SELECT * FROM review_log WHERE id > :afterId ORDER BY id LIMIT :limit")
     suspend fun pageAfterId(afterId: Long, limit: Int): List<ReviewLogEntity>
 
+    /**
+     * One keyset page of the log's distinct question ids, in id order. The
+     * optimizer builds one training card per question and a card needs all of
+     * its rows: paging *questions* first lets the rows arrive one question at a
+     * time (see [rowsForQuestions]) without ever holding the whole log.
+     */
+    @Query(
+        "SELECT DISTINCT questionId FROM review_log " +
+            "WHERE questionId > :afterId ORDER BY questionId LIMIT :limit"
+    )
+    suspend fun pageQuestionIdsAfter(afterId: String, limit: Int): List<String>
+
+    /**
+     * Every row of [questionIds], each question's rows oldest first — the order
+     * a per-card training history needs. The `(questionId, reviewedAt)` index
+     * serves the ordering; `id` only breaks exact-timestamp ties.
+     */
+    @Query(
+        "SELECT * FROM review_log WHERE questionId IN (:questionIds) " +
+            "ORDER BY questionId ASC, reviewedAt ASC, id ASC"
+    )
+    suspend fun rowsForQuestions(questionIds: Collection<String>): List<ReviewLogEntity>
+
     /** One question's review history, oldest first. */
     @Query("SELECT * FROM review_log WHERE questionId = :questionId ORDER BY reviewedAt ASC, id ASC")
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>

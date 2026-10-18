@@ -169,6 +169,36 @@ class TestSessionResumeTest {
     }
 
     @Test
+    fun openingAnotherScopeOfTheSamePaperKeepsTheSavedAnswers() {
+        seed(3)
+        runBlocking {
+            // A saved session of this paper whose scope is not the one opened
+            // below — a whole-paper sitting and a narrower one, say.
+            app.repository.saveTestProgress(
+                com.mcqapp.domain.TestSnapshot(
+                    paperId = "p1",
+                    categoryIds = listOf("c1", "c2"),
+                    currentIndex = 1,
+                    questionSeed = 3L,
+                    questionShuffle = true
+                ),
+                listOf(com.mcqapp.domain.TestAnswer("q0", selection = setOf("a"), dwellSeconds = 4L))
+            )
+        }
+
+        // Looking at another scope must not destroy what was saved: only a
+        // session whose document is gone leaves harmless leftovers behind.
+        val vm = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { vm.state.value.current?.id == "q0" })
+        assertTrue(vm.state.value.resumeOffer == null)
+        assertEquals(
+            "the saved session's answers were deleted by opening a screen",
+            listOf("q0"),
+            answerRows()
+        )
+    }
+
+    @Test
     fun aLegacySnapshotIsAdoptedIntoRowsSoTheAnswersSurvive() {
         seed(4)
         // What an older build — or a restored backup — leaves behind: one

@@ -18,6 +18,13 @@ import com.mcqapp.util.Logger
  * A snapshot written before the rows existed (or restored from a backup) still
  * carries its answers in the document; [adopt] writes them as rows when it
  * resumes, so they survive the next answer instead of being dropped.
+ *
+ * Rows are keyed by `(paperId, questionId)`, so they cannot tell two *scopes* of
+ * one paper apart — a whole-paper session and a mistakes-only one, say. Only
+ * one session is saved at a time (the header slot is global), so the pair is
+ * enough to decide when rows are leftovers; [discardStale] is what the caller
+ * uses, and it deliberately leaves a same-paper document alone rather than
+ * deleting answers an open screen did not create.
  */
 internal class TestProgressStore(
     private val db: AppDatabase,

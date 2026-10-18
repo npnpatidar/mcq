@@ -659,13 +659,19 @@ class TestViewModel(
      */
     private suspend fun checkResumeOffer(base: SessionOrder) {
         val document = repository.loadTestSnapshot()
-        if (document == null || !document.matches(paperId, categoryIds)) {
-            // One session is saved at a time, so this paper's answers can only
-            // be the leftovers of an abandoned one — its slot has been taken.
-            // Merging them into this session would show answers never given here.
+        if (document == null || document.paperId != paperId) {
+            // No session of this paper is saved — the one slot is another
+            // paper's, or empty — so its answers can only be the leftovers of
+            // an abandoned one, and merging them into this session would show
+            // answers never given here.
+            //
+            // A document for this paper under *another* scope is left alone:
+            // opening a screen must not destroy a saved session, and an answer
+            // row is keyed by question, not by scope. See TestProgressStore.
             repository.clearStaleTestAnswers(paperId)
             return
         }
+        if (!document.matches(paperId, categoryIds)) return
         // A document written before the answers moved to rows still carries
         // them inline; writing them as rows now is what keeps the next answer
         // from dropping everything answered before it. A row-based document has

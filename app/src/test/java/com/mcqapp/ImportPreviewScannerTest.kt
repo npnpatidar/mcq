@@ -65,6 +65,12 @@ class ImportPreviewScannerTest {
         ]}
         """.trimIndent()
         assertTrue(scan(twoPapers).isBackup)
+        // Several papers, but nothing to restore beyond the rows themselves.
+        assertFalse(scan(twoPapers).hasScheduling)
+        assertEquals(0, scan(twoPapers).attemptCount)
+        assertEquals(2, scan(twoPapers).paperCount)
+        // The total spans every paper, not only the previewed first one.
+        assertEquals(2, scan(twoPapers).totalQuestions)
 
         val scheduled = """
         {"papers":[{"id":"p1","title":"One","categories":[{"id":"c","title":"C","questions":[
@@ -72,6 +78,7 @@ class ImportPreviewScannerTest {
          "scheduling":{"q1":{"ease":2.5,"intervalDays":1,"dueAt":1,"reps":1}}}
         """.trimIndent()
         assertTrue(scan(scheduled).isBackup)
+        assertTrue(scan(scheduled).hasScheduling)
     }
 
     @Test

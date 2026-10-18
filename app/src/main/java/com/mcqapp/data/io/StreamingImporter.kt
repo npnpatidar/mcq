@@ -48,7 +48,14 @@ class StreamingImporter(
     private val db: AppDatabase,
     private val updateAnswersOnDuplicate: Boolean = false,
     private val batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
-    private val overrides: ImportOverrides = ImportOverrides()
+    private val overrides: ImportOverrides = ImportOverrides(),
+    /**
+     * Restore the file's tail `scheduling` for the questions this import
+     * accepts. Off by default: it remembers each accepted question, and a plain
+     * bank (no review progress) should not pay that. A file the preview
+     * reported as carrying scheduling sets it.
+     */
+    private val captureSchedules: Boolean = false
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -86,7 +93,9 @@ class StreamingImporter(
         source: () -> InputStream,
         onProgress: ((Int) -> Unit)?
     ): ImportReport {
-        val session = StreamingImportSession(db, json, updateAnswersOnDuplicate, batchSize, overrides, onProgress)
+        val session = StreamingImportSession(
+            db, json, updateAnswersOnDuplicate, batchSize, overrides, onProgress, captureSchedules
+        )
         val queue = ArrayBlockingQueue<StreamEvent>(16)
         val tailRef = AtomicReference<LegacyParser.StreamedFile>()
         val errorRef = AtomicReference<Throwable>()

@@ -14,10 +14,14 @@ data class ImportPreview(
     val header: LegacyParser.PaperHeader?,
     val paperCount: Int,
     val isBackup: Boolean,
-    val hasAttempts: Boolean,
+    /** How many attempts the tail carried, for the restore notice. */
+    val attemptCount: Int,
+    /** The file carries review progress, so a streamed import must apply it. */
+    val hasScheduling: Boolean,
     val firstPaperCategoryCount: Int,
     val effectiveCategoryTitle: String,
     val sample: List<PreviewQuestion>,
+    /** Every question in the file, across all papers — not just the sample's. */
     val totalQuestions: Int,
     val warnings: List<String>
 )
@@ -55,8 +59,10 @@ fun scanImportPreview(
             }
 
             override fun onQuestions(categoryId: String, questions: List<QuestionDto>) {
-                if (paperCount != 1) return
+                // The count is the whole file's; the sample is the first
+                // paper's, because that is the only paper the preview edits.
                 total += questions.size
+                if (paperCount != 1) return
                 if (effectiveCategoryTitle == null && questions.isNotEmpty()) {
                     effectiveCategoryTitle = currentCategoryTitle
                 }
@@ -73,7 +79,8 @@ fun scanImportPreview(
         header = firstHeader,
         paperCount = paperCount,
         isBackup = paperCount > 1 || tail.scheduling.isNotEmpty(),
-        hasAttempts = tail.attempts.isNotEmpty(),
+        attemptCount = tail.attempts.size,
+        hasScheduling = tail.scheduling.isNotEmpty(),
         firstPaperCategoryCount = firstPaperCategoryCount,
         effectiveCategoryTitle = effectiveCategoryTitle ?: "Uncategorized",
         sample = sample,

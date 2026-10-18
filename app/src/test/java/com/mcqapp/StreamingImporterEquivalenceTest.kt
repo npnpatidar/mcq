@@ -68,9 +68,15 @@ class StreamingImporterEquivalenceTest {
         json: String,
         updateAnswers: Boolean = false,
         times: Int = 1,
-        batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE
+        batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
+        captureSchedules: Boolean = false
     ) {
-        val importer = StreamingImporter(db, updateAnswersOnDuplicate = updateAnswers, batchSize = batchSize)
+        val importer = StreamingImporter(
+            db,
+            updateAnswersOnDuplicate = updateAnswers,
+            batchSize = batchSize,
+            captureSchedules = captureSchedules
+        )
         repeat(times) {
             importer.import(source = { ByteArrayInputStream(json.toByteArray()) })
         }
@@ -85,7 +91,8 @@ class StreamingImporterEquivalenceTest {
         val sd = db.openHelper.writableDatabase
         val tables = listOf(
             "papers", "categories", "questions", "options", "correct_answers",
-            "passages", "bookmarks", "attempts", "question_results", "question_stats"
+            "passages", "bookmarks", "attempts", "question_results", "question_stats",
+            "card_state"
         )
         val out = mutableListOf<String>()
         for (table in tables) {
@@ -270,6 +277,77 @@ class StreamingImporterEquivalenceTest {
             )
         ).import(source = { ByteArrayInputStream(singleCategoryBank.toByteArray()) })
         assertSameState()
+    }
+
+    /**
+     * The library's "Export all" shape: more than one paper, and review
+     * progress in the tail. The whole-file importer applies `scheduling` to the
+     * questions it accepts; a streamed import that did not would silently drop
+     * every schedule the export carried.
+     */
+    private val scheduledTwoPaperBank = """
+    {
+      "version": 2,
+      "papers": [
+        {
+          "id": "p1",
+          "title": "First",
+          "categories": [
+            {"id": "c1", "title": "C1", "questions": [
+              {"id": "q1", "text": "One", "options": ["a","b"], "correctOptionIds": ["a"]},
+              {"id": "q2", "text": "Two", "options": ["a","b"], "correctOptionIds": ["b"]}
+            ]}
+          ]
+        },
+        {
+          "id": "p2",
+          "title": "Second",
+          "categories": [
+            {"id": "c2", "title": "C2", "questions": [
+              {"id": "q3", "text": "Three", "options": ["a","b"], "correctOptionIds": ["a"]}
+            ]}
+          ]
+        }
+      ],
+      "scheduling": {
+        "q1": {"ease": 2.6, "intervalDays": 5, "dueAt": 1000, "reps": 3, "lapses": 1,
+               "cardState": "REVIEW", "lastReviewedAt": 900, "difficulty": 4.5,
+               "stability": 12.5, "reviewCount": 4},
+        "q3": {"ease": 2.4, "intervalDays": 2, "dueAt": 2000, "reps": 1, "lapses": 0,
+               "cardState": "LEARNING", "lastReviewedAt": 1900, "difficulty": 6.0,
+               "stability": 3.25, "reviewCount": 1}
+      }
+    }
+    """.trimIndent()
+
+    @Test
+    fun aMultiPaperBankWithReviewProgressMatches() = runBlocking {
+        wholeFileImport(wholeFileDb, scheduledTwoPaperBank)
+        streamingImport(streamingDb, scheduledTwoPaperBank, captureSchedules = true)
+        assertSameState()
+        // The schedule landed on the question of the second paper too, not just
+        // the previewed first one.
+        assertEquals(2000L, streamingDb.cardStateDao().get("p2", "q3")!!.dueAt)
+    }
+
+    /**
+     * A re-import skips the duplicate, so the file's stale schedule must not
+     * roll back a card the user has since moved on with — the same rule the
+     * whole-file importer follows.
+     */
+    @Test
+    fun aReimportDoesNotRollBackAMovedOnCard() = runBlocking {
+        wholeFileImport(wholeFileDb, scheduledTwoPaperBank)
+        streamingImport(streamingDb, scheduledTwoPaperBank, captureSchedules = true)
+        for (db in listOf(wholeFileDb, streamingDb)) {
+            val moved = db.cardStateDao().get("p1", "q1")!!.copy(reps = 9, dueAt = 99999)
+            db.cardStateDao().upsert(moved)
+        }
+        wholeFileImport(wholeFileDb, scheduledTwoPaperBank)
+        streamingImport(streamingDb, scheduledTwoPaperBank, captureSchedules = true)
+        assertSameState()
+        assertEquals(99999L, wholeFileDb.cardStateDao().get("p1", "q1")!!.dueAt)
+        assertEquals(99999L, streamingDb.cardStateDao().get("p1", "q1")!!.dueAt)
     }
 
     @Test

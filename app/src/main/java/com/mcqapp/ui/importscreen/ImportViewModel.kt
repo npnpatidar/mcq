@@ -219,6 +219,30 @@ internal fun isBackupFile(file: McqFileDto): Boolean =
     file.papers.size > 1 || file.scheduling.isNotEmpty()
 
 /**
+ * The restore the preview is a window onto: a file with more than one paper,
+ * or with review progress, is imported in full even though the preview shows
+ * only the first paper. [questionCount] is whatever the caller could count
+ * cheaply — the whole file for an already-parsed DTO, the previewed paper for
+ * a streamed one.
+ */
+internal fun backupRestoreNotice(
+    paperCount: Int,
+    questionCount: Int,
+    attemptCount: Int,
+    hasScheduling: Boolean
+): List<String> {
+    val extras = buildList {
+        if (hasScheduling) add("review schedules")
+        if (attemptCount > 0) add("$attemptCount attempts")
+    }
+    val including = if (extras.isEmpty()) "" else ", including ${extras.joinToString(" and ")}"
+    return listOf(
+        "Backup restore: $paperCount papers ($questionCount questions)$including " +
+            "will be restored. Only this first paper is previewed for editing."
+    )
+}
+
+/**
  * Classifies preview questions exactly like the importer will: a hash already
  * in the database is a duplicate (skipped); the same id with changed content
  * or a fixed answer key is changed (updates in place); else new. Pure, so the
@@ -414,9 +438,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     // not be retained twice) of the last directly-loaded JSON.
     private var loadedDirectFp: String? = null
 
-    // Set only for a large single-paper JSON: how the streaming import re-opens
-    // the file. Null means the whole-file path (small JSON, docx, backup).
+    // Set only for a JSON the bounded preview could represent: how the
+    // streaming import re-opens the file. Null means the whole-file path
+    // (small JSON, docx).
     private var streamSource: (() -> InputStream)? = null
+
+    // Whether the streamed file carries review progress that the import must
+    // apply. Only meaningful while [streamSource] is set.
+    private var streamRestoreSchedules: Boolean = false
 
     private fun fingerprint(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
@@ -497,21 +526,15 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Bounded preview of a large single-paper bank. One pass keeps the header,
-     * a sample of questions and the counts; the import re-opens the same source
-     * and streams it, applying the paper-level edits made here.
+     * Bounded preview of a JSON bank. One pass keeps the header, a sample of
+     * the first paper's questions and the counts; the import re-opens the same
+     * source and streams it, applying the paper-level edits made here. A backup
+     * — several papers and/or review progress — takes the same path: the other
+     * papers and the schedules stream past the same reader, so a library export
+     * never has to exist as one DTO tree.
      */
     private suspend fun loadLargeJson(open: () -> InputStream, sourceKey: String) {
         val preview = scanImportPreview(open, PREVIEW_SAMPLE_SIZE)
-        if (preview.isBackup) {
-            // Backups carry other papers and review progress the bounded
-            // preview cannot represent; fall back to the whole-file path.
-            Logger.i("IMPORTVM", "loadLargeJson: backup (${preview.paperCount} papers), " +
-                "using whole-file parse")
-            streamSource = null
-            parseAndLoad(parse = { LegacyParser.parse(open()) })
-            return
-        }
         val header = preview.header
         if (header == null) {
             val detail = preview.warnings.joinToString("\n")
@@ -530,6 +553,16 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         if (interruptedNotice != null) {
             Logger.w("IMPORTVM", "unfinished previous import: $interruptedNotice")
         }
+        val backupNotice = if (preview.isBackup) {
+            backupRestoreNotice(
+                paperCount = preview.paperCount,
+                questionCount = preview.totalQuestions,
+                attemptCount = preview.attemptCount,
+                hasScheduling = preview.hasScheduling
+            )
+        } else {
+            emptyList()
+        }
         val sampleQuestions = preview.sample.map { it.dto }
         _state.value = ImportUiState(
             loading = false,
@@ -539,7 +572,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarking = header.negativeMarking,
             categoryName = preview.effectiveCategoryTitle,
             questions = sampleQuestions,
-            parseWarnings = listOfNotNull(interruptedNotice) + preview.warnings,
+            parseWarnings = listOfNotNull(interruptedNotice) + preview.warnings + backupNotice,
             originalFile = null,
             totalQuestionCount = preview.totalQuestions,
             previewTruncated = sampleQuestions.size < preview.totalQuestions,
@@ -549,8 +582,10 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             categorySuggestions = _state.value.categorySuggestions
         )
         streamSource = open
+        streamRestoreSchedules = preview.hasScheduling
         Logger.i("IMPORTVM", "Loaded bounded preview: ${sampleQuestions.size} of " +
-            "${preview.totalQuestions} questions across ${preview.firstPaperCategoryCount} categories")
+            "${preview.totalQuestions} questions across ${preview.firstPaperCategoryCount} categories" +
+            if (preview.isBackup) " (backup: ${preview.paperCount} papers)" else "")
         refreshDuplicates()
     }
 
@@ -625,6 +660,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         titleOverride: String? = null
     ) {
         streamSource = null
+        streamRestoreSchedules = false
         val file = parse()
         val paper = file.papers.firstOrNull()
         if (paper == null) {
@@ -652,12 +688,11 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             val totalQs = file.papers.sumOf { p ->
                 p.categories.sumOf { it.questions.size }
             }
-            listOf(
-                "Backup restore: ${file.papers.size} papers " +
-                    "(${totalQs} questions) will be restored, " +
-                    "including review schedules" +
-                    (if (file.attempts.isNotEmpty()) " and ${file.attempts.size} attempts" else "") +
-                    ". Only this first paper is previewed for editing."
+            backupRestoreNotice(
+                paperCount = file.papers.size,
+                questionCount = totalQs,
+                attemptCount = file.attempts.size,
+                hasScheduling = file.scheduling.isNotEmpty()
             )
         } else {
             emptyList()
@@ -709,8 +744,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun import() {
         val s = _state.value
-        // Large single-paper banks stream: the file is re-opened and written a
-        // batch at a time, with only the previewed sample's edits applied.
+        // The file streams: it is re-opened and written a batch at a time, with
+        // only the previewed sample's edits applied. A backup streams its other
+        // papers and its schedules the same way.
         val source = streamSource
         if (source != null) {
             if (s.paperTitle.isBlank()) return
@@ -737,12 +773,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     Logger.i("IMPORTVM", "import(): streaming ${s.totalQuestionCount} questions " +
                         "with a ${s.questions.size}-question preview " +
-                        "(${overrides.deletedIds.size} deleted in preview)")
+                        "(${overrides.deletedIds.size} deleted in preview" +
+                        (if (streamRestoreSchedules) ", restoring schedules" else "") + ")")
                     val report = withContext(Dispatchers.Default) {
                         StreamingImporter(
                             repository.db(),
                             updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
-                            overrides = overrides
+                            overrides = overrides,
+                            captureSchedules = streamRestoreSchedules
                         ).import(source) { seen ->
                             importJournal.progress(seen)
                             _state.update { it.copy(importedQuestions = seen) }

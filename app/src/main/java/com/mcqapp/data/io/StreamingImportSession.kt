@@ -50,7 +50,13 @@ internal class StreamingImportSession(
     private val updateAnswersOnDuplicate: Boolean,
     val batchSize: Int,
     private val overrides: ImportOverrides,
-    private val onProgress: ((Int) -> Unit)?
+    private val onProgress: ((Int) -> Unit)?,
+    /**
+     * Record where each accepted question landed, so the tail's `scheduling`
+     * can be applied once it is read. Off for files with no review progress:
+     * the map is per accepted question, and a plain bank does not pay it.
+     */
+    private val captureSchedules: Boolean = false
 ) {
     private var newPapers = 0
     private var updatedPapers = 0
@@ -80,6 +86,17 @@ internal class StreamingImportSession(
 
     /** passageId -> categoryId of its first member, for this paper. */
     private val paperPassageRecords = LinkedHashMap<String, String>()
+
+    /**
+     * Where each accepted question landed, for the tail's `scheduling` — which
+     * is read after every paper, so it can only be applied at [finish]. Null
+     * unless [captureSchedules] was set.
+     */
+    private val acceptedSchedules: HashMap<String, ScheduleTarget>? =
+        if (captureSchedules) HashMap() else null
+
+    /** The paper a question was written under, and its stored content hash. */
+    private class ScheduleTarget(val paperId: String, val contentHash: String)
 
     /** Written passages, globally, in first-member order. */
     private val passagePaper = LinkedHashMap<String, String>()
@@ -135,17 +152,14 @@ internal class StreamingImportSession(
         onProgress?.invoke(questionsSeen)
     }
 
-    /** Everything after the papers: passages, bookmarks, attempts. */
+    /** Everything after the papers: passages, bookmarks, attempts, schedules. */
     suspend fun finish(tail: LegacyParser.StreamedFile) {
         finishPaper()
         writePassages(tail)
         foldPassageStrays()
         restoreBookmarks(tail)
         restoreAttempts(tail)
-        if (tail.scheduling.isNotEmpty()) {
-            Logger.w("STREAMIMPORT", "Ignoring ${tail.scheduling.size} schedule entries: " +
-                "files carrying review progress must use the whole-file importer")
-        }
+        applyTailSchedules(tail)
     }
 
     fun report() = ImportReport(
@@ -417,6 +431,11 @@ internal class StreamingImportSession(
                 dto.correctOptionIds.map { CorrectAnswerEntity(dto.id, it) }
             )
 
+            // Accepted, so a tail `scheduling` entry naming it applies at
+            // [finish]: remember the paper it landed under and the hash of its
+            // stored bytes.
+            acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, contentHash))
+
             // Review progress is applied only to a question this import
             // accepted, exactly as the whole-file importer applies the file's
             // `scheduling` map. The hash is the stored bytes' hash, because
@@ -588,6 +607,60 @@ internal class StreamingImportSession(
                 attempt.paperId, attempt.title, attempt.finishedAt, restoredRows
             )
             restoredAttempts++
+        }
+    }
+
+    /**
+     * The file's `scheduling`, applied to the questions this import accepted —
+     * the same rule the whole-file importer uses for `file.scheduling`. The tail
+     * is read only after every paper, so the entries are applied here rather
+     * than while their batch was written: [acceptedSchedules] remembered where
+     * each accepted question landed. An entry naming a question that is not in
+     * that map was a skipped duplicate, so it is dropped and a schedule the
+     * user has since moved on with is not rolled back.
+     */
+    private suspend fun applyTailSchedules(tail: LegacyParser.StreamedFile) {
+        if (tail.scheduling.isEmpty()) return
+        val targets = acceptedSchedules
+        if (targets == null) {
+            Logger.w("STREAMIMPORT", "Ignoring ${tail.scheduling.size} schedule entries: " +
+                "this import did not ask to restore review progress")
+            return
+        }
+        var applied = 0
+        var skipped = 0
+        for ((questionId, schedule) in tail.scheduling) {
+            val target = targets[questionId]
+            if (target == null) {
+                skipped++
+                continue
+            }
+            db.cardStateDao().upsert(
+                CardStateEntity(
+                    paperId = target.paperId,
+                    questionId = questionId,
+                    ease = schedule.ease,
+                    intervalDays = schedule.intervalDays,
+                    dueAt = schedule.dueAt,
+                    reps = schedule.reps,
+                    lapses = schedule.lapses,
+                    leech = schedule.leech,
+                    lastReviewedAt = schedule.lastReviewedAt,
+                    difficulty = schedule.difficulty,
+                    stability = schedule.stability,
+                    cardState = runCatching {
+                        CardStateKind.valueOf(schedule.cardState)
+                    }.getOrDefault(CardStateKind.NEW),
+                    reviewCount = schedule.reviewCount,
+                    contentHash = target.contentHash
+                )
+            )
+            restoredSchedules++
+            applied++
+        }
+        if (skipped > 0) {
+            Logger.i("STREAMIMPORT", "Restored $applied card states; skipped " +
+                "$skipped schedule entries for questions this import did not accept")
         }
     }
 }

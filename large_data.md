@@ -14,24 +14,12 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-Nothing open. The whole-bank hash set is gone (see Fixed); what remains of the
-legacy whole-DTO path is either bounded or a deliberate feature (see Parked /
-accepted).
+Nothing open. The whole-bank hash set is gone (see Fixed), and the JSON import
+streams every file — a multi-paper "Export all" backup included — so no import
+path builds the whole DTO.
 
 ## Parked / accepted (deliberate)
 
-- **The app's own "Export all" JSON, re-imported through "Import questions",
-  is parsed whole-file once it is large.** `LibraryViewModel.exportAll` writes
-  every paper plus scheduling/bookmarks/attempts (`Exporter.exportAllTo`,
-  `withScheduling = true`); `isBackupFile` (`ImportViewModel.kt:218`) calls any
-  multi-paper or scheduled file a backup, and above the 4 MB stream threshold —
-  or picked from a Uri — it skips the bounded preview and falls back to a
-  whole-file `LegacyParser.parse`. This is **not** the Settings zip backup: the
-  picker classifies that (`PickedArchive.BACKUP`) and refuses it with
-  "Restore it from Settings → Restore backup" (`LibraryScreen.kt:254-258`).
-  The JSON round-trip is deliberate (`ImportBackupRestoreTest` pins the file
-  the Import button writes); streaming it needs a multi-paper streaming reader
-  the parser does not have.
 - **Search is `LIKE '%q%'`** — a full scan. Instant search is on hold by request
   (FTS5 paused).
 - **`observeBookmarks()` full id list** in `TestViewModel.kt:~170` and
@@ -53,6 +41,22 @@ accepted).
 
 ## Fixed
 
+- **A large "Export all" JSON — a library backup — was parsed whole-file when
+  re-imported.** `loadLargeJson` called any multi-paper or scheduled file a
+  backup "the bounded preview cannot represent" and fell back to
+  `LegacyParser.parse`, building the entire DTO (every paper, question, option
+  and inlined image) on the heap while the import ran. The reader already walked
+  every paper (`LegacyParser.streamImport`), so the preview now covers backups
+  too: the first paper is sampled for editing, `totalQuestions` counts the whole
+  file, and the import streams every paper through `StreamingImportSession`.
+  Review progress sits after the papers, so the session remembers where each
+  accepted question landed (`captureSchedules`) and applies the tail's
+  `scheduling` at `finish`, on the whole-file importer's rule (a skipped
+  duplicate is not rolled back). `StreamingImporterEquivalenceTest` now diffs
+  `card_state` too, over a multi-paper scheduled bank and a re-import after a
+  card moved on; `BackupSchedulingTest` streams the app's own export. The
+  Settings zip backup is unchanged and still refused by the import picker
+  (`PickedArchive.BACKUP`).
 - **Every whole-file JSON/docx import read the whole content-hash table** —
   `Importer.import` opened with
   `questionDao.getAllContentHashes().toHashSet()`: a million-row scan into a

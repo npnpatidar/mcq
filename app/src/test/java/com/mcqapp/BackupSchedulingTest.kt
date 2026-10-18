@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
+import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.repository.McqRepository
@@ -115,6 +116,40 @@ class BackupSchedulingTest {
         assertEquals(before.intervalDays, after.intervalDays)
         assertEquals(before.lastReviewedAt, after.lastReviewedAt)
         // The FSRS memory model travels with the backup too.
+        assertEquals(before.difficulty, after.difficulty, 0.0001)
+        assertEquals(before.stability, after.stability, 0.0001)
+        assertEquals(before.state, after.state)
+        assertEquals(before.reviewCount, after.reviewCount)
+    }
+
+    /**
+     * The import screen now streams a large "Export all" JSON instead of
+     * holding it as one DTO; that path must keep the review progress the export
+     * carries, exactly as the whole-file restore does.
+     */
+    @Test
+    fun aStreamedBackupKeepsTheSchedule() = runBlocking {
+        studyOnce()
+        val before = repository.cardState("p1", "q1")!!
+        val json = exportAllJson()
+
+        // Fresh database: nothing but the file.
+        db.close()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        repository = McqRepository(db, context)
+
+        StreamingImporter(db, captureSchedules = true)
+            .import({ java.io.ByteArrayInputStream(json.toByteArray()) })
+
+        val after = repository.cardState("p1", "q1")
+        assertTrue("the card should exist after a streamed restore", after != null)
+        assertEquals(before.reps, after!!.reps)
+        assertEquals(before.ease, after.ease, 0.0001)
+        assertEquals(before.intervalDays, after.intervalDays)
+        assertEquals(before.lastReviewedAt, after.lastReviewedAt)
         assertEquals(before.difficulty, after.difficulty, 0.0001)
         assertEquals(before.stability, after.stability, 0.0001)
         assertEquals(before.state, after.state)

@@ -328,7 +328,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                             output = out,
                             manifest = manifest,
                             content = { w ->
-                                com.mcqapp.data.io.Exporter(db).exportAllTo(w)
+                                // The zip carries the rows verbatim in
+                                // study.json, so the question-keyed map would
+                                // only duplicate them.
+                                com.mcqapp.data.io.Exporter(db)
+                                    .exportAllTo(w, withScheduling = false)
                             },
                             study = { w ->
                                 val source = com.mcqapp.data.backup.BackupSource(db)

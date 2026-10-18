@@ -39,6 +39,9 @@ suspend fun QuestionDao.getSessionRefsByIdsChunked(ids: List<String>): List<Sess
 suspend fun QuestionDao.countUngradedForCategoriesChunked(categoryIds: List<String>): Int =
     categoryIds.chunks().sumOf { countUngradedForCategories(it) }
 
+suspend fun QuestionDao.countInCategoriesChunked(categoryIds: List<String>): Int =
+    categoryIds.chunks().sumOf { countInCategories(it) }
+
 suspend fun QuestionDao.getHashInputsByCategoriesChunked(
     categoryIds: List<String>
 ): List<QuestionIdHash> =

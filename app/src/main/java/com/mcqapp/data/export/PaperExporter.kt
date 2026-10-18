@@ -4,6 +4,7 @@ import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.PaperDto
+import com.mcqapp.data.io.toCardScheduleDto
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.util.Logger
@@ -83,21 +84,7 @@ class PaperExporter(private val db: AppDatabase) {
         if (questionIds.isEmpty()) return emptyMap()
         return db.cardStateDao().getForQuestionsChunked(questionIds)
             .filter { it.reps > 0 || it.dueAt > 0L }
-            .associate { state ->
-                state.questionId to CardScheduleDto(
-                    ease = state.ease,
-                    intervalDays = state.intervalDays,
-                    dueAt = state.dueAt,
-                    reps = state.reps,
-                    lapses = state.lapses,
-                    leech = state.leech,
-                    lastReviewedAt = state.lastReviewedAt,
-                    difficulty = state.difficulty,
-                    stability = state.stability,
-                    cardState = state.cardState.name,
-                    reviewCount = state.reviewCount
-                )
-            }
+            .associate { state -> state.questionId to state.toCardScheduleDto() }
     }
 
     /**

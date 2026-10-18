@@ -233,9 +233,10 @@ interface QuestionDao {
         limit: Int
     ): List<QuestionPageRow>
 
-    /** How many questions one category holds, for an export's header count. */
-    @Query("SELECT COUNT(*) FROM questions WHERE categoryId = :categoryId")
-    suspend fun countByCategory(categoryId: String): Int
+    /** How many questions the given categories hold together, for an export's
+     * header count. Chunked at the call site: a paper may hold 1000 of them. */
+    @Query("SELECT COUNT(*) FROM questions WHERE categoryId IN (:categoryIds)")
+    suspend fun countInCategories(categoryIds: List<String>): Int
 
     /** One page of bookmarked questions, newest bookmark first (the order the
      * bookmarks screen has always shown). Only requested pages carry the full

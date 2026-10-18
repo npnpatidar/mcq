@@ -8,6 +8,7 @@ import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionPageRow
+import com.mcqapp.data.local.countInCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.parseContentElements
@@ -24,13 +25,19 @@ class Exporter(private val db: AppDatabase) {
     private val json = Json { prettyPrint = true }
 
     /**
-     * Writes the whole bank to [output] without ever holding it: papers and
+     * Writes the whole bank to [writer] without ever holding it: papers and
      * categories are serialised one at a time straight from the database, so
      * peak memory is a single category's questions (~a hundred), not the
      * 200 MB graph plus the ~50 MB String the in-memory encode needed. The
      * output is the same schema, just compact — the importer parses either.
+     *
+     * @param withScheduling the question-keyed review map, for the plain JSON
+     *   export. It is written a page at a time, so the bank's `card_state` is
+     *   never a map in memory either. The backup zip passes [false]: it carries
+     *   the rows verbatim in `study.json`, which this map cannot express, and
+     *   writing both would double the review data in the file.
      */
-    suspend fun exportAllTo(writer: java.io.BufferedWriter) {
+    suspend fun exportAllTo(writer: java.io.BufferedWriter, withScheduling: Boolean = true) {
         Logger.i("EXPORT", "Streaming export of all papers")
         writer.write("{\"version\":1,\"papers\":[")
         val papers = db.paperDao().getAll()
@@ -105,7 +112,9 @@ class Exporter(private val db: AppDatabase) {
                 )
             )
         }
-        writer.write("],\"warnings\":[],\"scheduling\":{},\"passages\":[")
+        writer.write("],\"warnings\":[],\"scheduling\":{")
+        if (withScheduling) writeScheduling(writer)
+        writer.write("},\"passages\":[")
         val allPassages = db.passageDao().getAll()
         allPassages.forEachIndexed { pIndex, passage ->
             if (pIndex > 0) writer.write(",")
@@ -114,6 +123,35 @@ class Exporter(private val db: AppDatabase) {
         writer.write("]}")
         writer.flush()
         Logger.i("EXPORT", "Streamed ${papers.size} papers, ${allPassages.size} passages")
+    }
+
+    /**
+     * The question-keyed review map, one keyset page at a time.
+     *
+     * This is what the streaming rewrite of the whole-bank export dropped: the
+     * plain JSON export wrote `{}` here, so a bank exported and imported lost
+     * every schedule, and no test noticed because the method that carried them
+     * had no production caller left. Untouched cards are skipped by the same
+     * rule the DTO builder uses — no reps and no due date is a question nobody
+     * studied — and the rows are written as they are read, never as a map.
+     */
+    private suspend fun writeScheduling(writer: java.io.BufferedWriter) {
+        var afterRowId = Long.MIN_VALUE
+        var first = true
+        while (true) {
+            val page = db.cardStateDao().pageAfterRowId(afterRowId, EXPORT_PAGE)
+            if (page.isEmpty()) break
+            for (row in page) {
+                val state = row.state
+                if (state.reps <= 0 && state.dueAt <= 0L) continue
+                if (!first) writer.write(",")
+                first = false
+                writer.write(JsonPrimitive(state.questionId).toString())
+                writer.write(":")
+                writer.write(json.encodeToString(CardScheduleDto.serializer(), state.toCardScheduleDto()))
+            }
+            afterRowId = page.last().rowid
+        }
     }
 
     /**
@@ -172,21 +210,7 @@ class Exporter(private val db: AppDatabase) {
             scheduling = if (withScheduling) {
                 db.cardStateDao().getAll()
                     .filter { it.reps > 0 || it.dueAt > 0L }
-                    .associate { state ->
-                        state.questionId to CardScheduleDto(
-                            ease = state.ease,
-                            intervalDays = state.intervalDays,
-                            dueAt = state.dueAt,
-                            reps = state.reps,
-                            lapses = state.lapses,
-                            leech = state.leech,
-                            lastReviewedAt = state.lastReviewedAt,
-                            difficulty = state.difficulty,
-                            stability = state.stability,
-                            cardState = state.cardState.name,
-                            reviewCount = state.reviewCount
-                        )
-                    }
+                    .associate { state -> state.questionId to state.toCardScheduleDto() }
             } else {
                 emptyMap()
             }
@@ -220,8 +244,7 @@ class Exporter(private val db: AppDatabase) {
             CategoryFilter.subtreeIds(allCategories, rootId)
         }
         val categories = allCategories.filter { it.id in selected }
-        var total = 0
-        for (category in categories) total += db.questionDao().countByCategory(category.id)
+        val total = db.questionDao().countInCategoriesChunked(categories.map { it.id })
         return streamFor(paper, categories, total)
     }
 

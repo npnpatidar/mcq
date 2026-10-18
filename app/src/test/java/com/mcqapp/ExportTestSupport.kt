@@ -98,11 +98,17 @@ fun apkgOfQuestions(
     scheduling
 )
 
-/** Every question id the walk yields, in order. */
+/**
+ * Every question id the Anki writer would note, in the order it notes them:
+ * the walk's questions, then the paper's own top-level list. The two are
+ * disjoint for anything the app writes.
+ */
 fun questionIdsOf(paper: PaperDto): List<String> {
+    val stream = PaperStream.of(paper)
     val ids = mutableListOf<String>()
     runBlocking {
-        PaperStream.of(paper).walk(onCategory = {}, onQuestion = { ids += it.id })
+        stream.walk(onCategory = {}, onQuestion = { ids += it.id })
     }
+    ids += stream.looseQuestions.map { it.id }
     return ids
 }

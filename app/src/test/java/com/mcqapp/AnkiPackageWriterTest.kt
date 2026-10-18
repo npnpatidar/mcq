@@ -502,7 +502,7 @@ class AnkiPackageWriterTest {
     }
 
     @Test
-    fun flattensCategoriesDepthFirstThenTopLevelQuestions() {
+    fun notesCategoriesInDocumentOrderThenTopLevelQuestions() {
         val paper = PaperDto(
             id = "p",
             title = "T",

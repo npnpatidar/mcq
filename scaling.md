@@ -184,7 +184,7 @@ constant, not O(file size).
 1. Refs → **Paging 3**:
    - `QuestionDao` gets a `PagingSource` variant of `getRefsByCategories`
      (ordering preserved from the SQL `ORDER BY`; Room's
-     `LimitOffsetPagingSource` serves it as `LIMIT ? OFFSET ?` — see §8 Open 5
+     `LimitOffsetPagingSource` serves it as `LIMIT ? OFFSET ?` — see §8 Open 4
      for that limitation).
    - `BrowseViewModel` exposes `Pager(PAGING_SIZE = ~60)` +
      `cachedIn(viewModelScope)`.

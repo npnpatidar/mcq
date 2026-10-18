@@ -83,7 +83,8 @@ class QuestionRefTextTest {
 
     private fun paramsFor(pageSize: Int = 2): (Int?) -> PagingSource.LoadParams<Int> =
         { key ->
-            if (key == null) PagingSource.LoadParams.Refresh(null, pageSize, false)            else PagingSource.LoadParams.Append(key, pageSize, false)
+            if (key == null) PagingSource.LoadParams.Refresh(null, pageSize, false)
+            else PagingSource.LoadParams.Append(key, pageSize, false)
         }
 
     @Test

@@ -842,9 +842,6 @@ interface QuestionDao {
     )
     suspend fun getCategoryCountsFor(categoryIds: List<String>): List<CategoryCountEntity>
 
-    @Query("SELECT id FROM questions WHERE categoryId = :categoryId")
-    suspend fun getIdsByCategory(categoryId: String): List<String>
-
     /** The stored question with this content, if any: a same-content match. */
     @Query("SELECT id FROM questions WHERE contentHash = :contentHash LIMIT 1")
     suspend fun getIdByContentHash(contentHash: String): String?
@@ -878,11 +875,16 @@ interface QuestionDao {
         tags: String
     )
 
+    /**
+     * How many questions the paper holds, by the same join the paper's id list
+     * used. The delete confirmation took `.size` of that list; a
+     * million-question paper paid for the ids just to count them.
+     */
     @Query(
-        "SELECT questions.id FROM questions INNER JOIN categories " +
+        "SELECT COUNT(*) FROM questions INNER JOIN categories " +
             "ON questions.categoryId = categories.id WHERE categories.paperId = :paperId"
     )
-    suspend fun getIdsByPaper(paperId: String): List<String>
+    suspend fun countByPaper(paperId: String): Int
 
     @Query("SELECT * FROM questions WHERE id = :id")
     suspend fun getById(id: String): QuestionEntity?
@@ -1324,6 +1326,39 @@ interface BookmarkDao {
     /** How many of [questionIds] are bookmarked, for the delete confirmation. */
     @Query("SELECT COUNT(*) FROM bookmarks WHERE questionId IN (:questionIds)")
     suspend fun countForQuestions(questionIds: Collection<String>): Int
+
+    /**
+     * The bookmarks whose question belongs to [paperId]. Deleting a paper used
+     * to read every question id of the paper and chunk them through
+     * `removeAllChunked`; the relation is a join away, so a million-question
+     * paper never materialises its ids. Must run before the paper's cascade,
+     * while its questions still exist.
+     */
+    @Query(
+        "DELETE FROM bookmarks WHERE questionId IN (" +
+            "SELECT questions.id FROM questions INNER JOIN categories " +
+            "ON questions.categoryId = categories.id WHERE categories.paperId = :paperId)"
+    )
+    suspend fun removeAllByPaper(paperId: String)
+
+    /** The count form of [removeAllByPaper], for the delete confirmation. */
+    @Query(
+        "SELECT COUNT(*) FROM bookmarks WHERE questionId IN (" +
+            "SELECT questions.id FROM questions INNER JOIN categories " +
+            "ON questions.categoryId = categories.id WHERE categories.paperId = :paperId)"
+    )
+    suspend fun countByPaper(paperId: String): Int
+
+    /**
+     * The same one level down: the bookmarks whose question sits in
+     * [categoryId]. Deleting a category cascades only its own questions, so the
+     * paper-wide form cannot serve it.
+     */
+    @Query(
+        "DELETE FROM bookmarks WHERE questionId IN (" +
+            "SELECT id FROM questions WHERE categoryId = :categoryId)"
+    )
+    suspend fun removeAllByCategory(categoryId: String)
 
     @Query("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE questionId = :questionId)")
     suspend fun isBookmarked(questionId: String): Boolean

@@ -14,20 +14,13 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-### 1. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
-`PaperStore.kt:~121` and `:~139` call `getIdsByPaper(paperId)`, returning every
-question id before deleting (downstream `removeAllChunked` /
-`countForQuestionsChunked` chunk it, but the id list itself is the peak).
-
-Fix shape: chunk the id read too, or delete/count by `paperId` in SQL.
-
-### 2. `FsrsTuner.optimize` — whole review log
+### 1. `FsrsTuner.optimize` — whole review log
 `FsrsTuner.kt:~44`: `db.reviewLogDao().getAll()` then `buildFsrsTrainingCards`
 over it. Tuning on a million reviews holds the log.
 
 Fix shape: page the log into the fit.
 
-### 3. The legacy in-memory `Importer` reachable outside `.apkg`
+### 2. The legacy in-memory `Importer` reachable outside `.apkg`
 - `ImportViewModel.kt:~798` — the non-preview / edited-file path (a large bank
   takes the streamed path at `:~742`).
 - `LibraryViewModel.kt:~386` — "Load sample data" (tiny asset; harmless).
@@ -59,6 +52,16 @@ non-preview caller streams too.
 
 ## Fixed
 
+- **Deleting a paper or category read the whole id list first** —
+  `PaperStore.deletePaper` / `deleteImpact` called `questionDao.getIdsByPaper`
+  (and `deleteCategory` `getIdsByCategory`), materialising every question id of
+  a million-question paper just to delete its bookmarks or count them for the
+  confirmation dialog. The paper→question relation is a join through
+  `categories`, so it is now resolved in SQL: `bookmarkDao.removeAllByPaper` /
+  `removeAllByCategory` and `bookmarkDao.countByPaper` /
+  `questionDao.countByPaper` do the delete and the count in one statement each,
+  before the cascade removes the questions. `getIdsByPaper` / `getIdsByCategory`
+  are gone.
 - **The stats Workload / Memory / Cards tabs held the whole log and the whole
   card library** — `StatsViewModel` fed them `inputOf(loadedLibrary(),
   loadedReviews())`, two lists cached for the ViewModel's life: one

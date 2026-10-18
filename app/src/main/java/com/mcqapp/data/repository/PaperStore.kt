@@ -4,9 +4,7 @@ import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
-import com.mcqapp.data.local.countForQuestionsChunked
 import com.mcqapp.data.local.getCategoryCountsForChunked
-import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
@@ -115,12 +113,12 @@ internal class PaperStore(
      * makes a single unconfirmed tap expensive.
      */
     suspend fun deleteImpact(paperId: String): McqRepository.DeleteImpact {
-        val questionIds = db.questionDao().getIdsByPaper(paperId)
+        // Counted, not listed: a million-question paper's id list was read only
+        // to take its size, for a dialog that shows four numbers.
         return McqRepository.DeleteImpact(
-            questions = questionIds.size,
+            questions = db.questionDao().countByPaper(paperId),
             attempts = db.attemptDao().countByPaper(paperId),
-            bookmarks = if (questionIds.isEmpty()) 0
-            else db.bookmarkDao().countForQuestionsChunked(questionIds),
+            bookmarks = db.bookmarkDao().countByPaper(paperId),
             schedules = db.cardStateDao().countByPaper(paperId)
         )
     }
@@ -132,9 +130,9 @@ internal class PaperStore(
         // must land together, or a crash midway leaves the database claiming a
         // test was taken against questions that no longer exist.
         db.withTransaction {
-            // Collect first: deleting the paper cascades its questions away.
-            val questionIds = db.questionDao().getIdsByPaper(paperId)
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
+            // The cascade below removes the paper's questions, and this cleanup
+            // resolves them by join, so it has to run first.
+            db.bookmarkDao().removeAllByPaper(paperId)
             // History and SM-2 cards have no path to the paper except this
             // paperId column, so a plain cascade leaves them behind as orphans:
             // attempts would still show up in History under a title that no
@@ -183,8 +181,9 @@ internal class PaperStore(
                 fromParentId = categoryId,
                 toParentId = category.parentId
             )
-            val questionIds = db.questionDao().getIdsByCategory(categoryId)
-            if (questionIds.isNotEmpty()) db.bookmarkDao().removeAllChunked(questionIds)
+            // Before the delete cascades this category's questions away; the
+            // relation is a join, so a million-question category is not listed.
+            db.bookmarkDao().removeAllByCategory(categoryId)
             db.categoryDao().deleteById(categoryId)
         }
     }

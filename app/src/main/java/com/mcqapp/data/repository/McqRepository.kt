@@ -607,14 +607,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     )
 
     /**
-     * Same save, but the questions are ids resolved in batches: a full-paper
-     * test of a huge paper never holds every question at once. The caller
-     * passes the ordered ids it already holds.
+     * Same save, but every question is resolved from the database in batches,
+     * straight off the session's order: a full-paper test of a huge paper never
+     * holds every question at once, and never materialises its id list either.
      */
     suspend fun saveAttemptStreamed(
         paperId: String,
         paperTitle: String,
-        questionIdsInOrder: List<String>,
+        order: SessionOrder,
         selections: Map<String, Set<String>>,
         negativeMarking: Double,
         durationSeconds: Long,
@@ -622,7 +622,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         dwellSeconds: Map<String, Long> = emptyMap(),
         onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
     ): Long = historyStore.saveAttemptStreamed(
-        paperId, paperTitle, questionIdsInOrder, selections, negativeMarking,
+        paperId, paperTitle, order, selections, negativeMarking,
         durationSeconds, finishedAt, dwellSeconds, onProgress
     )
     fun observeAttempts(): Flow<List<com.mcqapp.domain.Attempt>> = historyStore.observeAttempts()

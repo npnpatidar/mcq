@@ -22,6 +22,7 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.QuestionStats
 import com.mcqapp.domain.ReviewFilters
+import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
@@ -252,15 +253,22 @@ internal class HistoryStore(
     }
 
     /**
-     * The same save as [saveAttempt], but the questions are ids resolved from
-     * the database in batches: a full-paper test of a 169k-question paper
-     * would otherwise hold every question's content at once. Only the ordered
-     * ids, the tallies and one batch of result rows are in memory.
+     * The same save as [saveAttempt], but every question is resolved from the
+     * database a batch at a time, straight off the session's [order]: a
+     * full-paper test of a 169k-question paper would otherwise hold every
+     * question's content at once — and, handed one id per question, its whole
+     * id list, which at a million questions is ~80 MB of strings held for the
+     * length of the save on top of the content.
+     *
+     * The category titles a batch needs are resolved as batches meet new
+     * categories, then memoised. Reading them up front cost a second pass over
+     * every question row of the paper; the order is grouped by category, so a
+     * category is looked up at most once.
      */
     suspend fun saveAttemptStreamed(
         paperId: String,
         paperTitle: String,
-        questionIdsInOrder: List<String>,
+        order: SessionOrder,
         selections: Map<String, Set<String>>,
         negativeMarking: Double,
         durationSeconds: Long,
@@ -274,7 +282,7 @@ internal class HistoryStore(
             AttemptEntity(
                 paperId = paperId,
                 title = paperTitle,
-                totalQuestions = questionIdsInOrder.size,
+                totalQuestions = order.size,
                 correctCount = 0,
                 wrongCount = 0,
                 skippedCount = 0,
@@ -284,24 +292,30 @@ internal class HistoryStore(
                 finishedAt = finishedAt
             )
         )
-        val categoryTitles = categoryTitlesOf(
-            questionIdsInOrder.chunked(BATCH).flatMap { ids ->
-                db.questionDao().getByIdsChunked(ids).map { it.categoryId }
-            }.toSet()
-        )
-        for (batch in questionIdsInOrder.chunked(BATCH)) {
-            // Authored order inside the batch, not the database's.
-            val entities = db.questionDao().getByIdsChunked(batch).associateBy { it.id }
-            val ordered = batch.mapNotNull { entities[it] }
+        val categoryTitles = HashMap<String, String>()
+        val knownCategories = HashSet<String>()
+        var start = 0
+        while (start < order.size) {
+            val end = minOf(start + BATCH, order.size)
+            val ids = (start until end).map { order.idAt(it) }
+            // Session order inside the batch, not the database's.
+            val entities = db.questionDao().getByIdsChunked(ids).associateBy { it.id }
+            val batch = ids.mapNotNull { entities[it] }
+            val newCategories = batch.map { it.categoryId }.toSet() - knownCategories
+            if (newCategories.isNotEmpty()) {
+                knownCategories += newCategories
+                categoryTitles += categoryTitlesOf(newCategories)
+            }
             val rows = mutableListOf<QuestionResultEntity>()
             scoreBatch(
-                mapper.toDomainBulk(ordered), selections, negativeMarking,
+                mapper.toDomainBulk(batch), selections, negativeMarking,
                 categoryTitles, dwellSeconds, tally, rows
             )
             db.attemptDao().insertResults(rows.map { it.copy(attemptId = attemptId) })
             db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, rows)
             stored += rows.size
-            onProgress(stored, questionIdsInOrder.size)
+            onProgress(stored, order.size)
+            start = end
         }
         db.attemptDao().updateTally(
             attemptId,
@@ -313,7 +327,7 @@ internal class HistoryStore(
         )
         Logger.d(
             "REPO",
-            "saveAttemptStreamed(paper=$paperId, questions=${questionIdsInOrder.size}, " +
+            "saveAttemptStreamed(paper=$paperId, questions=${order.size}, " +
                 "correct=${tally.correct}, wrong=${tally.wrong}, skipped=${tally.skipped}, " +
                 "ungraded=${tally.ungraded}, score=${tally.score}/maxScore=${tally.maxScore})"
         )

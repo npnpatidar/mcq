@@ -80,11 +80,13 @@ class RepositoryTest {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         val ids = (1..5).map { "q$it" }
         ids.forEach { repository.saveQuestion(question(it, setOf("$it-a"))) }
+        val order = repository.getSessionOrderForPaper("p1")
+        assertEquals(ids, order.idsInOrder())
         val progress = mutableListOf<Pair<Int, Int>>()
         repository.saveAttemptStreamed(
             paperId = "p1",
             paperTitle = "Paper",
-            questionIdsInOrder = ids,
+            order = order,
             selections = ids.associateWith { setOf("$it-a") },
             negativeMarking = 0.0,
             durationSeconds = 10,
@@ -93,6 +95,54 @@ class RepositoryTest {
         )
         // One batch here (BATCH = 500): a single report, already at the total.
         assertEquals(listOf(ids.size to ids.size), progress)
+    }
+
+    /**
+     * The streamed save used to be handed the session's whole id list and to
+     * resolve every question twice — once to find the categories whose titles
+     * its result rows carry, once to build them. It now walks the order in
+     * batches and looks a category's title up when a batch first meets it, so
+     * this fixture puts a second category past the batch boundary: the ids come
+     * back in session order, and every batch's titles resolve.
+     */
+    @Test
+    fun streamedSaveWalksTheOrderAcrossBatchesAndResolvesTitlesLate() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat One")
+        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat Two")
+        // Explicit order: c1 before c2, whatever the titles are.
+        db.categoryDao().updateFields("c1", "p1", "Cat One", null, sortOrder = 0)
+        db.categoryDao().updateFields("c2", "p1", "Cat Two", null, sortOrder = 1)
+        // Inserted c2-first so the session order is not the insertion order.
+        val second = (1..3).map { "b$it" }
+        val first = (1..500).map { "a$it" }
+        second.forEach { repository.saveQuestion(question(it, setOf("$it-a"), categoryId = "c2")) }
+        first.forEach { repository.saveQuestion(question(it, setOf("$it-a"), categoryId = "c1")) }
+        val order = repository.getSessionOrderForPaper("p1")
+        assertEquals(503, order.size)
+        val expected = order.idsInOrder()
+        assertTrue(
+            "the second batch has to meet the second category",
+            expected.drop(500).any { it.startsWith("b") }
+        )
+        val attemptId = repository.saveAttemptStreamed(
+            paperId = "p1",
+            paperTitle = "Paper",
+            order = order,
+            selections = expected.associateWith { setOf("${it}-a") },
+            negativeMarking = 0.0,
+            durationSeconds = 60,
+            finishedAt = System.currentTimeMillis()
+        )
+        val attempt = repository.getAttempt(attemptId)!!
+        assertEquals(503, attempt.totalQuestions)
+        assertEquals(503, attempt.correctCount)
+        val results = repository.getAttemptResults(attemptId)
+        assertEquals("results follow the session order", expected, results.map { it.questionId })
+        assertEquals(
+            "every batch's category title resolves, however late it is met",
+            expected.map { if (it.startsWith("a")) "Cat One" else "Cat Two" },
+            results.map { it.categoryTitle }
+        )
     }
 
     @Test

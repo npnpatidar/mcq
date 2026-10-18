@@ -614,7 +614,7 @@ class TestViewModel(
                     repository.saveAttemptStreamed(
                         paperId = paperId,
                         paperTitle = current.paper?.title ?: "Test",
-                        questionIdsInOrder = current.order.idsInOrder(),
+                        order = current.order,
                         selections = current.selections,
                         negativeMarking = current.paper?.negativeMarking ?: 0.0,
                         durationSeconds = durationSeconds,

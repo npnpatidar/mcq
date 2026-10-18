@@ -307,9 +307,13 @@ order, filters and reorder semantics match today's behaviour.
    resolve question N+1's content (a read ahead of time — no prefetch of any
    parts other than the next card) in the FSRS/Anki spirit (#5171 class of
    lazy loading but for the "next" object). Cheap, keeps tap-to-cards < 120 ms.
-6. Submit is already streamed (`saveAttemptStreamed`). Add:
-   - `submit()` progress indicator from batch count (not from the list).
-   - Save keeps `selections` map as-is (already just answered questions).
+6. **Submit** — done: `saveAttemptStreamed` takes the session's `SessionOrder`
+   and walks it in 500-row batches, so the ~80 MB id list the caller used to
+   build for it is gone and the progress indicator comes straight from the batch
+   loop. The category titles its result rows carry used to cost a second pass
+   over every question row; a batch now resolves the categories it meets for the
+   first time, which the order's grouping by category makes at most one lookup
+   per category. `selections` stays as-is (already just the answered questions).
 
 **Targets**: opening a 250k session < 1 s first frame (session order known,
 content lazily resolved); navigation p95 < 120 ms with the next-card
@@ -889,6 +893,17 @@ over `searchText` (§4.5 + F4).
   comparing a graded card's hash against the question *row*, plus a
   picture-bearing question that must not come straight back after AGAIN.
 
+- **Submit handed the attempt one id per question** (§4.2) — `submit()` built
+  `order.idsInOrder()`, ~80 MB of strings at a million questions, and held it for
+  the length of the save, and `saveAttemptStreamed` read every question row twice:
+  once to collect the categories whose titles its result rows carry, once to score
+  them. It now takes the `SessionOrder` itself, walks it in 500-row batches, and
+  resolves a category's title the first time a batch meets it — the order is
+  grouped by category, so that is at most one lookup per category. One pass over
+  the questions, no id list. `RepositoryTest` pins the cross-batch walk: a second
+  category that only appears past the batch boundary still sets every one of its
+  rows' titles.
+
 - **Test session order held one object per question** (§4.2) — the follow-on to
   the bullet above. Even slim, a list of a million refs is one object plus one
   id `String` each: measured 80 MB retained on this host, and the shuffle and
@@ -927,14 +942,10 @@ over `searchText` (§4.5 + F4).
    has never been studied builds a million cards. No production path asks for it
    (the session pulls one card at a time; the drill asks for leeches), but the
    repository API allows it. The pull and the badge are bounded now (§8 Fixed).
-2. Test session submit: `saveAttemptStreamed` is still handed the whole ordered
-   id list (`order.idsInOrder()` — ~80 MB of strings at a million questions) and
-   two full question scans run at submit (§4.2). The order itself is bounded now
-   (§8 Fixed).
-3. Exports that build the document in memory: HTML, DOCX (body XML + hidden
+2. Exports that build the document in memory: HTML, DOCX (body XML + hidden
    payload + all media), JSON_INLINE, Anki media pool (F5). An export also still
    reads every `card_state` row of the paper in one list.
-4. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
+3. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
    `observeCategoryCounts` for library badges (F2/F3).
-5. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
+4. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
 

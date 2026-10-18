@@ -1,14 +1,20 @@
 package com.mcqapp.util
 
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -16,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
+import kotlinx.coroutines.delay
 
 /**
  * Renders a list of content elements: text, images, tables, and MathML
@@ -112,6 +119,46 @@ private fun TableElement(element: ContentElement.TableElement) {
 internal const val MATHJAX_ASSET_URL = "file:///android_asset/mathjax/tex-mml-svg.js"
 
 /**
+ * JavaScript bridge the rendered page uses to report its final height.
+ * A height is only ever an `Int`, clamped in Kotlin before it is used, so
+ * exposing the bridge to imported content cannot do more than ask for space.
+ */
+internal const val CONTENT_HEIGHT_BRIDGE = "McqContentHeight"
+
+/** A single question's page cannot sensibly be taller than this (CSS px). */
+internal const val MAX_CONTENT_HEIGHT_PX = 20_000
+
+/**
+ * Final page heights, keyed by the exact HTML.
+ *
+ * A WebView has no intrinsic height before the page loads, and MathJax
+ * replaces every `<math>` with an SVG of a different height once typesetting
+ * settles. A wrap-content WebView therefore measures twice on the frame its
+ * question appears — raw MathML first, then the typeset SVG — which is what
+ * made tables and formulas look like they were being built on screen.
+ * Remembering the settled height lets content that comes back (next/previous
+ * question, a row scrolled back into view, a list rebuilt) reserve its space
+ * from the first frame, so nothing below it moves.
+ */
+internal object ContentHeightCache {
+    private const val MAX_ENTRIES = 32
+
+    // Access-ordered LRU: pages are re-visited far more often than created.
+    private val heights = object : LinkedHashMap<String, Int>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>): Boolean =
+            size > MAX_ENTRIES
+    }
+
+    @Synchronized
+    fun get(html: String): Int? = heights[html]
+
+    @Synchronized
+    fun put(html: String, heightPx: Int) {
+        heights[html] = heightPx
+    }
+}
+
+/**
  * One flowing HTML block for content holding formulas: text and equations
  * share the browser's inline layout, so `हल करें: [x²..] x का मान?` reads
  * as one sentence. Tables stay block-level; images scale to the width.
@@ -172,6 +219,46 @@ internal fun mixedContentHtml(
         </style>
         </head>
         <body>$body</body>
+        <script>
+        // Report the height the page settles at, not the height it has while
+        // the browser is still working: MathJax's own promise resolves after
+        // the initial typeset pass, and images (data: URIs) are in by the
+        // load event, so a single report then is final. Without this the
+        // Compose side sees the raw-MathML height, then the typeset height,
+        // and the question visibly rebuilds.
+        (function () {
+          var reported = -1;
+          function report() {
+            try {
+              var body = document.body;
+              var h = Math.max(body.scrollHeight, body.getBoundingClientRect().height);
+              h = Math.ceil(h);
+              if (h > 0 && h !== reported && window.$CONTENT_HEIGHT_BRIDGE) {
+                reported = h;
+                window.$CONTENT_HEIGHT_BRIDGE.onHeight(h);
+              }
+            } catch (e) { /* a broken bridge must not break the page */ }
+          }
+          function afterTypeset() {
+            var mj = window.MathJax;
+            if (mj && mj.startup && mj.startup.promise && mj.startup.promise.then) {
+              mj.startup.promise.then(report, report);
+            } else if (mj && mj.typesetPromise) {
+              mj.typesetPromise().then(report, report);
+            } else {
+              report();
+            }
+          }
+          // Width changes (rotation, split screen, a font-scale change) reflow
+          // the page; the new height has to reach Compose too.
+          window.addEventListener('resize', function () { setTimeout(report, 0); });
+          if (document.readyState === 'complete') {
+            setTimeout(afterTypeset, 0);
+          } else {
+            window.addEventListener('load', function () { setTimeout(afterTypeset, 0); });
+          }
+        })();
+        </script>
         </html>
         """.trimIndent()
 }
@@ -251,6 +338,22 @@ private fun MixedContentView(
             ?: colorScheme.onSurface
         mixedContentHtml(elements, cssPx, color.toCssRgba())
     }
+    // The settled height of this exact page, if it has been rendered before.
+    // Remembered per page so a resize of the block (and everything below it)
+    // only ever happens the first time a page is seen.
+    var heightPx by remember(html) { mutableStateOf(ContentHeightCache.get(html)) }
+    // A page that cannot report (no JS, a missing asset) must still appear.
+    var revealUnmeasured by remember(html) { mutableStateOf(false) }
+    LaunchedEffect(html) {
+        if (heightPx == null) {
+            // Generous: this only fires when the bridge never does, and a
+            // blank block would be worse than the old wrap-content layout.
+            delay(1500)
+            if (heightPx == null) revealUnmeasured = true
+        }
+    }
+    val measuredPx = heightPx
+    val showContent = measuredPx != null || revealUnmeasured
     // Recreate the WebView when the page changes (e.g. theme toggle),
     // so the colors baked into the HTML never go stale.
     androidx.compose.runtime.key(html) {
@@ -258,12 +361,21 @@ private fun MixedContentView(
             factory = { context ->
                 WebView(context).apply {
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    // Hidden until the page reports a settled height (see the
+                    // update block); a cached height reveals it at once.
+                    alpha = 0f
                     settings.javaScriptEnabled = true
                     settings.loadWithOverviewMode = true
                     // Assets and resources stay reachable without this; it only
                     // stops the page reading arbitrary file:// paths.
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
+                    // The page is pinned to its content height, so it has
+                    // nothing to scroll; leaving it scrollable would let the
+                    // WebView eat drags meant for the question list.
+                    isVerticalScrollBarEnabled = false
+                    isHorizontalScrollBarEnabled = false
+                    overScrollMode = android.view.View.OVER_SCROLL_NEVER
                     // The page content comes from imported files. Refuse to
                     // navigate anywhere, so a link or injected markup cannot
                     // take over the frame.
@@ -276,6 +388,22 @@ private fun MixedContentView(
                         @Deprecated("Required for API < 24")
                         override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean = true
                     }
+                    // The page reports the height it settles at; see the
+                    // script in mixedContentHtml. It runs on the bridge's
+                    // thread, so hop back to the main thread and set state.
+                    addJavascriptInterface(
+                        object {
+                            @JavascriptInterface
+                            fun onHeight(px: Int) {
+                                this@apply.post {
+                                    val clamped = px.coerceIn(1, MAX_CONTENT_HEIGHT_PX)
+                                    ContentHeightCache.put(html, clamped)
+                                    heightPx = clamped
+                                }
+                            }
+                        },
+                        CONTENT_HEIGHT_BRIDGE
+                    )
                     loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
                 }
             },
@@ -286,10 +414,30 @@ private fun MixedContentView(
             onRelease = { webView ->
                 webView.onPause()
                 webView.stopLoading()
+                webView.removeJavascriptInterface(CONTENT_HEIGHT_BRIDGE)
                 (webView.parent as? android.view.ViewGroup)?.removeView(webView)
                 webView.destroy()
             },
-            modifier = modifier.padding(vertical = 4.dp)
+            // Hidden until it has something final to show: the intermediate
+            // layouts (empty view, raw MathML, typeset SVG) are what look like
+            // the question being built on screen.
+            update = { webView ->
+                webView.alpha = if (showContent) 1f else 0f
+            },
+            modifier = modifier
+                .padding(vertical = 4.dp)
+                .then(
+                    when {
+                        // CSS px in this page are density-independent like dp
+                        // (initial-scale=1 and device-width), so the reported
+                        // number is already the height in dp.
+                        measuredPx != null -> Modifier.height(measuredPx.dp)
+                        // Exactly pinned: wrapping content here would measure
+                        // the page mid-load, which is the jump being removed.
+                        !revealUnmeasured -> Modifier.height(1.dp)
+                        else -> Modifier
+                    }
+                )
         )
     }
 }

@@ -109,11 +109,16 @@ class WebViewLifecycleTest {
     }
 
     @Test
-    fun theMathLiveBridgeIsRemovedBeforeDestroying() {
-        val text = source("src/main/java/com/mcqapp/ui/editor/MathLiveEditor.kt")
-        assertTrue(
-            "the @JavascriptInterface object must be detached before destroy()",
-            text.contains("removeJavascriptInterface")
-        )
+    fun everyJavascriptBridgeIsRemovedBeforeDestroying() {
+        // A bridge object survives destroy() and keeps its native reference;
+        // the mixed-content page reports its height through one too.
+        val sites = webViewBlocks().filter { it.second.contains("addJavascriptInterface(") }
+        assertTrue("expected at least one bridged WebView, saw ${sites.size}", sites.isNotEmpty())
+        for ((path, block) in sites) {
+            assertTrue(
+                "$path: the @JavascriptInterface object must be detached before destroy()",
+                block.contains("removeJavascriptInterface(")
+            )
+        }
     }
 }

@@ -597,7 +597,7 @@ fun TestSessionScreen(
     if (showSubmitDialog) {
         val slowest = state.dwellSeconds.maxByOrNull { it.value }
         val slowestIndex = slowest?.let { entry ->
-            state.refs.indexOfFirst { it.id == entry.key }.takeIf { it >= 0 }
+            state.order.indexOfId(entry.key).takeIf { it >= 0 }
         }
         val summary = SubmitSummary.Summary(
             answered = state.answeredCount,
@@ -607,7 +607,7 @@ fun TestSessionScreen(
             slowestQuestion = slowestIndex?.plus(1),
             slowestSeconds = slowest?.value ?: 0L
         )
-        val firstFlagged = state.refs.indexOfFirst { it.id in state.flagged }
+        val firstFlagged = state.order.firstIndexOfAny(state.flagged)
         AlertDialog(
             onDismissRequest = { showSubmitDialog = false },
             title = { Text(stringResource(R.string.submit_test)) },
@@ -916,10 +916,10 @@ private fun QuestionPalette(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 // Count + key avoids boxing an Int on every composition.
-                items(count = state.questionCount, key = { state.refs[it].id }) { index ->
-                    val ref = state.refs[index]
-                    val answered = state.selections[ref.id]?.isNotEmpty() == true
-                    val flagged = ref.id in state.flagged
+                items(count = state.questionCount, key = { state.order.idAt(it) }) { index ->
+                    val id = state.order.idAt(index)
+                    val answered = state.selections[id]?.isNotEmpty() == true
+                    val flagged = id in state.flagged
                     val current = index == state.currentIndex
                     val palette = verdictColors()
                     val bg = when {

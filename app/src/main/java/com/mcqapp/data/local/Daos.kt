@@ -243,25 +243,40 @@ interface QuestionDao {
     suspend fun getRefsByCategories(categoryIds: List<String>): List<QuestionRef>
 
     /**
-     * A session's ordered questions, ids and passage membership only.
+     * A session's rows, ids and passage membership only, one keyset page at a
+     * time.
      *
      * A test session walks its order by index and resolves the one question on
-     * screen by id, so nothing else about a ref is ever read from here. The
-     * full ref above also materialises the stem preview and the explanation
+     * screen by id, so nothing else about a row is ever read. The full ref
+     * query below also materialises the stem preview and the explanation
      * elements JSON per row: ~61 MB of strings for a million questions on the
      * synthetic bank, and an explanation can hold an inline data-URI image, so
      * kilobytes per row on a real one — all of it for fields no session code
-     * reads. [SessionRef] cannot carry them, so no screen can start rendering
-     * them from a session again.
+     * reads. [SessionRefRow] carries the id, the passage, and the two cursor
+     * columns, so a session order is built without ever holding the rows.
+     *
+     * A category's rows are ordered `(sortOrder, rowid)`, exactly as
+     * [getRefsByCategoryOrdered] orders them, and a whole paper concatenates
+     * its categories in `(sortOrder, title)` — the order the join this
+     * replaced used, so the streaming build reproduces it. The keyset
+     * predicate walks a category without an OFFSET, which would rescan from
+     * the top on every page of a category a million rows deep;
+     * `Int.MIN_VALUE`/`Long.MIN_VALUE` is below every stored value, so the
+     * same statement serves the first page.
      */
     @Query(
-        "SELECT questions.id AS id, questions.passageId AS passageId FROM questions " +
-            "INNER JOIN categories ON questions.categoryId = categories.id " +
-            "WHERE questions.categoryId IN (:categoryIds) " +
-            "ORDER BY categories.sortOrder, categories.title, " +
-            "questions.sortOrder, questions.rowid"
+        "SELECT id, passageId, sortOrder, rowid AS rowId FROM questions " +
+            "WHERE categoryId = :categoryId " +
+            "AND (sortOrder > :afterSortOrder " +
+            "  OR (sortOrder = :afterSortOrder AND rowid > :afterRowId)) " +
+            "ORDER BY sortOrder, rowid LIMIT :limit"
     )
-    suspend fun getSessionRefsByCategories(categoryIds: List<String>): List<SessionRef>
+    suspend fun pageSessionRefsByCategory(
+        categoryId: String,
+        afterSortOrder: Int,
+        afterRowId: Long,
+        limit: Int
+    ): List<SessionRefRow>
 
     /**
      * The same slim rows for a known id list, in its own order — a
@@ -296,6 +311,28 @@ interface QuestionDao {
             "WHERE categories.paperId = :paperId"
     )
     suspend fun countForPaper(paperId: String): Int
+
+    /**
+     * How many of the paper's questions have no answer key — excluded from
+     * scoring entirely. One aggregate query, so the submit summary of a
+     * million-question paper does not count a million ids in Kotlin.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND NOT EXISTS (SELECT 1 FROM correct_answers ca " +
+            "WHERE ca.questionId = questions.id)"
+    )
+    suspend fun countUngradedForPaper(paperId: String): Int
+
+    /** [countUngradedForPaper] over an explicit category selection. */
+    @Query(
+        "SELECT COUNT(*) FROM questions WHERE categoryId IN (:categoryIds) " +
+            "AND NOT EXISTS (SELECT 1 FROM correct_answers ca " +
+            "WHERE ca.questionId = questions.id)"
+    )
+    suspend fun countUngradedForCategories(categoryIds: List<String>): Int
 
     /**
      * The first question of the paper a session would serve as *new*, in the
@@ -420,6 +457,17 @@ interface QuestionDao {
             "ORDER BY sortOrder, rowid"
     )
     suspend fun getRefsByCategoryOrdered(categoryId: String): List<QuestionRef>
+
+    /**
+     * The distinct passages this category's questions refer to. Export needs
+     * membership, not the members, and it used to read a whole slim ref list
+     * per category just to take the passage ids off it.
+     */
+    @Query(
+        "SELECT DISTINCT passageId FROM questions " +
+            "WHERE categoryId = :categoryId AND passageId IS NOT NULL"
+    )
+    suspend fun getPassageIdsByCategory(categoryId: String): List<String>
 
     @Query(
         "SELECT id FROM questions WHERE categoryId = :categoryId " +
@@ -1444,15 +1492,28 @@ data class QuestionRef(
 )
 
 /**
- * One question of a test session as the session needs it: the id it is
- * resolved and answered by, and the passage it moves with. A session's order
- * is a list of a million of these, so it deliberately carries nothing else —
- * a preview or explanation text on each row is tens to hundreds of megabytes
- * of strings that no session code reads.
+ * One question of a test session as a reader hands it over: the id it is
+ * resolved and answered by, and the passage it moves with. It deliberately
+ * carries nothing else — a preview or explanation text on each row is tens to
+ * hundreds of megabytes of strings that no session code reads. A session's
+ * whole order is held as a [com.mcqapp.domain.SessionOrder] now; this is the
+ * row shape for the readers that do materialise a list (mistakes, by id).
  */
 data class SessionRef(
     val id: String,
     val passageId: String? = null
+)
+
+/**
+ * One keyset page of a session's rows: the id, the passage it moves with, and
+ * the `(sortOrder, rowid)` a caller passes back to read the next page. A
+ * session order is built from these without ever holding the refs.
+ */
+data class SessionRefRow(
+    val id: String,
+    val passageId: String? = null,
+    val sortOrder: Int = 0,
+    val rowId: Long = 0
 )
 
 /**

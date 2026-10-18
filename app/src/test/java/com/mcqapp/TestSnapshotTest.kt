@@ -1,9 +1,9 @@
 package com.mcqapp
 
 import com.mcqapp.data.local.SessionRef
-import com.mcqapp.domain.PassageBlocks
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.TestSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -89,24 +89,27 @@ class TestSnapshotTest {
     private fun ref(id: String, passageId: String? = null) =
         SessionRef(id = id, passageId = passageId)
 
-    private fun bank() = listOf(
-        ref("q0"), ref("q1"), ref("q2"),
-        ref("q3", "p"), ref("q4", "p"),
-        ref("q5"), ref("q6"), ref("q7")
+    private fun bank() = SessionOrder.of(
+        listOf(
+            ref("q0"), ref("q1"), ref("q2"),
+            ref("q3", "p"), ref("q4", "p"),
+            ref("q5"), ref("q6"), ref("q7")
+        )
     )
 
     @Test
     fun aSeedSnapshotReproducesTheShuffledOrder() {
         val base = bank()
         val seed = 987654321L
-        val present = PassageBlocks.shuffleAttempt(base, seed, true) { it.passageId }
+        // What the session presents: the same call the view model makes.
+        val present = base.shuffled(seed, shuffle = true)
         val snapshot = TestSnapshot(
             paperId = "p1",
             categoryIds = listOf("c"),
             questionSeed = seed,
             questionShuffle = true
         )
-        assertEquals(present.map { it.id }, TestSnapshot.orderRefs(base, base, snapshot).map { it.id })
+        assertEquals(present.idsInOrder(), TestSnapshot.orderOf(base, snapshot)!!.idsInOrder())
     }
 
     @Test
@@ -114,8 +117,7 @@ class TestSnapshotTest {
         val base = bank()
         val seed = 42L
         val drillSeed = 24L
-        val shuffled = PassageBlocks.shuffleAttempt(base, seed, true) { it.passageId }
-        val present = PassageBlocks.sample(shuffled, 3, drillSeed) { it.passageId }
+        val present = base.shuffled(seed, shuffle = true).sampled(3, drillSeed)
         val snapshot = TestSnapshot(
             paperId = "p1",
             categoryIds = listOf("c"),
@@ -124,30 +126,30 @@ class TestSnapshotTest {
             drillSeed = drillSeed,
             drillRequested = 3
         )
-        assertEquals(present.map { it.id }, TestSnapshot.orderRefs(base, base, snapshot).map { it.id })
+        assertEquals(present.idsInOrder(), TestSnapshot.orderOf(base, snapshot)!!.idsInOrder())
     }
 
     @Test
     fun aSeedSnapshotDropsQuestionsDeletedSinceItWasTaken() {
-        val base = bank()
+        val withDelete = SessionOrder.of(
+            listOf(ref("q0"), ref("q1"), ref("q2"), ref("q4", "p"), ref("q5"), ref("q6"), ref("q7"))
+        )
         val seed = 7L
-        val withDelete = base.filter { it.id != "q3" }
-        val present = PassageBlocks.shuffleAttempt(withDelete, seed, true) { it.passageId }
+        val present = withDelete.shuffled(seed, shuffle = true)
         val snapshot = TestSnapshot(
             paperId = "p1",
             categoryIds = listOf("c"),
             questionSeed = seed,
             questionShuffle = true
         )
-        val ordered = TestSnapshot.orderRefs(withDelete, withDelete, snapshot).map { it.id }
-        assertEquals(present.map { it.id }, ordered)
+        val ordered = TestSnapshot.orderOf(withDelete, snapshot)!!.idsInOrder()
+        assertEquals(present.idsInOrder(), ordered)
         assertFalse(ordered.contains("q3"))
     }
 
     @Test
     fun aLegacySnapshotReplaysItsIdList() {
         val base = bank()
-        val present = base
         val snapshot = TestSnapshot(
             paperId = "p1",
             categoryIds = listOf("c"),
@@ -155,8 +157,26 @@ class TestSnapshotTest {
         )
         assertEquals(
             listOf("q5", "q1", "q0", "q2", "q3", "q4", "q6", "q7"),
-            TestSnapshot.orderRefs(base, present, snapshot).map { it.id }
+            TestSnapshot.orderOf(base, snapshot)!!.idsInOrder()
         )
+    }
+
+    @Test
+    fun aSnapshotOfAChangedPaperCannotResume() {
+        val base = bank()
+        val legacy = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            questionIds = listOf("q9")
+        )
+        assertNull(TestSnapshot.orderOf(base, legacy))
+        // A paper that emptied out resumes into an empty order, which the view
+        // model reads as "start fresh" and clears the snapshot for.
+        val empty = TestSnapshot.orderOf(
+            SessionOrder.empty(),
+            TestSnapshot(paperId = "p1", categoryIds = listOf("c"))
+        )!!
+        assertTrue(empty.isEmpty)
     }
 
     /**
@@ -165,7 +185,7 @@ class TestSnapshotTest {
      */
     @Test
     fun aSeedSnapshotOfABigBankStaysSmall() {
-        val base = (0 until 5000).map { ref("q$it") }
+        val base = SessionOrder.of((0 until 5000).map { ref("q$it") })
         val snapshot = TestSnapshot(
             paperId = "p1",
             categoryIds = listOf("c"),

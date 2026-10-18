@@ -2,18 +2,17 @@ package com.mcqapp.domain
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
-import com.mcqapp.data.local.SessionRef
 
 /**
- * Pages the pre-submit answer-review sheet over the session's ordered refs.
+ * Pages the pre-submit answer-review sheet over the session's order.
  *
- * The refs are already in memory (ids and passage membership only); each page
- * resolves just that slice's questions, so a 250k-question review never holds
- * every row. [loadQuestions] is injected so the paging logic is unit-testable
- * without a database.
+ * The order is already in memory, and each page resolves just that slice's
+ * questions by id, so a 250k-question review never holds every row.
+ * [loadQuestions] is injected so the paging logic is unit-testable without a
+ * database.
  */
 class SessionReviewPagingSource(
-    private val refs: List<SessionRef>,
+    private val order: SessionOrder,
     private val selections: Map<String, Set<String>>,
     private val flagged: Set<String>,
     private val pageSize: Int,
@@ -24,21 +23,21 @@ class SessionReviewPagingSource(
         params: LoadParams<Int>
     ): LoadResult<Int, AnswerReview.Row> {
         val offset = params.key ?: 0
-        if (offset >= refs.size) {
+        if (offset >= order.size) {
             return LoadResult.Page(emptyList(), prevKey = null, nextKey = null)
         }
-        val end = minOf(offset + params.loadSize.coerceAtLeast(1), refs.size)
-        val slice = refs.subList(offset, end)
-        val byId = loadQuestions(slice.map { it.id }).associateBy { it.id }
-        val rows = slice.mapIndexedNotNull { i, ref ->
-            byId[ref.id]?.let { q ->
+        val end = minOf(offset + params.loadSize.coerceAtLeast(1), order.size)
+        val ids = (offset until end).map { order.idAt(it) }
+        val byId = loadQuestions(ids).associateBy { it.id }
+        val rows = ids.mapIndexedNotNull { i, id ->
+            byId[id]?.let { q ->
                 AnswerReview.row(offset + i + 1, q, selections, flagged)
             }
         }
         return LoadResult.Page(
             data = rows,
             prevKey = if (offset > 0) (offset - pageSize).coerceAtLeast(0) else null,
-            nextKey = if (end < refs.size) end else null
+            nextKey = if (end < order.size) end else null
         )
     }
 

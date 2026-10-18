@@ -254,10 +254,15 @@ order, filters and reorder semantics match today's behaviour.
   an explanation can hold a data-URI image, so a row can be kilobytes. The
   full `QuestionRef` readers stay for the browse and passage list surfaces,
   which do render the preview (`QuestionRefTextTest`).
-- `refs` is still one `SessionRef` object per question, so 1M rows is ~110 MB
-  (id strings dominate). The order itself must become primitive: a `LongArray`
-  of question rowids (+ an `IntArray` passage index) is ~12 MB at 1M, with ids
-  resolved per visible window. That is the remaining half of the step-1 plan.
+- ~~`refs` is still one `SessionRef` object per question~~ — fixed:
+  `SessionOrder` holds the order as one UTF-8 pool of the ids (authored order)
+  plus `IntArray`s — per-row start offsets, the presentation order the shuffle
+  permutes, and a passage index. Measured on this host for a million
+  15-character ids: the ref list retained 80 MB, the order retains 27 MB, and a
+  shuffle or drill copy is one 4 MB `IntArray` where the ref list copied the
+  whole list and built one block list per question. Nothing needed a per-row
+  object: the palette and the review sheet read status by index or by id, and
+  the question on screen is resolved by id.
 - `TestSnapshot.persistProgress` no longer serialises the paper's `questionIds`
   — it stores the shuffle and drill seeds and rebuilds the order — so a write is
   proportional to the *answered* part (`selections`, `revealed`, `flagged`,
@@ -267,19 +272,20 @@ order, filters and reorder semantics match today's behaviour.
 - `openAnswerReview` accumulates `reviewRows` for the entire session (only
   rows, in batches — good — but the final list is full-session-sized and a
   giant opened dialog).
-- The palette `LazyVerticalGrid(items(refs))` is virtualised and fine, but
+- The palette `LazyVerticalGrid(items(order))` is virtualised and fine, but
   the `flagged`/`bookmarked` sets are O(answered) per lookup in compositional
   lambdas; fine. No change.
 
 **Plan**
 
-1. **Slim refs** — half done: `SessionRef(id, passageId)` is in place (the
-   planned `categoryId` turned out unused by the whole test path). Stems for
-   the palette are not fetched at all: the palette cell only needs the id to
-   read `selections`/`flagged`, and it already receives it. Remaining: replace
-   the `List<SessionRef>` order with a `LongArray` of rowids + an `IntArray`
-   passage index, resolving ids for the visible window (grid cells and the
-   review sheet) on demand.
+1. **Slim refs** — done, and past the plan. The session reader returns slim rows
+   (`SessionRef`), and the order is no longer a list of those: `SessionOrder` is
+   one id pool plus `IntArray`s, built by streaming a category at a time out of
+   a keyset query — no paper-wide join, no 1000-id `IN` list, no OFFSET. The
+   palette reads status by index and the review sheet resolves one page of ids
+   at a time, so nothing needs a per-question object. Rowid-keyed navigation was
+   considered and dropped: ids are what every reader already takes, and the pool
+   gets the same memory without giving a question a second identity.
 2. **Snapshot workload**: move the resume snapshot off DataStore:
    - New `resume_snapshot` Room row (or 4-column table: paperId, index,
      selections JSON *by deltas*, dwell map).
@@ -319,7 +325,7 @@ reconstruction; review-sheet paging order test (batch boundaries).
 ### 4.3 Drill (`Get drill` dialog / estudio-only session)
 
 Today the drill already:
-- Samples `PassageBlocks.sample(shuffled, count)` off ids only (cheap);
+- Samples `SessionOrder.sampled(count, seed)` off the order only (cheap);
 - Reuses the whole test session VM (`drillCount > 0` path).
 
 **Plan**
@@ -883,6 +889,25 @@ over `searchText` (§4.5 + F4).
   comparing a graded card's hash against the question *row*, plus a
   picture-bearing question that must not come straight back after AGAIN.
 
+- **Test session order held one object per question** (§4.2) — the follow-on to
+  the bullet above. Even slim, a list of a million refs is one object plus one
+  id `String` each: measured 80 MB retained on this host, and the shuffle and
+  drill cut each built another list (8 MB) plus one block list per question
+  (~50 MB transient). The order is now `SessionOrder`: one UTF-8 pool of the
+  ids in authored order, plus an `IntArray` of per-row start offsets, an
+  `IntArray` presentation order that the shuffle permutes, and an `IntArray`
+  passage index. Measured for a million ids: 27 MB retained, 4 MB per shuffle
+  copy, no block lists. The ids are never all materialised either — the load
+  streams one category at a time through `pageSessionRefsByCategory`, a keyset
+  walk on `(sortOrder, rowid)` whose sentinel serves the first page, into a
+  builder. Presentation is unchanged: `PassageBlocksTest` pins the block draw
+  against `List.shuffled(Random)` itself, and `SessionOrderTest` pins the rules
+  — a passage's members together, authored order intact inside a block, a drill
+  never cutting a passage in half — which is what lets an existing snapshot's
+  seed resume into the order the session presented. The ungraded count for a
+  paper or a category selection is one aggregate query instead of a count over a
+  million ids.
+
 - **Test session refs carried content** (§4.2) — the session's ref reader
   selected `searchText` and `explanation` (the elements JSON) per question,
   fields no session code reads: the order is walked by index and the question
@@ -902,8 +927,10 @@ over `searchText` (§4.5 + F4).
    has never been studied builds a million cards. No production path asks for it
    (the session pulls one card at a time; the drill asks for leeches), but the
    repository API allows it. The pull and the badge are bounded now (§8 Fixed).
-2. Test session: all 1M refs in state, whole-list shuffle, two full question
-   scans at submit (§4.2).
+2. Test session submit: `saveAttemptStreamed` is still handed the whole ordered
+   id list (`order.idsInOrder()` — ~80 MB of strings at a million questions) and
+   two full question scans run at submit (§4.2). The order itself is bounded now
+   (§8 Fixed).
 3. Exports that build the document in memory: HTML, DOCX (body XML + hidden
    payload + all media), JSON_INLINE, Anki media pool (F5). An export also still
    reads every `card_state` row of the paper in one list.

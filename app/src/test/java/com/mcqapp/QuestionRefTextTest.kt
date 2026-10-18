@@ -89,9 +89,16 @@ class QuestionRefTextTest {
 
     @Test
     fun theSessionReaderCarriesIdsAndPassageMembershipOnly() = runBlocking {
-        val refs = repository.getQuestionRefsForPaper("p1")
-        assertEquals(listOf("q1"), refs.map { it.id })
-        assertEquals(listOf("pa"), refs.map { it.passageId })
+        val order = repository.getSessionOrderForPaper("p1")
+        assertEquals(listOf("q1"), order.idsInOrder())
+        val page = db.questionDao().pageSessionRefsByCategory(
+            categoryId = "c1",
+            afterSortOrder = Int.MIN_VALUE,
+            afterRowId = Long.MIN_VALUE,
+            limit = 10
+        )
+        assertEquals("the paged reader carries the id", listOf("q1"), page.map { it.id })
+        assertEquals("and the passage it moves with", listOf("pa"), page.map { it.passageId })
         assertEquals(
             "the by-id reader is the same slim row",
             listOf(SessionRef("q1", "pa")),

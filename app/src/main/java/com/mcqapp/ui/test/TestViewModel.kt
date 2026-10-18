@@ -8,7 +8,6 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
-import com.mcqapp.data.local.SessionRef
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.AnswerReview
@@ -16,6 +15,7 @@ import com.mcqapp.domain.AutoAdvance
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.SessionReviewPagingSource
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.TestSnapshot
@@ -39,13 +39,13 @@ data class TestUiState(
     val loadError: String? = null,
     val paper: Paper? = null,
     /**
-     * The session's ordered questions — ids and passage membership only, so a
-     * million-question paper is a list of pairs rather than of content. The
-     * question on screen is resolved by id on navigation, and its passage
-     * membership is what keeps a comprehension set together through the
-     * shuffle and a drill's cut.
+     * The session's order — ids and passage membership, held as one pool with
+     * offsets rather than one object per question, so a million-question paper
+     * is tens of megabytes and not hundreds. The question on screen is
+     * resolved by id on navigation, and its passage membership is what keeps a
+     * comprehension set together through the shuffle and a drill's cut.
      */
-    val refs: List<SessionRef> = emptyList(),
+    val order: SessionOrder = SessionOrder.empty(),
     /** The question on screen, resolved by id from its ref. */
     val current: Question? = null,
     /** The passage the resolved question belongs to, when it has one. */
@@ -88,7 +88,7 @@ data class TestUiState(
 
     val answeredCount: Int get() = selections.count { it.value.isNotEmpty() }
     val isCurrentRevealed: Boolean get() = current?.id in revealed
-    val questionCount: Int get() = refs.size
+    val questionCount: Int get() = order.size
 }
 
 @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -135,9 +135,9 @@ class TestViewModel(
     private var questionShuffleEnabled: Boolean = false
     private var sessionSeed: Long = 0L
     private var drillSampleSeed: Long = 0L
-    /** The order a pending resume would present; rebuilt while the base refs
-     *  are still loaded, so the unshuffled list is not retained. */
-    private var resumeOrder: List<SessionRef> = emptyList()
+    /** The order a pending resume would present; rebuilt while the base order
+     *  is still loaded, so the unshuffled one is not retained. */
+    private var resumeOrder: SessionOrder = SessionOrder.empty()
 
     /** The card resolved ahead of the visible one, keyed by its ref id. */
     private var prefetched: Pair<String, LoadedCard>? = null
@@ -179,16 +179,17 @@ class TestViewModel(
                 Logger.d("TESTVM", "Loading paper $paperId")
                 val paper = repository.getPaper(paperId)
                 Logger.d("TESTVM", "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}")
-                // Scheduling-and-preview columns only: the session orders ids,
-                // never content (see loadQuestionRefs).
-                val refs = if (mistakesOnly) {
-                    repository.getMistakenQuestionRefs(paperId)
+                // Session order only: the load streams the ids and passage
+                // membership out of the database, so a million-question paper
+                // never materialises its refs, let alone its content.
+                val order = if (mistakesOnly) {
+                    repository.getMistakenQuestionOrder(paperId)
                 } else if (categoryIds.isEmpty()) {
-                    repository.getQuestionRefsForPaper(paperId)
+                    repository.getSessionOrderForPaper(paperId)
                 } else {
-                    repository.getQuestionRefsForCategories(categoryIds)
+                    repository.getSessionOrderForCategories(categoryIds)
                 }
-                Logger.i("TESTVM", "Loaded ${refs.size} questions, duration=${paper?.durationMinutes}min" +
+                Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesOnly) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
@@ -202,16 +203,16 @@ class TestViewModel(
                 val isDrill = drillCount > 0
                 // Block-aware: passage members move as one block, so a
                 // comprehension set is never split by the shuffle or the cut.
-                val shuffled = com.mcqapp.domain.PassageBlocks
-                    .shuffleAttempt(refs, seed, shuffleQ) { it.passageId }
+                // (A seed snapshot replays this, so the algorithm and its
+                // Random stream live in SessionOrder, not here.)
+                val shuffled = order.shuffled(seed, shuffleQ)
                 val drilled = if (isDrill) {
                     val sampleSeed = Random.nextLong()
                     drillSampleSeed = sampleSeed
                     Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffled.size}, seed=$sampleSeed")
                     // Whole blocks are taken, so the result may overshoot the
                     // requested count when a passage does not fit the cut.
-                    com.mcqapp.domain.PassageBlocks
-                        .sample(shuffled, drillCount, sampleSeed) { it.passageId }
+                    shuffled.sampled(drillCount, sampleSeed)
                 } else {
                     drillSampleSeed = 0L
                     shuffled
@@ -228,15 +229,20 @@ class TestViewModel(
                 val advance = repository.autoAdvance().first()
                 if (practice && !strict) Logger.i("TESTVM", "Practice mode on: live feedback enabled")
                 if (strict) Logger.i("TESTVM", "Strict exam mode on: aids hidden")
-                // The session orders refs; the question on screen is resolved
-                // by id when it is reached, so a 169k-question paper never
-                // holds every question's content at once.
-                val ungradedTotal = repository.countUngraded(drilled.map { it.id })
+                // Ungraded are counted by paper or by category selection — one
+                // aggregate query. Only the sampled sessions (a drill, a
+                // mistakes-only run) count by id, where the session's questions
+                // are bounded by what the user asked for.
+                val ungradedTotal = when {
+                    isDrill || mistakesOnly -> repository.countUngraded(drilled.idsInOrder())
+                    categoryIds.isEmpty() -> repository.countUngradedForPaper(paperId)
+                    else -> repository.countUngradedForCategories(categoryIds)
+                }
                 _state.update {
                     it.copy(
                         loading = false,
                         paper = paper,
-                        refs = drilled,
+                        order = drilled,
                         ungradedTotal = ungradedTotal,
                         totalSeconds = totalSeconds,
                         remainingSeconds = totalSeconds,
@@ -248,11 +254,11 @@ class TestViewModel(
                         drillRequested = if (isDrill) drillCount else 0
                     )
                 }
-                checkResumeOffer(refs)
+                checkResumeOffer(order)
                 startTimestamp = System.currentTimeMillis()
                 lastNavMillis = startTimestamp
                 dwellCommitted.clear()
-                _state.update { it.copy(dwellActive = drilled.isNotEmpty()) }
+                _state.update { it.copy(dwellActive = !drilled.isEmpty) }
                 resolveCurrent()
                 startDwellTicker()
                 if (totalSeconds > 0) startTimer()
@@ -459,7 +465,7 @@ class TestViewModel(
     }
 
     fun goTo(index: Int) {
-        if (index in _state.value.refs.indices) {
+        if (index in 0 until _state.value.order.size) {
             flushDwell()
             _state.update { it.copy(currentIndex = index) }
             // The header reads the live value, so it has to follow the
@@ -471,21 +477,22 @@ class TestViewModel(
     }
 
     /**
-     * Resolves the question on screen from its ref. Sessions hold refs only —
-     * a full paper of 169k questions cannot fit in memory as content — so the
-     * body, its options and its passage are read when the index changes.
+     * Resolves the question on screen from its order. Sessions hold an order
+     * and nothing else — a full paper of 169k questions cannot fit in memory as
+     * content — so the body, its options and its passage are read when the
+     * index changes.
      */
     private fun resolveCurrent() {
         val state = _state.value
-        val ref = state.refs.getOrNull(state.currentIndex)
-        if (ref == null) {
+        val currentId = state.order.idAtOrNull(state.currentIndex)
+        if (currentId == null) {
             prefetched = null
             _state.update { it.copy(current = null, currentPassage = null) }
             return
         }
         // The read-ahead of the previous card already holds this one: publish
         // it without a round-trip, so tapping Next is a frame, not a query.
-        val ready = prefetched?.takeIf { it.first == ref.id }?.second
+        val ready = prefetched?.takeIf { it.first == currentId }?.second
         if (ready != null) {
             prefetched = null
             publishCurrent(ready)
@@ -493,10 +500,10 @@ class TestViewModel(
             return
         }
         viewModelScope.launch {
-            val loaded = loadCurrent(ref.id)
+            val loaded = loadCurrent(currentId)
             // A navigation that raced this read wins: only publish what is
             // still on screen.
-            if (_state.value.refs.getOrNull(_state.value.currentIndex)?.id != ref.id) return@launch
+            if (_state.value.order.idAtOrNull(_state.value.currentIndex) != currentId) return@launch
             publishCurrent(loaded)
             prefetchNext()
         }
@@ -523,17 +530,17 @@ class TestViewModel(
      */
     private fun prefetchNext() {
         val state = _state.value
-        val nextRef = state.refs.getOrNull(state.currentIndex + 1) ?: run {
+        val nextId = state.order.idAtOrNull(state.currentIndex + 1) ?: run {
             prefetched = null
             return
         }
-        if (prefetched?.first == nextRef.id) return
+        if (prefetched?.first == nextId) return
         prefetched = null
         viewModelScope.launch {
-            val loaded = loadCurrent(nextRef.id)
+            val loaded = loadCurrent(nextId)
             val now = _state.value
-            if (now.refs.getOrNull(now.currentIndex + 1)?.id == nextRef.id) {
-                prefetched = loaded?.let { nextRef.id to it }
+            if (now.order.idAtOrNull(now.currentIndex + 1) == nextId) {
+                prefetched = loaded?.let { nextId to it }
             }
         }
     }
@@ -558,13 +565,12 @@ class TestViewModel(
     fun openAnswerReview() {
         if (_state.value.reviewOpen) return
         val state = _state.value
-        val refs = state.refs
-        val selections = state.selections
-        val flagged = state.flagged
         reviewPaging.value = Pager(
             PagingConfig(pageSize = REVIEW_PAGE, initialLoadSize = REVIEW_PAGE, enablePlaceholders = false)
         ) {
-            SessionReviewPagingSource(refs, selections, flagged, REVIEW_PAGE) { ids ->
+            SessionReviewPagingSource(
+                state.order, state.selections, state.flagged, REVIEW_PAGE
+            ) { ids ->
                 repository.questionsOf(repository.db().questionDao().getByIdsChunked(ids))
             }
         }.flow.cachedIn(viewModelScope)
@@ -608,7 +614,7 @@ class TestViewModel(
                     repository.saveAttemptStreamed(
                         paperId = paperId,
                         paperTitle = current.paper?.title ?: "Test",
-                        questionIdsInOrder = current.refs.map { it.id },
+                        questionIdsInOrder = current.order.idsInOrder(),
                         selections = current.selections,
                         negativeMarking = current.paper?.negativeMarking ?: 0.0,
                         durationSeconds = durationSeconds,
@@ -647,7 +653,7 @@ class TestViewModel(
      * paper + category selection. Only offered when real progress exists
      * and the paper still contains overlapping questions.
      */
-    private suspend fun checkResumeOffer(base: List<SessionRef>) {
+    private suspend fun checkResumeOffer(base: SessionOrder) {
         val raw = repository.loadTestProgress() ?: return
         val saved = TestSnapshot.fromJson(raw) ?: run {
             repository.clearTestProgress()
@@ -658,8 +664,11 @@ class TestViewModel(
             repository.clearTestProgress()
             return
         }
-        val ordered = TestSnapshot.orderRefs(base, _state.value.refs, saved)
-        if (ordered.isEmpty()) {
+        val ordered = TestSnapshot.orderOf(base, saved) ?: run {
+            repository.clearTestProgress()
+            return
+        }
+        if (ordered.isEmpty) {
             repository.clearTestProgress()
             return
         }
@@ -672,7 +681,7 @@ class TestViewModel(
     fun resume() {
         val saved = _state.value.resumeOffer ?: return
         val ordered = resumeOrder
-        if (ordered.isEmpty()) {
+        if (ordered.isEmpty) {
             discardResume()
             return
         }
@@ -686,11 +695,11 @@ class TestViewModel(
             "answered=${saved.selections.size}")
         _state.update {
             it.copy(
-                refs = ordered,
+                order = ordered,
                 selections = saved.selections.mapValues { e -> e.value.toSet() },
                 revealed = saved.revealed,
                 flagged = saved.flagged,
-                currentIndex = saved.currentIndex.coerceIn(ordered.indices),
+                currentIndex = saved.currentIndex.coerceIn(0, ordered.size - 1),
                 remainingSeconds = saved.remainingSeconds,
                 totalSeconds = saved.totalSeconds,
                 dwellSeconds = saved.dwellSeconds,
@@ -713,7 +722,7 @@ class TestViewModel(
     fun discardResume() {
         Logger.i("TESTVM", "Discarding saved progress, starting fresh")
         viewModelScope.launch { repository.clearTestProgress() }
-        resumeOrder = emptyList()
+        resumeOrder = SessionOrder.empty()
         _state.update { it.copy(resumeOffer = null) }
     }
 

@@ -2,6 +2,7 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.countUngradedForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.QuestionRef
@@ -9,6 +10,7 @@ import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.OverviewData
@@ -390,9 +392,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getQuestionsForPaper(paperId: String): List<Question> =
         questionStore.getQuestionsForPaper(paperId)
 
-    /** Ids and passage membership only: a session never materialises content. */
-    suspend fun getQuestionRefsForPaper(paperId: String): List<com.mcqapp.data.local.SessionRef> =
-        questionStore.getRefsForPaper(paperId)
+    /**
+     * A session's order for a whole paper: ids and passage membership only,
+     * streamed out of the database, never a list of question content.
+     */
+    suspend fun getSessionOrderForPaper(paperId: String): SessionOrder =
+        questionStore.getOrderForPaper(paperId)
+
+    /** [getSessionOrderForPaper] over an explicit category selection. */
+    suspend fun getSessionOrderForCategories(categoryIds: List<String>): SessionOrder =
+        questionStore.getOrderForCategories(categoryIds)
 
     /** Observed refs for browse: the list re-emits on any write. */
     fun observeQuestionRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<QuestionRef>> =
@@ -402,11 +411,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun questionsOf(
         entities: List<com.mcqapp.data.local.QuestionEntity>
     ): List<Question> = questionStore.toDomain(entities)
-
-    suspend fun getQuestionRefsForCategories(
-        categoryIds: List<String>
-    ): List<com.mcqapp.data.local.SessionRef> =
-        questionStore.getRefsForCategories(categoryIds)
 
     // --- browse list paging ---
 
@@ -644,21 +648,31 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         historyStore.getWeakestCategories(limit)
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
-        /** Mistaken questions as session refs: content is fetched when one is opened. */
-    suspend fun getMistakenQuestionRefs(
-        paperId: String
-    ): List<com.mcqapp.data.local.SessionRef> =
-        historyStore.getMistakenQuestionRefs(paperId)
+    /** Mistaken questions as a session order: content is fetched when one is opened. */
+    suspend fun getMistakenQuestionOrder(paperId: String): SessionOrder =
+        SessionOrder.of(historyStore.getMistakenQuestionRefs(paperId))
 
     /**
-     * How many of these questions have no answer key — excluded from
-     * scoring. Ids only: never loads question content to count them.
+     * How many of these questions have no answer key — excluded from scoring.
+     * Ids only: never loads question content to count them. Only the sampled
+     * sessions (a drill, mistakes-only) count by id, where the session's
+     * questions are bounded by what was asked for; whole-paper and category
+     * sessions use the aggregates below.
      */
     suspend fun countUngraded(questionIds: List<String>): Int {
         if (questionIds.isEmpty()) return 0
         val withKeys = db.correctAnswerDao().getQuestionIdsWithKeysChunked(questionIds)
         return questionIds.count { it !in withKeys }
     }
+
+    /** Ungraded questions of a whole paper: one aggregate, no ids read. */
+    suspend fun countUngradedForPaper(paperId: String): Int =
+        db.questionDao().countUngradedForPaper(paperId)
+
+    /** [countUngradedForPaper] over an explicit category selection. */
+    suspend fun countUngradedForCategories(categoryIds: List<String>): Int =
+        if (categoryIds.isEmpty()) 0
+        else db.questionDao().countUngradedForCategoriesChunked(categoryIds)
 
 suspend fun getMistakenQuestions(paperId: String): List<Question> =
         historyStore.getMistakenQuestions(paperId)

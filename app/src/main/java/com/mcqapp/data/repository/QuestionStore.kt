@@ -13,13 +13,13 @@ import com.mcqapp.data.local.getIdCategoriesByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getRefsByCategoriesChunked
-import com.mcqapp.data.local.getSessionRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
@@ -81,11 +81,6 @@ internal class QuestionStore(
         return getQuestionsForCategories(categoryIds)
     }
 
-    /**
-     * The paper's questions as session refs — the id it is answered by and the
-     * passage it moves with, never the stem, options or explanation. A session
-     * orders these and resolves the one question on screen by id.
-     */
     /** Observed refs for browse: the list re-emits on any write. */
     fun observeRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<com.mcqapp.data.local.QuestionRef>> =
         kotlinx.coroutines.flow.combine(
@@ -99,16 +94,55 @@ internal class QuestionStore(
             }
             .flowOn(kotlinx.coroutines.Dispatchers.IO)
 
-    suspend fun getRefsForPaper(paperId: String): List<com.mcqapp.data.local.SessionRef> {
+    /**
+     * The paper's questions as a session order — the ids it is answered by and
+     * the passages they move with, never the stem, options or explanation. A
+     * session walks this by index and resolves the one question on screen by
+     * id.
+     */
+    suspend fun getOrderForPaper(paperId: String): SessionOrder {
         val categoryIds = db.categoryDao().getByPaper(paperId).map { it.id }
-        if (categoryIds.isEmpty()) return emptyList()
-        return db.questionDao().getSessionRefsByCategoriesChunked(categoryIds)
+        return loadOrder(categoryIds)
     }
 
-    suspend fun getRefsForCategories(
-        categoryIds: List<String>
-    ): List<com.mcqapp.data.local.SessionRef> =
-        db.questionDao().getSessionRefsByCategoriesChunked(categoryIds)
+    /**
+     * [getOrderForPaper] over an explicit category selection, ordered the way
+     * the old paper-wide join ordered it: by `(categories.sortOrder,
+     * categories.title)`, then `(questions.sortOrder, rowid)` inside each.
+     */
+    suspend fun getOrderForCategories(categoryIds: List<String>): SessionOrder {
+        val ordered = db.categoryDao().getByIds(categoryIds)
+            .sortedWith(compareBy({ it.sortOrder }, { it.title }))
+            .map { it.id }
+        return loadOrder(ordered)
+    }
+
+    /**
+     * Streams one category at a time into [SessionOrder.Builder], a keyset
+     * page at a time, so the refs are never all in memory at once: a
+     * million-question paper is a byte pool and two IntArrays, not a million
+     * objects. The keyset cursor is the last row's `(sortOrder, rowid)`, and
+     * the sentinel is below every stored value, so one query serves the first
+     * page too.
+     */
+    private suspend fun loadOrder(categoryIds: List<String>): SessionOrder {
+        val builder = SessionOrder.Builder()
+        for (categoryId in categoryIds) {
+            var afterSortOrder = Int.MIN_VALUE
+            var afterRowId = Long.MIN_VALUE
+            while (true) {
+                val page = db.questionDao().pageSessionRefsByCategory(
+                    categoryId, afterSortOrder, afterRowId, ORDER_PAGE
+                )
+                for (row in page) builder.add(row.id, row.passageId)
+                if (page.size < ORDER_PAGE) break
+                val last = page.last()
+                afterSortOrder = last.sortOrder
+                afterRowId = last.rowId
+            }
+        }
+        return builder.build()
+    }
 
     /** Domain questions for entities a batch surface already loaded. */
     suspend fun toDomain(entities: List<QuestionEntity>): List<Question> =
@@ -476,5 +510,14 @@ internal class QuestionStore(
         if (moveAfterAnchor(member.id, anchor.id)) {
             Logger.i("REPO", "placeWithGroup(${member.id} after ${anchor.id})")
         }
+    }
+
+    private companion object {
+        /**
+         * Session rows read per keyset page. An ordinary category is one page
+         * (a thousand questions); a category a million rows deep pages
+         * through without rescanning.
+         */
+        const val ORDER_PAGE = 2000
     }
 }

@@ -1,7 +1,5 @@
 package com.mcqapp.domain
 
-import com.mcqapp.data.local.SessionRef
-
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -13,7 +11,7 @@ import kotlinx.serialization.json.Json
  * The presented order is reproduced from the shuffle/drill seeds rather than
  * from an id list: at 250k questions that list alone was tens of megabytes
  * rewritten on every answer, while the seeds are a few bytes and
- * [PassageBlocks] is deterministic in them. [questionIds] survives only to
+ * [SessionOrder] is deterministic in them. [questionIds] survives only to
  * read snapshots written before the seeds were stored.
  */
 @Serializable
@@ -66,35 +64,19 @@ data class TestSnapshot(
             return ordered + loaded.filter { it.id !in seen }
         }
 
-        /** The same reorder over the session's lightweight refs. */
-        fun reorderRefs(loaded: List<SessionRef>, savedIds: List<String>): List<SessionRef> {
-            if (savedIds.isEmpty()) return loaded
-            val byId = loaded.associateBy { it.id }
-            val ordered = savedIds.mapNotNull { byId[it] }
-            if (ordered.isEmpty()) return emptyList()
-            val seen = ordered.map { it.id }.toHashSet()
-            return ordered + loaded.filter { it.id !in seen }
-        }
-
         /**
          * The order a session presented, rebuilt from [base] (the freshly
-         * loaded, unshuffled refs). Seed snapshots reproduce the shuffle and
-         * drill cut exactly; legacy snapshots replay their saved id list over
-         * [presented] (the refs this session loaded), as they always did.
+         * loaded order, unshuffled). Seed snapshots reproduce the shuffle and
+         * drill cut exactly; legacy snapshots replay their saved id list, as
+         * they always did. Null means the paper changed too much — the caller
+         * starts fresh instead of resuming into a session missing questions.
          */
-        fun orderRefs(
-            base: List<SessionRef>,
-            presented: List<SessionRef>,
-            saved: TestSnapshot
-        ): List<SessionRef> {
-            val seed = saved.questionSeed
-                ?: return reorderRefs(presented, saved.questionIds)
-            val shuffled = PassageBlocks.shuffleAttempt(
-                base, seed, saved.questionShuffle
-            ) { it.passageId }
+        fun orderOf(base: SessionOrder, saved: TestSnapshot): SessionOrder? {
+            val seed = saved.questionSeed ?: return base.reorderedTo(saved.questionIds)
+            val shuffled = base.shuffled(seed, saved.questionShuffle)
             val drillSeed = saved.drillSeed
             return if (drillSeed != null && saved.drillRequested > 0) {
-                PassageBlocks.sample(shuffled, saved.drillRequested, drillSeed) { it.passageId }
+                shuffled.sampled(saved.drillRequested, drillSeed)
             } else {
                 shuffled
             }

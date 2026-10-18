@@ -23,9 +23,10 @@ import com.mcqapp.domain.searchableText
         QuestionStatsEntity::class,
         CardStateEntity::class,
         ReviewLogEntity::class,
-        PassageEntity::class
+        PassageEntity::class,
+        TestProgressEntity::class
     ],
-    version = 16,
+    version = 17,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -43,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun cardStateDao(): CardStateDao
     abstract fun reviewLogDao(): ReviewLogDao
     abstract fun passageDao(): PassageDao
+    abstract fun testProgressDao(): TestProgressDao
 
     companion object {
         @Volatile
@@ -425,6 +427,27 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Adds `test_progress`: the in-progress test session's answers, one row
+         * per question reached, so answering costs one small upsert instead of
+         * re-serialising every answer so far into the resume snapshot. New and
+         * empty — the answers of a session already running stay in the snapshot
+         * it was written with, and are adopted into rows on resume.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `test_progress` (" +
+                        "`paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, " +
+                        "`selection` TEXT NOT NULL, `revealed` INTEGER NOT NULL, " +
+                        "`flagged` INTEGER NOT NULL, `dwellSeconds` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`paperId`, `questionId`), " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+            }
+        }
+
+        /**
          * Fills the `searchText` columns from the element JSON already stored.
          * Keyset-paged by rowid — stable because the update never changes the
          * key — so peak memory is one batch, not a whole 250k-question table.
@@ -507,7 +530,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
-                    MIGRATION_15_16
+                    MIGRATION_15_16, MIGRATION_16_17
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

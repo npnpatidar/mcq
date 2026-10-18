@@ -304,7 +304,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     val paperCreated = paperRows.map {
                         McqBackupFormat.PaperCreated(it.id, it.createdAt)
                     }
-                    val inProgressTest = repository.loadTestProgress()
+                    // The session's answers are rows; the backup carries them
+                    // inlined in the one document the format has always had.
+                    val inProgressTest = repository.testProgressForBackup()
                     val manifest = McqBackupFormat.Manifest(
                         dbVersion = db.openHelper.readableDatabase.version,
                         appVersion = appVersion,
@@ -380,8 +382,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                             updateAnswersOnDuplicate = updateAnswers,
                             applySettings = { repository.settingsRestore(it) },
                             applyInProgress = { snapshot ->
-                                if (snapshot != null) repository.saveTestProgress(snapshot)
-                                else repository.clearTestProgress()
+                                repository.restoreTestProgress(snapshot)
                             }
                         )
                     }

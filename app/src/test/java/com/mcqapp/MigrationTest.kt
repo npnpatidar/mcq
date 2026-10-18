@@ -185,7 +185,8 @@ class MigrationTest {
                 AppDatabase.MIGRATION_12_13,
                 AppDatabase.MIGRATION_13_14,
                 AppDatabase.MIGRATION_14_15,
-                AppDatabase.MIGRATION_15_16
+                AppDatabase.MIGRATION_15_16,
+                AppDatabase.MIGRATION_16_17
             )
             .allowMainThreadQueries()
             .build()
@@ -527,11 +528,12 @@ class MigrationTest {
                     AppDatabase.MIGRATION_12_13,
                     AppDatabase.MIGRATION_13_14,
                     AppDatabase.MIGRATION_14_15,
-                    AppDatabase.MIGRATION_15_16
+                    AppDatabase.MIGRATION_15_16,
+                    AppDatabase.MIGRATION_16_17
                 )
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->16; Room validates the final schema.
+            // One open exercises 3->4->...->17; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)
@@ -671,6 +673,80 @@ class MigrationTest {
             }
         } finally {
             db.close()
+        }
+    }
+
+    /**
+     * Builds a genuine v16 file by replaying the production 6->16 migrations,
+     * with a paper and a question seeded: a 16->17 test then proves the new
+     * table lands and that its rows hang off the paper.
+     */
+    private fun createV16WithSeed() {
+        createV6(
+            insertPaper(),
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) " +
+                "VALUES ('c1','p1','Cat',NULL,0)",
+            "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage," +
+                "difficulty,marks,tags,sortOrder,contentHash) VALUES " +
+                "('q1','c1','Q one',NULL,'because',NULL,'medium',2.0,'tag',0,'hash1')"
+        )
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            AppDatabase.MIGRATION_9_10.migrate(raw)
+            AppDatabase.MIGRATION_10_11.migrate(raw)
+            AppDatabase.MIGRATION_11_12.migrate(raw)
+            AppDatabase.MIGRATION_12_13.migrate(raw)
+            AppDatabase.MIGRATION_13_14.migrate(raw)
+            AppDatabase.MIGRATION_14_15.migrate(raw)
+            AppDatabase.MIGRATION_15_16.migrate(raw)
+            raw.version = 16
+        }
+    }
+
+    /**
+     * 16->17 adds `test_progress`: the in-progress session's answers, one row per
+     * question, so writing an answer no longer re-serialises every answer so far.
+     */
+    @Test
+    fun `migration 16 to 17 adds the session answers table`() {
+        runBlocking {
+            createV16WithSeed()
+            val db = openMigrated()
+            try {
+                // Opening ran 16->17; Room's identity check on open is what
+                // proves the migrated schema matches the entity.
+                db.testProgressDao().upsertAll(
+                    listOf(
+                        com.mcqapp.data.local.TestProgressEntity(
+                            paperId = "p1",
+                            questionId = "q1",
+                            selection = "q1-a",
+                            revealed = true,
+                            flagged = true,
+                            dwellSeconds = 7
+                        )
+                    )
+                )
+                val stored = db.testProgressDao().getForPaper("p1").single()
+                assertEquals("q1-a", stored.selection)
+                assertTrue(stored.revealed)
+                assertEquals(7L, stored.dwellSeconds)
+                // The answers belong to the paper: deleting it takes them with it.
+                db.paperDao().deleteById("p1")
+                assertTrue(db.testProgressDao().getForPaper("p1").isEmpty())
+            } finally {
+                db.close()
+            }
         }
     }
 

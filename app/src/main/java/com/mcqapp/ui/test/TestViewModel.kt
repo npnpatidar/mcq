@@ -18,6 +18,7 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.SessionReviewPagingSource
 import com.mcqapp.domain.Shuffle
+import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.TimerWarnings
 import com.mcqapp.util.Logger
@@ -466,13 +467,16 @@ class TestViewModel(
 
     fun goTo(index: Int) {
         if (index in 0 until _state.value.order.size) {
+            // The question being left is the one whose answer changed: its dwell
+            // is banked by the flush below and written with the new header.
+            val leaving = _state.value.order.idAtOrNull(_state.value.currentIndex)
             flushDwell()
             _state.update { it.copy(currentIndex = index) }
             // The header reads the live value, so it has to follow the
             // question rather than keep showing the one just left.
             publishDwell(System.currentTimeMillis())
             resolveCurrent()
-            persistProgress()
+            persistProgress(questionId = leaving)
         }
     }
 
@@ -654,13 +658,21 @@ class TestViewModel(
      * and the paper still contains overlapping questions.
      */
     private suspend fun checkResumeOffer(base: SessionOrder) {
-        val raw = repository.loadTestProgress() ?: return
-        val saved = TestSnapshot.fromJson(raw) ?: run {
-            repository.clearTestProgress()
+        val document = repository.loadTestSnapshot()
+        if (document == null || !document.matches(paperId, categoryIds)) {
+            // One session is saved at a time, so this paper's answers can only
+            // be the leftovers of an abandoned one — its slot has been taken.
+            // Merging them into this session would show answers never given here.
+            repository.clearStaleTestAnswers(paperId)
             return
         }
-        if (!saved.matches(paperId, categoryIds)) return
-        if (saved.selections.isEmpty() && saved.currentIndex <= 0) {
+        // A document written before the answers moved to rows still carries
+        // them inline; writing them as rows now is what keeps the next answer
+        // from dropping everything answered before it. A row-based document has
+        // nothing to adopt, so this costs a check.
+        repository.adoptTestAnswers(document)
+        val saved = repository.resumeOffer(paperId) ?: document
+        if (!saved.hasAnswers && saved.currentIndex <= 0) {
             repository.clearTestProgress()
             return
         }
@@ -726,30 +738,44 @@ class TestViewModel(
         _state.update { it.copy(resumeOffer = null) }
     }
 
-    /** Best-effort snapshot after every discrete change (never on timer ticks). */
-    private fun persistProgress() {
+    /**
+     * Best-effort snapshot after every discrete change (never on timer ticks).
+     *
+     * The document holds the session's header — scope, seeds, index, timers — and
+     * is a few hundred bytes. The answer that changed is one `test_progress` row:
+     * [questionId] names it when the change is about a question just left, the
+     * one on screen otherwise. Serialising every answer so far, which is what
+     * this used to do, made each tap cost the whole sitting.
+     */
+    private fun persistProgress(questionId: String? = null) {
         val current = _state.value
         if (current.loading || current.questionCount == 0 || current.submitted) return
         val snapshot = TestSnapshot(
             paperId = paperId,
             categoryIds = categoryIds,
             questionIds = emptyList(),
-            selections = current.selections.mapValues { e -> e.value.toList() },
-            revealed = current.revealed,
-            flagged = current.flagged,
             currentIndex = current.currentIndex,
             remainingSeconds = current.remainingSeconds,
             totalSeconds = current.totalSeconds,
-            dwellSeconds = current.dwellSeconds,
             questionSeed = sessionSeed,
             questionShuffle = questionShuffleEnabled,
             optionShuffleSeed = optionShuffleSeed,
             drillSeed = if (drillSampleSeed != 0L) drillSampleSeed else null,
             drillRequested = current.drillRequested
         )
+        val id = questionId ?: current.order.idAtOrNull(current.currentIndex)
+        val changed = if (id == null) emptyList() else listOf(
+            TestAnswer(
+                questionId = id,
+                selection = current.selections[id] ?: emptySet(),
+                revealed = id in current.revealed,
+                flagged = id in current.flagged,
+                dwellSeconds = current.dwellSeconds[id] ?: 0L
+            )
+        )
         viewModelScope.launch {
             try {
-                repository.saveTestProgress(snapshot.toJson())
+                repository.saveTestProgress(snapshot, changed)
             } catch (e: Exception) {
                 Logger.w("TESTVM", "persistProgress failed: ${e.message}")
             }

@@ -263,12 +263,15 @@ order, filters and reorder semantics match today's behaviour.
   whole list and built one block list per question. Nothing needed a per-row
   object: the palette and the review sheet read status by index or by id, and
   the question on screen is resolved by id.
-- `TestSnapshot.persistProgress` no longer serialises the paper's `questionIds`
+- ~~`TestSnapshot.persistProgress` no longer serialises the paper's `questionIds`
   — it stores the shuffle and drill seeds and rebuilds the order — so a write is
   proportional to the *answered* part (`selections`, `revealed`, `flagged`,
-  `dwellSeconds`), not to the paper. Re-checked against `TestViewModel.kt`
-  (`questionIds = emptyList()`); a session answering hundreds of thousands of
-  questions in one sitting is still an O(answered) JSON rewrite per action.
+  `dwellSeconds`), not to the paper.~~ — and the *answered part* is off the
+  document now too: it keeps only the session's header (scope, seeds, index,
+  timers — a few hundred bytes whatever the paper), while each answer is one
+  `test_progress` row written by the action that changed it. Answering is a
+  constant-size write; reading the offer is one pass over the rows, once, on
+  screen entry.
 - `openAnswerReview` accumulates `reviewRows` for the entire session (only
   rows, in batches — good — but the final list is full-session-sized and a
   giant opened dialog).
@@ -286,17 +289,19 @@ order, filters and reorder semantics match today's behaviour.
    at a time, so nothing needs a per-question object. Rowid-keyed navigation was
    considered and dropped: ids are what every reader already takes, and the pool
    gets the same memory without giving a question a second identity.
-2. **Snapshot workload**: move the resume snapshot off DataStore:
-   - New `resume_snapshot` Room row (or 4-column table: paperId, index,
-     selections JSON *by deltas*, dwell map).
-   - `persistProgress` writes **deltas** (currently-changed selections only)
-     after each action; on resume it re-reads `questionIds` from the same
-     stored sources (PaperLoader + shuffle + drill seed is already stored:
-     store the seed, rebuild the session deterministically instead of holding
-     250k ids). Snapshot JSON stays a few KB regardless of paper size.
-   - Keep "resume by category selection" semantics exactly: the seed +
-     selected ids allow deterministic reorder; a changed DB item silently
+2. **Snapshot workload** — done, and past the plan: the header is all that stays
+   in the snapshot document (DataStore keeps one small global slot), and the
+   answers are `test_progress` rows written one upsert per action, so nothing is
+   re-serialised. The old shape of this item — a `resume_snapshot` row holding
+   selections "by deltas" — turned out to be a worse fit than a row per answer:
+   deltas still need a replay pass and a compaction story, while a keyed row per
+   question is idempotent and cascades with its paper.
+   - Resume-by-category-selection semantics are unchanged: the seed + the
+     selected category ids reproduce the order, and a changed DB item silently
      falls out — same behaviour as `TestSnapshot.matches(...)` today.
+   - The document a snapshot *was* is still readable: a snapshot written before
+     the rows existed, or restored from a backup (whose format has one inlined
+     document), inlines its answers and is adopted into rows as it resumes.
 3. Review sheet: already streams. Change only the retention scale:
    - Move to DB-backed review rows: insert rows into the `answer_review` side
      table (or reuse nothing new — actually reuse nothing new: build rows for
@@ -733,7 +738,9 @@ members pages.
    1. Study session/thread + badge counts (§4.4, per-pull cost → constant).
    2. Search two-phase + FTS (§4.5 + F4 backfill in the same migration).
    3. Browse → Paging + SQL filters + per-page reorder context (§4.1).
-   4. Test snapshot deltas + slim refs + review-sheet paging (§4.2).
+   4. Test snapshot deltas + slim refs + review-sheet paging (§4.2) — refs and
+      the snapshot are done; the review sheet's full-session `reviewRows` list
+      and its paging are what is left of this step.
 4. **Aggregate tables**: `question_stats` (§4.8) + SQL-first statistics
    (§4.9). Both touch stored data → migration + backfill.
 5. **Results + Bookmarks page their rows** (§4.7, §4.11).
@@ -755,8 +762,9 @@ feature change earlier, only on the foundations.
   aggregates, import streaming, snapshot budget.
 - **Pure-JVM perf guards** (run in CI's x86_64): assertions like
   "aggregate due count over 250k card rows < X ms", "FTS search parity with
-  the legacy walk", "snapshot JSON size ≤ f(answered)" — cheap, deterministic,
-  no Robolectric.
+  the legacy walk", "the resume document stays header-sized however much was
+  answered" (`TestSnapshotTest` pins it at under 500 bytes with 5k answers) —
+  cheap, deterministic, no Robolectric.
 - **Robolectric behavior tests** (CI only, per AGENTS.md): list paging order
   vs. legacy order, stats regressions, chunk-boundary paging.
 - **Manual matrix on device** (ARM64 host: install the `app-debug` CI
@@ -805,6 +813,7 @@ slower, so the numbers below are a floor).
 | deep-link jump by index (OFFSET 500k) | 1.4 s, inherent to `LIMIT 1 OFFSET n` |
 | `GROUP BY categoryId` over the whole table | 0.12 s, now only the library badge asks for it |
 | the same counts filtered to one paper's categories | 1.6 ms for 10k questions |
+| resume snapshot write, per answer | constant: a ~300 B header + one upsert (was O(answered): MB-scale by the end of a sitting) |
 
 Search is not instant and cannot be while it is `LIKE '%q%'` with no FTS
 index: every window is a full scan, and a rare term walks several windows
@@ -977,6 +986,23 @@ over `searchText` (§4.5 + F4).
   is identical, and `RepositoryTest` pins it. One aggregate deliberately stays:
   the library badge reads `observeCategoryCounts`, because the library shows
   every paper at once and one covering-index scan still beats a query per paper.
+
+- **The resume snapshot rewrote the whole sitting on every tap** (§4.2) — the
+  snapshot document carried every answer, so the hundred-thousandth tap
+  re-serialised everything answered before it into one DataStore string. The
+  document is now the session's *header* only — scope, order seeds, index,
+  timers, a few hundred bytes whatever the paper — and each answer is one
+  `test_progress` row (`selection`, `revealed`, `flagged`, `dwellSeconds`),
+  written by the action that changed it, cascading with its paper. `persistProgress`
+  writes the header plus the one question whose answer moved (`goTo` names the
+  question it is leaving, so its banked dwell goes with it), and the offer joins
+  the rows back into the snapshot on screen entry — one pass, once. The backup
+  needs no format change: `testProgressForBackup()` materialises the legacy
+  inlined document at export time, and a restored document is adopted into rows
+  the moment it resumes. `TestSnapshotTest` pins the header size, the round trip
+  and the row-wins merge; `TestProgressStoreTest` pins the document size after
+  300 answers, the backup document and the cleared state; `TestSessionResumeTest`
+  answers through the view model, rebuilds it and resumes.
 
 ### Open (in pain order)
 

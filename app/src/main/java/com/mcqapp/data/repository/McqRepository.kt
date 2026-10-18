@@ -11,6 +11,8 @@ import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
+import com.mcqapp.domain.TestAnswer
+import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.OverviewData
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.Flow
  * ViewModel (and the JVM tests) already programs against stable:
  *
  * - [SettingsStore] — DataStore preferences, scheduler options, resume snapshot
+ * - [TestProgressStore] — the resume snapshot's answers, one row per answer
  * - [QuestionContentMapper] — entity <-> domain mapping and the content hash
  * - [QuestionStore] — question CRUD and bulk operations
  * - [PaperStore] — papers, categories, the library tree, paper deletion
@@ -45,6 +48,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val historyStore = HistoryStore(db, mapper, questionStore)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings)
+    private val testProgress = TestProgressStore(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -145,9 +149,36 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =
         statsStore.reviewHistory(questionId)
 
-    suspend fun saveTestProgress(json: String) = settings.saveTestProgress(json)
-    suspend fun loadTestProgress(): String? = settings.loadTestProgress()
-    suspend fun clearTestProgress() = settings.clearTestProgress()
+    // --- in-progress test session (header in DataStore, answers in Room) ---
+
+    /** The header a killed test session left behind, or null. */
+    suspend fun loadTestSnapshot(): TestSnapshot? = testProgress.snapshot()
+
+    /** The header joined with its stored answers: what a resume would restore. */
+    suspend fun resumeOffer(paperId: String): TestSnapshot? = testProgress.offer(paperId)
+
+    /** Persists the header and the questions whose answer just changed. */
+    suspend fun saveTestProgress(snapshot: TestSnapshot, changed: List<TestAnswer>) =
+        testProgress.save(snapshot, changed)
+
+    /** Writes a legacy snapshot's inline answers as rows, so they are not dropped. */
+    suspend fun adoptTestAnswers(snapshot: TestSnapshot) = testProgress.adopt(snapshot)
+
+    /** Drops the snapshot and the answers of the paper it names. */
+    suspend fun clearTestProgress() = testProgress.clear()
+
+    /** Drops answers left behind by a session whose slot another paper took. */
+    suspend fun clearStaleTestAnswers(paperId: String) = testProgress.discardStale(paperId)
+
+    /** The backup's copy of the in-progress session, answers inlined. */
+    suspend fun testProgressForBackup(): String? = testProgress.forBackup()
+
+    /**
+     * Restores a backup's in-progress session: its document verbatim, with any
+     * rows it supersedes dropped. The answers inside it are adopted as rows the
+     * next time the session is offered.
+     */
+    suspend fun restoreTestProgress(document: String?) = testProgress.restore(document)
 
     /** Every preference, typed, for the backup's settings.json. */
     suspend fun settingsSnapshot() = settings.snapshot()

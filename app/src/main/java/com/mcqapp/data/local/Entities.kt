@@ -232,6 +232,43 @@ data class ReviewLogEntity(
     val intervalDaysAfter: Int? = null
 )
 
+/**
+ * One question's progress inside an in-progress test session: what was
+ * selected, whether the answer was revealed or the question flagged, and the
+ * time spent on it.
+ *
+ * Stored a row at a time so an answer costs one small upsert. The resume
+ * snapshot used to carry every answer in one JSON document, so each tap
+ * re-serialised everything answered so far — money that grows with the sitting,
+ * not with the tap. The snapshot now keeps only what a session *is* (seeds,
+ * scope, index, timers) and the answers live here.
+ *
+ * Scoped to the paper, cascading with it: deleting a paper drops its session,
+ * and re-importing one replaces the paper row, which does the same. [selection]
+ * is option ids comma-joined exactly like `question_results.selectedOptionIds`,
+ * empty when the question was reached but nothing was picked.
+ */
+@Entity(
+    tableName = "test_progress",
+    primaryKeys = ["paperId", "questionId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ]
+)
+data class TestProgressEntity(
+    val paperId: String,
+    val questionId: String,
+    val selection: String = "",
+    val revealed: Boolean = false,
+    val flagged: Boolean = false,
+    val dwellSeconds: Long = 0L
+)
+
 @Entity(tableName = "bookmarks")
 data class BookmarkEntity(
     @PrimaryKey val questionId: String,

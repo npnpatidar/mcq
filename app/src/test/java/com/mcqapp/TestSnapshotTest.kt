@@ -4,6 +4,7 @@ import com.mcqapp.data.local.SessionRef
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.SessionOrder
+import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -177,6 +178,104 @@ class TestSnapshotTest {
             TestSnapshot(paperId = "p1", categoryIds = listOf("c"))
         )!!
         assertTrue(empty.isEmpty)
+    }
+
+    // --- the answers live in rows; the document is only the header ---
+
+    /**
+     * The whole point of moving the answers out: however much was answered, the
+     * document a tap rewrites is the session's header and nothing else.
+     */
+    @Test
+    fun aHeaderStaysTheSameSizeHoweverMuchWasAnswered() {
+        val answered = (0 until 5000).associate { "q$it" to listOf("q$it-a") }
+        val session = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            selections = answered,
+            revealed = answered.keys,
+            flagged = answered.keys,
+            currentIndex = 4999,
+            remainingSeconds = 12,
+            dwellSeconds = answered.keys.associateWith { 12L },
+            questionSeed = 1L,
+            questionShuffle = true
+        )
+        val header = session.header().toJson()
+        assertTrue("header should be KB-scale, was ${header.length}", header.length < 500)
+        assertFalse(header.contains("q4999"))
+        // Only the per-question payload is dropped.
+        val stripped = session.header()
+        assertEquals(4999, stripped.currentIndex)
+        assertEquals(1L, stripped.questionSeed)
+        assertEquals(12, stripped.remainingSeconds)
+        assertTrue(stripped.selections.isEmpty())
+        assertTrue(stripped.revealed.isEmpty())
+        assertTrue(stripped.dwellSeconds.isEmpty())
+    }
+
+    /**
+     * A snapshot written before the rows existed still carries its answers. On
+     * resume they become rows, so the next answer cannot drop them: this pins
+     * that every field survives that trip. An empty selection is the one
+     * deliberate casualty — a question visited and left blank is skipped either
+     * way, so it is not restored as an answer.
+     */
+    @Test
+    fun adoptingALegacySnapshotIntoRowsLosesNothing() {
+        val legacy = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            questionIds = listOf("q2", "q1"),
+            selections = mapOf("q2" to listOf("q2-a"), "q9" to emptyList()),
+            revealed = setOf("q1"),
+            flagged = setOf("q3"),
+            currentIndex = 1,
+            remainingSeconds = 42,
+            totalSeconds = 600,
+            dwellSeconds = mapOf("q2" to 9L),
+            questionSeed = 5L,
+            questionShuffle = true
+        )
+        val resumed = legacy.header().withAnswers(legacy.answers())
+        assertEquals(listOf("q2-a"), resumed.selections["q2"])
+        assertEquals(setOf("q1"), resumed.revealed)
+        assertEquals(setOf("q3"), resumed.flagged)
+        assertEquals(mapOf("q2" to 9L), resumed.dwellSeconds)
+        assertEquals(1, resumed.currentIndex)
+        assertEquals(42, resumed.remainingSeconds)
+        assertEquals(600, resumed.totalSeconds)
+        assertEquals(5L, resumed.questionSeed)
+        assertTrue(resumed.questionShuffle)
+        assertTrue(resumed.hasAnswers)
+    }
+
+    /**
+     * Rows are the truth once a session has them; a header carrying both is
+     * mid-adoption, and the rows are the newer copy.
+     */
+    @Test
+    fun storedRowsWinOverInlineAnswers() {
+        val stale = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            selections = mapOf("q1" to listOf("q1-b")),
+            currentIndex = 3
+        )
+        val merged = stale.withAnswers(
+            listOf(TestAnswer(questionId = "q1", selection = setOf("q1-a"), dwellSeconds = 4L))
+        )
+        assertEquals(listOf("q1-a"), merged.selections["q1"])
+        assertEquals(mapOf("q1" to 4L), merged.dwellSeconds)
+        assertEquals(3, merged.currentIndex)
+    }
+
+    @Test
+    fun reachingAQuestionIsNotAnsweringIt() {
+        val visited = TestSnapshot(paperId = "p1", categoryIds = listOf("c"))
+            .withAnswers(listOf(TestAnswer(questionId = "q1", dwellSeconds = 8L)))
+        assertFalse(visited.hasAnswers)
+        assertEquals(mapOf("q1" to 8L), visited.dwellSeconds)
     }
 
     /**

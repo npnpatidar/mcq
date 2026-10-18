@@ -1155,6 +1155,29 @@ interface CardStateDao {
     suspend fun dueForPaper(paperId: String, now: Long): List<CardStateEntity>
 }
 
+/**
+ * The in-progress test session's answers, one row per question reached. See
+ * [TestProgressEntity]: the session's header (seeds, scope, index, timers) stays
+ * in the resume snapshot, while what was answered is written here a row at a
+ * time so one answer costs one small upsert.
+ */
+@Dao
+interface TestProgressDao {
+    /**
+     * Writes the questions that just changed — one row each, no read first.
+     * The whole change set of one action is one or two rows, never the sitting.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(rows: List<TestProgressEntity>)
+
+    /** Every answer of a saved session, for the resume offer. */
+    @Query("SELECT * FROM test_progress WHERE paperId = :paperId")
+    suspend fun getForPaper(paperId: String): List<TestProgressEntity>
+
+    @Query("DELETE FROM test_progress WHERE paperId = :paperId")
+    suspend fun deleteForPaper(paperId: String)
+}
+
 @Dao
 interface ReviewLogDao {
     /** Appends one graded review; a row is never updated once written. */

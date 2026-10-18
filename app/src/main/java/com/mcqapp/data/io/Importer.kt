@@ -38,11 +38,11 @@ data class ImportReport(
  * Imports an [McqFileDto] into the database.
  *
  * Single-use by design: an instance carries per-import mutable state
- * (`importedFile`, `writtenThisImport`, `storedCandidates`, `sameIdCache`)
- * that must not leak between files, so a fresh [Importer] is constructed for
- * every import — reusing one across imports would collide questions against
- * the previous file's written hashes and cached candidates. It is also not
- * safe to run two imports concurrently on one instance.
+ * (`importedFile`, `writtenThisImport`, `storedCandidates`, `sameIdCache`,
+ * `importHashCache`) that must not leak between files, so a fresh [Importer] is
+ * constructed for every import — reusing one across imports would collide
+ * questions against the previous file's written hashes and cached candidates.
+ * It is also not safe to run two imports concurrently on one instance.
  */
 class Importer(
     private val db: AppDatabase,
@@ -72,6 +72,7 @@ class Importer(
         // file's collision candidates into this one.
         storedCandidates = null
         sameIdCache = null
+        importHashCache = null
         writtenThisImport.clear()
         seenPassageIds.clear()
         importProgressLogs = 0
@@ -92,9 +93,15 @@ class Importer(
         var restoredSchedules = 0
 
         db.withTransaction {
-            // Snapshot BEFORE any writes: destructive writes cascade-delete rows,
-            // so a snapshot taken later could match hashes of already-deleted rows.
-            val existingHashes = db.questionDao().getAllContentHashes().toHashSet()
+            // Snapshot BEFORE any writes: an update can change a stored
+            // question's hash, so a probe taken later could miss a hash that
+            // was there. Only the hashes this import probes are read — the
+            // whole table was a million-row scan to answer a question about
+            // one file's hashes (the same reason `getExistingIds` exists).
+            val probeHashes = importHashes() + unscaledImportHashes()
+            val existingHashes = db.questionDao()
+                .getMatchesByContentHashesChunked(probeHashes)
+                .mapTo(HashSet()) { it.contentHash }
 
             // Scale each paper's images just before writing it and drop the
             // scaled twin when the paper is done. The previous whole-file
@@ -605,18 +612,38 @@ class Importer(
     /**
      * Every content hash this import could produce, from the scaled DTOs —
      * the same inputs the question loop hashes (and the row stores), so the
-     * collision prefetch and the per-question lookup always agree.
+     * collision prefetch, the existing-hash snapshot and the per-question
+     * lookup always agree. Scaled once per import: the snapshot needs it up
+     * front now, and [loadCollisionCandidates] reuses it.
      */
-    private fun importHashes(): Set<String> = importedFile?.papers.orEmpty()
-        .flatMap { paper ->
-            // Scale one paper at a time: only this paper's scaled twin and the
-            // hash set are live, never a second copy of the whole bank.
-            val scaled = paper.withDownscaledImages()
-            scaled.categories.flatMap { it.questions } + scaled.topLevelQuestions()
-        }
-        .mapTo(mutableSetOf()) { question ->
-            ContentHash.of(question)
-        }
+    private fun importHashes(): Set<String> {
+        importHashCache?.let { return it }
+        val hashes = importedFile?.papers.orEmpty()
+            .flatMap { paper ->
+                // Scale one paper at a time: only this paper's scaled twin and
+                // the hash set are live, never a second copy of the whole bank.
+                val scaled = paper.withDownscaledImages()
+                scaled.categories.flatMap { it.questions } + scaled.topLevelQuestions()
+            }
+            .mapTo(mutableSetOf()) { question ->
+                ContentHash.of(question)
+            }
+        importHashCache = hashes
+        return hashes
+    }
+
+    /**
+     * The hashes the paper-skip pre-check probes, which are taken *before*
+     * scaling. Downscaling can change a picture's bytes and so a question's
+     * hash, so these are not always in [importHashes]; the snapshot has to
+     * cover both or a re-import could stop skipping a paper.
+     */
+    private fun unscaledImportHashes(): Set<String> = importedFile?.papers.orEmpty()
+        .flatMap { paper -> paper.categories.flatMap { it.questions } + paper.topLevelQuestions() }
+        .mapTo(mutableSetOf()) { ContentHash.of(it) }
+
+    /** Memoised [importHashes], reset with the per-import state. */
+    private var importHashCache: Set<String>? = null
 
     /** The file being imported, kept so collision candidates can be gathered. */
     private var importedFile: McqFileDto? = null

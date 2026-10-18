@@ -740,15 +740,6 @@ interface QuestionDao {
     @Query("SELECT * FROM questions WHERE id = :id")
     fun observeById(id: String): Flow<QuestionEntity?>
 
-    /**
-     * Every content hash, column-narrow. Import dedup classification probes
-     * this set; materialising the whole `questions` table (element JSON and
-     * base64 images included) to read one string column is what made a large
-     * re-import OOM.
-     */
-    @Query("SELECT contentHash FROM questions")
-    suspend fun getAllContentHashes(): List<String>
-
     /** Every question id, column-narrow; collision probes need no body. */
     @Query("SELECT id FROM questions")
     suspend fun getAllIds(): List<String>

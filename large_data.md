@@ -14,16 +14,19 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-### 1. The legacy in-memory `Importer` reachable outside `.apkg`
-- `ImportViewModel.kt:~798` — the non-preview / edited-file path (a large bank
-  takes the streamed path at `:~742`).
-- `LibraryViewModel.kt:~386` — "Load sample data" (tiny asset; harmless).
-
-So the whole-bank hash set (`getAllContentHashes`) and whole-DTO are not solely
-an apkg concern. Fix shape: delete the legacy reader once the JSON path's last
-non-preview caller streams too.
+Nothing open. The whole-bank hash set is gone (see Fixed); what remains of the
+legacy whole-DTO path is either bounded or a deliberate feature (see Parked /
+accepted).
 
 ## Parked / accepted (deliberate)
+
+- **A JSON backup picked through "Import questions"** is still parsed
+  whole-file: `ImportViewModel.loadLargeJson` falls back to `LegacyParser.parse`
+  when the bounded preview sees a backup, because that preview cannot represent
+  papers 2+ or review progress. The feature is deliberate and tested
+  (`ImportBackupRestoreTest` pins the file the Import button writes), so it is
+  not deleted; streaming it needs a multi-paper streaming reader the parser does
+  not have. Settings → Restore backup is the streaming path.
 
 - **Search is `LIKE '%q%'`** — a full scan. Instant search is on hold by request
   (FTS5 paused).
@@ -46,6 +49,18 @@ non-preview caller streams too.
 
 ## Fixed
 
+- **Every whole-file JSON/docx import read the whole content-hash table** —
+  `Importer.import` opened with
+  `questionDao.getAllContentHashes().toHashSet()`: a million-row scan into a
+  `HashSet<String>` for every import, even a one-question file, so importing a
+  small bank into a full library was an O(bank) allocation for an O(file)
+  question. The dedup probes only ever ask about the file's own hashes, so the
+  pre-write snapshot now reads just those
+  (`getMatchesByContentHashesChunked(importHashes() + unscaledImportHashes())`,
+  the scaled and pre-scaling sets the two probes use); `getAllContentHashes` is
+  gone and `importHashes()` is memoised across its two callers. `Importer` stays
+  as the whole-file path (bounded by the 4 MB JSON threshold) and the
+  round-trip oracle.
 - **FSRS tuning held the whole review log** — `FsrsTuner.optimize` called
   `reviewLogDao.getAll()` (the log as one `List<ReviewLogEntity>`) and
   `buildFsrsTrainingCards` grouped it into a second full-bank structure beside

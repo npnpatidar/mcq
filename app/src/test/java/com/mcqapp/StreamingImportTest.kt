@@ -1,5 +1,7 @@
 package com.mcqapp
 
+import com.mcqapp.data.io.AttemptDto
+import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
@@ -37,6 +39,11 @@ class StreamingImportTest {
 
         val papers = mutableListOf<P>()
         var tail: LegacyParser.StreamedFile? = null
+        // The tail streams through the sink now, so the collector reassembles
+        // it from the callbacks rather than reading it off [tail].
+        val bookmarks = mutableListOf<String>()
+        val attempts = mutableListOf<AttemptDto>()
+        val scheduling = LinkedHashMap<String, CardScheduleDto>()
 
         override fun onPaper(header: LegacyParser.PaperHeader) {
             papers += P(header.id, header.title, header.description, header.durationMinutes, header.negativeMarking)
@@ -48,6 +55,18 @@ class StreamingImportTest {
 
         override fun onQuestions(categoryId: String, questions: List<QuestionDto>) {
             papers.last().categories.last { it.id == categoryId }.questions += questions
+        }
+
+        override fun onBookmarks(ids: List<String>) {
+            bookmarks += ids
+        }
+
+        override fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) {
+            entries.forEach { (id, schedule) -> scheduling[id] = schedule }
+        }
+
+        override fun onAttempts(attempts: List<AttemptDto>) {
+            this.attempts += attempts
         }
 
         fun asDto(): McqFileDto = McqFileDto(
@@ -62,10 +81,10 @@ class StreamingImportTest {
                     categories = p.categories.map { CategoryDto(it.id, it.title, it.parentId, it.questions.toList()) }
                 )
             },
-            bookmarks = tail?.bookmarks ?: emptyList(),
-            attempts = tail?.attempts ?: emptyList(),
+            bookmarks = bookmarks,
+            attempts = attempts,
             warnings = tail?.warnings ?: emptyList(),
-            scheduling = tail?.scheduling ?: emptyMap(),
+            scheduling = scheduling,
             passages = tail?.passages ?: emptyList()
         )
     }
@@ -181,6 +200,56 @@ class StreamingImportTest {
 
         assertEquals(listOf(2, 2, 1), sizes)
         assertEquals(listOf("q1", "q2", "q3", "q4", "q5"), ids)
+    }
+
+    @Test
+    fun theTailStreamsPastInPagesInsteadOfBeingCollected() {
+        // `bookmarks`/`scheduling`/`attempts` trail the papers. They are handed
+        // to the sink as they are read, so a studied million-question backup
+        // costs one page — not a million-entry list plus a million-entry map.
+        val json = """
+        {
+          "version": 3,
+          "papers": [{"id": "p1", "title": "P", "categories": [
+            {"id": "c1", "title": "C", "questions": [
+              {"id": "q1", "text": "One", "options": ["a"], "correctOptionIds": ["a"]}
+            ]}
+          ]}],
+          "bookmarks": ["q1", "q2", "q3", "q4", "q5"],
+          "scheduling": {
+            "q1": {"ease": 2.5, "intervalDays": 3, "dueAt": 1, "reps": 1, "lapses": 0,
+                   "leech": false, "lastReviewedAt": 1, "difficulty": 5.0,
+                   "stability": 3.0, "cardState": "REVIEW", "reviewCount": 1}
+          }
+        }
+        """.trimIndent()
+
+        var bookmarkPages = 0
+        var bookmarks = 0
+        var schedules = 0
+        val tail = LegacyParser.streamImport(
+            ByteArrayInputStream(json.toByteArray()),
+            object : LegacyParser.ImportStreamSink {
+                override fun onPaper(header: LegacyParser.PaperHeader) = Unit
+                override fun onCategory(category: CategoryDto) = Unit
+                override fun onQuestions(categoryId: String, questions: List<QuestionDto>) = Unit
+                override fun onBookmarks(ids: List<String>) {
+                    bookmarkPages++
+                    bookmarks += ids.size
+                }
+                override fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) {
+                    schedules += entries.size
+                }
+            },
+            batchSize = 2
+        )
+
+        assertEquals("five ids at a page of two", 3, bookmarkPages)
+        assertEquals(5, bookmarks)
+        assertEquals(1, schedules)
+        assertTrue("the tail is not also retained", tail.bookmarks.isEmpty())
+        assertTrue("the tail is not also retained", tail.scheduling.isEmpty())
+        assertTrue("the tail is not also retained", tail.attempts.isEmpty())
     }
 
     @Test

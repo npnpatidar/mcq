@@ -42,6 +42,8 @@ fun scanImportPreview(
     var firstPaperCategoryCount = 0
     var effectiveCategoryTitle: String? = null
     var currentCategoryTitle = "Uncategorized"
+    var scheduleCount = 0
+    var attemptCount = 0
     val sample = ArrayList<PreviewQuestion>(minOf(sampleSize, 1024))
     var total = 0
     val tail = open().use { input ->
@@ -73,14 +75,25 @@ fun scanImportPreview(
                     }
                 }
             }
+
+            // The tail streams past instead of being collected: the preview
+            // only needs counts, so a studied 1M-question backup does not
+            // build a million-entry schedule map just to show a notice.
+            override fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) {
+                scheduleCount += entries.size
+            }
+
+            override fun onAttempts(attempts: List<AttemptDto>) {
+                attemptCount += attempts.size
+            }
         })
     }
     return ImportPreview(
         header = firstHeader,
         paperCount = paperCount,
-        isBackup = paperCount > 1 || tail.scheduling.isNotEmpty(),
-        attemptCount = tail.attempts.size,
-        hasScheduling = tail.scheduling.isNotEmpty(),
+        isBackup = paperCount > 1 || scheduleCount > 0,
+        attemptCount = attemptCount,
+        hasScheduling = scheduleCount > 0,
         firstPaperCategoryCount = firstPaperCategoryCount,
         effectiveCategoryTitle = effectiveCategoryTitle ?: "Uncategorized",
         sample = sample,

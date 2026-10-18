@@ -83,8 +83,7 @@ class QuestionRefTextTest {
 
     private fun paramsFor(pageSize: Int = 2): (Int?) -> PagingSource.LoadParams<Int> =
         { key ->
-            if (key == null) PagingSource.LoadParams.Refresh(null, pageSize, false)
-            else PagingSource.LoadParams.Append(key, pageSize, false)
+            if (key == null) PagingSource.LoadParams.Refresh(null, pageSize, false)            else PagingSource.LoadParams.Append(key, pageSize, false)
         }
 
     @Test
@@ -109,7 +108,9 @@ class QuestionRefTextTest {
     @Test
     fun everyRefQueryCarriesTheFlattenedStem() = runBlocking {
         assertReadable(db.questionDao().getRefsByCategories(listOf("c1")))
-        assertReadable(db.questionDao().getRefsByCategoryOrdered("c1"))
+        // `getRefsByCategoryOrdered` is the reorder projection and deliberately
+        // carries only id/passageId — the reorder math reads nothing else, and
+        // the stem/explanation of a 1M-row category is what B2 removed from it.
         assertReadable(db.questionDao().getRefsByIds(listOf("q1")))
         assertReadable(listOfNotNull(db.questionDao().getRefById("q1")))
         assertReadable(db.questionDao().getRefsByPassageOrdered("pa"))
@@ -123,5 +124,17 @@ class QuestionRefTextTest {
         )
         assertReadable(walkPaging(2, { repository.browseRefsSource(browse) }, paramsFor()))
         assertReadable(walkPaging(2, { repository.passageMembersSource("pa") }, paramsFor()))
+    }
+
+    @Test
+    fun theReorderProjectionCarriesNoStem() = runBlocking {
+        // The reorder context is one category's positions, not its content: a
+        // category with a million questions must not load a million stems and
+        // explanations just to move one row.
+        val refs = db.questionDao().getRefsByCategoryOrdered("c1")
+        assertEquals(listOf("q1"), refs.map { it.id })
+        assertEquals(listOf("pa"), refs.map { it.passageId })
+        assertEquals(listOf(""), refs.map { it.text })
+        assertEquals(listOf(""), refs.map { it.explanation })
     }
 }

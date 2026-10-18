@@ -595,7 +595,17 @@ fun TestSessionScreen(
     }
 
     if (showSubmitDialog) {
-        val slowest = state.dwellSeconds.maxByOrNull { it.value }
+        // The on-screen question's dwell lives in its own flow now (the
+        // per-second tick no longer copies the whole map), so fold it in before
+        // picking the slowest — otherwise the question being answered right now
+        // could never win.
+        val currentId = state.currentQuestion?.id
+        val dwell = if (currentId != null && liveDwell > (state.dwellSeconds[currentId] ?: 0L)) {
+            state.dwellSeconds + (currentId to liveDwell)
+        } else {
+            state.dwellSeconds
+        }
+        val slowest = dwell.maxByOrNull { it.value }
         val slowestIndex = slowest?.let { entry ->
             state.order.indexOfId(entry.key).takeIf { it >= 0 }
         }

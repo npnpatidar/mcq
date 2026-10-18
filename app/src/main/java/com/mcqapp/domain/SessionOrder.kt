@@ -101,6 +101,10 @@ class SessionOrder private constructor(
         val seen = java.util.BitSet(size)
         for (id in savedIds) {
             val row = rowById[id] ?: continue
+            // A malformed order can repeat an id or name one twice; without the
+            // `seen` guard the repeat would write the same row again (or run
+            // `written` past `size` and throw on the fill loop below).
+            if (seen.get(row)) continue
             out[written++] = row
             seen.set(row)
         }

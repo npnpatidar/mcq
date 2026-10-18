@@ -98,6 +98,12 @@ internal class StreamingImportSession(
     /** The paper a question was written under, and its stored content hash. */
     private class ScheduleTarget(val paperId: String, val contentHash: String)
 
+    /** Logged once when a file carries schedules but the import did not ask for them. */
+    private var warnedNoScheduleCapture = false
+
+    /** Entries naming a question this import did not accept, for the summary. */
+    private var skippedSchedules = 0
+
     /** Written passages, globally, in first-member order. */
     private val passagePaper = LinkedHashMap<String, String>()
     private val passageCategory = LinkedHashMap<String, String>()
@@ -152,14 +158,64 @@ internal class StreamingImportSession(
         onProgress?.invoke(questionsSeen)
     }
 
+    /**
+     * One page of the file's `bookmarks`, written as it streams past. Replaces
+     * collecting them into the tail: a "bookmark everything" backup is up to a
+     * million ids, which used to be a live list until [finish].
+     */
+    suspend fun onBookmarks(ids: List<String>) {
+        if (ids.isEmpty()) return
+        db.withTransaction { restoreBookmarksPage(ids) }
+    }
+
+    /**
+     * One page of the file's `scheduling`, applied as it streams past. The
+     * tail is read after every paper, so [acceptedSchedules] already knows
+     * where each accepted question landed; an entry naming a question that is
+     * not there was a skipped duplicate and is dropped, the rule
+     * [applyTailSchedules] documents.
+     */
+    suspend fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) {
+        if (entries.isEmpty()) return
+        val targets = acceptedSchedules
+        if (targets == null) {
+            if (!warnedNoScheduleCapture) {
+                warnedNoScheduleCapture = true
+                Logger.w(
+                    "STREAMIMPORT",
+                    "Ignoring the file's schedule entries: this import did not ask " +
+                        "to restore review progress"
+                )
+            }
+            return
+        }
+        db.withTransaction { applySchedulePage(entries, targets) }
+    }
+
+    /** One page of the file's `attempts`, written as it streams past. */
+    suspend fun onAttempts(attempts: List<AttemptDto>) {
+        if (attempts.isEmpty()) return
+        db.withTransaction { restoreAttemptsPage(attempts) }
+    }
+
     /** Everything after the papers: passages, bookmarks, attempts, schedules. */
     suspend fun finish(tail: LegacyParser.StreamedFile) {
         finishPaper()
         writePassages(tail)
         foldPassageStrays()
-        restoreBookmarks(tail)
-        restoreAttempts(tail)
+        // The streamed path already wrote these through the `on*` handlers
+        // above, so what is left here is the whole-tail shape (`streamPapers`,
+        // the apkg importer) and the end-of-import summary.
+        restoreBookmarksPage(tail.bookmarks)
+        restoreAttemptsPage(tail.attempts)
         applyTailSchedules(tail)
+        if (skippedSchedules > 0) {
+            Logger.i(
+                "STREAMIMPORT",
+                "Restored $restoredSchedules card states; skipped $skippedSchedules " +
+                    "schedule entries for questions this import did not accept"
+            )
+        }
     }
 
     fun report() = ImportReport(
@@ -556,8 +612,8 @@ internal class StreamingImportSession(
         }
     }
 
-    private suspend fun restoreBookmarks(tail: LegacyParser.StreamedFile) {
-        for (questionId in tail.bookmarks) {
+    private suspend fun restoreBookmarksPage(ids: List<String>) {
+        for (questionId in ids) {
             if (questionId.isNotBlank() && !db.bookmarkDao().isBookmarked(questionId)) {
                 db.bookmarkDao().add(BookmarkEntity(questionId))
                 restoredBookmarks++
@@ -565,12 +621,16 @@ internal class StreamingImportSession(
         }
     }
 
-    private suspend fun restoreAttempts(tail: LegacyParser.StreamedFile) {
-        if (tail.attempts.isEmpty()) return
-        val knownAttempts = db.attemptDao().getAllAttempts()
-            .map { Triple(it.paperId, it.finishedAt, it.score) }.toHashSet()
-        for (attempt in tail.attempts) {
-            if (!knownAttempts.add(Triple(attempt.paperId, attempt.finishedAt, attempt.score))) {
+    /** Already-stored attempts, read once for the whole import, never per page. */
+    private var knownAttempts: HashSet<Triple<String, Long, Double>>? = null
+
+    private suspend fun restoreAttemptsPage(attempts: List<AttemptDto>) {
+        if (attempts.isEmpty()) return
+        val known = knownAttempts ?: db.attemptDao().getAllAttempts()
+            .mapTo(HashSet()) { Triple(it.paperId, it.finishedAt, it.score) }
+            .also { knownAttempts = it }
+        for (attempt in attempts) {
+            if (!known.add(Triple(attempt.paperId, attempt.finishedAt, attempt.score))) {
                 continue
             }
             val attemptId = db.attemptDao().insertAttempt(
@@ -623,16 +683,25 @@ internal class StreamingImportSession(
         if (tail.scheduling.isEmpty()) return
         val targets = acceptedSchedules
         if (targets == null) {
-            Logger.w("STREAMIMPORT", "Ignoring ${tail.scheduling.size} schedule entries: " +
-                "this import did not ask to restore review progress")
+            if (!warnedNoScheduleCapture) {
+                warnedNoScheduleCapture = true
+                Logger.w("STREAMIMPORT", "Ignoring the file's schedule entries: " +
+                    "this import did not ask to restore review progress")
+            }
             return
         }
-        var applied = 0
-        var skipped = 0
-        for ((questionId, schedule) in tail.scheduling) {
+        applySchedulePage(tail.scheduling.map { it.key to it.value }, targets)
+    }
+
+    /** One page of schedule entries for the questions [targets] remembers. */
+    private suspend fun applySchedulePage(
+        entries: List<Pair<String, CardScheduleDto>>,
+        targets: Map<String, ScheduleTarget>
+    ) {
+        for ((questionId, schedule) in entries) {
             val target = targets[questionId]
             if (target == null) {
-                skipped++
+                skippedSchedules++
                 continue
             }
             db.cardStateDao().upsert(
@@ -656,11 +725,6 @@ internal class StreamingImportSession(
                 )
             )
             restoredSchedules++
-            applied++
-        }
-        if (skipped > 0) {
-            Logger.i("STREAMIMPORT", "Restored $applied card states; skipped " +
-                "$skipped schedule entries for questions this import did not accept")
         }
     }
 }

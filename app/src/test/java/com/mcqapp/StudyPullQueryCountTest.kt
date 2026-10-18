@@ -12,6 +12,7 @@ import com.mcqapp.domain.QuestionOption
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -114,5 +115,50 @@ class StudyPullQueryCountTest {
             0,
             statsFor(100).answerKeySelects
         )
+    }
+
+    @Test
+    fun theDuePullReadsOneRowPerPool() = runBlocking {
+        // With due schedules the pull used to select every one of them and rank
+        // them in memory. Each pool's head is now a `LIMIT 1` read whose ORDER
+        // BY carries the same risk comparator, so the row count cannot grow
+        // with the backlog.
+        val dueSelects = mutableListOf<String>()
+        val db = Room.inMemoryDatabaseBuilder(appContext, AppDatabase::class.java)
+            .setQueryCallback(
+                RoomDatabase.QueryCallback { sql, _ ->
+                    val trimmed = sql.trimStart()
+                    if (trimmed.startsWith("SELECT cs.*") && sql.contains("FROM card_state cs")) {
+                        dueSelects += sql
+                    }
+                },
+                { it.run() }
+            )
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val repository = McqRepository(db, appContext)
+            repository.ensurePaperAndCategory("p1", "Paper 1", "c1", "Cat 1")
+            (1..200).forEach { repository.saveQuestion(question("q$it")) }
+            // Graduate every card, so all 200 have a review schedule.
+            (1..200).forEach {
+                repository.recordStudyReview("p1", "q$it", com.mcqapp.domain.ReviewGrade.GOOD, 5)
+            }
+            dueSelects.clear()
+            val now = System.currentTimeMillis() + 400L * 86_400_000L
+            val card = repository.getNextStudyCard("p1", reviewsSinceNew = 0, now = now)
+            assertNotNull("a long-overdue card is served", card)
+            assertEquals(
+                "one bounded read per due pool, not one row per due card: $dueSelects",
+                2,
+                dueSelects.size
+            )
+            assertTrue(
+                "a due pool was read without LIMIT 1: $dueSelects",
+                dueSelects.all { it.contains("LIMIT 1") }
+            )
+        } finally {
+            db.close()
+        }
     }
 }

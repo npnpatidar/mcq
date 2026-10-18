@@ -5,14 +5,22 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.stats.FsrsReplay
 import com.mcqapp.domain.stats.ReplayReview
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * [FsrsReplay.Stream] is the path the statistics screen now uses: it replays
- * one keyset page at a time, in `id` order, keeping state per card instead of
- * the per-review maps [FsrsReplay.replay] needs. The two must agree row for
- * row, because a divergence would silently move the calibration and
- * maturity numbers the page shows without any test touching a database.
+ * [FsrsReplay.Stream] is the path the statistics screen uses: it replays one
+ * keyset page at a time, in `id` order, keeping state per card instead of the
+ * per-review maps [FsrsReplay.replay] needs.
+ *
+ * Contract: **append (`id`) order is authoritative for [FsrsReplay.Stream]**.
+ * The store feeds rows by ascending `id` — each card's own append order — and
+ * the stream does not re-sort by `reviewedAt`. [FsrsReplay.replay] does sort
+ * each card's history by `(reviewedAt, id)`, so the two agree only while
+ * `reviewedAt` is monotonic with `id`; [nonMonotonicTimestampsFollowAppendOrder]
+ * pins the case where it is not. Scheduling never reads the log, so this
+ * cannot move a card's schedule.
  */
 class FsrsReplayStreamTest {
 
@@ -83,6 +91,30 @@ class FsrsReplayStreamTest {
         val firstPage = log.take(3).map { stream.accept(it) }
         val secondPage = log.drop(3).map { stream.accept(it) }
         assertEquals(FsrsReplay.replay(log, scheduler), firstPage + secondPage)
+    }
+
+    @Test
+    fun nonMonotonicTimestampsFollowAppendOrder() {
+        // A clock rollback (or a restored log) can append a row stamped before
+        // its predecessor. By contract the stream replays it in append order,
+        // so it *has* a pre-state; the batch oracle re-sorts the card's rows by
+        // `reviewedAt`, so it sees that row first and has none. Pin both, so
+        // neither the contract nor the oracle can drift silently.
+        val rollback = listOf(
+            row(1, questionId = "d", rating = 3, reviewedAt = t0 + 7 * day),
+            row(2, questionId = "d", rating = 2, reviewedAt = t0)
+        )
+        val streamedRows = streamed(rollback)
+        assertNotNull(
+            "append order gives the second row the first row's state",
+            streamedRows.last().predictedRetention
+        )
+        assertNull(
+            "the batch oracle re-sorted it first, so it has no pre-state",
+            FsrsReplay.replay(rollback, scheduler).last().predictedRetention
+        )
+        // In the normal (id-monotonic) case the two are still identical.
+        assertEquals(FsrsReplay.replay(log, scheduler), streamed(log))
     }
 
     @Test

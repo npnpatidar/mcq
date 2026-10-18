@@ -136,15 +136,54 @@ internal class StudyStore(
     ): com.mcqapp.domain.StudyCard? {
         val config = settings.schedulerConfigNow()
         resetEdited(paperId, config)
-        val pools = poolsOf(config, dueCards(paperId, now), now)
+        val scheduler = fsrs(config)
+        // The pull only ever reads the head of each pool, so each is selected by
+        // SQL (`LIMIT 1`) instead of built from every due row. The risk ranking
+        // is `Study.pools`' comparator expressed in SQL, so the served card is
+        // the one the whole-paper model would have served — without reading the
+        // backlog on the calling (main) thread.
+        val learning = db.cardStateDao().firstDueLearningForPaper(paperId, now)?.toDomain()
+        val review = db.cardStateDao().bestDueReviewForPaper(
+            paperId,
+            now,
+            com.mcqapp.domain.FsrsScheduler.DAY_MS.toDouble()
+        )?.toDomain()
         return com.mcqapp.domain.Study.pickNext(
-            pools.learning,
-            pools.reviews,
-            firstNewCard(config, paperId),
-            config.studyMode,
-            reviewsSinceNew
+            learning = listOfNotNull(
+                learning?.let {
+                    com.mcqapp.domain.StudyCard(
+                        it.questionId,
+                        com.mcqapp.domain.StudyReason.LEARNING,
+                        it
+                    )
+                }
+            ),
+            reviews = listOfNotNull(
+                review?.let {
+                    com.mcqapp.domain.StudyCard(
+                        it.questionId,
+                        reviewReason(scheduler, it, now),
+                        it
+                    )
+                }
+            ),
+            freshFirst = firstNewCard(config, paperId),
+            studyMode = config.studyMode,
+            reviewsSinceNew = reviewsSinceNew
         )
     }
+
+    /** Why a due review is served: the threshold `Study.pools` labels with. */
+    private fun reviewReason(
+        scheduler: com.mcqapp.domain.FsrsScheduler,
+        state: com.mcqapp.domain.CardState,
+        now: Long
+    ): com.mcqapp.domain.StudyReason =
+        if (scheduler.retention(state, now) < com.mcqapp.domain.Study.LOW_RECALL_RISK_RETENTION) {
+            com.mcqapp.domain.StudyReason.LOW_RECALL_RISK
+        } else {
+            com.mcqapp.domain.StudyReason.DUE
+        }
 
     /**
      * The paper's schedules that are due now and still describe their

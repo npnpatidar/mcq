@@ -115,6 +115,16 @@ data class QuestionIdHash(
 )
 
 /**
+ * One question's position inside its category: only what a reorder needs to
+ * validate and renumber. Selecting the whole row would read the stem, image
+ * and explanation JSON of every row of the category — megabytes per thousand.
+ */
+data class QuestionOrderRow(
+    val id: String,
+    val sortOrder: Int
+)
+
+/**
  * One question row with the cursor column the export walk orders it by.
  * `questions` orders by `(sortOrder, rowid)`, and only `rowid` is not already
  * on [QuestionEntity]. Named `rowid` so Room maps it the same way
@@ -195,6 +205,19 @@ interface PassageDao {
 interface QuestionDao {
     @Query("SELECT * FROM questions WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
     suspend fun getByCategory(categoryId: String): List<QuestionEntity>
+
+    /**
+     * A category's positions only (`id`, `sortOrder`), in display order — what
+     * a block reorder validates and renumbers against. The whole-row
+     * [getByCategory] was selected just to read these two fields, dragging the
+     * stem, image and explanation JSON of every row of the category along.
+     */
+    @Query("SELECT id, sortOrder FROM questions WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
+    suspend fun getOrderByCategory(categoryId: String): List<QuestionOrderRow>
+
+    /** A question's category id without reading its content. */
+    @Query("SELECT categoryId FROM questions WHERE id = :id")
+    suspend fun getCategoryIdById(id: String): String?
 
     @Query(
         "SELECT questions.* FROM questions " +
@@ -489,10 +512,18 @@ interface QuestionDao {
      * - `query` is pre-escaped for `LIKE ... ESCAPE '\'`; an empty string
      *   disables the text search. It matches `questions.searchText` — the
      *   flattened visible text — so the predicate never scans the elements
-     *   JSON and agrees with the in-memory `searchableText` filter. A question
-     *   is also found through its passage's own flattened text (the same
-     *   `passages.searchText` the search queries match on), as a subquery
-     *   rather than a list of matching passage ids.
+     *   JSON and agrees with the in-memory `searchableText` filter. It also
+     *   matches `questions.tags` and each option's own `searchText`, the same
+     *   three fields the global search reads and the UI promises ("Search
+     *   text, tags, options"). A question is also found through its passage's
+     *   own flattened text (the same `passages.searchText` the search queries
+     *   match on), as a subquery rather than a list of matching passage ids.
+     * - `noExplanation` tests the *serialized* explanation against the shapes
+     *   the app writes: the editor stores `[]` for an unanswered explanation
+     *   and both importers store `[{"type":"text","content":""}]` when the
+     *   file carried no explanation text, so the column is never `''`.
+     *   Comparing the flattened text would mean decoding the elements JSON per
+     *   row, which SQL cannot do here.
      * - `categoryFilterCsv` is `,id,id,…` matched with `INSTR`, so a whole
      *   subtree of categories costs one bind variable instead of one per
      *   category. The `Int` filter flags are 0/1 for reuse of one statement.
@@ -505,12 +536,16 @@ interface QuestionDao {
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
-            "AND (:noExplanation = 0 OR " +
-            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
+            "OR TRIM(questions.explanation) IN " +
+            "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
@@ -529,15 +564,21 @@ interface QuestionDao {
     ): PagingSource<Int, QuestionRef>
 
     /**
-     * One category's refs in its own order. Reorder math works on a single
-     * category's list; fetching it on demand replaces deriving every id from
-     * the paper-wide list.
+     * One category's reorder order: its questions' ids and passage ids, in
+     * `(sortOrder, rowid)` order. That is all
+     * [com.mcqapp.domain.PassageReorder] reads, and a category is not bounded
+     * in a paper: selecting the stem preview and the explanation elements JSON
+     * here materialised a whole large category's content — an explanation can
+     * hold an inline data-URI image — just to move one row.
+     *
+     * The remaining [QuestionRef] fields are selected as constants, so the
+     * result type stays the one the reorder math already takes while the
+     * columns themselves are never read.
      */
     @Query(
-        "SELECT id, categoryId, passageId, contentHash, searchText AS text, explanation, " +
-            "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions WHERE categoryId = :categoryId " +
-            "ORDER BY sortOrder, rowid"
+        "SELECT id, categoryId, passageId, '' AS contentHash, '' AS text, " +
+            "'' AS explanation, 0 AS answerKeyCount FROM questions " +
+            "WHERE categoryId = :categoryId ORDER BY sortOrder, rowid"
     )
     suspend fun getRefsByCategoryOrdered(categoryId: String): List<QuestionRef>
 
@@ -631,12 +672,16 @@ interface QuestionDao {
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
-            "AND (:noExplanation = 0 OR " +
-            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
+            "OR TRIM(questions.explanation) IN " +
+            "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
@@ -663,12 +708,16 @@ interface QuestionDao {
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
-            "AND (:noExplanation = 0 OR " +
-            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
+            "OR TRIM(questions.explanation) IN " +
+            "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
@@ -699,12 +748,16 @@ interface QuestionDao {
             "INNER JOIN categories anchorCategory ON anchorCategory.id = anchor.categoryId " +
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
-            "AND (:noExplanation = 0 OR " +
-            "TRIM(questions.explanation, char(9) || char(10) || char(13) || ' ') = '') " +
+            "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
+            "OR TRIM(questions.explanation) IN " +
+            "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
@@ -915,22 +968,35 @@ interface QuestionDao {
     suspend fun getIdCategoriesByIds(ids: List<String>): List<QuestionCategoryRow>
 
     /**
-     * The first page of every question's category, for statistics grouping.
-     * The whole-table version this replaced materialised 250k rows into a list
-     * on the way to a lookup map; paging keeps the peak at one page. Order is
+     * The first page of one paper's questions and their categories, for the
+     * scoped statistics grouping. Only the selected paper is read: the whole
+     * table would be one entry per question in the bank, which is the
+     * whole-bank structure the statistics screen exists to avoid. Order is
      * irrelevant to that map, so paging on `id` lets the primary-key index
-     * serve the scan.
+     * serve the scan while the categories join scopes it to the paper.
      *
      * The first page is its own query rather than a sentinel `afterId`, because
      * no `String` is smaller than every question id in SQLite's ordering short
      * of the empty string, and an empty id is legal (if pathological) input.
      */
-    @Query("SELECT id, categoryId FROM questions ORDER BY id LIMIT :limit")
-    suspend fun pageIdCategoriesFirst(limit: Int): List<QuestionCategoryRow>
+    @Query(
+        "SELECT q.id, q.categoryId FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId ORDER BY q.id LIMIT :limit"
+    )
+    suspend fun pageIdCategoriesFirst(paperId: String, limit: Int): List<QuestionCategoryRow>
 
     /** One subsequent keyset page; see [pageIdCategoriesFirst]. */
-    @Query("SELECT id, categoryId FROM questions WHERE id > :afterId ORDER BY id LIMIT :limit")
-    suspend fun pageIdCategoriesAfter(afterId: String, limit: Int): List<QuestionCategoryRow>
+    @Query(
+        "SELECT q.id, q.categoryId FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId AND q.id > :afterId ORDER BY q.id LIMIT :limit"
+    )
+    suspend fun pageIdCategoriesAfter(
+        paperId: String,
+        afterId: String,
+        limit: Int
+    ): List<QuestionCategoryRow>
 
     @Query("UPDATE questions SET categoryId = :categoryId WHERE id IN (:ids)")
     suspend fun updateCategory(ids: List<String>, categoryId: String): Int
@@ -1194,6 +1260,61 @@ interface CardStateDao {
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
     )
     suspend fun dueForPaper(paperId: String, now: Long): List<CardStateEntity>
+
+    /**
+     * The first due learning card in authored order — the head of `Study.pools`'
+     * learning pool. `Study.pickNext` only ever reads the first learning card,
+     * so the pull reads it with `LIMIT 1` rather than resolving every due
+     * schedule; a paper with a large due backlog must not be materialised to
+     * serve one card.
+     */
+    @Query(
+        "SELECT cs.* FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.contentHash = q.contentHash " +
+            "AND cs.cardState IN ('LEARNING','RELEARNING') " +
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
+    )
+    suspend fun firstDueLearningForPaper(paperId: String, now: Long): CardStateEntity?
+
+    /**
+     * The due review card `Study.pools` would rank first: the one whose
+     * predicted retention is lowest. Retention is a strictly decreasing
+     * function of `elapsed / stability`, so the ranking is that ratio
+     * descending, computed in SQL so `LIMIT 1` reads one row instead of the
+     * whole backlog. `stability <= 0` is retention 0 and sorts ahead of every
+     * positive ratio; ties fall to the oldest due date then authored order,
+     * the same comparator `Study.pools` uses. [dayMs] converts the millisecond
+     * gap to days so both branches of the ratio share one unit.
+     *
+     * A due leech is an ordinary review here, exactly as in `Study.pools`; the
+     * leech drill filters them separately.
+     */
+    @Query(
+        "SELECT cs.* FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.contentHash = q.contentHash " +
+            "AND cs.cardState NOT IN ('LEARNING','RELEARNING') " +
+            "ORDER BY " +
+            "CASE WHEN cs.stability <= 0.0 THEN 0 ELSE 1 END ASC, " +
+            "CASE WHEN cs.stability <= 0.0 THEN 0.0 " +
+            "WHEN cs.lastReviewedAt = 0 " +
+            "THEN MAX(cs.intervalDays, 1) * 1.0 / cs.stability " +
+            "ELSE (:now - cs.lastReviewedAt) * 1.0 / (:dayMs * cs.stability) END DESC, " +
+            "cs.dueAt ASC, " +
+            "c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
+    )
+    suspend fun bestDueReviewForPaper(
+        paperId: String,
+        now: Long,
+        dayMs: Double
+    ): CardStateEntity?
 }
 
 /**

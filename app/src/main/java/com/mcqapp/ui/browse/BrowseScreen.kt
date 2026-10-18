@@ -439,7 +439,9 @@ fun BrowseScreen(
                 }
                 val context = state.categoryContexts[question.categoryId]
                 val categoryList = context?.refs.orEmpty()
-                val indexInCategory = categoryList.indexOfFirst { it.id == question.id }
+                // Index and enable state are precomputed once per window; the
+                // tap handlers below still compute the new order on demand.
+                val moves = state.rowMoves[question.id]
                 // A section's first/last rows carry the category moves (their
                 // own question is pinned at the edge anyway), matched by id
                 // from the category's context rather than a rendered index.
@@ -462,12 +464,8 @@ fun BrowseScreen(
                 if (isPassageFirst && passage != null) {
                     PassageHeaderCard(
                         passage = passage,
-                        canMoveUp = questionMoveEnabled && context != null &&
-                            com.mcqapp.domain.PassageReorder
-                                .movePassageBlock(categoryList, passageId, up = true, { it.id }, { it.passageId }) != null,
-                        canMoveDown = questionMoveEnabled && context != null &&
-                            com.mcqapp.domain.PassageReorder
-                                .movePassageBlock(categoryList, passageId, up = false, { it.id }, { it.passageId }) != null,
+                        canMoveUp = questionMoveEnabled && moves?.passageCanMoveUp == true,
+                        canMoveDown = questionMoveEnabled && moves?.passageCanMoveDown == true,
                         onMoveUp = {
                             com.mcqapp.domain.PassageReorder
                                 .movePassageBlock(categoryList, passageId, up = true, { it.id }, { it.passageId })
@@ -510,14 +508,12 @@ fun BrowseScreen(
                         canMoveUp = if (isCategoryFirst) {
                             categoryMove(question.categoryId, true)
                         } else {
-                            questionMoveEnabled && context != null && com.mcqapp.domain.PassageReorder
-                                .canMove(categoryList, indexInCategory, up = true) { it.passageId }
+                            questionMoveEnabled && moves?.canMoveUp == true
                         },
                         canMoveDown = if (isCategoryLast) {
                             categoryMove(question.categoryId, false)
                         } else {
-                            questionMoveEnabled && context != null && com.mcqapp.domain.PassageReorder
-                                .canMove(categoryList, indexInCategory, up = false) { it.passageId }
+                            questionMoveEnabled && moves?.canMoveDown == true
                         },
                         onMoveUp = {
                             if (isCategoryFirst) viewModel.moveCategory(question.categoryId, -1)

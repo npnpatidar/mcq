@@ -110,6 +110,15 @@ class StreamingImporter(
                             offer(queue, StreamEvent.Category(category))
                         override fun onQuestions(categoryId: String, questions: List<QuestionDto>) =
                             offer(queue, StreamEvent.Questions(categoryId, questions))
+                        // The tail streams through the same bounded queue, so
+                        // its pages are written while the file is still being
+                        // read and nothing of it accumulates here.
+                        override fun onBookmarks(ids: List<String>) =
+                            offer(queue, StreamEvent.Bookmarks(ids))
+                        override fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) =
+                            offer(queue, StreamEvent.Schedules(entries))
+                        override fun onAttempts(attempts: List<AttemptDto>) =
+                            offer(queue, StreamEvent.Attempts(attempts))
                     }, session.batchSize)
                 }
                 tailRef.set(tail)
@@ -138,6 +147,9 @@ class StreamingImporter(
                     is StreamEvent.Paper -> session.onPaper(event.header)
                     is StreamEvent.Category -> session.onCategory(event.category)
                     is StreamEvent.Questions -> session.onQuestions(event.categoryId, event.questions)
+                    is StreamEvent.Bookmarks -> session.onBookmarks(event.ids)
+                    is StreamEvent.Schedules -> session.onSchedules(event.entries)
+                    is StreamEvent.Attempts -> session.onAttempts(event.attempts)
                     StreamEvent.End -> break
                 }
             }
@@ -162,6 +174,9 @@ class StreamingImporter(
         class Paper(val header: LegacyParser.PaperHeader) : StreamEvent
         class Category(val category: CategoryDto) : StreamEvent
         class Questions(val categoryId: String, val questions: List<QuestionDto>) : StreamEvent
+        class Bookmarks(val ids: List<String>) : StreamEvent
+        class Schedules(val entries: List<Pair<String, CardScheduleDto>>) : StreamEvent
+        class Attempts(val attempts: List<AttemptDto>) : StreamEvent
         object End : StreamEvent
     }
 }

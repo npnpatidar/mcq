@@ -154,6 +154,11 @@ object LegacyParser {
      * The tail of a streamed parse: everything the file carries that is not a
      * paper. In the canonical order these fields trail `papers`, so they are
      * returned once the walk ends rather than streamed ahead of it.
+     *
+     * [streamImport] streams the tail through [ImportStreamSink]'s
+     * `onBookmarks`/`onSchedules`/`onAttempts` callbacks instead, so its result
+     * carries those three fields empty and only the counts a preview needs
+     * come back from the sink. [streamPapers] and [parse] still fill them.
      */
     data class StreamedFile(
         val version: Int,
@@ -235,6 +240,23 @@ object LegacyParser {
         fun onPaper(header: PaperHeader)
         fun onCategory(category: CategoryDto)
         fun onQuestions(categoryId: String, questions: List<QuestionDto>)
+
+        /**
+         * Tail entries, delivered in pages while they are read rather than
+         * collected into [StreamedFile]. A file lists `bookmarks`, `scheduling`
+         * and `attempts` *after* its papers, so a sink that wants them applied
+         * can do so here and never hold one entry per question — which for a
+         * studied 1M-question backup is the difference between a page and a
+         * million-entry map.
+         *
+         * Defaults are no-ops, so a sink that only reads papers (the preview,
+         * a parser test) ignores them; [StreamedFile] then carries empty
+         * lists for those fields when written by
+         * [streamImport].
+         */
+        fun onBookmarks(ids: List<String>) = Unit
+        fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) = Unit
+        fun onAttempts(attempts: List<AttemptDto>) = Unit
     }
 
     /**
@@ -302,9 +324,6 @@ object LegacyParser {
         scan: LocalImageScan
     ): StreamedFile {
         var passages = emptyList<PassageDto>()
-        var attempts = emptyList<AttemptDto>()
-        var bookmarks = emptyList<String>()
-        var scheduling = emptyMap<String, CardScheduleDto>()
         var version = 1
         var papersEmitted = 0
         reader.beginObject()
@@ -343,24 +362,25 @@ object LegacyParser {
                         null
                     }
                 }
-                "attempts" -> attempts = readArrayOrWarn(
-                    reader, "File", "attempts", "attempt", warnings
-                ) { index, obj ->
-                    try {
-                        parseAttempt(obj)
-                    } catch (e: Exception) {
-                        warnings.add("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
-                        null
+                "attempts" -> streamArrayOrWarn(
+                    reader, "File", "attempts", "attempt", warnings, batchSize,
+                    { index, obj ->
+                        try {
+                            parseAttempt(obj)
+                        } catch (e: Exception) {
+                            warnings.add("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                            null
+                        }
                     }
-                }
-                "bookmarks" -> bookmarks = readBookmarks(reader)
-                "scheduling" -> scheduling = readScheduling(reader)
+                ) { sink.onAttempts(it) }
+                "bookmarks" -> streamBookmarks(reader, batchSize) { sink.onBookmarks(it) }
+                "scheduling" -> streamScheduling(reader, batchSize) { sink.onSchedules(it) }
                 "version" -> version = readInt(reader) ?: 1
                 else -> reader.skipValue()
             }
         }
         reader.endObject()
-        return StreamedFile(version, passages, bookmarks, attempts, scheduling, warnings)
+        return StreamedFile(version, passages, emptyList(), emptyList(), emptyMap(), warnings)
     }
 
     /** Reads a `papers` array streaming each entry; returns how many emitted. */
@@ -906,6 +926,47 @@ object LegacyParser {
         return out
     }
 
+    /**
+     * [readArrayOrWarn], handing the mapped rows to [onPage] in pages instead
+     * of collecting them: same warnings, same per-row skips, only the
+     * retention differs, so a tail array with a million entries costs one page.
+     */
+    private fun <T> streamArrayOrWarn(
+        reader: JsonPull,
+        where: String,
+        name: String,
+        entryName: String,
+        warnings: MutableList<String>,
+        pageSize: Int,
+        mapper: (Int, JsonObject) -> T?,
+        onPage: (List<T>) -> Unit
+    ) {
+        if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
+            warnings.add("$where: \"$name\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            reader.skipValue()
+            return
+        }
+        val page = ArrayList<T>(pageSize.coerceAtMost(1024))
+        reader.beginArray()
+        var index = 0
+        while (reader.hasNext()) {
+            val at = index + 1
+            index = at
+            val slice = readElement(reader)
+            if (slice is JsonObject) {
+                mapper(at - 1, slice)?.let(page::add)
+            } else {
+                warnings.add("Skipped malformed $entryName $at: not an object — it was skipped")
+            }
+            if (page.size >= pageSize) {
+                onPage(page.toList())
+                page.clear()
+            }
+        }
+        reader.endArray()
+        if (page.isNotEmpty()) onPage(page)
+    }
+
     private fun readBookmarks(reader: JsonPull): List<String> {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
             reader.skipValue()
@@ -919,6 +980,51 @@ object LegacyParser {
         }
         reader.endArray()
         return out
+    }
+
+    /** [readBookmarks], handing each page of ids to [onPage] instead of collecting. */
+    private fun streamBookmarks(reader: JsonPull, pageSize: Int, onPage: (List<String>) -> Unit) {
+        if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
+            reader.skipValue()
+            return
+        }
+        val page = ArrayList<String>(pageSize.coerceAtMost(1024))
+        reader.beginArray()
+        while (reader.hasNext()) {
+            val value = readString(reader)
+            if (!value.isNullOrBlank()) page += value
+            if (page.size >= pageSize) {
+                onPage(page.toList())
+                page.clear()
+            }
+        }
+        reader.endArray()
+        if (page.isNotEmpty()) onPage(page)
+    }
+
+    /** [readScheduling], handing each page of entries to [onPage] instead of collecting. */
+    private fun streamScheduling(
+        reader: JsonPull,
+        pageSize: Int,
+        onPage: (List<Pair<String, CardScheduleDto>>) -> Unit
+    ) {
+        if (reader.peek() != JsonPull.Token.BEGIN_OBJECT) {
+            reader.skipValue()
+            return
+        }
+        val page = ArrayList<Pair<String, CardScheduleDto>>(pageSize.coerceAtMost(1024))
+        reader.beginObject()
+        while (reader.hasNext()) {
+            val id = reader.nextName()
+            val entry = readElement(reader)
+            if (entry is JsonObject) cardSchedule(entry)?.let { page += id to it }
+            if (page.size >= pageSize) {
+                onPage(page.toList())
+                page.clear()
+            }
+        }
+        reader.endObject()
+        if (page.isNotEmpty()) onPage(page)
     }
 
     /**

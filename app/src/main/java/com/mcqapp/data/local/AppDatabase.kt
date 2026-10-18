@@ -457,66 +457,50 @@ abstract class AppDatabase : RoomDatabase() {
 
             fun flattened(raw: String) = raw.parseContentElements(json).searchableText
 
-            var last = -1L
-            while (true) {
-                val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
-                db.query(
-                    "SELECT rowid, text FROM questions WHERE rowid > ? " +
-                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
-                    arrayOf(last)
-                ).use { c ->
-                    while (c.moveToNext()) batch += c.getLong(0) to c.getString(1)
-                }
-                if (batch.isEmpty()) break
-                for ((rowid, text) in batch) {
-                    db.execSQL(
-                        "UPDATE questions SET searchText = ? WHERE rowid = ?",
-                        arrayOf(flattened(text), rowid)
-                    )
-                    last = rowid
-                }
-            }
-
-            last = -1L
-            while (true) {
-                val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
-                db.query(
-                    "SELECT rowid, text FROM options WHERE rowid > ? " +
-                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
-                    arrayOf(last)
-                ).use { c ->
-                    while (c.moveToNext()) batch += c.getLong(0) to c.getString(1)
-                }
-                if (batch.isEmpty()) break
-                for ((rowid, text) in batch) {
-                    db.execSQL(
-                        "UPDATE options SET searchText = ? WHERE rowid = ?",
-                        arrayOf(flattened(text), rowid)
-                    )
-                    last = rowid
-                }
-            }
-
-            last = -1L
-            while (true) {
-                val batch = ArrayList<Triple<Long, String, String>>(SEARCH_BACKFILL_BATCH)
-                db.query(
-                    "SELECT rowid, title, text FROM passages WHERE rowid > ? " +
-                        "ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
-                    arrayOf(last)
-                ).use { c ->
-                    while (c.moveToNext()) {
-                        batch += Triple(c.getLong(0), c.getString(1), c.getString(2))
+            // One compiled statement per table, rebound per row. The 14→15
+            // upgrade touches every question, option and passage — ~5M rows on
+            // a million-question library — and a fresh `execSQL` per row spent
+            // most of the migration re-compiling the same UPDATE.
+            fun backfill(
+                table: String,
+                select: String,
+                value: (android.database.Cursor) -> String
+            ) {
+                val update = db.compileStatement(
+                    "UPDATE $table SET searchText = ? WHERE rowid = ?"
+                )
+                try {
+                    var last = -1L
+                    while (true) {
+                        val batch = ArrayList<Pair<Long, String>>(SEARCH_BACKFILL_BATCH)
+                        db.query(
+                            "$select WHERE rowid > ? ORDER BY rowid LIMIT $SEARCH_BACKFILL_BATCH",
+                            arrayOf(last)
+                        ).use { c ->
+                            while (c.moveToNext()) batch += c.getLong(0) to value(c)
+                        }
+                        if (batch.isEmpty()) break
+                        for ((rowid, text) in batch) {
+                            update.clearBindings()
+                            update.bindString(1, text)
+                            update.bindLong(2, rowid)
+                            update.executeUpdateDelete()
+                            last = rowid
+                        }
                     }
+                } finally {
+                    update.close()
                 }
-                if (batch.isEmpty()) break
-                for ((rowid, title, text) in batch) {
-                    db.execSQL(
-                        "UPDATE passages SET searchText = ? WHERE rowid = ?",
-                        arrayOf(passageSearchText(title, text.parseContentElements(json)), rowid)
-                    )
-                    last = rowid
-                }
+            }
+
+            backfill("questions", "SELECT rowid, text FROM questions") { c ->
+                flattened(c.getString(1))
+            }
+            backfill("options", "SELECT rowid, text FROM options") { c ->
+                flattened(c.getString(1))
+            }
+            backfill("passages", "SELECT rowid, title, text FROM passages") { c ->
+                passageSearchText(c.getString(1), c.getString(2).parseContentElements(json))
             }
         }
 

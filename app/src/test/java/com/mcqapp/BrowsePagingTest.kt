@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
+import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
@@ -112,5 +113,70 @@ class BrowsePagingTest {
             listOf("q1"),
             walk { source(categoryFilterIds = setOf("c1")) }
         )
+    }
+
+    @Test
+    fun textQueryMatchesTagsAndOptionText() = runBlocking {
+        // The search box promises "Text, tags, options". Matching only
+        // questions.searchText silently missed the other two.
+        repository.saveQuestion(
+            Question(
+                id = "q-tag",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Plain stem")),
+                options = listOf(QuestionOption("a", "Nothing")),
+                correctOptionIds = setOf("a"),
+                tags = listOf("photosynthesis")
+            )
+        )
+        repository.saveQuestion(
+            Question(
+                id = "q-option",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Another stem")),
+                options = listOf(QuestionOption("a", "Mitochondrion")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        save("q-stem", "c2", "Plain stem")
+
+        assertEquals(listOf("q-tag"), walk { source(query = "photosynth") })
+        assertEquals(listOf("q-option"), walk { source(query = "Mitochondr") })
+        assertEquals(listOf("q-tag", "q-stem"), walk { source(query = "Plain stem") })
+    }
+
+    @Test
+    fun theNoExplanationChipMatchesTheShapesTheAppWrites() = runBlocking {
+        // The editor stores `[]`; both importers store a blank text element.
+        // The chip used to test `TRIM(explanation) = ''`, which matched
+        // neither, so it was always empty.
+        val base = QuestionEntity(
+            id = "q-editor",
+            categoryId = "c1",
+            text = """[{"type":"text","content":"Has stem"}]""",
+            searchText = "Has stem",
+            explanation = "[]"
+        )
+        db.questionDao().upsertAll(
+            listOf(
+                base,
+                base.copy(id = "q-import", explanation = """[{"type":"text","content":""}]"""),
+                base.copy(id = "q-legacy-blank", explanation = ""),
+                base.copy(id = "q-blank-space", explanation = "   "),
+                base.copy(id = "q-has", explanation = """[{"type":"text","content":"Because"}]"""),
+                base.copy(id = "q-legacy-text", explanation = "Plain reason")
+            )
+        )
+
+        val walked = walk { source(filter = BrowseListFilter.NO_EXPLANATION) }
+        assertEquals(listOf("q-editor", "q-import", "q-legacy-blank", "q-blank-space"), walked)
+        // The count the list header reads must agree with the page walk.
+        val scope = McqRepository.BrowseScope.of(
+            paperId = "p1",
+            query = "",
+            filter = BrowseListFilter.NO_EXPLANATION,
+            categoryFilterIds = null
+        )
+        assertEquals(walked.size, repository.browseFilteredCount(scope))
     }
 }

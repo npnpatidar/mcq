@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
+import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.DayBoundary
@@ -150,5 +152,33 @@ class StatsRetentionStreamTest {
         )
         assertEquals(2, scoped.groupRetention.size)
         assertEquals(6, scoped.groupRetention.sumOf { it.reviews })
+    }
+
+    @Test
+    fun theScopedCategoryMapPagesOnlyTheSelectedPaper() = runBlocking {
+        // The Retention tab's question→category-title map used to be built by
+        // reading every question in the bank, even with one paper selected.
+        // These two keyset pages are the scoped replacement, so they must never
+        // return another paper's rows.
+        db.paperDao().upsert(PaperEntity("p1", "Paper One"))
+        db.paperDao().upsert(PaperEntity("p2", "Paper Two"))
+        db.categoryDao().upsert(CategoryEntity("c1", "p1", "Alpha"))
+        db.categoryDao().upsert(CategoryEntity("c2", "p2", "Beta"))
+        db.questionDao().upsertAll(
+            listOf(
+                QuestionEntity("a1", "c1", text = "", searchText = ""),
+                QuestionEntity("a2", "c1", text = "", searchText = ""),
+                QuestionEntity("b1", "c2", text = "", searchText = "")
+            )
+        )
+
+        val first = db.questionDao().pageIdCategoriesFirst("p1", 1)
+        assertEquals(listOf("a1"), first.map { it.id })
+        val rest = db.questionDao().pageIdCategoriesAfter("p1", first.last().id, 10)
+        assertEquals(listOf("a2"), rest.map { it.id })
+        assertTrue(
+            "p2 must not leak into p1's page",
+            (first + rest).all { it.categoryId == "c1" }
+        )
     }
 }

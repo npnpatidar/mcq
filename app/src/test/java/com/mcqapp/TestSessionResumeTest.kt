@@ -231,4 +231,45 @@ class TestSessionResumeTest {
             awaitCondition { answerRows().toSet() == setOf("q0", "q2") }
         )
     }
+
+    @Test
+    fun aLegacyOrderSurvivesASecondResume() {
+        seed(5)
+        // Pre-seed snapshots carried their order in `questionIds` and had no
+        // seed. Resuming used to materialise that order and then persist an
+        // empty `questionIds` with no seed, so the *second* relaunch fell back
+        // to authored order and silently re-shuffled the sitting.
+        runBlocking {
+            app.repository.restoreTestProgress(
+                com.mcqapp.domain.TestSnapshot(
+                    paperId = "p1",
+                    categoryIds = listOf("c1"),
+                    questionIds = listOf("q3", "q0", "q4", "q1", "q2"),
+                    currentIndex = 1,
+                    questionSeed = null
+                ).toJson()
+            )
+        }
+
+        val first = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { first.state.value.resumeOffer != null })
+        first.resume()
+        assertEquals(
+            "the legacy order is restored",
+            listOf("q3", "q0", "q4", "q1", "q2"),
+            first.state.value.order.idsInOrder()
+        )
+        // An answer persists the session for the next relaunch.
+        first.toggleOption("a")
+        first.next()
+
+        val second = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { second.state.value.resumeOffer != null })
+        second.resume()
+        assertEquals(
+            "the second resume kept the legacy order",
+            listOf("q3", "q0", "q4", "q1", "q2"),
+            second.state.value.order.idsInOrder()
+        )
+    }
 }

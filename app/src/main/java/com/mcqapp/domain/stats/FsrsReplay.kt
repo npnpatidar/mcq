@@ -103,19 +103,25 @@ object FsrsReplay {
     }
 
     /**
-     * A one-pass replayer for a log read in `id` order — the order rows were
-     * appended, which is also each card's own chronological order. [replay]
-     * has to hold two maps keyed by *row* id (one entry per logged review, so a
-     * million-row log needs millions of entries) because it re-sorts an
-     * arbitrarily ordered list. This keeps only per-card state instead:
-     * [CardState] plus the interval carried out of the last review, one entry
-     * per card — a quarter of the size for the 1M-review/250k-card target, and
-     * it never holds a whole page's enriched rows.
+     * A one-pass replayer for a log read in `id` order. **Append order is
+     * authoritative here**: rows are replayed in the order [accept] is fed, and
+     * the statistics store feeds them by ascending `id`, which is also each
+     * card's own append order.
      *
-     * The caller must feed rows in ascending `id` and the same rows [replay]
-     * would sort within each card; the two are pinned equal by
-     * `FsrsReplayStreamTest`, which exists because this is the path the
-     * statistics screen actually uses.
+     * This keeps only per-card state — [CardState] plus the interval carried
+     * out of the last review, one entry per card — instead of the two
+     * row-keyed maps [replay] needs for an arbitrarily ordered list: a
+     * quarter of the size for the 1M-review/250k-card target, and it never
+     * holds a whole page's enriched rows.
+     *
+     * Unlike [replay], which sorts each card's history by `(reviewedAt, id)`,
+     * this does **not** order by `reviewedAt`: if a row was appended with an
+     * earlier timestamp than the row before it (a clock rollback, or a
+     * restored log), the two compute different pre-answer predictions. The
+     * divergence is deliberate — append order is the order the app wrote, and
+     * the scheduler only ever sees the row it is given, so no card's schedule
+     * depends on this choice. `FsrsReplayStreamTest` pins both the monotonic
+     * agreement and the non-monotonic append-order rule.
      */
     class Stream(private val scheduler: FsrsScheduler) {
         private val states = HashMap<String, CardState>()

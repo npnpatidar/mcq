@@ -120,6 +120,26 @@ class SessionOrderTest {
     }
 
     @Test
+    fun reorderedToSurvivesARepeatedId() {
+        // A malformed snapshot can name the same id twice. Before the `seen`
+        // guard the repeat wrote the same authored row again (and could run the
+        // fill loop past the end of the output array, throwing).
+        val order = SessionOrder.of(bank())
+        val reordered = order.reorderedTo(listOf("q5", "q5", "q1", "q5"))!!
+        assertEquals(listOf("q5", "q1", "q0", "q2", "q3", "q4", "q6", "q7"), reordered.idsInOrder())
+        assertEquals("every authored row appears exactly once", bank().size, reordered.size)
+    }
+
+    @Test
+    fun reorderedToSkipsIdsThePaperNoLongerHas() {
+        val order = SessionOrder.of(bank())
+        assertEquals(
+            listOf("q6", "q0", "q1", "q2", "q3", "q4", "q5", "q7"),
+            order.reorderedTo(listOf("q6", "deleted", "q7-deleted"))!!.idsInOrder()
+        )
+    }
+
+    @Test
     fun aBuilderGrowsPastItsFirstPages() {
         // The builder starts small and doubles; a category page is 2000 rows.
         val builder = SessionOrder.Builder()

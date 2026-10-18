@@ -81,9 +81,10 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             cfg = config,
             zone = DayBoundary.zoneOffset(now),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
-            // Only the scoped breakdown labels by category, and the map is one
-            // entry per question, so the unscoped view skips building it.
-            categoryOfQuestion = if (scopePaperId == null) emptyMap() else loadCategoryOfQuestion()
+            // Only the scoped breakdown labels by category, and the map holds
+            // one entry per question of the selected paper — never the whole
+            // bank — so the unscoped view skips building it.
+            categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
         )
         replayInto(scheduler, accumulator::add)
         return accumulator.toData()
@@ -254,19 +255,20 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
     }
 
     /**
-     * questionId → category title, for the per-category breakdown. The old
-     * `getAllIdCategories()` built a 250k-element list of pairs on the way to
-     * this map; paging folds each page in as it arrives.
+     * questionId → category title, for the per-category breakdown of one paper.
+     * The old `getAllIdCategories()` built a 250k-element list of pairs on the
+     * way to this map; paging folds each page in as it arrives, and the paper
+     * scope keeps the map to the selected paper's questions.
      */
-    private suspend fun loadCategoryOfQuestion(): Map<String, String> {
+    private suspend fun loadCategoryOfQuestion(paperId: String): Map<String, String> {
         val titles = db.categoryDao().getAll().associate { it.id to it.title }
         val out = HashMap<String, String>()
-        var page = db.questionDao().pageIdCategoriesFirst(PAGE_SIZE)
+        var page = db.questionDao().pageIdCategoriesFirst(paperId, PAGE_SIZE)
         while (true) {
             if (page.isEmpty()) break
             page.forEach { row -> titles[row.categoryId]?.let { out[row.id] = it } }
             if (page.size < PAGE_SIZE) break
-            page = db.questionDao().pageIdCategoriesAfter(page.last().id, PAGE_SIZE)
+            page = db.questionDao().pageIdCategoriesAfter(paperId, page.last().id, PAGE_SIZE)
         }
         return out
     }

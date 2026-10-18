@@ -23,6 +23,7 @@ import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.TimerWarnings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 data class TestUiState(
@@ -140,6 +142,14 @@ class TestViewModel(
      *  is still loaded, so the unshuffled one is not retained. */
     private var resumeOrder: SessionOrder = SessionOrder.empty()
 
+    /**
+     * The id list of a resumed *legacy* snapshot (one with no shuffle seed).
+     * Autosaves keep writing it — and a null seed — so a second resume replays
+     * the same order instead of stamping the fresh random seed over it and
+     * silently reverting to the authored order.
+     */
+    private var legacyResumedIds: List<String>? = null
+
     /** The card resolved ahead of the visible one, keyed by its ref id. */
     private var prefetched: Pair<String, LoadedCard>? = null
 
@@ -206,17 +216,23 @@ class TestViewModel(
                 // comprehension set is never split by the shuffle or the cut.
                 // (A seed snapshot replays this, so the algorithm and its
                 // Random stream live in SessionOrder, not here.)
-                val shuffled = order.shuffled(seed, shuffleQ)
-                val drilled = if (isDrill) {
-                    val sampleSeed = Random.nextLong()
-                    drillSampleSeed = sampleSeed
-                    Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffled.size}, seed=$sampleSeed")
-                    // Whole blocks are taken, so the result may overshoot the
-                    // requested count when a passage does not fit the cut.
-                    shuffled.sampled(drillCount, sampleSeed)
-                } else {
-                    drillSampleSeed = 0L
-                    shuffled
+                //
+                // The shuffle and the drill cut iterate the whole paper and
+                // allocate multi-megabyte index arrays, so they run off the
+                // main thread; only the resulting order is published to state.
+                val (shuffled, drilled) = withContext(Dispatchers.Default) {
+                    val shuffledOrder = order.shuffled(seed, shuffleQ)
+                    if (isDrill) {
+                        val sampleSeed = Random.nextLong()
+                        drillSampleSeed = sampleSeed
+                        Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffledOrder.size}, seed=$sampleSeed")
+                        // Whole blocks are taken, so the result may overshoot
+                        // the requested count when a passage does not fit.
+                        shuffledOrder to shuffledOrder.sampled(drillCount, sampleSeed)
+                    } else {
+                        drillSampleSeed = 0L
+                        shuffledOrder to shuffledOrder
+                    }
                 }
                 optionShuffleSeed = if (shuffleO) seed else 0L
                 // Saturating conversion: drillMinutes and durationMinutes both
@@ -336,6 +352,14 @@ class TestViewModel(
      * reached, without moving [lastNavMillis] — the anchor stays where
      * navigation put it so ticks cannot lose a sub-second remainder.
      */
+    /**
+     * Publishes the live dwell of the question on screen. The tick updates
+     * only [liveDwell] — the header's own flow — and never the per-question
+     * [TestUiState.dwellSeconds] map, so a second of looking at a question does
+     * not copy a map that grows with everything answered so far. The map is
+     * written when a question is left ([flushDwell]) and when the session is
+     * submitted, which is exactly when its reader needs it.
+     */
     private fun publishDwell(now: Long) {
         val current = _state.value
         val question = current.currentQuestion ?: return
@@ -343,11 +367,14 @@ class TestViewModel(
             if (current.dwellActive) (now - lastNavMillis).coerceAtLeast(0L) / 1000 else 0L
         val total = (dwellCommitted[question.id] ?: 0L) + segment
         if (_liveDwell.value != total) _liveDwell.value = total
-        if (current.dwellSeconds[question.id] == total) return
-        _state.update {
-            it.copy(dwellSeconds = it.dwellSeconds + (question.id to total))
-        }
     }
+
+    /**
+     * The dwell currently known for [id]: the on-screen question's live total,
+     * or its last banked total once it has been left.
+     */
+    private fun dwellOf(state: TestUiState, id: String): Long =
+        if (id == state.currentQuestion?.id) _liveDwell.value else state.dwellSeconds[id] ?: 0L
 
     /** Banks time on the question being left, so the next visit starts from it. */
     private fun flushDwell() {
@@ -682,10 +709,13 @@ class TestViewModel(
             repository.clearTestProgress()
             return
         }
-        val ordered = TestSnapshot.orderOf(base, saved) ?: run {
-            repository.clearTestProgress()
-            return
-        }
+        // Rebuilding a seeded order replays the whole-paper shuffle, so it runs
+        // off the main thread like the load-time shuffle does.
+        val ordered = withContext(Dispatchers.Default) { TestSnapshot.orderOf(base, saved) }
+            ?: run {
+                repository.clearTestProgress()
+                return
+            }
         if (ordered.isEmpty) {
             repository.clearTestProgress()
             return
@@ -707,6 +737,10 @@ class TestViewModel(
         // tiny snapshot instead of falling back to an id list.
         saved.questionSeed?.let { sessionSeed = it }
         saved.drillSeed?.let { drillSampleSeed = it }
+        // A seed-less snapshot has no seed to replay; keep its id list (and a
+        // null seed) so the next autosave does not stamp the fresh random seed
+        // over the order the user resumed into.
+        legacyResumedIds = if (saved.questionSeed == null) saved.questionIds else null
         questionShuffleEnabled = saved.questionShuffle
         optionShuffleSeed = saved.optionShuffleSeed
         Logger.i("TESTVM", "Resuming saved progress: index=${saved.currentIndex}, " +
@@ -741,6 +775,7 @@ class TestViewModel(
         Logger.i("TESTVM", "Discarding saved progress, starting fresh")
         viewModelScope.launch { repository.clearTestProgress() }
         resumeOrder = SessionOrder.empty()
+        legacyResumedIds = null
         _state.update { it.copy(resumeOffer = null) }
     }
 
@@ -759,11 +794,13 @@ class TestViewModel(
         val snapshot = TestSnapshot(
             paperId = paperId,
             categoryIds = categoryIds,
-            questionIds = emptyList(),
+            // A resumed legacy snapshot keeps its id list and a null seed until
+            // the session ends, so a second resume replays the same order.
+            questionIds = legacyResumedIds ?: emptyList(),
             currentIndex = current.currentIndex,
             remainingSeconds = current.remainingSeconds,
             totalSeconds = current.totalSeconds,
-            questionSeed = sessionSeed,
+            questionSeed = if (legacyResumedIds != null) null else sessionSeed,
             questionShuffle = questionShuffleEnabled,
             optionShuffleSeed = optionShuffleSeed,
             drillSeed = if (drillSampleSeed != 0L) drillSampleSeed else null,
@@ -776,7 +813,7 @@ class TestViewModel(
                 selection = current.selections[id] ?: emptySet(),
                 revealed = id in current.revealed,
                 flagged = id in current.flagged,
-                dwellSeconds = current.dwellSeconds[id] ?: 0L
+                dwellSeconds = dwellOf(current, id)
             )
         )
         viewModelScope.launch {

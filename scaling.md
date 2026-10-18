@@ -183,8 +183,9 @@ constant, not O(file size).
 
 1. Refs → **Paging 3**:
    - `QuestionDao` gets a `PagingSource` variant of `getRefsByCategories`
-     (keyset on `(categories.sortOrder, categories.title, questions.sortOrder,
-     rowid)` room-paging style so the ordering is preserved).
+     (ordering preserved from the SQL `ORDER BY`; Room's
+     `LimitOffsetPagingSource` serves it as `LIMIT ? OFFSET ?` — see §8 Open 5
+     for that limitation).
    - `BrowseViewModel` exposes `Pager(PAGING_SIZE = ~60)` +
      `cachedIn(viewModelScope)`.
    - Screen keeps the LazyColumn, swaps `itemsIndexed(filtered, ...)` for
@@ -1092,14 +1093,15 @@ over `searchText` (§4.5 + F4).
    in the page query, one `isBookmarked(id)` for the toggle, and the table's
    invalidation to rebuild. Left because it is three call sites and the paging
    sources are already the right shape.
-4. The apkg import (§5.5): `.apkg` is the one import that is not streamed. The
-   reader expands the whole archive, builds every paper as one DTO, and
-   `Importer` holds it beside a whole-bank hash set, so a large deck is refused
-   at the cap or OOMs under it. The fix is the shape §4.6/§5.5 already use for
-   JSON: extract entries to temp files under the same caps, drive the reader
-   per paper (decks are known up front; a deck's cards are a scoped query), and
-   feed the existing per-batch writer, applying each paper's schedules as it is
-   written. Left as its own change because it rewrites the reader's grouping and
-   media plumbing and can only be verified on x86_64 CI; it needs an
-   equivalence test over the existing apkg fixtures before it lands.
+4. Browse paging is still `LimitOffsetPagingSource` (§3, `getRefsByCategories`):
+   Room serves each page as `LIMIT ? OFFSET ?`, so a deep jump walks the
+   ordered index up to the offset — the measured `OFFSET 500k` on the
+   reference host is ~1.4 s. Nothing crashes and memory stays one page, but a
+   deep fling on a million-question paper pauses visibly. The fix is keyset
+   paging on `(categories.sortOrder, categories.title, questions.sortOrder,
+   rowid)`, which changes the paging key from an `Int` offset to a tuple and
+   touches every jump/scroll path; left as its own change rather than folded
+   into the streaming work. (The `.apkg` import is no longer on this list: it
+   streams through the same writer as JSON — see §5.5 and
+   `AnkiApkgImporter`.)
 

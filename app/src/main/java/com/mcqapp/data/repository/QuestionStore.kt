@@ -7,6 +7,7 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.QuestionOrderRow
 import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
@@ -445,7 +446,7 @@ internal class QuestionStore(
     suspend fun renumberQuestions(categoryId: String, orderedIds: List<String>): Boolean {
         if (orderedIds.isEmpty()) return false
         return db.withTransaction {
-            val rows = db.questionDao().getByCategory(categoryId).associateBy { it.id }
+            val rows = db.questionDao().getOrderByCategory(categoryId).associateBy { it.id }
             if (orderedIds.any { it !in rows } || rows.size != orderedIds.size) {
                 Logger.w("REPO", "renumberQuestions($categoryId): id set mismatch, refusing")
                 return@withTransaction false
@@ -468,14 +469,16 @@ internal class QuestionStore(
      */
     internal suspend fun moveAfterAnchor(questionId: String, anchorId: String): Boolean {
         return db.withTransaction {
-            val moved = db.questionDao().getById(questionId) ?: return@withTransaction false
-            val anchor = db.questionDao().getById(anchorId) ?: return@withTransaction false
-            if (moved.categoryId != anchor.categoryId) return@withTransaction false
-            val ordered = mutableListOf<QuestionEntity>()
-            for (row in db.questionDao().getByCategory(anchor.categoryId)) {
+            val movedCategory = db.questionDao().getCategoryIdById(questionId)
+                ?: return@withTransaction false
+            val anchorCategory = db.questionDao().getCategoryIdById(anchorId)
+                ?: return@withTransaction false
+            if (movedCategory != anchorCategory) return@withTransaction false
+            val ordered = mutableListOf<QuestionOrderRow>()
+            for (row in db.questionDao().getOrderByCategory(anchorCategory)) {
                 if (row.id == questionId) continue
                 ordered += row
-                if (row.id == anchorId) ordered += moved
+                if (row.id == anchorId) ordered += QuestionOrderRow(questionId, 0)
             }
             if (ordered.none { it.id == questionId }) return@withTransaction false
             ordered.forEachIndexed { index, row ->

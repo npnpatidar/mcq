@@ -40,6 +40,22 @@ data class CategoryContext(
     val lastId: String? = null
 )
 
+/**
+ * What a row's own move arrows and (for a passage header) its block arrows
+ * need, resolved once per window. Asking `PassageReorder` from the row
+ * composable ran `indexOfFirst` over the whole category — and, for a passage
+ * header, allocated the whole reordered id list just to test `!= null` — on
+ * every recomposition. This is the same answer, computed once per window off
+ * the main thread.
+ */
+data class RowMoveState(
+    val indexInCategory: Int,
+    val canMoveUp: Boolean,
+    val canMoveDown: Boolean,
+    val passageCanMoveUp: Boolean,
+    val passageCanMoveDown: Boolean
+)
+
 data class BrowseUiState(
     val paper: Paper? = null,
     /**
@@ -49,6 +65,13 @@ data class BrowseUiState(
      * a 1000-category paper ended up resident after one pass down the list.
      */
     val categoryContexts: Map<String, CategoryContext> = emptyMap(),
+    /**
+     * Per-row reorder enable state for the same window, precomputed off the
+     * main thread; see [RowMoveState]. Scoped to the window like the contexts:
+     * the screen reads one hash entry per row instead of running the reorder
+     * math during composition.
+     */
+    val rowMoves: Map<String, RowMoveState> = emptyMap(),
     /** passageId -> its first member's id in paper order (null: not loaded). */
     val passageFirstIds: Map<String, String?> = emptyMap(),
     /** Full passages for the visible group headers, loaded on demand. */
@@ -124,6 +147,13 @@ class BrowseViewModel(
      *  rows (or evict rows) from a window that has already scrolled past. */
     private var windowPassageIds: Set<String> = emptySet()
     private var windowCategoryIds: Set<String> = emptySet()
+
+    /** The rows of the live window, kept so the reorder states can be rebuilt
+     *  when the contexts they read land; see [refreshRowMoves]. */
+    private var windowRefs: List<QuestionRef> = emptyList()
+
+    /** Guards against a slow reorder-state build landing after a newer one. */
+    private var rowMovesGeneration = 0L
 
     init {
         Logger.i("BROWSEVM", "BrowseViewModel created: paperId=$paperId")
@@ -207,6 +237,7 @@ class BrowseViewModel(
      */
     fun onVisibleRows(window: List<QuestionRef>) {
         if (window.isEmpty()) return
+        windowRefs = window
         windowIds = window.mapTo(mutableSetOf()) { it.id }
         windowPassageIds = window.mapNotNullTo(mutableSetOf()) { it.passageId }
         windowCategoryIds = window.mapTo(mutableSetOf()) { it.categoryId }
@@ -214,7 +245,35 @@ class BrowseViewModel(
         loadPassages(windowPassageIds.toList())
         loadPassageFirstIds(windowPassageIds.toList())
         loadCategoryContexts(windowCategoryIds.toList())
+        refreshRowMoves()
     }
+
+    /**
+     * Rebuilds [BrowseUiState.rowMoves] for the live window from the loaded
+     * contexts, off the main thread. Runs again when the contexts land, since
+     * the first pass for a freshly scrolled window has none of them yet.
+     */
+    private fun refreshRowMoves() {
+        val window = windowRefs
+        val generation = ++rowMovesGeneration
+        if (window.isEmpty()) {
+            _state.update { it.copy(rowMoves = emptyMap()) }
+            return
+        }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val moves = rowMoveStates(window, _state.value.categoryContexts)
+            if (generation != rowMovesGeneration) return@launch
+            _state.update { it.copy(rowMoves = moves) }
+        }
+    }
+
+    /**
+     * The reorder enable state for each window row; see [rowMoveStatesOf].
+     */
+    private fun rowMoveStates(
+        window: List<QuestionRef>,
+        contexts: Map<String, CategoryContext>
+    ): Map<String, RowMoveState> = rowMoveStatesOf(window, contexts)
 
     /**
      * One row asking for what it renders, because it is on screen without it.
@@ -236,12 +295,14 @@ class BrowseViewModel(
         // drops the card the moment it lands. Bounded by the rows actually on
         // screen, and released by the next window.
         windowIds = windowIds + ref.id
+        if (windowRefs.none { it.id == ref.id }) windowRefs = windowRefs + ref
         loadContent(listOf(ref))
         listOfNotNull(ref.passageId).let { passageIds ->
             loadPassages(passageIds)
             loadPassageFirstIds(passageIds)
         }
         loadCategoryContexts(listOf(ref.categoryId))
+        refreshRowMoves()
     }
 
     private fun loadContent(window: List<QuestionRef>) {
@@ -356,6 +417,7 @@ class BrowseViewModel(
                         categoryContexts = it.categoryContexts.filterKeys { id -> id in windowCategoryIds } + loaded
                     )
                 }
+                refreshRowMoves()
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "reorder context for ${missing.size} categories failed", e)
             } finally {
@@ -365,9 +427,11 @@ class BrowseViewModel(
     }
 
     private fun invalidateContexts() {
+        rowMovesGeneration++
         _state.update {
             it.copy(
                 categoryContexts = emptyMap(),
+                rowMoves = emptyMap(),
                 passageFirstIds = emptyMap(),
                 passages = emptyMap(),
                 contentById = emptyMap(),
@@ -584,4 +648,71 @@ class BrowseViewModel(
             }
         }
     }
+}
+
+/**
+ * The reorder enable state for each row of [window], computed once per window
+ * instead of once per row per recomposition.
+ *
+ * One pass per category records the contiguous passage runs (exactly
+ * `PassageReorder.runOf`'s notion), a second answers each window row from them.
+ * O(category) time but O(window) memory, and it runs off the main thread;
+ * `BrowseRowMoveStateTest` holds every row's answer to the
+ * `PassageReorder.canMove` / `movePassageBlock` predicates it replaces.
+ */
+internal fun rowMoveStatesOf(
+    window: List<QuestionRef>,
+    contexts: Map<String, CategoryContext>
+): Map<String, RowMoveState> {
+    val wanted = window.mapTo(HashSet()) { it.id }
+    val out = HashMap<String, RowMoveState>(window.size * 2)
+    for (categoryId in window.mapTo(LinkedHashSet()) { it.categoryId }) {
+        val refs = contexts[categoryId]?.refs ?: continue
+        if (refs.isEmpty()) continue
+        // The contiguous run each row belongs to, exactly as
+        // PassageReorder.runOf computes it: a passage's members are contiguous
+        // by invariant, and a (corrupt) split passage must be treated run by
+        // run, not as one far-apart span.
+        val runStart = IntArray(refs.size)
+        val runEnd = IntArray(refs.size)
+        var at = 0
+        while (at < refs.size) {
+            val passageId = refs[at].passageId
+            if (passageId == null) {
+                runStart[at] = at
+                runEnd[at] = at
+                at++
+            } else {
+                var end = at
+                while (end + 1 < refs.size && refs[end + 1].passageId == passageId) end++
+                for (k in at..end) {
+                    runStart[k] = at
+                    runEnd[k] = end
+                }
+                at = end + 1
+            }
+        }
+        refs.forEachIndexed { index, ref ->
+            if (ref.id !in wanted) return@forEachIndexed
+            val passageId = ref.passageId
+            val first = runStart[index]
+            val last = runEnd[index]
+            out[ref.id] = RowMoveState(
+                indexInCategory = index,
+                // Same predicates as PassageReorder.canMove / movePassageBlock:
+                // a member may swap within its run, a standalone row with a
+                // neighbour, and only a non-blank passage id moves as a block.
+                canMoveUp = if (passageId == null) index > 0 else index > first,
+                canMoveDown = if (passageId == null) {
+                    index < refs.size - 1
+                } else {
+                    index < last
+                },
+                passageCanMoveUp = passageId != null && passageId.isNotBlank() && first > 0,
+                passageCanMoveDown = passageId != null && passageId.isNotBlank() &&
+                    last < refs.size - 1
+            )
+        }
+    }
+    return out
 }

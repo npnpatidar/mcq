@@ -15,10 +15,13 @@ import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
+import com.mcqapp.domain.stats.WorkloadData
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -144,6 +147,33 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         range: StatsAggregator.Range,
         now: Long
     ): OverviewData = statsStore.loadOverview(scopePaperId, range, now)
+
+    /**
+     * The workload tab alone, streamed. Its per-question response-time roll-ups
+     * are the replay's own working set; the log and the cards are never listed.
+     */
+    internal suspend fun statsWorkload(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): WorkloadData = statsStore.loadWorkload(scopePaperId, range, now)
+
+    /**
+     * The memory tab alone, streamed: one replay feeds both the overview
+     * accumulator's KPIs and the memory accumulator's curves and histograms.
+     */
+    internal suspend fun statsMemory(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): MemoryData = statsStore.loadMemory(scopePaperId, range, now)
+
+    /** The cards tab alone, streamed: the cards first, then the log for leeches. */
+    internal suspend fun statsCards(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): CardsData = statsStore.loadCards(scopePaperId, range, now)
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =

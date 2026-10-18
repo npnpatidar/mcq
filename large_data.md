@@ -14,34 +14,20 @@ run locally. Line numbers below are anchors, not promises.
 
 ## Open — ranked worst-first
 
-### 1. Stats Workload / Memory / Cards tabs — whole card library + whole review log
-`StatsViewModel.kt:~232` calls `inputOf(loadedLibrary(), loadedReviews(), now)`;
-both are cached for the ViewModel's life.
-- `StatsStore.loadCards()` (`StatsStore.kt:~159`) pages every `CardSnapshot`
-  into one `ArrayList` then returns it — one object per *studied* card.
-- `StatsStore.loadReviews()` (`StatsStore.kt:~53`) returns the entire replayed
-  review log as `List<ReplayReview>`.
-
-Retention streams past the log and Overview streams; these three tabs don't.
-At a million studied cards this is the largest remaining in-app construct.
-
-Fix shape: page the log/cards through the aggregators, or compute the three
-sections as SQL aggregates the way retention does.
-
-### 2. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
+### 1. `PaperStore.deletePaper` / `deleteImpact` — the paper's whole id list
 `PaperStore.kt:~121` and `:~139` call `getIdsByPaper(paperId)`, returning every
 question id before deleting (downstream `removeAllChunked` /
 `countForQuestionsChunked` chunk it, but the id list itself is the peak).
 
 Fix shape: chunk the id read too, or delete/count by `paperId` in SQL.
 
-### 3. `FsrsTuner.optimize` — whole review log
+### 2. `FsrsTuner.optimize` — whole review log
 `FsrsTuner.kt:~44`: `db.reviewLogDao().getAll()` then `buildFsrsTrainingCards`
 over it. Tuning on a million reviews holds the log.
 
 Fix shape: page the log into the fit.
 
-### 4. The legacy in-memory `Importer` reachable outside `.apkg`
+### 3. The legacy in-memory `Importer` reachable outside `.apkg`
 - `ImportViewModel.kt:~798` — the non-preview / edited-file path (a large bank
   takes the streamed path at `:~742`).
 - `LibraryViewModel.kt:~386` — "Load sample data" (tiny asset; harmless).
@@ -65,14 +51,25 @@ non-preview caller streams too.
 ## Not a gap
 
 - `.apkg` **export** streams its structure (notes batched into a temp
-  collection, collection zipped in chunks, schedules asked per batch) but the
-  media dedupe map is a whole-paper construct — see item 2.
+  collection, collection zipped in chunks, schedules asked per batch); its
+  media dedupe map is keyed on the image's digest (see Fixed).
 - JSON import/restore, backup write/restore, storage report, category counts,
   badge counts, ZIP/PDF/Anki writers, stats retention, snapshot saves, the review
   sheet — all stream or aggregate in SQL.
 
 ## Fixed
 
+- **The stats Workload / Memory / Cards tabs held the whole log and the whole
+  card library** — `StatsViewModel` fed them `inputOf(loadedLibrary(),
+  loadedReviews())`, two lists cached for the ViewModel's life: one
+  `CardSnapshot` per studied card and one `ReplayReview` per review. Each tab
+  now streams through its own accumulator (`StatsStore.loadWorkload` /
+  `loadMemory` / `loadCards`), the same objects the in-memory build feeds:
+  per-day buckets and per-question roll-ups instead of the log, and — for the
+  histograms' true medians, which no counter can give — a `DoubleArray` of
+  eight bytes a value instead of an object a card. `StatsStore.loadLibrary` /
+  `loadReviews` stay only as the stream tests' oracle. (`StatsTabsStreamTest`
+  gates the streamed build against the in-memory one.)
 - **Rich exports held every image's data URI as a map key** — the writers
   dedupe media so one picture is stored once, but keyed that map on the full data
   URI, putting every image back in memory as a base64 string on top of the

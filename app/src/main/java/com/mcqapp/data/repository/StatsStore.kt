@@ -9,12 +9,15 @@ import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
+import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.FsrsReplay
+import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.ReviewHistoryEntry
 import com.mcqapp.domain.stats.StatsAggregator
+import com.mcqapp.domain.stats.WorkloadData
 
 /**
  * Loads what the statistics page needs: the replayed review log, every card's
@@ -109,6 +112,94 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         )
         replayInto(scheduler, accumulator::add)
         pageCardsInto(accumulator::addCard)
+        return accumulator.toData()
+    }
+
+    /**
+     * The workload tab, streamed: the log is replayed and the cards are paged
+     * into one [StatsAggregator.WorkloadAccumulator]. Its response-time list
+     * keeps a roll per question in range — the replay's own working set — but
+     * neither the log nor the library is ever listed.
+     */
+    suspend fun loadWorkload(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): WorkloadData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.WorkloadAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now)
+        )
+        replayInto(scheduler, accumulator::add)
+        pageCardsInto(accumulator::addCard)
+        return accumulator.toData()
+    }
+
+    /**
+     * The memory tab, streamed: the overview accumulator supplies the KPIs from
+     * the same replay, and the memory accumulator carries the distributions and
+     * the growth curves. Neither the log nor the library is ever listed.
+     */
+    suspend fun loadMemory(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): MemoryData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val zone = DayBoundary.zoneOffset(now)
+        val overview = StatsAggregator.OverviewAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = zone,
+            scheduler = scheduler,
+            // Only the KPIs are wanted here; the memory tab ranks nothing.
+            collectWeakest = false
+        )
+        val memory = StatsAggregator.MemoryAccumulator(
+            scopePaperId = scopePaperId,
+            now = now,
+            cfg = config,
+            zone = zone,
+            scheduler = scheduler
+        )
+        replayInto(scheduler) { review ->
+            overview.add(review)
+            memory.add(review)
+        }
+        pageCardsInto { snapshot ->
+            overview.addCard(snapshot)
+            memory.addCard(snapshot)
+        }
+        return memory.toData(overview.kpis())
+    }
+
+    /**
+     * The cards tab, streamed: the cards are paged first (a leech can only be
+     * rolled up once its card has been seen), then the log is replayed past the
+     * accumulator. The per-paper table is one bucket per paper, not per card.
+     */
+    suspend fun loadCards(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): CardsData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.CardsAccumulator(
+            scopePaperId = scopePaperId,
+            now = now,
+            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
+        )
+        pageCardsInto(accumulator::addCard)
+        replayInto(scheduler, accumulator::add)
         return accumulator.toData()
     }
 

@@ -15,10 +15,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class BookmarksUiState(val count: Int = 0)
@@ -32,13 +30,14 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Rebuilt whenever the bookmark set changes, so removing (or adding) a
-     * bookmark from anywhere refreshes the visible list. Pages carry content
-     * only as they scroll in.
+     * bookmark from anywhere refreshes the visible list. The trigger is the
+     * table's invalidation, not its contents: the ids themselves would be
+     * handed back in full on every change, and this is the one screen that
+     * already knows every row is bookmarked. Pages carry content only as they
+     * scroll in.
      */
     val pagingData: Flow<PagingData<com.mcqapp.domain.BookmarkedQuestion>> =
-        repository.observeBookmarks()
-            .map { it.size }
-            .distinctUntilChanged()
+        repository.observeBookmarkChanges()
             .flatMapLatest {
                 Pager(
                     PagingConfig(
@@ -53,9 +52,10 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
             .cachedIn(viewModelScope)
 
     init {
+        // The count, not the ids: a "bookmark everything" bank is one COUNT.
         viewModelScope.launch {
-            repository.observeBookmarks().collect { ids ->
-                _state.value = BookmarksUiState(count = ids.size)
+            repository.observeBookmarkCount().collect { count ->
+                _state.value = BookmarksUiState(count = count)
             }
         }
     }

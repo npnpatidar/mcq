@@ -76,6 +76,28 @@ class NoDeadCodeTest {
         )
     }
 
+    /**
+     * Two readers materialise a whole table: every result row of an attempt and
+     * every bookmarked question. Both screens page instead
+     * (`resultPagingSource`, `bookmarkedPagingSource`), so they stay as the
+     * tests' oracles — the list a streamed save is asserted against, and the
+     * provenance a bookmark is asserted against — and no production path may
+     * ask for them.
+     */
+    @Test
+    fun theWholeTableReadersHaveNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "McqRepository.kt" && it.name != "HistoryStore.kt" }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("getBookmarkedQuestions()", "getAttemptResults(")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read a whole table: $offenders", offenders.isEmpty())
+    }
+
     @Test
     fun imageScalingHasOneImplementation() {
         // The paper-level scaler is the single copy of the mapping; the

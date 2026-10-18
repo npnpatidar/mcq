@@ -617,8 +617,20 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     // --- bookmarks, attempts, mistakes ---
 
     fun observeBookmarks(): Flow<List<String>> = historyStore.observeBookmarks()
+
+    /** A signal that the bookmark set changed, for paging the bookmarks screen. */
+    fun observeBookmarkChanges(): Flow<Unit> = historyStore.observeBookmarkChanges()
+
+    /** How many bookmarks there are, for the header count and the empty state. */
+    fun observeBookmarkCount(): Flow<Int> = historyStore.observeBookmarkCount()
     suspend fun toggleBookmark(questionId: String) = historyStore.toggleBookmark(questionId)
     suspend fun isBookmarked(questionId: String): Boolean = historyStore.isBookmarked(questionId)
+
+    /**
+     * Every bookmarked question, with its paper. Linear in the bank, so it is
+     * the tests' oracle — the screen pages its rows with
+     * [bookmarkedPagingSource] — and `NoDeadCodeTest` refuses a production call.
+     */
     suspend fun getBookmarkedQuestions(): List<com.mcqapp.domain.BookmarkedQuestion> =
         historyStore.getBookmarkedQuestions()
     fun bookmarkedPagingSource(): androidx.paging.PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion> =
@@ -659,6 +671,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun observeAttempts(): Flow<List<com.mcqapp.domain.Attempt>> = historyStore.observeAttempts()
     suspend fun getAttempt(attemptId: Long): com.mcqapp.domain.Attempt? =
         historyStore.getAttempt(attemptId)
+    /**
+     * Every result row of an attempt, in one list. Linear in the attempt, so it
+     * is the tests' oracle — the screen pages its rows with
+     * [resultPagingSource] and reads the header from the SQL aggregates — and
+     * `NoDeadCodeTest` refuses a production call.
+     */
     suspend fun getAttemptResults(attemptId: Long): List<com.mcqapp.domain.QuestionResult> =
         historyStore.getAttemptResults(attemptId)
     fun resultPagingSource(

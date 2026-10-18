@@ -11,7 +11,11 @@ import com.mcqapp.domain.BookmarkedQuestion
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -74,5 +78,44 @@ class BookmarksPagingTest {
         assertEquals(listOf("q1", "q3", "q2"), rows.map { it.question.id })
         assertEquals(listOf("p1", "p1", "p1"), rows.map { it.paperId })
         assertEquals("Q q1", rows.first().question.text)
+    }
+
+    /**
+     * The screen reads a number, not the ids: a count is one `COUNT(*)` and a
+     * refresh needs only to know that the table moved.
+     */
+    @Test
+    fun theCountIsOneNumberAndTheChangeSignalIsPerWrite() = runBlocking {
+        saveQuestion("q1"); saveQuestion("q2")
+        assertEquals(0, repository.observeBookmarkCount().first())
+
+        val signals = java.util.concurrent.atomic.AtomicInteger()
+        val collector = launch {
+            repository.observeBookmarkChanges().collect { signals.incrementAndGet() }
+        }
+        try {
+            delay(100)
+
+            bookmark("q1", 1L)
+            awaitAtLeast(signals, 1)
+            assertEquals(1, repository.observeBookmarkCount().first())
+
+            bookmark("q2", 2L)
+            awaitAtLeast(signals, 2)
+            assertEquals(2, repository.observeBookmarkCount().first())
+
+            // Toggling back off is a write too, and the number follows.
+            repository.toggleBookmark("q1")
+            awaitAtLeast(signals, 3)
+            assertEquals(1, repository.observeBookmarkCount().first())
+        } finally {
+            collector.cancel()
+        }
+    }
+
+    private suspend fun awaitAtLeast(signals: java.util.concurrent.atomic.AtomicInteger, n: Int) {
+        withTimeout(10_000) {
+            while (signals.get() < n) delay(10)
+        }
     }
 }

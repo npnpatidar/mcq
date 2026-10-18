@@ -53,6 +53,18 @@ internal class HistoryStore(
 
     fun observeBookmarks(): Flow<List<String>> = db.bookmarkDao().observeAll()
 
+    /**
+     * A signal that the bookmark set changed. The bookmarks screen pages its
+     * rows with a plain [PagingSource], so all it needs to rebuild them is the
+     * table's invalidation — not the ids themselves, which a "bookmark
+     * everything" bank would hand back in full on every change.
+     */
+    fun observeBookmarkChanges(): Flow<Unit> =
+        db.invalidationTracker.createFlow("bookmarks").map { Unit }
+
+    /** How many bookmarks there are, for the header count and empty state. */
+    fun observeBookmarkCount(): Flow<Int> = db.bookmarkDao().observeCount()
+
     suspend fun toggleBookmark(questionId: String) {
         // One transaction: the check and the flip must observe one state, or
         // a double-tap racing within one dispatcher hop reads the same value
@@ -119,7 +131,14 @@ internal class HistoryStore(
         return BookmarkPage(items, hasMore = entities.size == limit)
     }
 
-    /** Bookmark rows paired with their owning paper, for the bookmarks screen. */
+    /**
+     * Bookmark rows paired with their owning paper, for the bookmarks screen.
+     *
+     * Linear: it reads every bookmark id and every one of their questions. It
+     * is what the tests assert provenance against; the screen pages its rows
+     * with [bookmarkedPagingSource], and `NoDeadCodeTest` refuses a production
+     * call here.
+     */
     suspend fun getBookmarkedQuestions(): List<com.mcqapp.domain.BookmarkedQuestion> {
         val ids = db.bookmarkDao().getAll()
         if (ids.isEmpty()) return emptyList()
@@ -356,6 +375,12 @@ internal class HistoryStore(
         finishedAt = finishedAt
     )
 
+    /**
+     * Every result row of an attempt, decoded. Linear in the attempt: it is what
+     * the tests assert the streamed save against; the results screen pages its
+     * rows with [resultPagingSource] and reads its header from the SQL
+     * aggregates, and `NoDeadCodeTest` refuses a production call here.
+     */
     suspend fun getAttemptResults(attemptId: Long): List<QuestionResult> {
         Logger.d("REPO", "getAttemptResults($attemptId)")
         return db.attemptDao().getResults(attemptId).map { it.toDomainResult() }

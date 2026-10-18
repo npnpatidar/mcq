@@ -1246,6 +1246,15 @@ interface BookmarkDao {
     @Query("SELECT COUNT(*) FROM bookmarks")
     suspend fun countAll(): Int
 
+    /**
+     * How many bookmarks there are, re-read only when the table changes. The
+     * bookmarks screen wants the *number* (and a signal that the set changed),
+     * never the ids: reading those back to count them would materialise a
+     * million strings on every bookmark.
+     */
+    @Query("SELECT COUNT(*) FROM bookmarks")
+    fun observeCount(): Flow<Int>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun add(bookmark: BookmarkEntity)
 

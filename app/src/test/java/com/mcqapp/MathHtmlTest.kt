@@ -66,7 +66,14 @@ class MathHtmlTest {
         // the raw MathML and the typeset SVG do not have the same height.
         assertTrue(html.contains("startup.promise"))
         assertTrue(html.contains("typesetPromise"))
-        assertTrue(html.contains("body.scrollHeight"))
+        // The body's border box, not scrollHeight: scrollHeight is at least
+        // the viewport height, and the viewport is the pinned height, so a
+        // block pinned too tall could never shrink and would leave blank
+        // space below the question.
+        assertTrue(html.contains("body.getBoundingClientRect().height"))
+        assertTrue(!html.contains("body.scrollHeight"))
+        // Nothing may be reported before the typeset pass settles.
+        assertTrue(html.contains("if (!settled) return"))
         // A width change (rotation, font scale) reflows the page.
         assertTrue(html.contains("addEventListener('resize'"))
     }

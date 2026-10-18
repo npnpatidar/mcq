@@ -108,10 +108,12 @@ class RepositoryTest {
     @Test
     fun streamedSaveWalksTheOrderAcrossBatchesAndResolvesTitlesLate() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat One")
-        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat Two")
-        // Explicit order: c1 before c2, whatever the titles are.
-        db.categoryDao().updateFields("c1", "p1", "Cat One", null, sortOrder = 0)
-        db.categoryDao().updateFields("c2", "p1", "Cat Two", null, sortOrder = 1)
+        // A second ensurePaperAndCategory would REPLACE the paper row and
+        // cascade-delete c1 (categories.paperId FK), so insert c2 directly, and
+        // with an explicit sortOrder so the session order is c1 then c2.
+        db.categoryDao().upsert(
+            CategoryEntity(id = "c2", paperId = "p1", title = "Cat Two", sortOrder = 1)
+        )
         // Inserted c2-first so the session order is not the insertion order.
         val second = (1..3).map { "b$it" }
         val first = (1..500).map { "a$it" }

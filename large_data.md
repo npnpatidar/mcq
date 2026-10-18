@@ -27,7 +27,6 @@ accepted).
   (`ImportBackupRestoreTest` pins the file the Import button writes), so it is
   not deleted; streaming it needs a multi-paper streaming reader the parser does
   not have. Settings → Restore backup is the streaming path.
-
 - **Search is `LIKE '%q%'`** — a full scan. Instant search is on hold by request
   (FTS5 paused).
 - **`observeBookmarks()` full id list** in `TestViewModel.kt:~170` and

@@ -980,10 +980,13 @@ over `searchText` (§4.5 + F4).
 
 ### Open (in pain order)
 
-1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is still
+1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is
    linear in the paper — every eligible card, so a million-question paper that
-   has never been studied builds a million cards. No production path asks for it
-   (the session pulls one card at a time; the drill asks for leeches), but the
-   repository API allows it. The pull and the badge are bounded now (§8 Fixed).
+   has never been studied builds a million cards. It is kept deliberately: it is
+   the study tests' oracle for "the badge and the session agree" and for the
+   removal of daily caps, neither of which the one-card pull can express. No
+   production path asks for it, and `NoDeadCodeTest` now refuses the call if one
+   ever appears (the drill asks `leechesOnly = true`, bounded by the schedules on
+   file). The pull and the badge are bounded (§8 Fixed).
 2. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
 

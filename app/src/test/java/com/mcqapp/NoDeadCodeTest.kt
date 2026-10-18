@@ -42,6 +42,40 @@ class NoDeadCodeTest {
         }
     }
 
+    /**
+     * `getStudyQueue(leechesOnly = false)` materialises every eligible card, so
+     * it is linear in the paper — a million cards on a paper nobody has studied.
+     * It stays because it is the study tests' oracle: it is what "the badge and
+     * the session agree" is asserted against, and what daily caps were removed
+     * against. No screen may call it. The session pulls one card at a time
+     * (`getNextStudyCard`), and the drill asks for leeches (`leechesOnly = true`,
+     * bounded by the schedules on file).
+     */
+    @Test
+    fun theLinearStudyQueueHasNoProductionCaller() {
+        // A 200-character window covers a call whose arguments wrap.
+        val window = 200
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "McqRepository.kt" && it.name != "StudyStore.kt" }
+            .forEach { file ->
+                val text = file.readText()
+                var at = text.indexOf("getStudyQueue(")
+                while (at >= 0) {
+                    val call = text.substring(at, minOf(text.length, at + window))
+                    if (!call.contains("leechesOnly = true")) {
+                        val line = text.count { it == '\n' } + 1
+                        offenders += "${file.name}:$line"
+                    }
+                    at = text.indexOf("getStudyQueue(", at + 1)
+                }
+            }
+        assertTrue(
+            "these ask for the linear full study queue: $offenders",
+            offenders.isEmpty()
+        )
+    }
+
     @Test
     fun imageScalingHasOneImplementation() {
         // The paper-level scaler is the single copy of the mapping; the

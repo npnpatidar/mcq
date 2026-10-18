@@ -256,9 +256,9 @@ internal fun mixedContentHtml(
     // data URIs (the picker encodes them, imports downscale to them), so
     // there is no file: image or stylesheet to allow — allowFileAccess=false
     // rules out real files and this page never references an android_asset
-    // image or CSS. script-src and font-src keep file: for the bundled
-    // MathJax asset and math font, and everything else stays off the
-    // network, same as the exports.
+    // image or CSS. script-src keeps file: for the bundled MathJax asset;
+    // the only network origin allowed is the asset origin that serves the
+    // math font, and everything else stays offline, same as the exports.
     return """
         <html>
         <head>

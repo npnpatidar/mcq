@@ -96,8 +96,8 @@ class TestProgressStoreTest {
         // The backup format has one snapshot field and no rows, so the document
         // it writes is the legacy shape: header with the answers inlined.
         val forBackup = TestSnapshot.fromJson(repository.testProgressForBackup()!!)!!
-        assertEquals(listOf("q1"), forBackup.selections["q1"])
-        assertEquals(listOf("q2"), forBackup.selections["q2"])
+        assertEquals(listOf("q1-a"), forBackup.selections["q1"])
+        assertEquals(listOf("q2-a"), forBackup.selections["q2"])
         assertEquals(1, forBackup.currentIndex)
     }
 

@@ -223,11 +223,12 @@ object AnkiPackageWriter {
             }
             zip(file, media, out)
         } finally {
+            media.close()
             if (!file.delete()) {
                 Logger.w("ANKI", "Could not delete temp collection ${file.absolutePath}")
             }
         }
-        Logger.i("EXPORT", "Wrote .apkg with $index notes, ${media.entries.size} media files")
+        Logger.i("EXPORT", "Wrote .apkg with $index notes, ${media.size} media files")
     }
 
     /** A card waiting for its batch's scheduling rows before it is written. */
@@ -388,7 +389,7 @@ object AnkiPackageWriter {
             collection.inputStream().use { it.copyTo(zip) }
             zip.closeEntry()
 
-            if (media.entries.isNotEmpty()) {
+            if (media.isNotEmpty) {
                 zip.putNextEntry(ZipEntry("media"))
                 // Anki's import uses the manifest's original filenames, not the
                 // numeric zip names, when rewriting <img> references and storing
@@ -399,9 +400,11 @@ object AnkiPackageWriter {
                 zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
 
-                media.entries.forEach { (numeric, bytes) ->
+                // Spooled to temp files by the pool, so a deck's pictures are
+                // never all in memory at once.
+                media.names.forEach { numeric ->
                     zip.putNextEntry(ZipEntry(numeric))
-                    zip.write(bytes)
+                    media.copyTo(numeric, zip)
                     zip.closeEntry()
                 }
             }

@@ -14,6 +14,7 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
+import java.io.Closeable
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.util.zip.ZipEntry
@@ -43,63 +44,68 @@ object DocxPaperWriter {
      * Renders the document straight to [out]. The body is streamed into
      * `word/document.xml` as the paper is walked, the hidden payload is
      * streamed into `docProps/custom.xml` by a second walk, and the finished
-     * package never exists as a second copy of either. The one thing held is
-     * the pictures the paper embeds: they are `word/media` entries, so they
-     * have to be named and written before the body that draws them.
+     * package never exists as a second copy of either. The pictures the paper
+     * embeds are the one thing held back — they are `word/media` entries, so
+     * they have to be named and written before the body that draws them — and
+     * they are spooled to temp files rather than kept in memory ([MediaPool]).
      */
     suspend fun writeDocx(stream: PaperStream, out: OutputStream) {
         val warnings = mutableListOf<String>()
         val media = MediaPool()
-        val bySection = flattenCategories(stream.categories).associateBy { it.dto.id }
+        try {
+            val bySection = flattenCategories(stream.categories).associateBy { it.dto.id }
 
-        ZipOutputStream(out).use { zip ->
-            // [Content_Types].xml comes first: the OPC spec asks for it, and
-            // strict readers look for it there.
-            writeEntry(zip, "[Content_Types].xml", contentTypesXml())
-            writeEntry(zip, "_rels/.rels", rootRelsXml())
+            ZipOutputStream(out).use { zip ->
+                // [Content_Types].xml comes first: the OPC spec asks for it, and
+                // strict readers look for it there.
+                writeEntry(zip, "[Content_Types].xml", contentTypesXml())
+                writeEntry(zip, "_rels/.rels", rootRelsXml())
 
-            zip.putNextEntry(ZipEntry("word/document.xml"))
-            val body = OutputStreamWriter(zip, Charsets.UTF_8)
-            body.append(documentHead())
-            writeBody(body, stream, bySection, media, warnings)
-            body.append(documentTail())
-            // Flush, never close: closing would take the zip with it.
-            body.flush()
-            zip.closeEntry()
-
-            writeEntry(zip, "word/styles.xml", stylesXml())
-            // After the body: it lists the media the body registered.
-            writeEntry(zip, "word/_rels/document.xml.rels", documentRelsXml(media))
-
-            // The hidden payload: the full paper DTO as a custom document
-            // property. It is invisible in Word (File > Info > Advanced
-            // Properties aside) and survives Word's own saves, so a file the
-            // app wrote and nobody edited re-imports with ids, marks,
-            // difficulty and tags intact instead of duplicating everything the
-            // visible markers cannot carry. The parser falls back to the
-            // markers when the payload no longer matches the visible text,
-            // and grafts the image srcs back from the word/media entries the
-            // payload deliberately does not duplicate. It is streamed with the
-            // same writer the JSON export uses, with the images blanked.
-            zip.putNextEntry(ZipEntry("docProps/custom.xml"))
-            val props = OutputStreamWriter(zip, Charsets.UTF_8)
-            props.append(customPropsHead())
-            PaperJsonWriter.writePaperJson(
-                XmlEscapingAppendable(props),
-                stream,
-                json = payloadJsonFormat,
-                question = { stripPayloadImages(it) },
-                passage = { stripPayloadImages(it) }
-            )
-            props.append(customPropsTail())
-            props.flush()
-            zip.closeEntry()
-
-            for ((target, bytes) in media.files) {
-                zip.putNextEntry(ZipEntry("word/$target"))
-                zip.write(bytes)
+                zip.putNextEntry(ZipEntry("word/document.xml"))
+                val body = OutputStreamWriter(zip, Charsets.UTF_8)
+                body.append(documentHead())
+                writeBody(body, stream, bySection, media, warnings)
+                body.append(documentTail())
+                // Flush, never close: closing would take the zip with it.
+                body.flush()
                 zip.closeEntry()
+
+                writeEntry(zip, "word/styles.xml", stylesXml())
+                // After the body: it lists the media the body registered.
+                writeEntry(zip, "word/_rels/document.xml.rels", documentRelsXml(media))
+
+                // The hidden payload: the full paper DTO as a custom document
+                // property. It is invisible in Word (File > Info > Advanced
+                // Properties aside) and survives Word's own saves, so a file the
+                // app wrote and nobody edited re-imports with ids, marks,
+                // difficulty and tags intact instead of duplicating everything the
+                // visible markers cannot carry. The parser falls back to the
+                // markers when the payload no longer matches the visible text,
+                // and grafts the image srcs back from the word/media entries the
+                // payload deliberately does not duplicate. It is streamed with the
+                // same writer the JSON export uses, with the images blanked.
+                zip.putNextEntry(ZipEntry("docProps/custom.xml"))
+                val props = OutputStreamWriter(zip, Charsets.UTF_8)
+                props.append(customPropsHead())
+                PaperJsonWriter.writePaperJson(
+                    XmlEscapingAppendable(props),
+                    stream,
+                    json = payloadJsonFormat,
+                    question = { stripPayloadImages(it) },
+                    passage = { stripPayloadImages(it) }
+                )
+                props.append(customPropsTail())
+                props.flush()
+                zip.closeEntry()
+
+                for (target in media.targets) {
+                    zip.putNextEntry(ZipEntry("word/$target"))
+                    media.copyTo(target, zip)
+                    zip.closeEntry()
+                }
             }
+        } finally {
+            media.close()
         }
         for (warning in warnings) Logger.w("DOCX", warning)
     }
@@ -756,9 +762,13 @@ object DocxPaperWriter {
     // Media: data URIs to word/media entries
     // ------------------------------------------------------------------
 
-    private class MediaPool {
-        val files = LinkedHashMap<String, ByteArray>()
+    private class MediaPool : Closeable {
+        private val spool = MediaSpool()
         val rels = LinkedHashMap<String, String>()
+
+        /** The `media/…` targets, in the order the body met them. */
+        val targets: List<String> get() = spool.names
+
         private val uriToRid = HashMap<String, String>()
         private var mediaCounter = 0
         private var docPrCounter = 0
@@ -785,7 +795,9 @@ object DocxPaperWriter {
             val rid = uriToRid.getOrPut(src) {
                 mediaCounter++
                 val target = "media/image$mediaCounter.${imageExtension(image.mimeType)}"
-                files[target] = image.bytes
+                // Spooled, not kept: the body registers every picture the paper
+                // has, and the entries are written after it.
+                spool.add(target, image.bytes)
                 val rid = "rIdMedia$mediaCounter"
                 rels[rid] = target
                 rid
@@ -799,6 +811,10 @@ object DocxPaperWriter {
             }
             return Pic(rid, cx, cy, ++docPrCounter)
         }
+
+        fun copyTo(target: String, out: OutputStream) = spool.copyTo(target, out)
+
+        override fun close() = spool.close()
     }
 
     private fun drawingXml(pic: Pic): String =

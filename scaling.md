@@ -510,11 +510,18 @@ RSS of the test JVM for a 50k bank) as the perf gate.
 
 **Today's hot paths** (`ResultsViewModel.kt`):
 
-- `getAttemptResults(attemptId)` maps **every** `QuestionResultEntity` (full
+- ~~`getAttemptResults(attemptId)` maps **every** `QuestionResultEntity` (full
   element JSON, options JSON, explanation) into `QuestionResult` objects in
-  memory at once. Plus `categoryBreakdown` uses the same in-memory list.
-- ResultsScreen renders all rows in `LazyColumn` (fine) but the model is
-  still O(attempt size) in memory.
+  memory at once. Plus `categoryBreakdown` uses the same in-memory list.~~ —
+  fixed: the screen pages (`resultPagingSource`, keyed on the last scanned
+  `rowid` plus the skipped count so a filter chip drops rows without shifting
+  the numbering) and reads its header from SQL (`getResultAggregates`,
+  `getResultCategoryBreakdown`). `getAttemptResults` stays as the tests' oracle
+  of a streamed save, and `NoDeadCodeTest` refuses a production call.
+- ~~ResultsScreen renders all rows in `LazyColumn` (fine) but the model is
+  still O(attempt size) in memory.~~ — fixed by the paging above. The one set it
+  does hold is the bookmarked id list, which is what marks a row as saved
+  (§8 Open 3 keeps that shape).
 
 **Plan**
 
@@ -630,11 +637,17 @@ members pages.
 
 **Today's hot paths** (`BookmarksViewModel.kt`, `HistoryStore.getBookmarkedQuestions`):
 
-- Loads **all** bookmarked questions with full content + a category/paper
+- ~~Loads **all** bookmarked questions with full content + a category/paper
   lookup, into one List. Bookmarks are user-curated so usually small — but the
-  app explicitly supports "bookmark everything".
-- Export goes through the streaming exporter (F5, §8) rather than building the
-  file in memory; the LazyColumn is virtualised.
+  app explicitly supports "bookmark everything".~~ — fixed: the screen pages
+  its rows (`bookmarkedPagingSource`, one page of content decoded per scroll),
+  rebuilds them off the `bookmarks` table's *invalidation* rather than the id
+  list, and counts them with one `COUNT(*)`. `getBookmarkedQuestions` stays as
+  the tests' oracle of bookmark provenance, and `NoDeadCodeTest` refuses a
+  production call.
+- ~~Export goes through the streaming exporter (F5, §8) rather than building the
+  file in memory; the LazyColumn is virtualised.~~ — that was already true and
+  still is (§8 Fixed).
 
 **Plan**
 
@@ -743,7 +756,7 @@ members pages.
       and its paging are what is left of this step.
 4. **Aggregate tables**: `question_stats` (§4.8) + SQL-first statistics
    (§4.9). Both touch stored data → migration + backfill.
-5. **Results + Bookmarks page their rows** (§4.7, §4.11).
+5. **Results + Bookmarks page their rows** (§4.7, §4.11) — done (§8 Fixed).
 6. **Import streaming + chunked transactions + preview paging** (§4.6) +
    export streaming (F5) + Anki writer streaming (§5.5).
 7. **Hygiene batch**: StorageInfo SQL (§5.2), `contentType`s, startup trace,
@@ -814,6 +827,7 @@ slower, so the numbers below are a floor).
 | `GROUP BY categoryId` over the whole table | 0.12 s, now only the library badge asks for it |
 | the same counts filtered to one paper's categories | 1.6 ms for 10k questions |
 | resume snapshot write, per answer | constant: a ~300 B header + one upsert (was O(answered): MB-scale by the end of a sitting) |
+| an exported paper's pictures | one image in memory (spooled to a temp file), was every distinct image the paper embeds |
 
 Search is not instant and cannot be while it is `LIKE '%q%'` with no FTS
 index: every window is a full scan, and a rare term walks several windows
@@ -965,10 +979,13 @@ over `searchText` (§4.5 + F4).
   writer notes one question at a time, asks for scheduling per batch
   (`getForQuestionsChunked`) instead of the whole paper's `card_state`, and
   writes the `col` row *after* the notes so no pass is spent finding out which
-  categories become decks. The render runs on `Dispatchers.IO`. Still held: the
-  pictures a paper embeds (DOCX `word/media`, the ZIP's image entries, the Anki
-  media pool) — bounded by the distinct images rather than the question count,
-  and named before the body that draws them, which is what the formats require.
+  categories become decks. The render runs on `Dispatchers.IO`. The pictures a
+  paper embeds (DOCX `word/media`, the ZIP's image entries, the Anki media pool)
+  are the one thing a writer cannot write as it meets them — all three formats
+  name their media before the body that draws it, and a zip's entries cannot be
+  interleaved — so they are spooled to temp files (`MediaSpool`) instead of
+  held: one image in memory at a time, whatever the paper embeds. A killed
+  process's spool is swept at startup with the rest of the temp staging.
   `ExportTestSupport.kt` drives the writers from a fixture; the content
   assertions live in `ExportWritersTest`/`DocxPaperWriterTest`/
   `PdfPaperWriterTest`, the byte-level round trips in `DocxRoundTripTest`.
@@ -1004,6 +1021,29 @@ over `searchText` (§4.5 + F4).
   300 answers, the backup document and the cleared state; `TestSessionResumeTest`
   answers through the view model, rebuilds it and resumes.
 
+- **Results and bookmarks held whole tables** (§4.7, §4.11) — opening an attempt
+  mapped every result row (element JSON, options JSON, explanation) into memory
+  before the first card, and the bookmarks screen loaded every bookmarked
+  question with its paper and worked out the count from the same list. Both
+  page now: results keyed on the last scanned `rowid` plus the rows a filter
+  chip skipped, so the numbering survives a filter; bookmarks one page of
+  decoded content per scroll. The bookmarks screen's *trigger* is the
+  `bookmarks` table's invalidation and its count is one `COUNT(*)`, so neither a
+  refresh nor the header reads an id list any more. The two linear readers stay
+  as the tests' oracles — `RepositoryTest` asserts a streamed save's order,
+  category titles and dwell against `getAttemptResults`, `BulkQueryTest` asserts
+  a bookmark's paper against `getBookmarkedQuestions` — and `NoDeadCodeTest`
+  now refuses a production call to either.
+
+- **Search rows showed the stored markup** (§4.5) — a result row rendered
+  `Question.text`, which concatenates the text elements as they were imported,
+  so an imported stem showed its inline tags on screen ("&lt;b&gt;Bold&lt;/b&gt;
+  question"). The row shows `previewText` now: the flattened, markup-free
+  visible text — the string the search actually matched on, and the same one
+  every other list row shows from its stored `searchText` column.
+  `QuestionSearchTest` pins that a preview carries no tag or entity, and that
+  `text` still does, because duplicate detection compares that.
+
 ### Open (in pain order)
 
 1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is
@@ -1015,4 +1055,12 @@ over `searchText` (§4.5 + F4).
    ever appears (the drill asks `leechesOnly = true`, bounded by the schedules on
    file). The pull and the badge are bounded (§8 Fixed).
 2. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
+3. The bookmarked id set: Test and Results observe **every** bookmark id
+   (`observeBookmarks()`) to mark rows as saved, which is a million strings on a
+   "bookmark everything" bank. The mark has to stay live — a bookmark taken on
+   another screen updates a visible row — so the fix is the bookmarks screen's
+   shape applied per row: `EXISTS(SELECT 1 FROM bookmarks WHERE questionId = …)`
+   in the page query, one `isBookmarked(id)` for the toggle, and the table's
+   invalidation to rebuild. Left because it is three call sites and the paging
+   sources are already the right shape.
 

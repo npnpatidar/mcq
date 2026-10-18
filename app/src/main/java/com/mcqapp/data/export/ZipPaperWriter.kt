@@ -20,14 +20,15 @@ import java.util.zip.ZipOutputStream
  *
  * Both the JSON and the folder are written while the paper streams past: the
  * JSON is encoded question by question straight into its entry, and each
- * image is decoded once and written into the folder. Only the images one paper
- * references are held (deduplicated by src — the set the folder ends up with),
- * never the paper's question graph.
+ * image is decoded once and spooled to a temp file ([MediaSpool]). Only the
+ * images one paper references are held (deduplicated by src — the set the
+ * folder ends up with), never the paper's question graph, and the spool itself
+ * holds one image at a time rather than the paper's worth of pictures.
  */
 object ZipPaperWriter {
 
     suspend fun paperToZip(stream: PaperStream, out: OutputStream) {
-        val files = LinkedHashMap<String, ByteArray>()
+        val spool = MediaSpool()
         val uriToPath = HashMap<String, String>()
         var counter = 0
 
@@ -37,7 +38,7 @@ object ZipPaperWriter {
             return uriToPath.getOrPut(src) {
                 counter++
                 val path = "images/img%03d.%s".format(counter, imageExtension(img.mimeType))
-                files[path] = img.bytes
+                spool.add(path, img.bytes)
                 path
             }
         }
@@ -69,24 +70,29 @@ object ZipPaperWriter {
             elements = remapElements(p.elements)
         )
 
-        ZipOutputStream(out).use { zip ->
-            zip.putNextEntry(ZipEntry("paper.json"))
-            val jsonWriter = OutputStreamWriter(zip, Charsets.UTF_8)
-            PaperJsonWriter.writePaperJson(
-                jsonWriter,
-                stream,
-                question = ::remapQuestion,
-                passage = ::remapPassage
-            )
-            // Flush, never close: closing would take the zip (and the caller's
-            // stream) with it.
-            jsonWriter.flush()
-            zip.closeEntry()
-            for ((path, bytes) in files) {
-                zip.putNextEntry(ZipEntry(path))
-                zip.write(bytes)
+        try {
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("paper.json"))
+                val jsonWriter = OutputStreamWriter(zip, Charsets.UTF_8)
+                PaperJsonWriter.writePaperJson(
+                    jsonWriter,
+                    stream,
+                    question = ::remapQuestion,
+                    passage = ::remapPassage
+                )
+                // Flush, never close: closing would take the zip (and the caller's
+                // stream) with it.
+                jsonWriter.flush()
                 zip.closeEntry()
+                // After the JSON: the passing walk named every picture it met.
+                for (path in spool.names) {
+                    zip.putNextEntry(ZipEntry(path))
+                    spool.copyTo(path, zip)
+                    zip.closeEntry()
+                }
             }
+        } finally {
+            spool.close()
         }
     }
 }

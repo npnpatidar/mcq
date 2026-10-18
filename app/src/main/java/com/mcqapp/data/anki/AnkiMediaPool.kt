@@ -1,36 +1,55 @@
 package com.mcqapp.data.anki
 
+import com.mcqapp.data.export.MediaSpool
 import com.mcqapp.data.export.imageExtension
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.renderInlineHtml
 import com.mcqapp.domain.ContentElement
+import java.io.Closeable
+import java.io.OutputStream
 
 /**
  * Collects image data while rewriting a field into Anki HTML.
  *
- * Data URIs are decoded once and stored under a generated filename. The note
- * field references that *filename* while the zip entry keeps a numeric name,
- * which is the layout Anki's own exporter uses: on import Anki builds its media
- * map keyed by filename and rewrites `src` from what the field says, so a
- * numeric `src` would never resolve. Remote URLs are left as-is because Anki
- * loads them from the network directly.
+ * Data URIs are decoded once and spooled to a temp file under a generated
+ * filename. The note field references that *filename* while the zip entry keeps
+ * a numeric name, which is the layout Anki's own exporter uses: on import Anki
+ * builds its media map keyed by filename and rewrites `src` from what the field
+ * says, so a numeric `src` would never resolve. Remote URLs are left as-is
+ * because Anki loads them from the network directly.
+ *
+ * The bytes are spooled rather than kept ([MediaSpool]): a deck's pictures are
+ * all named before the collection is zipped, so holding them would be the whole
+ * export's images in memory. Use it in a `finally` — [close] removes the spool.
  */
-class AnkiMediaPool {
+class AnkiMediaPool : Closeable {
 
     /** numeric zip name -> filename for the Anki collection's media map. */
     private val mediaMap = LinkedHashMap<String, String>()
 
-    /** numeric zip name -> image bytes. */
-    private val mediaBytes = LinkedHashMap<String, ByteArray>()
+    /** The spooled media, numeric zip name -> temp file. */
+    private val spool = MediaSpool()
 
     /** data URI -> filename already assigned (dedupe). */
     private val assigned = HashMap<String, String>()
 
-    val entries: Map<String, ByteArray> get() = mediaBytes
-
     /** numeric zip name -> filename (the Anki media manifest). */
     val manifest: Map<String, String> get() = mediaMap
+
+    /** How many media files the pool holds. Stays readable after [close]. */
+    val size: Int get() = spool.size
+
+    /** True when the export has media; Anki writes no `media` entry otherwise. */
+    val isNotEmpty: Boolean get() = !spool.isEmpty
+
+    /** The numeric zip names, in the order the notes met them. */
+    val names: List<String> get() = spool.names
+
+    /** Streams one spooled media entry into [out]. */
+    fun copyTo(numeric: String, out: OutputStream) = spool.copyTo(numeric, out)
+
+    override fun close() = spool.close()
 
     /** HTML-escapes [text] and appends its image as a self-contained `<img>`. */
     fun htmlField(text: String, imageSrc: String?): String =
@@ -77,9 +96,9 @@ class AnkiMediaPool {
         val dataUri = parseDataUri(src)
         if (dataUri != null) {
             val filename = assigned.getOrPut(src) {
-                val name = safeName(mediaBytes.size, imageExtension(dataUri.mimeType))
-                mediaMap[mediaBytes.size.toString()] = name
-                mediaBytes[mediaBytes.size.toString()] = dataUri.bytes
+                val name = safeName(spool.size, imageExtension(dataUri.mimeType))
+                mediaMap[spool.size.toString()] = name
+                spool.add(spool.size.toString(), dataUri.bytes)
                 name
             }
             return " " + AnkiPackageWriter.imageTag(filename)

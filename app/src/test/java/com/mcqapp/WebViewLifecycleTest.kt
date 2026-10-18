@@ -109,6 +109,20 @@ class WebViewLifecycleTest {
     }
 
     @Test
+    fun theContentWebViewServesTheMathFontItNeeds() {
+        // Native MathML is only readable with a MATH font, and a data
+        // document may not read one from file://; the page's WebViewClient
+        // has to answer the asset origin.
+        val site = webViewBlocks().firstOrNull { it.first.endsWith("ContentElements.kt") }
+        assertTrue("no mixed-content WebView found", site != null)
+        assertTrue(
+            "ContentElements.kt builds the content WebView but never serves the math font",
+            site!!.second.contains("shouldInterceptRequest") &&
+                site.second.contains("serveMathFont")
+        )
+    }
+
+    @Test
     fun everyJavascriptBridgeIsRemovedBeforeDestroying() {
         // A bridge object survives destroy() and keeps its native reference;
         // the mixed-content page reports its height through one too.

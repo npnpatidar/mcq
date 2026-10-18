@@ -119,6 +119,61 @@ private fun TableElement(element: ContentElement.TableElement) {
 internal const val MATHJAX_ASSET_URL = "file:///android_asset/mathjax/tex-mml-svg.js"
 
 /**
+ * The math font native MathML is rendered with. Android installs no
+ * OpenType MATH font of its own, so without this the browser falls back to
+ * the body font: stretchy brackets stay small and radicals are scaled
+ * glyphs. Latin Modern Math is the Computer Modern face MathJax draws with,
+ * so the native path looks like the path it replaces. The GUST licence
+ * ships beside it in the same asset directory.
+ *
+ * The font is fetched over WebView's asset origin rather than `file:`: a
+ * WebView refuses CORS-enabled subresources such as fonts from `file://`
+ * unless `allowFileAccessFromFileURLs` is turned on, which would let the
+ * page read arbitrary local files. [serveMathFont] answers this URL from
+ * the APK with a wildcard origin.
+ */
+internal const val MATH_FONT_ASSET_URL =
+    "https://appassets.androidplatform.net/assets/fonts/latinmodern-math.otf"
+
+/** Path of the math font inside `assets`, served for [MATH_FONT_ASSET_URL]. */
+internal const val MATH_FONT_ASSET_PATH = "fonts/latinmodern-math.otf"
+
+/** True only for the bundled math font, so [serveMathFont] stays a font server. */
+internal fun isMathFontRequest(url: String): Boolean = url == MATH_FONT_ASSET_URL
+
+/**
+ * Serves the bundled math font to the content WebView.
+ *
+ * Web fonts are CORS-enabled requests. The page is a data document, and a
+ * `file://` font would be another origin that the WebView refuses to read;
+ * answering the asset origin here with a wildcard `Access-Control-Allow-Origin`
+ * is the one way to get the font in without enabling file access. Only the
+ * exact font URL is answered, so this cannot be used as an arbitrary file
+ * reader.
+ *
+ * Runs on WebView's background thread: opening the asset here is fine.
+ */
+internal fun serveMathFont(
+    context: android.content.Context,
+    url: String
+): android.webkit.WebResourceResponse? {
+    if (!isMathFontRequest(url)) return null
+    return try {
+        android.webkit.WebResourceResponse(
+            "font/otf",
+            null,
+            context.assets.open(MATH_FONT_ASSET_PATH)
+        ).apply {
+            responseHeaders = mapOf("Access-Control-Allow-Origin" to "*")
+        }
+    } catch (e: Exception) {
+        // A missing asset must not take the page down; the formulas fall
+        // back to the body font instead.
+        null
+    }
+}
+
+/**
  * JavaScript bridge the rendered page uses to report its final height.
  * A height is only ever an `Int`, clamped in Kotlin before it is used, so
  * exposing the bridge to imported content cannot do more than ask for space.
@@ -201,13 +256,14 @@ internal fun mixedContentHtml(
     // data URIs (the picker encodes them, imports downscale to them), so
     // there is no file: image or stylesheet to allow — allowFileAccess=false
     // rules out real files and this page never references an android_asset
-    // image or CSS. script-src keeps file: for the bundled MathJax asset,
-    // and everything else stays off the network, same as the exports.
+    // image or CSS. script-src and font-src keep file: for the bundled
+    // MathJax asset and math font, and everything else stays off the
+    // network, same as the exports.
     return """
         <html>
         <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; img-src data:; style-src 'unsafe-inline'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; font-src https://appassets.androidplatform.net; img-src data:; style-src 'unsafe-inline'">
         <script>
         // MathML Core is built into Chromium 109+, and so into current Android
         // WebView: it lays formulas out as part of the document, with no script
@@ -222,7 +278,9 @@ internal fun mixedContentHtml(
         }
         </script>
         <style>
+        @font-face{font-family:'MCQMath';src:url('$MATH_FONT_ASSET_URL') format('opentype');font-display:block}
         html,body{margin:0;padding:0;background:transparent;color:$textColorCss;font-size:${fontSizePx}px}
+        math{font-family:'MCQMath'}
         table{border-collapse:collapse;margin:4px 0}
         img{vertical-align:middle}
         </style>
@@ -230,11 +288,11 @@ internal fun mixedContentHtml(
         <body>$body</body>
         <script>
         // Report the height the page settles at, not the height it has while
-        // the browser is still working: MathJax's own promise resolves after
-        // the initial typeset pass, and images (data: URIs) are in by the
-        // load event, so a single report then is final. Without this the
-        // Compose side sees the raw-MathML height, then the typeset height,
-        // and the question visibly rebuilds.
+        // the browser is still working: the math font has to be loaded,
+        // MathJax's own promise resolves after the initial typeset pass, and
+        // images (data: URIs) are in by the load event. Without this the
+        // Compose side sees a provisional height, then the settled one, and
+        // the question visibly rebuilds.
         (function () {
           var reported = -1;
           // Nothing may be reported before the typeset pass has finished:
@@ -260,14 +318,26 @@ internal fun mixedContentHtml(
             settled = true;
             report();
           }
+          function settleWhenReady() {
+            // The bundled math font is a subresource: until it arrives the
+            // browser lays the formulas out in the body font, and that is a
+            // different height. Waiting for the font set is what keeps the
+            // first report the final one (font-display:block means nothing
+            // is painted with the wrong face in the meantime).
+            if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+              document.fonts.ready.then(settle, settle);
+            } else {
+              settle();
+            }
+          }
           function afterTypeset() {
             var mj = window.MathJax;
             if (mj && mj.startup && mj.startup.promise && mj.startup.promise.then) {
-              mj.startup.promise.then(settle, settle);
+              mj.startup.promise.then(settleWhenReady, settleWhenReady);
             } else if (mj && mj.typesetPromise) {
-              mj.typesetPromise().then(settle, settle);
+              mj.typesetPromise().then(settleWhenReady, settleWhenReady);
             } else {
-              settle();
+              settleWhenReady();
             }
           }
           // Width changes (rotation, split screen, a font-scale change) reflow
@@ -413,6 +483,15 @@ private fun MixedContentView(
 
                         @Deprecated("Required for API < 24")
                         override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean = true
+
+                        // The math font is the one subresource a data document
+                        // may not read from file:// (CORS). Answer its asset
+                        // origin here; see serveMathFont.
+                        override fun shouldInterceptRequest(
+                            view: WebView,
+                            request: android.webkit.WebResourceRequest
+                        ): android.webkit.WebResourceResponse? =
+                            serveMathFont(view.context, request.url.toString())
                     }
                     // The page reports the height it settles at; see the
                     // script in mixedContentHtml. It runs on the bridge's

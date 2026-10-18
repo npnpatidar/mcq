@@ -6,6 +6,8 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentHeightCache
 import com.mcqapp.util.MATHJAX_ASSET_URL
+import com.mcqapp.util.MATH_FONT_ASSET_URL
+import com.mcqapp.util.isMathFontRequest
 import com.mcqapp.util.mixedContentHtml
 import com.mcqapp.util.stripMathAttributes
 import com.mcqapp.util.toCssRgba
@@ -57,6 +59,47 @@ class MathHtmlTest {
         assertTrue(html.contains("typeof MathMLElement === 'undefined'"))
         assertTrue(html.contains("document.write("))
         assertTrue(html.contains(MATHJAX_ASSET_URL))
+    }
+
+    /**
+     * Native MathML needs a font with a MATH table for stretchy brackets,
+     * radicals and italic variables. Android ships none, so the page must
+     * load the bundled one and must not report a height measured before it
+     * arrives.
+     */
+    @Test
+    fun nativeMathUsesTheBundledMathFont() {
+        val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")
+        assertTrue(html.contains(MATH_FONT_ASSET_URL))
+        assertTrue(html.contains("@font-face"))
+        assertTrue(html.contains("math{font-family:'MCQMath'}"))
+        // Served from the asset origin, not file: — a WebView refuses
+        // CORS-enabled subresources such as fonts from file://.
+        assertTrue(html.contains("font-src https://appassets.androidplatform.net"))
+        assertTrue(html.contains("document.fonts.ready"))
+    }
+
+    @Test
+    fun onlyTheBundledMathFontIsServedFromTheAssetOrigin() {
+        assertTrue(isMathFontRequest(MATH_FONT_ASSET_URL))
+        // Anything else must fall through to the WebView's own handling,
+        // or the interceptor would be a general asset reader.
+        assertTrue(!isMathFontRequest("https://appassets.androidplatform.net/assets/mathjax/tex-mml-svg.js"))
+        assertTrue(!isMathFontRequest("https://appassets.androidplatform.net/assets/fonts/other.otf"))
+        assertTrue(!isMathFontRequest("file:///data/data/com.mcqapp/files/secret"))
+    }
+
+    @Test
+    fun bundledMathFontIsPresentAndHasAMathTable() {
+        val asset = File("src/main/assets/fonts/latinmodern-math.otf")
+        assertTrue("missing: ${asset.absolutePath}", asset.isFile)
+        val bytes = asset.readBytes()
+        assertTrue("unexpectedly small: ${bytes.size}", bytes.size > 500_000)
+        // sfnt header: numTables at 4..6, then one 16-byte directory entry
+        // per table. Without a MATH table the browser cannot lay maths out.
+        val tables = ((bytes[4].toInt() and 0xFF) shl 8) or (bytes[5].toInt() and 0xFF)
+        val tags = (0 until tables).map { String(bytes, 12 + it * 16, 4, Charsets.US_ASCII) }
+        assertTrue("tables: $tags", "MATH" in tags)
     }
 
     @Test

@@ -209,9 +209,18 @@ internal fun mixedContentHtml(
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; img-src data:; style-src 'unsafe-inline'">
         <script>
-        MathJax = { tex: { inlineMath: [['$', '$']] } };
+        // MathML Core is built into Chromium 109+, and so into current Android
+        // WebView: it lays formulas out as part of the document, with no script
+        // to parse and nothing to typeset afterwards, so the page has its final
+        // height on the first layout. Parsing the 2 MB MathJax bundle in every
+        // WebView was the cost that made a maths-heavy list stutter, so it is
+        // only loaded by WebViews that predate MathML Core. MathMLElement is
+        // exposed exactly when that support is present.
+        if (typeof MathMLElement === 'undefined') {
+          MathJax = { tex: { inlineMath: [['$', '$']] } };
+          document.write('<script src="$MATHJAX_ASSET_URL"><\/script>');
+        }
         </script>
-        <script src="$MATHJAX_ASSET_URL"></script>
         <style>
         html,body{margin:0;padding:0;background:transparent;color:$textColorCss;font-size:${fontSizePx}px}
         table{border-collapse:collapse;margin:4px 0}
@@ -264,6 +273,11 @@ internal fun mixedContentHtml(
           // Width changes (rotation, split screen, a font-scale change) reflow
           // the page; the new height has to reach Compose too.
           window.addEventListener('resize', function () { setTimeout(report, 0); });
+          // A font that arrives after load re-wraps the text. The report can
+          // shrink as well as grow, so a late correction is safe.
+          if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+            document.fonts.ready.then(function () { setTimeout(report, 0); }, function () {});
+          }
           if (document.readyState === 'complete') {
             setTimeout(afterTypeset, 0);
           } else {

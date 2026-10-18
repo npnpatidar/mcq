@@ -45,6 +45,20 @@ class MathHtmlTest {
         assertTrue(html.contains("<img src=\"https://example.com/f.png\""))
     }
 
+    /**
+     * Current WebView lays MathML out natively. That is what makes a
+     * maths-heavy list scroll: no 2 MB script to parse per block, no typeset
+     * pass, and a height that is final on the first layout. The bundle is
+     * still shipped and loaded by WebViews that predate MathML Core.
+     */
+    @Test
+    fun formulasUseNativeMathmlUnlessTheWebViewIsOlder() {
+        val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")
+        assertTrue(html.contains("typeof MathMLElement === 'undefined'"))
+        assertTrue(html.contains("document.write("))
+        assertTrue(html.contains(MATHJAX_ASSET_URL))
+    }
+
     @Test
     fun mixedPageNeedsNoNetwork() {
         val html = mixedContentHtml(sampleElements(), 48f, "rgba(0,0,0,1)")

@@ -98,6 +98,30 @@ class NoDeadCodeTest {
         assertTrue("these read a whole table: $offenders", offenders.isEmpty())
     }
 
+    /**
+     * `getLatestStandings` materialises one standing per question ever graded in
+     * the whole bank; `getBookmarkExportDto` builds every bookmark as one DTO.
+     * Both are linear in the bank. They stay as the tests' oracles — the
+     * mistake order and the bookmark grouping are asserted against them — and
+     * no production path may call them: the badges count in SQL
+     * (`countMistakesByPaper`), the mistakes session asks for one paper
+     * (`getMistakenQuestionIdsForPaper`), and the export walks pages
+     * (`Exporter.bookmarkStream`).
+     */
+    @Test
+    fun theStandingAndBookmarkOraclesHaveNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name !in setOf("Daos.kt", "McqRepository.kt", "HistoryStore.kt") }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("getLatestStandings()", "getBookmarkExportDto()")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read the whole bank: $offenders", offenders.isEmpty())
+    }
+
     @Test
     fun imageScalingHasOneImplementation() {
         // The paper-level scaler is the single copy of the mapping; the

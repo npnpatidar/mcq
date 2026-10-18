@@ -55,6 +55,22 @@ class PaperExporter(private val db: AppDatabase) {
         return render(PaperStream.of(dto), title, format, sink, twoColumnPdf = twoColumnPdf)
     }
 
+    /**
+     * Any database-backed walk (e.g. the bookmarks export) through the same
+     * format writers, without an in-memory DTO: the stream reads its questions
+     * a page at a time while the writer is on them.
+     */
+    suspend fun exportStream(
+        stream: PaperStream,
+        title: String,
+        format: ExportFormat,
+        sink: OutputStream,
+        twoColumnPdf: Boolean = false
+    ): ExportFile {
+        Logger.i("EXPORT", "Exporting '$title' as ${format.name}")
+        return render(stream, title, format, sink, twoColumnPdf = twoColumnPdf)
+    }
+
     /** Single category (with descendants) through the same format writers. */
     suspend fun exportCategory(
         paperId: String,

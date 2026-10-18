@@ -148,4 +148,27 @@ class BackupSchedulingTest {
         assertEquals(1, report.newQuestions)
         assertEquals(0, db.cardStateDao().getAll().size)
     }
+
+    /**
+     * The streaming export writes the bookmark array one id at a time (it used
+     * to encode the whole list into a single String). The document must still
+     * parse and still carry the bookmarks.
+     */
+    @Test
+    fun theStreamedExportCarriesBookmarks() = runBlocking {
+        repository.saveQuestion(
+            Question(
+                id = "q2",
+                categoryId = "c1",
+                text = "3 + 3?",
+                options = listOf(QuestionOption("a", "5"), QuestionOption("b", "6")),
+                correctOptionIds = setOf("b")
+            )
+        )
+        db.bookmarkDao().add(com.mcqapp.data.local.BookmarkEntity("q1", createdAt = 5))
+        db.bookmarkDao().add(com.mcqapp.data.local.BookmarkEntity("q2", createdAt = 9))
+
+        val file = LegacyParser.parse(exportAllJson())
+        assertEquals(setOf("q1", "q2"), file.bookmarks.toSet())
+    }
 }

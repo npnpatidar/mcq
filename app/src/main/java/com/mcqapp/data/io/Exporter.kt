@@ -14,8 +14,6 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.OutputStream
@@ -68,14 +66,24 @@ class Exporter(private val db: AppDatabase) {
             }
             writer.write("]}")
         }
-        writer.write("],\"bookmarks\":")
-        writer.write(
-            json.encodeToString(
-                ListSerializer(String.serializer()),
-                db.bookmarkDao().getAll()
-            )
-        )
-        writer.write(",\"attempts\":[")
+        writer.write("],\"bookmarks\":[")
+        // One id at a time, keyset-paged. Encoding the whole list built a
+        // second copy of it as a single String, and reading it built a list;
+        // re-import restores a set, so the order here is immaterial.
+        var firstBookmark = true
+        var afterBookmarkId = ""
+        while (true) {
+            val page = db.bookmarkDao().pageIdsAfter(afterBookmarkId, EXPORT_PAGE)
+            if (page.isEmpty()) break
+            for (questionId in page) {
+                if (!firstBookmark) writer.write(",")
+                firstBookmark = false
+                writer.write(JsonPrimitive(questionId).toString())
+            }
+            afterBookmarkId = page.last()
+            if (page.size < EXPORT_PAGE) break
+        }
+        writer.write("],\"attempts\":[")
         val attempts = db.attemptDao().getAllAttempts()
         attempts.forEachIndexed { aIndex, attempt ->
             if (aIndex > 0) writer.write(",")
@@ -248,6 +256,23 @@ class Exporter(private val db: AppDatabase) {
         return streamFor(paper, categories, total)
     }
 
+    /**
+     * The bookmarked questions as an exportable paper, walked from the database
+     * a page at a time. Grouped by the paper each bookmark came from — the same
+     * grouping the in-memory DTO builder used — with the titles and the count
+     * read up front (both small) and one page of questions live while its
+     * heading is written. A bank with every question bookmarked used to be
+     * built as one whole DTO before a byte was written.
+     *
+     * Null when nothing resolves to a question, the same contract the old
+     * builder had.
+     */
+    suspend fun bookmarkStream(): PaperStream? {
+        val total = db.questionDao().countBookmarkedQuestions()
+        if (total == 0) return null
+        return BookmarkStream(db.questionDao().getBookmarkedPaperTitles(), total)
+    }
+
     private suspend fun streamFor(
         paper: PaperEntity,
         categories: List<CategoryEntity>,
@@ -313,6 +338,53 @@ class Exporter(private val db: AppDatabase) {
                     val last = page.last()
                     afterSortOrder = last.question.sortOrder
                     afterRowId = last.rowid
+                }
+            }
+        }
+    }
+
+    /**
+     * The bookmark walk. The headings are the sorted paper titles; each
+     * heading's questions are a keyset page over the bookmarks, most recently
+     * bookmarked first, released as the writer moves to the next heading.
+     * Walking it again re-reads the pages.
+     */
+    private inner class BookmarkStream(
+        private val titles: List<String>,
+        override val totalQuestions: Int
+    ) : PaperStream {
+
+        override val id: String get() = BookmarkExport.PAPER_ID
+        override val title: String get() = BookmarkExport.PAPER_TITLE
+        override val description: String get() = ""
+        override val durationMinutes: Int get() = 0
+        override val negativeMarking: Double get() = 0.0
+        override val categories: List<CategoryDto>
+            get() = titles.mapIndexed { index, name ->
+                CategoryDto(id = "bookmarked-$index", title = name)
+            }
+        override val passages: List<PassageDto> get() = emptyList()
+        override val looseQuestions: List<QuestionDto> get() = emptyList()
+
+        override suspend fun walk(
+            onCategory: suspend (CategoryDto) -> Unit,
+            onQuestion: suspend (QuestionDto) -> Unit
+        ) {
+            titles.forEachIndexed { index, name ->
+                onCategory(CategoryDto(id = "bookmarked-$index", title = name))
+                var afterCreatedAt = 0L
+                var afterQuestionId: String? = null
+                while (true) {
+                    val page = db.questionDao().pageBookmarkedQuestionsForTitle(
+                        name, afterCreatedAt, afterQuestionId, EXPORT_PAGE
+                    )
+                    if (page.isEmpty()) break
+                    for (dto in page.map { it.question }.toDtoBulk()) onQuestion(dto)
+                    val last = page.last()
+                    afterCreatedAt = last.bookmarkCreatedAt
+                    afterQuestionId = last.question.id
+                    // A short page is the last one for this heading.
+                    if (page.size < EXPORT_PAGE) break
                 }
             }
         }

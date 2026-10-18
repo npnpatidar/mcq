@@ -252,6 +252,54 @@ interface QuestionDao {
     suspend fun getBookmarkedQuestionsPage(offset: Int, limit: Int): List<QuestionEntity>
 
     /**
+     * The distinct paper titles the bookmarked questions came from, sorted, for
+     * the bookmark export's category headings. A bookmark whose question or
+     * paper no longer resolves folds into "Other", exactly as the in-memory
+     * builder did.
+     */
+    @Query(
+        "SELECT DISTINCT COALESCE(papers.title, 'Other') AS title " +
+            "FROM bookmarks " +
+            "INNER JOIN questions ON questions.id = bookmarks.questionId " +
+            "LEFT JOIN categories ON categories.id = questions.categoryId " +
+            "LEFT JOIN papers ON papers.id = categories.paperId " +
+            "ORDER BY title"
+    )
+    suspend fun getBookmarkedPaperTitles(): List<String>
+
+    /** How many bookmarks still resolve to a question; dangling ids are dropped. */
+    @Query(
+        "SELECT COUNT(*) FROM bookmarks " +
+            "INNER JOIN questions ON questions.id = bookmarks.questionId"
+    )
+    suspend fun countBookmarkedQuestions(): Int
+
+    /**
+     * One keyset page of a title group's bookmarked questions, most recently
+     * bookmarked first. [afterQuestionId] is null for the first page; the
+     * `(createdAt, questionId)` key is then passed back for the next one, so a
+     * title group is never materialised whole and only one page of content is
+     * decoded at a time.
+     */
+    @Query(
+        "SELECT questions.*, bookmarks.createdAt AS bookmarkCreatedAt " +
+            "FROM questions " +
+            "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
+            "LEFT JOIN categories ON categories.id = questions.categoryId " +
+            "LEFT JOIN papers ON papers.id = categories.paperId " +
+            "WHERE COALESCE(papers.title, 'Other') = :title " +
+            "AND (:afterQuestionId IS NULL OR bookmarks.createdAt < :afterCreatedAt " +
+            "OR (bookmarks.createdAt = :afterCreatedAt AND bookmarks.questionId < :afterQuestionId)) " +
+            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC LIMIT :limit"
+    )
+    suspend fun pageBookmarkedQuestionsForTitle(
+        title: String,
+        afterCreatedAt: Long,
+        afterQuestionId: String?,
+        limit: Int
+    ): List<BookmarkedQuestionRow>
+
+    /**
      * What a list row needs and nothing more: identity and order, the content
      * hash, a flattened preview of the stem, and the answer-key count — never
      * elements, image or options. Lists that order a paper (study pools, test
@@ -1247,6 +1295,15 @@ interface BookmarkDao {
     suspend fun countAll(): Int
 
     /**
+     * One keyset page of bookmark ids, in primary-key order. The export used to
+     * read the whole table into a list and then encode that list into a single
+     * JSON String — two whole-bank allocations for a payload whose order does
+     * not matter (re-import restores a set). Keyset order keeps one page live.
+     */
+    @Query("SELECT questionId FROM bookmarks WHERE questionId > :afterId ORDER BY questionId LIMIT :limit")
+    suspend fun pageIdsAfter(afterId: String, limit: Int): List<String>
+
+    /**
      * How many bookmarks there are, re-read only when the table changes. The
      * bookmarks screen wants the *number* (and a signal that the set changed),
      * never the ids: reading those back to count them would materialise a
@@ -1327,6 +1384,42 @@ interface AttemptDao {
             "ORDER BY r.id"
     )
     suspend fun getLatestStandings(): List<LatestStanding>
+
+    /**
+     * Mistake counts per paper, counted in SQL. Same rule as
+     * [getLatestStandings]: a question's most recent graded, answered row
+     * decides, and only a wrong one is a mistake. The library badge used to
+     * materialise every standing — one object per question ever graded, in
+     * every paper — purely to group and size them in Kotlin. This returns at
+     * most one row per paper (the bank has ~1000), on the hot path that
+     * recomputes the badges after every finished test.
+     */
+    @Query(
+        "SELECT attempts.paperId AS paperId, COUNT(*) AS count " +
+            "FROM question_results r " +
+            "INNER JOIN attempts ON r.attemptId = attempts.id " +
+            "WHERE r.isCorrect = 0 AND r.id IN (" +
+            "SELECT MAX(id) FROM question_results " +
+            "WHERE selectedOptionIds != '' AND correctOptionIds != '' GROUP BY questionId) " +
+            "GROUP BY attempts.paperId"
+    )
+    suspend fun countMistakesByPaper(): List<PaperMistakeCount>
+
+    /**
+     * One paper's ever-missed question ids, most recently missed first — the
+     * same standing rule, scoped to the paper in SQL instead of filtering the
+     * whole bank's standings in memory. Bounded by how much of this paper was
+     * actually missed.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId FROM question_results r " +
+            "INNER JOIN attempts ON r.attemptId = attempts.id " +
+            "WHERE attempts.paperId = :paperId AND r.isCorrect = 0 AND r.id IN (" +
+            "SELECT MAX(id) FROM question_results " +
+            "WHERE selectedOptionIds != '' AND correctOptionIds != '' GROUP BY questionId) " +
+            "ORDER BY r.id DESC"
+    )
+    suspend fun getMistakenQuestionIdsForPaper(paperId: String): List<String>
 
     @Query("SELECT * FROM question_results WHERE attemptId = :attemptId ORDER BY rowid")
     suspend fun getResults(attemptId: Long): List<QuestionResultEntity>
@@ -1623,4 +1716,20 @@ data class LatestStanding(
     val paperId: String,
     val isCorrect: Boolean,
     val rowId: Long
+)
+
+/** One row of [AttemptDao.countMistakesByPaper]: a paper and its mistake count. */
+data class PaperMistakeCount(
+    val paperId: String,
+    val count: Int
+)
+
+/**
+ * One row of [QuestionDao.pageBookmarkedQuestionsForTitle]: a bookmarked
+ * question and its bookmark's timestamp. The timestamp is the keyset the
+ * bookmark export pages a title group by, so it travels beside the question.
+ */
+data class BookmarkedQuestionRow(
+    @Embedded val question: QuestionEntity,
+    val bookmarkCreatedAt: Long
 )

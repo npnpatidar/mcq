@@ -655,8 +655,12 @@ members pages.
    `SELECT question.id, stem-fields FROM bookmarks JOIN questions ... ORDER BY bookmarks.createdAt DESC`.
    Content resolves per visible row as today.
 2. Remove-all/counts paths already chunked; keep.
-3. Export goes through the streaming exporter (F5) with batched content
-   loads (300 rows per batch).
+3. ~~Export goes through the streaming exporter (F5) with batched content
+   loads (300 rows per batch).~~ — done: `Exporter.bookmarkStream()` walks the
+   bookmarked questions a keyset page at a time, grouped by the paper each came
+   from, so the export never builds the paper DTO. `getBookmarkExportDto` stays
+   as the tests' oracle (`BookmarkExportStreamTest` asserts the walk equals it),
+   and `NoDeadCodeTest` refuses a production call.
 
 **Targets**: 50k bookmarks streams; export does not build whole file in RAM.
 
@@ -705,7 +709,12 @@ members pages.
 
 ### 5.5 Anki interop (apkg import/export)
 
-- `AnkiPackageReader` already streams from the zip into temp sqlite. Keep.
+- `AnkiPackageReader` extracts the collection into a temp sqlite file, but it
+  expands the whole archive into a `Map<String, ByteArray>` first and returns
+  the whole bank as one DTO, which `Importer` then holds beside a whole-bank
+  hash set (`getAllContentHashes`). A 1M-note package is therefore either
+  refused at the 256 MB expansion cap or built whole in memory. This is the
+  remaining apkg gap; see §8 Open 4.
 - `AnkiPackageWriter` gets the streaming write (F5); schema-11 export must
   stay legacy-compatible (three fields, filename-keyed media) — the
   `AnkiRoundTripTest` fixtures are the gate.
@@ -1044,6 +1053,26 @@ over `searchText` (§4.5 + F4).
   `QuestionSearchTest` pins that a preview carries no tag or entity, and that
   `text` still does, because duplicate detection compares that.
 
+- **The library's mistake badges read one standing per graded question** (§5.1)
+  — `getMistakeCounts` called `getLatestStandings()` (one object per question
+  ever graded, in every paper) and grouped it in Kotlin, on the collector that
+  reruns after every finished test. `countMistakesByPaper` counts the same
+  latest-standing rule in SQL and returns at most one row per paper; the
+  mistakes session asks for its paper only
+  (`getMistakenQuestionIdsForPaper`) instead of filtering the whole bank.
+  `getLatestStandings` + `Mistakes.mistakenIdsByPaper` stay as the tests' oracle
+  (`LatestStandingsTest` asserts the SQL reads equal them across two papers) and
+  `NoDeadCodeTest` refuses a production call.
+
+- **The bookmark export was assembled as one DTO** (§4.11) — exporting
+  bookmarks read every bookmark id, decoded every bookmarked question and built
+  one `PaperDto` before a byte was written. `Exporter.bookmarkStream()` walks
+  the same grouping a keyset page at a time (titles and the count read up
+  front), through `PaperExporter.exportStream`. `getBookmarkExportDto` stays as
+  the oracle. The whole-bank JSON export also stopped encoding its bookmark
+  list into a single `String` — it writes ids one keyset page at a time
+  (`BookmarkDao.pageIdsAfter`).
+
 ### Open (in pain order)
 
 1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is
@@ -1063,4 +1092,14 @@ over `searchText` (§4.5 + F4).
    in the page query, one `isBookmarked(id)` for the toggle, and the table's
    invalidation to rebuild. Left because it is three call sites and the paging
    sources are already the right shape.
+4. The apkg import (§5.5): `.apkg` is the one import that is not streamed. The
+   reader expands the whole archive, builds every paper as one DTO, and
+   `Importer` holds it beside a whole-bank hash set, so a large deck is refused
+   at the cap or OOMs under it. The fix is the shape §4.6/§5.5 already use for
+   JSON: extract entries to temp files under the same caps, drive the reader
+   per paper (decks are known up front; a deck's cards are a scoped query), and
+   feed the existing per-batch writer, applying each paper's schedules as it is
+   written. Left as its own change because it rewrites the reader's grouping and
+   media plumbing and can only be verified on x86_64 CI; it needs an
+   equivalence test over the existing apkg fixtures before it lands.
 

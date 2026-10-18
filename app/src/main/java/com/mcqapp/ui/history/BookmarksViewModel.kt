@@ -73,15 +73,15 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         viewModelScope.launch {
             try {
-                val dto = repository.getBookmarkExportDto()
+                val stream = com.mcqapp.data.io.Exporter(repository.db()).bookmarkStream()
                     ?: throw IllegalStateException("No bookmarked questions to export")
                 val file = (
                     getApplication<Application>().contentResolver.openOutputStream(uri)
                         ?: throw IllegalStateException("Could not open output stream")
                     ).use { sink ->
                     com.mcqapp.data.export.PaperExporter(repository.db())
-                        .exportDto(
-                            dto,
+                        .exportStream(
+                            stream,
                             com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
                             format,
                             sink,

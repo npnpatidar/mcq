@@ -453,13 +453,9 @@ internal class HistoryStore(
 
     /** Paper id -> count of distinct ever-missed questions (for badges). */
     suspend fun getMistakeCounts(): Map<String, Int> =
-        // One aggregate in SQL instead of every attempt header and every
-        // result row (full option JSON included) in memory.
-        com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
-            db.attemptDao().getLatestStandings().map {
-                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
-            }
-        ).mapValues { it.value.size }
+        // Counted in SQL: one row per paper, not one standing per question ever
+        // graded. The library recomputes this after every finished test.
+        db.attemptDao().countMistakesByPaper().associate { it.paperId to it.count }
 
     /** Export DTO of all bookmarked questions, grouped by source paper. */
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? {
@@ -477,11 +473,9 @@ internal class HistoryStore(
     suspend fun getMistakenQuestionRefs(
         paperId: String
     ): List<com.mcqapp.data.local.SessionRef> {
-        val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
-            db.attemptDao().getLatestStandings().map {
-                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
-            }
-        )[paperId] ?: return emptyList()
+        // Scoped to the paper in SQL: the ordering key (rowid) travels with the
+        // id list, so the whole bank's standings never have to be materialised.
+        val ids = db.attemptDao().getMistakenQuestionIdsForPaper(paperId)
         if (ids.isEmpty()) return emptyList()
         val byId = db.questionDao().getSessionRefsByIdsChunked(ids).associateBy { it.id }
         return ids.mapNotNull { byId[it] }

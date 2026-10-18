@@ -96,6 +96,7 @@ class LatestStandingsTest {
 
         // And the practice round still serves both questions, recent miss first.
         assertEquals(listOf("q2", "q1"), repository.getMistakenQuestions("p1").map { it.id })
+        assertEquals(listOf("q2", "q1"), repository.getMistakenQuestionOrder("p1").idsInOrder())
     }
 
     @Test
@@ -104,5 +105,43 @@ class LatestStandingsTest {
         // order, so the later miss sorts first.
         attempt(selected = { if (it == "q1" || it == "q2") "b" else "a" })
         assertEquals(listOf("q2", "q1"), repository.getMistakenQuestions("p1").map { it.id })
+        assertEquals(listOf("q2", "q1"), repository.getMistakenQuestionOrder("p1").idsInOrder())
+    }
+
+    /**
+     * The SQL mistake reads (`countMistakesByPaper`,
+     * `getMistakenQuestionIdsForPaper`) must agree with the in-memory standing
+     * rule they replaced, paper for paper and id for id — including across two
+     * papers, so a paper's standings cannot leak into another's. The whole-bank
+     * `getLatestStandings` + `Mistakes.mistakenIdsByPaper` stays as the oracle.
+     */
+    @Test
+    fun theSqlMistakeReadsMatchTheStandingOracle() = runBlocking {
+        repository.ensurePaperAndCategory("p2", "Paper Two", "c2", "Cat Two")
+        repository.saveQuestion(question("q5").copy(categoryId = "c2"))
+
+        // p1: q1 and q2 missed, q3 and q4 right.
+        attempt(selected = { if (it == "q1" || it == "q2") "b" else "a" })
+        // p2: q5 missed.
+        repository.saveAttempt(
+            paperId = "p2",
+            paperTitle = "Paper Two",
+            questions = listOf(question("q5").copy(categoryId = "c2")),
+            selections = mapOf("q5" to setOf("b")),
+            negativeMarking = 0.0,
+            durationSeconds = 10,
+            finishedAt = System.currentTimeMillis()
+        )
+
+        val oracle = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
+            db.attemptDao().getLatestStandings().map {
+                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+            }
+        )
+
+        assertEquals(oracle.mapValues { it.value.size }, repository.getMistakeCounts())
+        assertEquals(oracle["p1"].orEmpty(), db.attemptDao().getMistakenQuestionIdsForPaper("p1"))
+        assertEquals(oracle["p1"].orEmpty(), repository.getMistakenQuestionOrder("p1").idsInOrder())
+        assertEquals(oracle["p2"].orEmpty(), repository.getMistakenQuestionOrder("p2").idsInOrder())
     }
 }

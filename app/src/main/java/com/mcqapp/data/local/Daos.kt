@@ -753,6 +753,16 @@ interface QuestionDao {
         @MapColumn(columnName = "chars") Long
         >
 
+    /**
+     * Per-category counts for the whole bank, for the library tree.
+     *
+     * This is the one aggregate left on a hot path, and it stays because the
+     * library genuinely shows every paper at once: one covering-index scan
+     * (~90 ms warm for a million questions) is cheaper than a query per paper,
+     * and the index is already there for browse. Everything that only needed
+     * the *trigger* watches [observeAnyQuestion] instead, and a single paper's
+     * tree reads [getCategoryCountsFor].
+     */
     @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
     fun observeCategoryCounts(): Flow<List<CategoryCountEntity>>
 
@@ -769,9 +779,20 @@ interface QuestionDao {
     @Query("SELECT COUNT(*) FROM questions")
     suspend fun countQuestions(): Int
 
-    /** One-shot form of [observeCategoryCounts], for a single paper read. */
-    @Query("SELECT categoryId, COUNT(*) as cnt FROM questions GROUP BY categoryId")
-    suspend fun getCategoryCounts(): List<CategoryCountEntity>
+    /**
+     * Per-category counts for one paper's categories.
+     *
+     * The whole-bank form of this query is a covering-index scan of a million
+     * entries (~90 ms warm here, and it only grows), and a screen only ever
+     * shows one paper's tree: reading a 100-question paper this way costs
+     * microseconds instead. The category ids come from that paper's own rows,
+     * so nothing outside it is counted.
+     */
+    @Query(
+        "SELECT categoryId, COUNT(*) as cnt FROM questions " +
+            "WHERE categoryId IN (:categoryIds) GROUP BY categoryId"
+    )
+    suspend fun getCategoryCountsFor(categoryIds: List<String>): List<CategoryCountEntity>
 
     @Query("SELECT id FROM questions WHERE categoryId = :categoryId")
     suspend fun getIdsByCategory(categoryId: String): List<String>

@@ -42,6 +42,15 @@ suspend fun QuestionDao.countUngradedForCategoriesChunked(categoryIds: List<Stri
 suspend fun QuestionDao.countInCategoriesChunked(categoryIds: List<String>): Int =
     categoryIds.chunks().sumOf { countInCategories(it) }
 
+/**
+ * Per-category counts for one paper's categories. The chunks are disjoint, so
+ * concatenating them keeps every category's count whole — no summing needed.
+ */
+suspend fun QuestionDao.getCategoryCountsForChunked(
+    categoryIds: List<String>
+): List<CategoryCountEntity> =
+    categoryIds.chunks().flatMap { getCategoryCountsFor(it) }
+
 suspend fun QuestionDao.getHashInputsByCategoriesChunked(
     categoryIds: List<String>
 ): List<QuestionIdHash> =

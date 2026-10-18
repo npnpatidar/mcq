@@ -803,7 +803,8 @@ slower, so the numbers below are a floor).
 | browse first page, paper-scoped, with the order indexes | 5 ms |
 | browse count for the page, with the order indexes | 60 ms |
 | deep-link jump by index (OFFSET 500k) | 1.4 s, inherent to `LIMIT 1 OFFSET n` |
-| `GROUP BY categoryId` over the whole table | 0.12 s, re-run on every question write |
+| `GROUP BY categoryId` over the whole table | 0.12 s, now only the library badge asks for it |
+| the same counts filtered to one paper's categories | 1.6 ms for 10k questions |
 
 Search is not instant and cannot be while it is `LIKE '%q%'` with no FTS
 index: every window is a full scan, and a rare term walks several windows
@@ -963,6 +964,20 @@ over `searchText` (§4.5 + F4).
   assertions live in `ExportWritersTest`/`DocxPaperWriterTest`/
   `PdfPaperWriterTest`, the byte-level round trips in `DocxRoundTripTest`.
 
+- **Bank-wide counts on every screen entry** (§8 Open 2) — `getPaper` answered
+  each one-paper read (Study, Editor and Test on entry) with a `GROUP BY
+  categoryId` over the whole bank, and the two browse flows watched that same
+  aggregate purely as a write trigger, so every question write re-scanned a
+  million index entries (~90 ms warm) to produce a value they never read. The
+  read is now `getCategoryCountsFor("... WHERE categoryId IN (:categoryIds)
+  GROUP BY categoryId")`, bounded by the paper being read — 1.6 ms for ten
+  thousand questions, microseconds for a small paper — and the trigger-only
+  flows watch `observeAnyQuestion()`, a one-row probe. That swap is safe by
+  construction: Room invalidates per *table*, so the refresh on a question write
+  is identical, and `RepositoryTest` pins it. One aggregate deliberately stays:
+  the library badge reads `observeCategoryCounts`, because the library shows
+  every paper at once and one covering-index scan still beats a query per paper.
+
 ### Open (in pain order)
 
 1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is still
@@ -970,7 +985,5 @@ over `searchText` (§4.5 + F4).
    has never been studied builds a million cards. No production path asks for it
    (the session pulls one card at a time; the drill asks for leeches), but the
    repository API allows it. The pull and the badge are bounded now (§8 Fixed).
-2. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
-   `observeCategoryCounts` for library badges (F2/F3).
-3. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
+2. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
 

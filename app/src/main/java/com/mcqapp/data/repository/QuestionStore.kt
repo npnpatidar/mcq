@@ -42,12 +42,15 @@ internal class QuestionStore(
     fun observeQuestionsForPaper(paperId: String): Flow<List<Question>> =
         // Bulk load (one options + one answers query for all rows) and map off
         // the main thread: the per-row re-fetch version stalled Browse badly.
-        // One IN query replaces the per-category fetch; the triggers are
-        // global so any question write refreshes this paper's list, and any
-        // CATEGORIES write refreshes it too — a category moved in the drawer
-        // or inline changes the section order, and the questions follow it.
+        // One IN query replaces the per-category fetch; Room's invalidation
+        // works per table, so a one-row probe (`observeAnyQuestion`) refreshes
+        // this paper's list on any question write exactly like the aggregate
+        // did — without re-scanning a million rows to produce a value nobody
+        // here reads. Any CATEGORIES write refreshes it too: a category moved
+        // in the drawer or inline changes the section order, and the questions
+        // follow it.
         kotlinx.coroutines.flow.combine(
-            db.questionDao().observeCategoryCounts(),
+            db.questionDao().observeAnyQuestion(),
             db.categoryDao().observeAll()
         ) { _, _ -> Unit }
             .map {
@@ -81,10 +84,10 @@ internal class QuestionStore(
         return getQuestionsForCategories(categoryIds)
     }
 
-    /** Observed refs for browse: the list re-emits on any write. */
+    /** Observed refs for browse: the list re-emits on any write (probe, not aggregate). */
     fun observeRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<com.mcqapp.data.local.QuestionRef>> =
         kotlinx.coroutines.flow.combine(
-            db.questionDao().observeCategoryCounts(),
+            db.questionDao().observeAnyQuestion(),
             db.categoryDao().observeAll()
         ) { _, _ -> Unit }
             .map {

@@ -6,6 +6,7 @@ import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.countForQuestionsChunked
+import com.mcqapp.data.local.getCategoryCountsForChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.domain.CategoryNode
@@ -57,8 +58,7 @@ internal class PaperStore(
      */
     private suspend fun PaperEntity.toDomain(countMap: Map<String, Int>? = null): Paper {
         val categories = db.categoryDao().getByPaper(id)
-        val counts = countMap
-            ?: db.questionDao().getCategoryCounts().associate { it.categoryId to it.cnt }
+        val counts = countMap ?: countsFor(categories)
         return Paper(
             id = id,
             title = title,
@@ -68,6 +68,16 @@ internal class PaperStore(
             categories = buildTree(categories, counts)
         )
     }
+
+    /**
+     * One paper's category counts, read over that paper's questions only. The
+     * bank-wide query this replaces was a covering-index scan of a million
+     * entries (~90 ms warm) for a tree that shows one paper.
+     */
+    private suspend fun countsFor(categories: List<CategoryEntity>): Map<String, Int> =
+        if (categories.isEmpty()) emptyMap()
+        else db.questionDao().getCategoryCountsForChunked(categories.map { it.id })
+            .associate { it.categoryId to it.cnt }
 
     private fun buildTree(
         categories: List<CategoryEntity>,

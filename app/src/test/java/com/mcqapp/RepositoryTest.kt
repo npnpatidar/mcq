@@ -8,7 +8,10 @@ import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -1043,5 +1046,61 @@ class RepositoryTest {
         val emission = db.questionDao().observeById("q1").first()
         assertEquals("q1", emission?.id)
         assertEquals(listOf("q1-a"), emission?.let { db.correctAnswerDao().getCorrectIds(it.id) })
+    }
+
+    /**
+     * Browse and the library used to watch a per-category `COUNT(*)` aggregate
+     * purely as a write trigger, which made every question write re-scan a
+     * million rows. They watch a one-row probe instead, and Room's invalidation
+     * is per table, so the refresh must be identical: this pins that a write
+     * still re-emits the list.
+     */
+    @Test
+    fun aQuestionWriteReemitsTheBrowseList() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+
+        val sizes = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val job = launch(Dispatchers.IO) {
+            repository.observeQuestionRefsForPaper("p1").collect { sizes += it.size }
+        }
+        try {
+            assertTrue("the first emission never arrived", awaitListSize(sizes, 1))
+            repository.saveQuestion(question("q2", setOf("q2-a")))
+            assertTrue(
+                "a question write must refresh the browse list",
+                awaitListSize(sizes, 2)
+            )
+        } finally {
+            job.cancel()
+        }
+    }
+
+    private suspend fun awaitListSize(sizes: List<Int>, expected: Int): Boolean {
+        repeat(400) {
+            if (sizes.contains(expected)) return true
+            delay(25)
+        }
+        return sizes.contains(expected)
+    }
+
+    /**
+     * A screen reads one paper's tree, so it counts that paper's categories
+     * only. The bank-wide `GROUP BY` this replaces scanned a million index
+     * entries (~90 ms warm) for the same answer; the filtered form is
+     * proportional to the paper.
+     */
+    @Test
+    fun aPaperReadCountsOnlyItsOwnQuestions() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
+        repository.saveQuestion(question("q3", setOf("q3-a"), categoryId = "c2"))
+
+        val paper = repository.getPaper("p1")!!
+        assertEquals(1, paper.totalQuestions)
+        assertEquals(1, paper.categories.single().questionCount)
+        assertEquals("the other paper keeps its own count", 2, repository.getPaper("p2")!!.totalQuestions)
     }
 }

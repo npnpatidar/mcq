@@ -39,10 +39,14 @@ class AnkiApkgImporter(
      *
      * [onProgress] runs after each batch with the running count of questions
      * read, so a long import can show it is alive.
+     *
+     * [nowMillis] anchors a card whose last review is not in the log; it is a
+     * parameter so an import is reproducible rather than a reading of the clock.
      */
     suspend fun import(
         source: () -> InputStream,
-        onProgress: ((Int) -> Unit)? = null
+        onProgress: ((Int) -> Unit)? = null,
+        nowMillis: Long = System.currentTimeMillis()
     ): ImportReport = withContext(Dispatchers.IO) {
         val session = StreamingImportSession(
             db = db,
@@ -63,7 +67,7 @@ class AnkiApkgImporter(
                 schedules: Map<String, CardScheduleDto>
             ) = session.onQuestions(categoryId, questions, schedules)
         }
-        val tail = source().use { AnkiPackageReader.stream(it, sink, batchSize) }
+        val tail = source().use { AnkiPackageReader.stream(it, sink, batchSize, nowMillis) }
         session.finish(
             LegacyParser.StreamedFile(
                 version = 1,

@@ -56,6 +56,15 @@ class AnkiStreamEquivalenceTest {
     private lateinit var context: Context
     private val open = mutableListOf<AppDatabase>()
 
+    /**
+     * Both readers must be handed the same instant. A card whose last review is
+     * not in the log (our own export writes the card's progress but no revlog
+     * row) gets its `lastReviewedAt` anchored at "now minus its interval", so a
+     * real clock would make the two imports differ by however long apart they
+     * ran — a clock reading, not a behavioural difference.
+     */
+    private val NOW = 1_760_000_000_000L
+
     private val us = com.mcqapp.data.anki.AnkiPackageWriter.FIELD_SEPARATOR
     private val png1x1 =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -81,7 +90,7 @@ class AnkiStreamEquivalenceTest {
     /** The old path: read the whole package, then import the whole DTO. */
     private fun wholeFile(bytes: ByteArray): AppDatabase = runBlocking {
         val db = newDb()
-        val read = AnkiPackageReader.read(bytes)
+        val read = AnkiPackageReader.read(bytes, nowMillis = NOW)
         Importer(db).import(read.file, read.scheduling)
         db
     }
@@ -89,7 +98,7 @@ class AnkiStreamEquivalenceTest {
     /** The new path: stream the package into the same writer the JSON path uses. */
     private fun streamed(bytes: ByteArray): AppDatabase = runBlocking {
         val db = newDb()
-        AnkiApkgImporter(db).import({ ByteArrayInputStream(bytes) })
+        AnkiApkgImporter(db).import({ ByteArrayInputStream(bytes) }, nowMillis = NOW)
         db
     }
 
@@ -286,11 +295,13 @@ class AnkiStreamEquivalenceTest {
             flds = marker("Cells are?", "Small", "Big"),
             cards = listOf(Triple(1004L, 4L, 0))
         )
-        // A note whose two cards sit in two different top-level decks.
+        // A cloze note whose two cards sit in two different top-level decks:
+        // one deletion each, so the card ords are distinct as Anki's own are
+        // (a note cannot hold two cards for one template).
         db.addNote(
-            id = 5, mid = 1, tags = " mcqapp ",
-            flds = marker("Shared?", "Yes", "No"),
-            cards = listOf(Triple(1005L, 2L, 0), Triple(1006L, 5L, 0))
+            id = 5, mid = 2, tags = " mcqapp ",
+            flds = "Shared: {{c1::first}} and {{c2::second}}?",
+            cards = listOf(Triple(1005L, 2L, 0), Triple(1006L, 5L, 1))
         )
         // No card at all: the whole-file reader folds it into the default deck.
         db.addNote(

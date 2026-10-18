@@ -44,7 +44,7 @@ class ExportWritersTest {
 
     @Test
     fun htmlEscapesAndMarksCorrect() {
-        val html = HtmlPaperWriter.paperToHtml(samplePaper())
+        val html = htmlOf(samplePaper())
         assertTrue(html.contains("Pick &lt;one&gt; &amp; &quot;all&quot;?"))
         assertTrue(html.contains("Paper &amp; Title"))
         assertTrue(html.contains("Because &lt;reasons&gt;"))
@@ -55,7 +55,7 @@ class ExportWritersTest {
     @Test
     fun htmlEmbedsDataUriImage() {
         val src = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(ByteArray(16) { it.toByte() })
-        val html = HtmlPaperWriter.paperToHtml(samplePaper(src))
+        val html = htmlOf(samplePaper(src))
         assertTrue(html.contains("<img src=\"data:image/jpeg;base64,"))
     }
 
@@ -84,14 +84,14 @@ class ExportWritersTest {
             title = "Paper",
             categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
         )
-        val html = HtmlPaperWriter.paperToHtml(paper)
+        val html = htmlOf(paper)
         assertEquals(1, html.split("<img src=\"$questionSrc\"").size - 1)
         assertEquals(1, html.split("<img src=\"$optionSrc\"").size - 1)
     }
 
     @Test
     fun quizHtmlHidesAnswersBehindToggle() {
-        val html = HtmlPaperWriter.paperToQuizHtml(samplePaper())
+        val html = htmlOf(samplePaper(), quiz = true)
         // no correct marks in the question body ...
         assertFalse(html.contains("class=\"correct\""))
         // ... and the answer line exists only inside the hidden block
@@ -148,7 +148,7 @@ class ExportWritersTest {
     fun zipContainsJsonAndImages() {
         val raw = ByteArray(64) { it.toByte() }
         val src = "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(raw)
-        val bytes = ZipPaperWriter.paperToZipBytes(samplePaper(src))
+        val bytes = zipOf(samplePaper(src))
 
         val entries = mutableMapOf<String, ByteArray>()
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
@@ -230,7 +230,7 @@ class ExportWritersTest {
             )
         )
 
-        val entries = unzip(ZipPaperWriter.paperToZipBytes(paper))
+        val entries = unzip(zipOf(paper))
         val json = entries.getValue("paper.json").toString(Charsets.UTF_8)
         val images = entries.filterKeys { it.startsWith("images/") }
 
@@ -253,7 +253,7 @@ class ExportWritersTest {
 
     @Test
     fun zipKeepsRemoteUrlsUntouched() {
-        val bytes = ZipPaperWriter.paperToZipBytes(
+        val bytes = zipOf(
             samplePaper("https://example.com/x.png")
         )
         val names = mutableListOf<String>()
@@ -293,21 +293,21 @@ class ExportWritersTest {
 
     @Test
     fun htmlRendersInlineFormattingTags() {
-        val html = HtmlPaperWriter.paperToHtml(richPaper())
+        val html = htmlOf(richPaper())
         assertTrue(html.contains("H<sub>2</sub>O <strong>x</strong>"))
         assertFalse(html.contains("&lt;sub&gt;"))
     }
 
     @Test
     fun htmlEscapesUnknownInlineTags() {
-        val html = HtmlPaperWriter.paperToHtml(richPaper())
+        val html = htmlOf(richPaper())
         assertFalse(html.contains("<foo>"))
         assertTrue(html.contains("&lt;foo&gt;y&lt;/foo&gt;"))
     }
 
     @Test
     fun htmlRendersTableAndMathElements() {
-        val html = HtmlPaperWriter.paperToHtml(richPaper())
+        val html = htmlOf(richPaper())
         assertTrue(html.contains("<td>a&lt;b</td>"))
         assertTrue(html.contains("<math><mi>x</mi></math>"))
     }
@@ -333,7 +333,7 @@ class ExportWritersTest {
             title = "Paper",
             categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
         )
-        val html = HtmlPaperWriter.paperToHtml(paper)
+        val html = htmlOf(paper)
         // The answer names the label the option carries, so a reader can match
         // it against the list; the option keeps the content and its markup.
         assertTrue(html.contains("Answer: A</p>"))
@@ -361,7 +361,7 @@ class ExportWritersTest {
             title = "Paper",
             categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
         )
-        val html = HtmlPaperWriter.paperToHtml(paper)
+        val html = htmlOf(paper)
         assertTrue(html.contains("A) one"))
         assertTrue(html.contains("C) three"))
         assertTrue(html.contains("Answer: A, C</p>"))
@@ -383,7 +383,7 @@ class ExportWritersTest {
             title = "Paper",
             categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
         )
-        val html = HtmlPaperWriter.paperToQuizHtml(paper)
+        val html = htmlOf(paper, quiz = true)
         assertTrue(html.contains("Answer: B</p>"))
         assertFalse(html.contains("Answer: two"))
     }
@@ -447,7 +447,7 @@ class ExportWritersTest {
     @Test
     fun htmlPrintsThePassageOnceAboveItsGroup() {
         val paper = passagePaper()
-        val html = HtmlPaperWriter.paperToHtml(paper, paper.passages)
+        val html = htmlOf(paper)
         // Two members share ONE header; the standalone question gets none.
         assertEquals(1, html.split("class=\"passage\"").size - 1)
         assertEquals(1, html.split("The water cycle").size - 1)
@@ -479,27 +479,28 @@ class ExportWritersTest {
                 )
             }
         )
-        val html = HtmlPaperWriter.paperToHtml(split, split.passages)
+        val html = htmlOf(split)
         assertEquals(2, html.split("class=\"passage\"").size - 1)
     }
 
     @Test
     fun htmlWithoutPassageDataRendersNoPassageBlock() {
-        // A caller that did not load passages (or a legacy paper) is unaffected.
-        val html = HtmlPaperWriter.paperToHtml(passagePaper())
+        // A legacy paper carries no passages at all, so the members have
+        // nothing to print even though they still name one.
+        val html = htmlOf(passagePaper().copy(passages = emptyList()))
         assertFalse(html.contains("class=\"passage\""))
     }
 
     @Test
     fun quizHtmlPrintsThePassageOnceAboveItsGroup() {
         val paper = passagePaper()
-        val html = HtmlPaperWriter.paperToQuizHtml(paper, paper.passages)
+        val html = htmlOf(paper, quiz = true)
         assertEquals(1, html.split("class=\"passage\"").size - 1)
     }
 
     @Test
     fun zipCarriesThePassageBlockInPaperJson() {
-        val bytes = ZipPaperWriter.paperToZipBytes(passagePaper())
+        val bytes = zipOf(passagePaper())
         var json = ""
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
             var entry = zip.nextEntry
@@ -520,7 +521,7 @@ class ExportWritersTest {
     )
     @Test
     fun pdfWithPassagesStaysAValidPdf() {
-        val bytes = com.mcqapp.data.export.PdfPaperWriter.paperToPdfBytes(passagePaper())
+        val bytes = pdfOf(passagePaper())
         assertTrue(bytes.size > 400)
         assertTrue(String(bytes, Charsets.ISO_8859_1).contains("%%EOF"))
     }

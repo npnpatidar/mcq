@@ -628,8 +628,8 @@ members pages.
 - Loads **all** bookmarked questions with full content + a category/paper
   lookup, into one List. Bookmarks are user-curated so usually small — but the
   app explicitly supports "bookmark everything".
-- Export builds the whole file in memory (F5 covers that); the LazyColumn is
-  virtualised.
+- Export goes through the streaming exporter (F5, §8) rather than building the
+  file in memory; the LazyColumn is virtualised.
 
 **Plan**
 
@@ -935,6 +935,34 @@ over `searchText` (§4.5 + F4).
   that do render previews. `Exporter`'s passage-collection read moved to the
   slim query too.
 
+- **Exports built the document in memory** (F5, §5.6) — every paper exporter
+  took the whole paper as a `PaperDto` and handed back the whole document as a
+  `String` or `ByteArray`, so a million-question paper meant the question graph,
+  the serialized document and the encoded bytes alive at once; the Anki writer
+  additionally read the paper's whole `card_state` (one entity per studied card)
+  before it wrote a note. The writers now take a `PaperStream` and write into
+  the caller's `OutputStream`. Everything outside the questions — title,
+  category headings, passages, the question *count* — is small enough to be
+  known up front, and the questions arrive one category at a time off a keyset
+  walk (`QuestionDao.pageByCategory`, 500-row pages on `(sortOrder, rowid)`) and
+  are released as the writer moves on. A writer that needs something it cannot
+  know until the first pass — DOCX's hidden payload, PDF's answer key, the
+  .apkg's deck list — walks a second time and pays a re-read rather than a
+  second in-memory copy. `PaperJsonWriter` is the one streamed envelope, shared
+  by `JSON_INLINE`, the ZIP's `paper.json` and the DOCX payload (compact: the
+  importer parses either shape); an `Appendable` writer sends a document through
+  one buffered UTF-8 encode instead of a `String` plus its bytes. The apkg
+  writer notes one question at a time, asks for scheduling per batch
+  (`getForQuestionsChunked`) instead of the whole paper's `card_state`, and
+  writes the `col` row *after* the notes so no pass is spent finding out which
+  categories become decks. The render runs on `Dispatchers.IO`. Still held: the
+  pictures a paper embeds (DOCX `word/media`, the ZIP's image entries, the Anki
+  media pool) — bounded by the distinct images rather than the question count,
+  and named before the body that draws them, which is what the formats require.
+  `ExportTestSupport.kt` drives the writers from a fixture; the content
+  assertions live in `ExportWritersTest`/`DocxPaperWriterTest`/
+  `PdfPaperWriterTest`, the byte-level round trips in `DocxRoundTripTest`.
+
 ### Open (in pain order)
 
 1. Study: the *full* study queue (`getStudyQueue(leechesOnly = false)`) is still
@@ -942,10 +970,7 @@ over `searchText` (§4.5 + F4).
    has never been studied builds a million cards. No production path asks for it
    (the session pulls one card at a time; the drill asks for leeches), but the
    repository API allows it. The pull and the badge are bounded now (§8 Fixed).
-2. Exports that build the document in memory: HTML, DOCX (body XML + hidden
-   payload + all media), JSON_INLINE, Anki media pool (F5). An export also still
-   reads every `card_state` row of the paper in one list.
-3. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
+2. Full-table aggregates on hot paths: `getCategoryCounts` on every paper read,
    `observeCategoryCounts` for library badges (F2/F3).
-4. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
+3. Search FTS (§4.5 + F4) — the only way "instant" becomes true.
 

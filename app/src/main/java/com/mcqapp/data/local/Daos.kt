@@ -114,6 +114,17 @@ data class QuestionIdHash(
     val contentHash: String
 )
 
+/**
+ * One question row with the cursor column the export walk orders it by.
+ * `questions` orders by `(sortOrder, rowid)`, and only `rowid` is not already
+ * on [QuestionEntity]. Named `rowid` so Room maps it the same way
+ * [CardStateRow] does.
+ */
+data class QuestionPageRow(
+    @Embedded val question: QuestionEntity,
+    val rowid: Long
+)
+
 @Dao
 interface PassageDao {
     @Query("SELECT * FROM passages WHERE id = :id")
@@ -203,7 +214,30 @@ interface QuestionDao {
     suspend fun getByCategories(categoryIds: List<String>): List<QuestionEntity>
 
     /**
-     * One page of bookmarked questions, newest bookmark first (the order the
+     * One keyset page of a category's full rows — the reader the export walk
+     * uses. A document has to read every question it prints, but it never has
+     * to hold more than the page it is writing, so this mirrors
+     * [pageSessionRefsByCategory] for the rows that carry content. OFFSET
+     * would rescan from the top of a category a million rows deep.
+     */
+    @Query(
+        "SELECT *, rowid FROM questions WHERE categoryId = :categoryId " +
+            "AND (sortOrder > :afterSortOrder " +
+            "  OR (sortOrder = :afterSortOrder AND rowid > :afterRowId)) " +
+            "ORDER BY sortOrder, rowid LIMIT :limit"
+    )
+    suspend fun pageByCategory(
+        categoryId: String,
+        afterSortOrder: Int,
+        afterRowId: Long,
+        limit: Int
+    ): List<QuestionPageRow>
+
+    /** How many questions one category holds, for an export's header count. */
+    @Query("SELECT COUNT(*) FROM questions WHERE categoryId = :categoryId")
+    suspend fun countByCategory(categoryId: String): Int
+
+    /** One page of bookmarked questions, newest bookmark first (the order the
      * bookmarks screen has always shown). Only requested pages carry the full
      * question content, so a "bookmark everything" bank no longer loads every
      * bookmarked question at once.
@@ -991,6 +1025,15 @@ interface CardStateDao {
 
     @Query("SELECT * FROM card_state WHERE paperId = :paperId AND questionId = :questionId")
     suspend fun get(paperId: String, questionId: String): CardStateEntity?
+
+    /**
+     * Scheduling for a known set of questions — what an Anki export needs for
+     * the notes it is about to write. Reading the paper's whole `card_state`
+     * instead was every studied card the paper has: ~100 MB of entities at a
+     * million.
+     */
+    @Query("SELECT * FROM card_state WHERE questionId IN (:ids)")
+    suspend fun getForQuestions(ids: List<String>): List<CardStateEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: CardStateEntity)

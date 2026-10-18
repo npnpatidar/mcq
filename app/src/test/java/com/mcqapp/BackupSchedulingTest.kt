@@ -67,10 +67,22 @@ class BackupSchedulingTest {
         )
     }
 
+    /**
+     * The whole-bank JSON as a string, for the parsers that read it. The
+     * exporter writes into a stream, so the test reads it back out of one.
+     */
+    private fun exportAllJson(): String {
+        val text = java.io.StringWriter()
+        val out = java.io.BufferedWriter(text)
+        runBlocking { Exporter(db).exportAllTo(out) }
+        out.flush()
+        return text.toString()
+    }
+
     @Test
     fun theBackupCarriesReviewProgress() = runBlocking {
         studyOnce()
-        val json = Exporter(db).exportAll()
+        val json = exportAllJson()
         val file = LegacyParser.parse(json)
         assertTrue(
             "the backup should carry q1's schedule",
@@ -84,7 +96,7 @@ class BackupSchedulingTest {
     fun aRestoredBackupKeepsTheSchedule() = runBlocking {
         studyOnce()
         val before = repository.cardState("p1", "q1")!!
-        val json = Exporter(db).exportAll()
+        val json = exportAllJson()
 
         // Fresh database: nothing but the file.
         db.close()
@@ -121,7 +133,7 @@ class BackupSchedulingTest {
             )
         )
         studyOnce()
-        val file = LegacyParser.parse(Exporter(db).exportAll())
+        val file = LegacyParser.parse(exportAllJson())
         assertEquals(setOf("q1"), file.scheduling.keys)
     }
 

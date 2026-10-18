@@ -1,11 +1,13 @@
 package com.mcqapp.data.io
 
+import com.mcqapp.data.export.PaperStream
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.QuestionPageRow
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.parseContentElements
@@ -20,10 +22,6 @@ import java.io.OutputStream
 class Exporter(private val db: AppDatabase) {
 
     private val json = Json { prettyPrint = true }
-
-    suspend fun exportAll(): String {
-        return json.encodeToString(McqFileDto.serializer(), exportAllDto())
-    }
 
     /**
      * Writes the whole bank to [output] without ever holding it: papers and
@@ -195,89 +193,117 @@ class Exporter(private val db: AppDatabase) {
         )
     }
 
-    suspend fun getPaperDto(paperId: String): PaperDto? {
+    /**
+     * A whole paper's export as a walk over the database: its header, category
+     * list, passages and question count are read up front — all small even for
+     * a million questions — and a category's questions are resolved one keyset
+     * page at a time, while the writer is on that category.
+     */
+    suspend fun paperStream(paperId: String): PaperStream? {
         val paper = db.paperDao().getById(paperId) ?: return null
-        return exportPaperDto(paper)
-    }
-
-    /** Domain passages by id, for the apkg writer and other callers. */
-    suspend fun getPassagesByIds(ids: List<String>): List<com.mcqapp.domain.Passage> {
-        if (ids.isEmpty()) return emptyList()
-        return db.passageDao().getByIdsChunked(ids).map { entity ->
-            val elements = entity.text.parseContentElements(json)
-            com.mcqapp.domain.Passage(
-                id = entity.id,
-                categoryId = entity.categoryId,
-                title = entity.title,
-                elements = elements,
-                image = entity.image,
-                sortOrder = entity.sortOrder
-            )
-        }
-    }
-
-    suspend fun exportPaper(paperId: String): String {
-        Logger.i("EXPORT", "Exporting paper $paperId")
-        val paper = db.paperDao().getById(paperId) ?: return json.encodeToString(
-            McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = emptyList())
-        )
-        val paperDto = exportPaperDto(paper)
-        return json.encodeToString(
-            McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = listOf(paperDto), passages = passagesFor(paperDto))
-        )
-    }
-
-    suspend fun exportCategories(paperId: String, rootCategoryIds: Set<String>): String {
-        val paperDto = getCategoriesDto(paperId, rootCategoryIds) ?: PaperDto(
-            id = paperId,
-            title = "Paper"
-        )
-        return json.encodeToString(
-            McqFileDto.serializer(),
-            McqFileDto(version = 1, papers = listOf(paperDto), passages = passagesFor(paperDto))
+        return streamFor(
+            paper,
+            db.categoryDao().getByPaper(paperId),
+            db.questionDao().countForPaper(paperId)
         )
     }
 
     /**
-     * Every passage a category-subset export still needs: the passages of the
-     * selected subtrees. A member question outside the subtrees must not pull
-     * its passage in, or the export would leak questions the user excluded;
-     * a passage whose members are all outside is dropped by the same rule.
+     * A category subtree (descendants included) as the same walk, so a
+     * category export reads no more than a paper export does. The count is the
+     * sum of the selected categories', not the paper's.
      */
-    private suspend fun passagesFor(paperDto: PaperDto): List<PassageDto> {
-        val memberIds = paperDto.categories
-            .flatMap { it.questions }
-            .mapNotNull { it.passageId }
-            .toSet()
-        if (memberIds.isEmpty()) return emptyList()
-        // getByIdsChunked fetches just the needed rows; getAll() read every passage
-        // (and decoded its JSON) once per exported paper.
-        return db.passageDao().getByIdsChunked(memberIds.toList())
-            .map { it.toPassageDto() }
-    }
-
-
-    /** Paper DTO restricted to the given category subtrees (descendants included). */
-    suspend fun getCategoriesDto(paperId: String, rootCategoryIds: Set<String>): PaperDto? {
+    suspend fun categoryStream(paperId: String, rootCategoryIds: Set<String>): PaperStream? {
         val paper = db.paperDao().getById(paperId) ?: return null
         val allCategories = db.categoryDao().getByPaper(paperId)
         val selected = rootCategoryIds.flatMapTo(mutableSetOf()) { rootId ->
             CategoryFilter.subtreeIds(allCategories, rootId)
         }
-        val selectedCategories = allCategories.filter { it.id in selected }.map { category ->
-            exportCategoryDto(category)
+        val categories = allCategories.filter { it.id in selected }
+        var total = 0
+        for (category in categories) total += db.questionDao().countByCategory(category.id)
+        return streamFor(paper, categories, total)
+    }
+
+    private suspend fun streamFor(
+        paper: PaperEntity,
+        categories: List<CategoryEntity>,
+        totalQuestions: Int
+    ): PaperStream =
+        DatabaseStream(paper, categories, totalQuestions, passagesOf(categories))
+
+    /**
+     * Every passage the given categories' questions reference — the passages a
+     * paper export, or a category subset of one, still needs. A member question
+     * outside the subset must not pull its passage in, or the export would leak
+     * questions the user excluded; a passage whose members are all outside is
+     * dropped by the same rule.
+     */
+    private suspend fun passagesOf(categories: List<CategoryEntity>): List<PassageDto> {
+        val memberIds = categories
+            .flatMap { db.questionDao().getPassageIdsByCategory(it.id) }
+            .distinct()
+        if (memberIds.isEmpty()) return emptyList()
+        // getByIdsChunked fetches just the needed rows; getAll() read every passage
+        // (and decoded its JSON) once per exported paper.
+        return db.passageDao().getByIdsChunked(memberIds).map { it.toPassageDto() }
+    }
+
+    /**
+     * The walk the exporters use. The header, the category list and the
+     * passages are held (all small); one keyset page of a category's rows is
+     * resolved while the writer is on it and released after. Walking the same
+     * stream twice re-reads the pages instead of caching them, which is the
+     * point: a document may take two passes, but never the paper's whole
+     * question graph.
+     */
+    private inner class DatabaseStream(
+        private val paper: PaperEntity,
+        private val categoryRows: List<CategoryEntity>,
+        override val totalQuestions: Int,
+        override val passages: List<PassageDto>
+    ) : PaperStream {
+
+        override val id: String get() = paper.id
+        override val title: String get() = paper.title
+        override val description: String get() = paper.description
+        override val durationMinutes: Int get() = paper.durationMinutes
+        override val negativeMarking: Double get() = paper.negativeMarking
+        override val categories: List<CategoryDto>
+            get() = categoryRows.map { it.toHeader() }
+        override val looseQuestions: List<QuestionDto> get() = emptyList()
+
+        override suspend fun walk(
+            onCategory: suspend (CategoryDto) -> Unit,
+            onQuestion: suspend (QuestionDto) -> Unit
+        ) {
+            for (category in categoryRows) {
+                onCategory(category.toHeader())
+                var afterSortOrder = Int.MIN_VALUE
+                var afterRowId = Long.MIN_VALUE
+                while (true) {
+                    val page = db.questionDao().pageByCategory(
+                        category.id, afterSortOrder, afterRowId, EXPORT_PAGE
+                    )
+                    if (page.isEmpty()) break
+                    for (dto in page.map { it.question }.toDtoBulk()) onQuestion(dto)
+                    val last = page.last()
+                    afterSortOrder = last.question.sortOrder
+                    afterRowId = last.rowid
+                }
+            }
         }
-        val dto = PaperDto(
-            id = paperId,
-            title = paper.title,
-            description = paper.description,
-            durationMinutes = paper.durationMinutes,
-            negativeMarking = paper.negativeMarking,
-            categories = selectedCategories
-        )
-        return dto.copy(passages = passagesFor(dto))
+    }
+
+    private fun CategoryEntity.toHeader() = CategoryDto(id = id, title = title, parentId = parentId)
+
+    private companion object {
+        /**
+         * Questions resolved per export page. One page is one query for the
+         * rows, one for its options and one for its answer keys, all under the
+         * bind-variable limit the chunked queries live with.
+         */
+        const val EXPORT_PAGE = 500
     }
 
     private suspend fun exportPaperDto(paper: PaperEntity): PaperDto {
@@ -290,7 +316,7 @@ class Exporter(private val db: AppDatabase) {
             negativeMarking = paper.negativeMarking,
             categories = categories.map { exportCategoryDto(it) }
         )
-        return dto.copy(passages = passagesFor(dto))
+        return dto.copy(passages = passagesOf(categories))
     }
 
     private suspend fun PassageEntity.toPassageDto(): PassageDto {

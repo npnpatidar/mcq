@@ -79,7 +79,7 @@ class DocxPaperWriterTest {
 
     @Test
     fun packageStructureIsComplete() {
-        val files = entries(DocxPaperWriter.paperToDocxBytes(paper()))
+        val files = entries(docxOf(paper()))
         for (name in listOf(
             "[Content_Types].xml", "_rels/.rels", "word/document.xml",
             "word/_rels/document.xml.rels", "word/styles.xml"
@@ -94,7 +94,7 @@ class DocxPaperWriterTest {
 
     @Test
     fun textIsEscapedAndUnknownTagsStayLiteral() {
-        val xml = documentXml(DocxPaperWriter.paperToDocxBytes(paper()))
+        val xml = documentXml(docxOf(paper()))
         // Stored text decodes to what the screen shows, then escapes for XML.
         // "<one>" is literal text (its own run, as the inline splitter
         // produces), the ampersand and quotes become entities.
@@ -108,7 +108,7 @@ class DocxPaperWriterTest {
 
     @Test
     fun markerGrammarLines() {
-        val xml = documentXml(DocxPaperWriter.paperToDocxBytes(paper()))
+        val xml = documentXml(docxOf(paper()))
         assertTrue(xml.contains(">1.) <"))
         assertTrue(xml.contains(">(a) <"))
         assertTrue(xml.contains(">(b) <"))
@@ -127,7 +127,7 @@ class DocxPaperWriterTest {
                 CategoryDto(id = "grand", title = "Grand", parentId = "child")
             )
         )
-        val xml = documentXml(DocxPaperWriter.paperToDocxBytes(paper))
+        val xml = documentXml(docxOf(paper))
         assertTrue(xml.contains("Heading1"))
         assertTrue(xml.contains(">Root</w:t>"))
         assertTrue(xml.contains("Heading2"))
@@ -149,7 +149,7 @@ class DocxPaperWriterTest {
             explanation = "e"
         )
         val xml = documentXml(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -175,7 +175,7 @@ class DocxPaperWriterTest {
             explanation = "e"
         )
         val xml = documentXml(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -193,7 +193,7 @@ class DocxPaperWriterTest {
             correctOptionIds = listOf("a")
         )
         val files = entries(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -222,7 +222,7 @@ class DocxPaperWriterTest {
             correctOptionIds = listOf("a")
         )
         val files = entries(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -241,7 +241,7 @@ class DocxPaperWriterTest {
             options = listOf(OptionDto(id = "a", text = "x"), OptionDto(id = "b", text = "y")),
             correctOptionIds = listOf("b"), passageId = "passage-1"
         )
-        val bytes = DocxPaperWriter.paperToDocxBytes(
+        val bytes = docxOf(
             PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q1, q2)))),
             passages = listOf(PassageDto(id = "passage-1", title = "The Passage", elements = listOf(
                 ContentElement.TextElement("Shared context")
@@ -266,7 +266,7 @@ class DocxPaperWriterTest {
             correctOptionIds = listOf("a")
         )
         val xml = documentXml(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -285,7 +285,7 @@ class DocxPaperWriterTest {
             correctOptionIds = emptyList()
         )
         val xml = documentXml(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -296,7 +296,7 @@ class DocxPaperWriterTest {
     fun questionWithoutOptionsIsLeftOut() {
         val q = QuestionDto(id = "q", text = "no options", options = emptyList())
         val xml = documentXml(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
@@ -311,7 +311,7 @@ class DocxPaperWriterTest {
             correctOptionIds = listOf("a")
         )
         val xml = documentXml(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", questions = listOf(q))
             )
         )
@@ -346,11 +346,11 @@ class DocxPaperWriterTest {
             correctOptionIds = listOf("a")
         )
         val files = entries(
-            DocxPaperWriter.paperToDocxBytes(
+            docxOf(
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
         assertTrue("nothing may be written to media", files.keys.none { it.startsWith("word/media/") })
-        assertNotNull(entries(DocxPaperWriter.paperToDocxBytes(paper())))
+        assertNotNull(entries(docxOf(paper())))
     }
 }

@@ -110,6 +110,7 @@ data class PaperDto(
     /** Reading passages referenced by this paper's questions' passageId. */
     val passages: List<PassageDto> = emptyList()
 ) {
+    /** The paper's own question list, outside every category. */
     fun topLevelQuestions(): List<QuestionDto> = questions
 }
 

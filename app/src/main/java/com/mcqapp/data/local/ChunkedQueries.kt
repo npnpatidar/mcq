@@ -68,6 +68,9 @@ suspend fun CategoryDao.getByIdsChunked(ids: List<String>): List<CategoryEntity>
 suspend fun PassageDao.getByIdsChunked(ids: List<String>): List<PassageEntity> =
     ids.chunks().flatMap { getByIds(it) }
 
+suspend fun CardStateDao.getForQuestionsChunked(ids: List<String>): List<CardStateEntity> =
+    ids.chunks().flatMap { getForQuestions(it) }
+
 suspend fun PaperDao.getByIdsChunked(ids: List<String>): List<PaperEntity> =
     ids.chunks().flatMap { getByIds(it) }
 

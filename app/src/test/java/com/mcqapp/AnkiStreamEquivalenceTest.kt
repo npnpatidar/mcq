@@ -362,7 +362,9 @@ class AnkiStreamEquivalenceTest {
             "update cards set type = 2, queue = 2, due = 5, ivl = 5, factor = 2600, " +
                 "reps = 7, lapses = 1 where id = 1011"
         )
-        db.execSQL("insert into revlog values (1, 1011, -1, 3, 5, 1, 2600, 1699996400, 0)")
+        // A real revlog row: id is the review's epoch-millis timestamp, time is
+        // how long it took in millis.
+        db.execSQL("insert into revlog values (1699996400000, 1011, -1, 3, 5, 1, 2600, 32500, 0)")
 
         val collection = bytesOf(db)
         return zipOf(

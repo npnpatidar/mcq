@@ -550,17 +550,24 @@ object AnkiPackageReader {
         return out
     }
 
+    /**
+     * The newest review's instant per card. In Anki's `revlog`, `id` is the
+     * review's epoch-millis timestamp and `time` is how long that review took
+     * in millis (Anki's stats divide it by 1000 for "seconds studied"), so the
+     * timestamp is `max(id)` and needs no scaling. Reading `max(time)` and
+     * multiplying by 1000 turned a ~30 s duration into a 1970 instant.
+     */
     private fun readLastReviewTimesFor(db: SQLiteDatabase, cardIds: List<Long>): Map<Long, Long> {
         if (cardIds.isEmpty()) return emptyMap()
         val out = HashMap<Long, Long>()
         for (chunk in cardIds.chunked(IN_CHUNK)) {
             val placeholders = chunk.joinToString(",") { "?" }
             db.rawQuery(
-                "select cid, max(time) from revlog where cid in ($placeholders) group by cid",
+                "select cid, max(id) from revlog where cid in ($placeholders) group by cid",
                 chunk.map { it.toString() }.toTypedArray()
             ).use { c ->
                 while (c.moveToNext()) {
-                    if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1) * 1000L
+                    if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1)
                 }
             }
         }
@@ -789,12 +796,16 @@ object AnkiPackageReader {
      * log is the only record of when a card was last seen; without it the
      * schedule falls back to the interval, which is close enough for a card
      * that has not been overdue. A package may legitimately not carry one.
+     *
+     * `id` is the review's epoch-millis timestamp and `time` is its duration in
+     * millis; see [readLastReviewTimesFor], which this whole-file oracle
+     * mirrors.
      */
     private fun readLastReviewTimes(db: SQLiteDatabase): Map<Long, Long> = try {
         val out = LinkedHashMap<Long, Long>()
-        db.rawQuery("select cid, max(time) from revlog group by cid", null).use { c ->
+        db.rawQuery("select cid, max(id) from revlog group by cid", null).use { c ->
             while (c.moveToNext()) {
-                if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1) * 1000L
+                if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1)
             }
         }
         out

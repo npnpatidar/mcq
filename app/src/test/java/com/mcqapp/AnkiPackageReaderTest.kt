@@ -5,6 +5,7 @@ import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
+import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
@@ -20,11 +21,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.runBlocking
 
 /**
  * Reading tests for `.apkg` import.
@@ -868,7 +871,9 @@ class AnkiPackageReaderTest {
                 "update cards set type = 2, queue = 2, due = 5, ivl = 5, factor = 2600, " +
                     "reps = 7, lapses = 1 where id = 1001",
                 // The review log is the only record of when a card was last seen.
-                "insert into revlog values (1, 1001, -1, 3, 5, 1, 2600, ${crt - 3600}, 0)"
+                // In Anki's `revlog`, the row id is the review's epoch-millis
+                // timestamp; `time` is how long the review took, in millis.
+                "insert into revlog values (${(crt - 3600) * 1000}, 1001, -1, 3, 5, 1, 2600, 32500, 0)"
             )
         )
 
@@ -885,6 +890,82 @@ class AnkiPackageReaderTest {
         // due = 5 days after the collection was created, not after the import.
         assertWithinADay("due", (crt + 5 * 86_400L) * 1000L, state.dueAt)
         assertEquals((crt - 3600) * 1000L, state.lastReviewedAt)
+    }
+
+    /**
+     * Anki's `revlog.id` is the review's timestamp in epoch millis and
+     * `revlog.time` is how long the review took, also in millis (Anki's
+     * `RevlogEntry` documents the latter as "amount of milliseconds taken to
+     * answer the card"). Reading the duration as the timestamp scales a half
+     * minute into 1970 and inflates the next FSRS grade's stability.
+     */
+    @Test
+    fun theLastReviewIsTheReviewLogTimestampNotItsDuration() {
+        val reviewedAt = 1_760_000_000_000L
+        val durationMs = 32_500L
+        val apkg = legacyPackage(
+            notes = listOf("Front: 2 + 2?${us}&#10003; 4<br>&#10007; five" to 1L),
+            extraSql = listOf(
+                "update cards set type = 2, queue = 2, due = 5, ivl = 5, factor = 2600, " +
+                    "reps = 7, lapses = 1 where id = 1001",
+                "insert into revlog values ($reviewedAt, 1001, -1, 3, 5, 1, 2600, $durationMs, 0)"
+            )
+        )
+
+        val result = AnkiPackageReader.read(apkg, nowMillis = reviewedAt + 86_400_000L)
+        val question = result.file.papers.single().let(::allQuestions).single()
+        val state = result.scheduling[question.id]
+
+        assertNotNull("a reviewed card must carry its schedule", state)
+        assertEquals("the row id is the review instant", reviewedAt, state!!.lastReviewedAt)
+        assertTrue(
+            "the duration $durationMs was read as an instant, which lands in 1970: " +
+                "${state.lastReviewedAt}",
+            state.lastReviewedAt > 1_000_000_000_000L
+        )
+    }
+
+    /** The streaming reader must take the same column as the whole-file one. */
+    @Test
+    fun theStreamedLastReviewIsTheReviewLogTimestamp() {
+        val reviewedAt = 1_760_000_000_000L
+        val apkg = legacyPackage(
+            notes = listOf("Front: 2 + 2?${us}&#10003; 4<br>&#10007; five" to 1L),
+            extraSql = listOf(
+                "update cards set type = 2, queue = 2, due = 5, ivl = 5, factor = 2600, " +
+                    "reps = 7, lapses = 1 where id = 1001",
+                "insert into revlog values ($reviewedAt, 1001, -1, 3, 5, 1, 2600, 32500, 0)"
+            )
+        )
+        val sink = ScheduleSink()
+
+        runBlocking {
+            AnkiPackageReader.stream(
+                ByteArrayInputStream(apkg),
+                sink,
+                nowMillis = reviewedAt + 86_400_000L
+            )
+        }
+
+        val state = sink.schedules.values.single()
+        assertEquals("the row id is the review instant", reviewedAt, state.lastReviewedAt)
+    }
+
+    /** Collects every batch's schedules so a test can read them off the stream. */
+    private class ScheduleSink : AnkiPackageReader.StreamSink {
+        val schedules = LinkedHashMap<String, CardScheduleDto>()
+
+        override suspend fun onPaper(header: LegacyParser.PaperHeader) = Unit
+
+        override suspend fun onCategory(category: CategoryDto) = Unit
+
+        override suspend fun onQuestions(
+            categoryId: String,
+            questions: List<QuestionDto>,
+            schedules: Map<String, CardScheduleDto>
+        ) {
+            this.schedules += schedules
+        }
     }
 
     @Test

@@ -1,8 +1,6 @@
 package com.mcqapp
 
 import com.mcqapp.data.local.SessionRef
-import com.mcqapp.domain.Question
-import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
@@ -13,14 +11,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TestSnapshotTest {
-
-    private fun question(id: String) = Question(
-        id = id,
-        categoryId = "c",
-        text = "Q $id",
-        options = listOf(QuestionOption("$id-a", "A")),
-        correctOptionIds = setOf("$id-a")
-    )
 
     @Test
     fun roundTripPreservesEverything() {
@@ -60,29 +50,53 @@ class TestSnapshotTest {
     }
 
     @Test
-    fun reorderRestoresSavedOrderAndAppendsNew() {
-        val loaded = listOf(question("q1"), question("q2"), question("q3"), question("qNew"))
-        val ordered = TestSnapshot.reorder(loaded, listOf("q3", "q1"))
-        assertEquals(listOf("q3", "q1", "q2", "qNew"), ordered.map { it.id })
+    fun aLegacySnapshotRestoresItsSavedOrderAndAppendsTheNew() {
+        // The loaded order is the base; the saved ids move to the front in the
+        // order they were presented, and questions added since land after them.
+        val base = SessionOrder.of(listOf(ref("q1"), ref("q2"), ref("q3"), ref("qNew")))
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            questionIds = listOf("q3", "q1")
+        )
+        assertEquals(
+            listOf("q3", "q1", "q2", "qNew"),
+            TestSnapshot.orderOf(base, snapshot)!!.idsInOrder()
+        )
     }
 
     @Test
-    fun reorderDropsDeletedQuestions() {
-        val loaded = listOf(question("q1"), question("q3"))
-        val ordered = TestSnapshot.reorder(loaded, listOf("q2", "q3", "q1"))
-        assertEquals(listOf("q3", "q1"), ordered.map { it.id })
+    fun aLegacySnapshotDropsDeletedQuestions() {
+        val base = SessionOrder.of(listOf(ref("q1"), ref("q3")))
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            questionIds = listOf("q2", "q3", "q1")
+        )
+        assertEquals(listOf("q3", "q1"), TestSnapshot.orderOf(base, snapshot)!!.idsInOrder())
     }
 
     @Test
-    fun reorderEmptyWhenNothingOverlaps() {
-        val loaded = listOf(question("q1"))
-        assertTrue(TestSnapshot.reorder(loaded, listOf("q9")).isEmpty())
+    fun aLegacySnapshotWithARepeatedIdPresentsTheQuestionOnce() {
+        // A malformed saved list names a question twice; the replay must not
+        // present it twice, and must not run the row cursor past the order.
+        val base = bank()
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            questionIds = listOf("q5", "q5", "q1")
+        )
+        assertEquals(
+            listOf("q5", "q1", "q0", "q2", "q3", "q4", "q6", "q7"),
+            TestSnapshot.orderOf(base, snapshot)!!.idsInOrder()
+        )
     }
 
     @Test
     fun emptySavedOrderKeepsLoadedOrder() {
-        val loaded = listOf(question("q1"), question("q2"))
-        assertEquals(listOf("q1", "q2"), TestSnapshot.reorder(loaded, emptyList()).map { it.id })
+        val base = SessionOrder.of(listOf(ref("q1"), ref("q2")))
+        val snapshot = TestSnapshot(paperId = "p1", categoryIds = listOf("c"))
+        assertEquals(listOf("q1", "q2"), TestSnapshot.orderOf(base, snapshot)!!.idsInOrder())
     }
 
     // --- seed-based order reconstruction (bounded snapshots) ---

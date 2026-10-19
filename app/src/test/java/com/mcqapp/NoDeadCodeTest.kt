@@ -29,7 +29,11 @@ class NoDeadCodeTest {
             "McqRepository.kt" to "fun searchQuestions(",
             "McqRepository.kt" to "fun observeQuestion(",
             "AnkiSchema11.kt" to "fun stripHtml(",
-            "Scoring.kt" to "fun isGraded("
+            "Scoring.kt" to "fun isGraded(",
+            // The legacy id-list replay has one implementation now
+            // (SessionOrder.reorderedTo, which guards a repeated id); the
+            // test-only copy that did not guard is gone.
+            "TestSnapshot.kt" to "fun reorder("
         ).forEach { (file, needle) ->
             assertFalse("$file still declares $needle", sourceOf(file).contains(needle))
         }
@@ -195,6 +199,22 @@ class NoDeadCodeTest {
                 "$name refreshes with the scaled explanation",
                 text.contains("scaledQuestion.storedExplanationJson(json)")
             )
+            // Presence alone would pass if an unscaled call were added
+            // alongside the scaled one, so the file's DTO forms are banned.
+            for (needle in listOf(
+                "questionDto.toQuestionEntity(",
+                "dto.toQuestionEntity(",
+                "questionDto.toOptionEntities(",
+                "dto.toOptionEntities(",
+                "questionDto.storedExplanationJson(",
+                "dto.storedExplanationJson(",
+                "passageDto.toPassageEntity("
+            )) {
+                assertFalse(
+                    "$name builds a row from the file's own DTO: $needle",
+                    text.contains(needle)
+                )
+            }
         }
     }
 

@@ -109,20 +109,6 @@ data class TestSnapshot(
         }
 
         /**
-         * Best-effort restore of presented order: saved order for questions
-         * that still exist, silently dropping deleted ones. Empty result
-         * means the paper changed too much — start fresh instead.
-         */
-        fun reorder(loaded: List<Question>, savedIds: List<String>): List<Question> {
-            if (savedIds.isEmpty()) return loaded
-            val byId = loaded.associateBy { it.id }
-            val ordered = savedIds.mapNotNull { byId[it] }
-            if (ordered.isEmpty()) return emptyList()
-            val seen = ordered.map { it.id }.toHashSet()
-            return ordered + loaded.filter { it.id !in seen }
-        }
-
-        /**
          * The order a session presented, rebuilt from [base] (the freshly
          * loaded order, unshuffled). Seed snapshots reproduce the shuffle and
          * drill cut exactly; legacy snapshots replay their saved id list, as

@@ -90,6 +90,36 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlRendersTopLevelQuestionsAndCountsThem() {
+        // A foreign file can carry questions outside every category. walk does
+        // not visit them, so the page printed a header count that included
+        // them while rendering none of them.
+        val loose = QuestionDto(
+            id = "q2",
+            text = "Loose?",
+            options = listOf(OptionDto(id = "a", text = "Alpha"), OptionDto(id = "b", text = "Beta")),
+            correctOptionIds = listOf("a")
+        )
+        val paper = samplePaper().copy(questions = listOf(loose))
+
+        val html = htmlOf(paper)
+
+        assertTrue(html.contains("2 questions"))
+        assertTrue(html.contains("Loose?"))
+        // Rendered questions now match the count: one in the category, one
+        // loose.
+        assertEquals(2, html.split("<div class=\"q\">").size - 1)
+        // The loose one gets its own section rather than joining the category.
+        val looseAt = html.indexOf("Loose?")
+        assertTrue(html.indexOf("<h2>Uncategorized</h2>") in 1 until looseAt)
+
+        // Quiz mode numbers the loose question after the categorised one.
+        val quiz = htmlOf(paper, quiz = true)
+        assertTrue(quiz.contains("Loose?"))
+        assertTrue("numbering must stay continuous", quiz.contains("Q2."))
+    }
+
+    @Test
     fun quizHtmlHidesAnswersBehindToggle() {
         val html = htmlOf(samplePaper(), quiz = true)
         // no correct marks in the question body ...

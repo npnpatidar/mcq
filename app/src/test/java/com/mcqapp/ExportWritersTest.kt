@@ -522,6 +522,25 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlRendersALegacyPassageImageWithoutElements() {
+        // A passage can carry a legacy image and no elements. The other two
+        // writers print it — PDF appends the legacy image after its element
+        // loop, DOCX embeds it unconditionally — while this block skipped it
+        // and left a title with nothing under it.
+        val src = "data:image/png;base64,iVBORw0KGgo="
+        val paper = passagePaper().copy(
+            passages = passagePaper().passages.map { it.copy(elements = emptyList(), image = src) }
+        )
+
+        val html = htmlOf(paper)
+
+        assertTrue(html.contains("<p class=\"passage-title\">The water cycle</p>"))
+        assertTrue("the legacy passage image must print", html.contains("src=\"$src\""))
+        // One header for the group, so one copy of the image.
+        assertEquals(1, html.split("src=\"$src\"").size - 1)
+    }
+
+    @Test
     fun quizHtmlPrintsThePassageOnceAboveItsGroup() {
         val paper = passagePaper()
         val html = htmlOf(paper, quiz = true)

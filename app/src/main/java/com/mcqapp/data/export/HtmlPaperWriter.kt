@@ -185,6 +185,14 @@ object HtmlPaperWriter {
             .append(esc(passage.title.ifBlank { "Passage" })).append("</p>\n")
         if (passage.elements.isNotEmpty()) {
             out.append(elementsToHtml(passage.elements, passage.image))
+        } else {
+            // A legacy passage can carry an image and no elements, in which
+            // case elementsToHtml would return "" — its empty-list guard is
+            // what keeps it from printing the legacy image on its own. PDF
+            // appends the legacy image after its element loop and DOCX embeds
+            // it unconditionally, so such a passage prints in both; printing
+            // only the title here was the odd one out.
+            out.append(imageTag(passage.image))
         }
         out.append("</div>\n")
     }

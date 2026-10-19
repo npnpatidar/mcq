@@ -218,6 +218,27 @@ class NoDeadCodeTest {
         }
     }
 
+    @Test
+    fun theImportButtonGateHasOneImplementation() {
+        // The gate and its labels live in a pure function so a JVM test can pin
+        // them; the screen only renders the answer. Re-inlining a label would
+        // put a second copy of the rules back in the composable, where no test
+        // can see it - the same shape as the import store's second call site.
+        val screen = sourceOf("ImportScreen.kt")
+        assertTrue(
+            "the screen renders the gate's answer",
+            screen.contains("enabled = importAction.enabled")
+        )
+        assertTrue(
+            "the screen renders the gate's label",
+            screen.contains("Text(importAction.label)")
+        )
+        assertFalse(
+            "the label text belongs to the gate, not the screen",
+            screen.contains("Nothing new to import")
+        )
+    }
+
     /** Constructions of [entity], not the `toXEntity(` calls that end in its name. */
     private fun constructions(text: String, entity: String): Int =
         Regex("(?<![A-Za-z])" + Regex.escape(entity) + "\\(").findAll(text).count()

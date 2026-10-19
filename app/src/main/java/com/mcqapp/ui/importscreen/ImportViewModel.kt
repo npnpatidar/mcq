@@ -219,6 +219,41 @@ internal fun buildPreviewPaperDto(
 internal fun isBackupFile(file: McqFileDto): Boolean =
     file.papers.size > 1 || file.scheduling.isNotEmpty()
 
+/** The Import button: whether it may run, and what it says. */
+internal data class ImportButtonState(val enabled: Boolean, val label: String)
+
+/**
+ * What the Import button offers for the previewed [state].
+ *
+ * The preview only knows the first paper, but a backup is imported whole:
+ * [ImportViewModel.import] skips the "nothing to do" early return for one, so
+ * a single small backup whose previewed paper is all duplicates would still
+ * restore the remaining papers and the review schedules. Gating the button on
+ * the preview alone left it reading "Nothing new to import" and disabled while
+ * the run would have done real work; a backup that has nothing new to add keeps
+ * the button live and says so.
+ */
+internal fun importButton(
+    state: ImportUiState,
+    newQuestions: Int,
+    changedQuestions: Int
+): ImportButtonState {
+    val backup = state.originalFile?.let { isBackupFile(it) } == true
+    val nothingToDo = newQuestions == 0 && changedQuestions == 0
+    val enabled = state.paperTitle.isNotBlank() &&
+        (state.previewTruncated || backup || !nothingToDo) &&
+        !state.importing
+    val label = when {
+        state.importing && state.previewTruncated -> "Importing…"
+        state.previewTruncated -> "Import ${state.totalQuestionCount} questions"
+        nothingToDo -> if (backup) "Restore backup" else "Nothing new to import"
+        changedQuestions == 0 -> "Import $newQuestions new questions"
+        newQuestions == 0 -> "Update $changedQuestions questions"
+        else -> "Import $newQuestions new • update $changedQuestions"
+    }
+    return ImportButtonState(enabled, label)
+}
+
 /**
  * The restore the preview is a window onto: a file with more than one paper,
  * or with review progress, is imported in full even though the preview shows

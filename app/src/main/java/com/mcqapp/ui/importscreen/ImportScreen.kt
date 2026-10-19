@@ -80,6 +80,9 @@ fun ImportScreen(
     val dupQuestions = remember(state.questions, state.duplicateIds) {
         state.questions.filter { it.id in state.duplicateIds }
     }
+    // The button's gate is pure so it can be pinned by a JVM test: a backup is
+    // imported whole even when its previewed paper shows nothing new.
+    val importAction = importButton(state, newQuestions.size, changedQuestions.size)
     // Advisory validation recomputes live as preview rows are edited.
     val warnings = remember(state.questions) {
         ImportWarnings.forFile(state.questions)
@@ -523,10 +526,7 @@ fun ImportScreen(
             Button(
                 onClick = { viewModel.import() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = state.paperTitle.isNotBlank() &&
-                    (state.previewTruncated ||
-                        newQuestions.isNotEmpty() || changedQuestions.isNotEmpty()) &&
-                    !state.importing
+                enabled = importAction.enabled
             ) {
                 if (state.importing) {
                     CircularProgressIndicator(
@@ -535,21 +535,7 @@ fun ImportScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(
-                    if (state.importing && state.previewTruncated) {
-                        "Importing…"
-                    } else if (state.previewTruncated) {
-                        "Import ${state.totalQuestionCount} questions"
-                    } else if (newQuestions.isEmpty() && changedQuestions.isEmpty()) {
-                        "Nothing new to import"
-                    } else if (changedQuestions.isEmpty()) {
-                        "Import ${newQuestions.size} new questions"
-                    } else if (newQuestions.isEmpty()) {
-                        "Update ${changedQuestions.size} questions"
-                    } else {
-                        "Import ${newQuestions.size} new • update ${changedQuestions.size}"
-                    }
-                )
+                Text(importAction.label)
             }
         }
     }

@@ -533,8 +533,14 @@ object LegacyParser {
         var wrongShape: String? = null
         var announced = false
         val seen = HashSet<String>()
-        fun categoryId(): String = id?.takeIf { it.isNotBlank() }
-            ?: "cat-" + System.currentTimeMillis().toString(36) + "-" + (0..9999).random()
+        // Resolved once and reused: the id may be absent (or appear *after*
+        // `questions`, since member order is not fixed), and a fresh generated
+        // id per call would write the category row under one id while stamping
+        // its questions with another — failing the questions.categoryId FK.
+        var resolvedId: String? = null
+        fun categoryId(): String = resolvedId ?: (id?.takeIf { it.isNotBlank() }
+            ?: "cat-" + System.currentTimeMillis().toString(36) + "-" + (0..9999).random())
+            .also { resolvedId = it }
         fun announce() {
             if (announced) return
             sink.onCategory(CategoryDto(categoryId(), title ?: "Category", parentId))

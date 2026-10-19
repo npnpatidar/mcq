@@ -81,6 +81,15 @@ object HtmlPaperWriter {
     private suspend fun body(stream: PaperStream, out: Appendable, quiz: Boolean) {
         var number = 0
         var openPassageId: String? = null
+        suspend fun emit(question: QuestionDto) {
+            number++
+            if (question.passageId != openPassageId) {
+                openPassageId = question.passageId
+                appendPassageBlock(out, question, stream.passages)
+            }
+            if (quiz) appendQuizQuestion(out, number, question)
+            else appendQuestion(out, number, question)
+        }
         stream.walk(
             onCategory = { category ->
                 out.append("<h2>").append(esc(category.title)).append("</h2>\n")
@@ -90,16 +99,19 @@ object HtmlPaperWriter {
                 // prints its header again.
                 openPassageId = null
             },
-            onQuestion = { question ->
-                number++
-                if (question.passageId != openPassageId) {
-                    openPassageId = question.passageId
-                    appendPassageBlock(out, question, stream.passages)
-                }
-                if (quiz) appendQuizQuestion(out, number, question)
-                else appendQuestion(out, number, question)
-            }
+            onQuestion = { emit(it) }
         )
+
+        // Top-level questions, a shape a foreign file can carry: walk does not
+        // visit them, while the header counts them (totalQuestions includes
+        // them) and DOCX/JSON both render them. With categories present they
+        // get their own section instead of joining the last one.
+        val loose = stream.looseQuestions
+        if (loose.isNotEmpty()) {
+            if (stream.categories.isNotEmpty()) out.append("<h2>Uncategorized</h2>\n")
+            openPassageId = null
+            for (question in loose) emit(question)
+        }
     }
 
     private fun appendQuizQuestion(out: Appendable, number: Int, question: QuestionDto) {
@@ -173,6 +185,14 @@ object HtmlPaperWriter {
             .append(esc(passage.title.ifBlank { "Passage" })).append("</p>\n")
         if (passage.elements.isNotEmpty()) {
             out.append(elementsToHtml(passage.elements, passage.image))
+        } else {
+            // A legacy passage can carry an image and no elements, in which
+            // case elementsToHtml would return "" — its empty-list guard is
+            // what keeps it from printing the legacy image on its own. PDF
+            // appends the legacy image after its element loop and DOCX embeds
+            // it unconditionally, so such a passage prints in both; printing
+            // only the title here was the odd one out.
+            out.append(imageTag(passage.image))
         }
         out.append("</div>\n")
     }

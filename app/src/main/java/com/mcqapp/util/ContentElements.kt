@@ -228,25 +228,37 @@ internal fun mixedContentHtml(
         // and the question visibly rebuilds.
         (function () {
           var reported = -1;
+          // Nothing may be reported before the typeset pass has finished:
+          // raw MathML is much taller than its SVG, and an early report would
+          // pin that height, reveal the block, and then move it again.
+          var settled = false;
           function report() {
+            if (!settled) return;
             try {
-              var body = document.body;
-              var h = Math.max(body.scrollHeight, body.getBoundingClientRect().height);
-              h = Math.ceil(h);
+              // The body's border box is the content height. Deliberately not
+              // scrollHeight: that is at least the viewport height, and the
+              // viewport is the height Compose pins us to — a block that was
+              // ever pinned too tall could then never shrink, leaving blank
+              // space after the question.
+              var h = Math.ceil(document.body.getBoundingClientRect().height);
               if (h > 0 && h !== reported && window.$CONTENT_HEIGHT_BRIDGE) {
                 reported = h;
                 window.$CONTENT_HEIGHT_BRIDGE.onHeight(h);
               }
             } catch (e) { /* a broken bridge must not break the page */ }
           }
+          function settle() {
+            settled = true;
+            report();
+          }
           function afterTypeset() {
             var mj = window.MathJax;
             if (mj && mj.startup && mj.startup.promise && mj.startup.promise.then) {
-              mj.startup.promise.then(report, report);
+              mj.startup.promise.then(settle, settle);
             } else if (mj && mj.typesetPromise) {
-              mj.typesetPromise().then(report, report);
+              mj.typesetPromise().then(settle, settle);
             } else {
-              report();
+              settle();
             }
           }
           // Width changes (rotation, split screen, a font-scale change) reflow

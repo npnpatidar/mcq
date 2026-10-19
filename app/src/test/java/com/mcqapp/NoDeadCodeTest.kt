@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,7 +29,11 @@ class NoDeadCodeTest {
             "McqRepository.kt" to "fun searchQuestions(",
             "McqRepository.kt" to "fun observeQuestion(",
             "AnkiSchema11.kt" to "fun stripHtml(",
-            "Scoring.kt" to "fun isGraded("
+            "Scoring.kt" to "fun isGraded(",
+            // The legacy id-list replay has one implementation now
+            // (SessionOrder.reorderedTo, which guards a repeated id); the
+            // test-only copy that did not guard is gone.
+            "TestSnapshot.kt" to "fun reorder("
         ).forEach { (file, needle) ->
             assertFalse("$file still declares $needle", sourceOf(file).contains(needle))
         }
@@ -159,6 +164,124 @@ class NoDeadCodeTest {
             importer.contains("paperDto.withDownscaledImages()")
         )
     }
+
+    @Test
+    fun theStoredRowsComeFromTheScaledTwin() {
+        // Scaling the DTO is only half: the row's element JSON is what
+        // ContentHash.sameQuestionContent reads back, so a row built from the
+        // file's original bytes reads as changed on every re-import - and the
+        // full-size picture stays stored. The row builders are the one
+        // construction site each; both write paths hand them the twin.
+        val importer = sourceOf("Importer.kt")
+        val streaming = sourceOf("StreamingImportSession.kt")
+        val builders = listOf("QuestionEntity", "OptionEntity", "PassageEntity")
+        for (builder in builders) {
+            assertEquals(
+                "$builder should be built in one place",
+                1,
+                constructions(importer, builder)
+            )
+            assertEquals(
+                "$builder should not be built inline in the streaming path",
+                0,
+                constructions(streaming, builder)
+            )
+        }
+        for (file in listOf("Importer.kt" to importer, "StreamingImportSession.kt" to streaming)) {
+            val (name, text) = file
+            assertTrue("$name stores the scaled question", text.contains("scaledQuestion.toQuestionEntity("))
+            assertTrue("$name stores the scaled options", text.contains("scaledQuestion.toOptionEntities("))
+            assertTrue(
+                "$name stores the scaled passage",
+                text.contains("passageDto.withDownscaledImages().toPassageEntity(")
+            )
+            assertTrue(
+                "$name refreshes with the scaled explanation",
+                text.contains("scaledQuestion.storedExplanationJson(json)")
+            )
+            // Presence alone would pass if an unscaled call were added
+            // alongside the scaled one, so the file's DTO forms are banned.
+            for (needle in listOf(
+                "questionDto.toQuestionEntity(",
+                "dto.toQuestionEntity(",
+                "questionDto.toOptionEntities(",
+                "dto.toOptionEntities(",
+                "questionDto.storedExplanationJson(",
+                "dto.storedExplanationJson(",
+                "passageDto.toPassageEntity("
+            )) {
+                assertFalse(
+                    "$name builds a row from the file's own DTO: $needle",
+                    text.contains(needle)
+                )
+            }
+        }
+    }
+
+    @Test
+    fun theImportButtonGateHasOneImplementation() {
+        // The gate and its labels live in a pure function so a JVM test can pin
+        // them; the screen only renders the answer. Re-inlining a label would
+        // put a second copy of the rules back in the composable, where no test
+        // can see it - the same shape as the import store's second call site.
+        val screen = sourceOf("ImportScreen.kt")
+        assertTrue(
+            "the screen renders the gate's answer",
+            screen.contains("enabled = importAction.enabled")
+        )
+        assertTrue(
+            "the screen renders the gate's label",
+            screen.contains("Text(importAction.label)")
+        )
+        assertFalse(
+            "the label text belongs to the gate, not the screen",
+            screen.contains("Nothing new to import")
+        )
+    }
+
+    @Test
+    fun bothSessionClocksGoThroughTheSameGate() {
+        // clockMayRun is the one rule: in view, not paused, answerable. The
+        // pure test pins the rule, but it cannot see whether a view model asks
+        // it - a call site that reverts to consulting only its own pause flag
+        // leaves every SessionClockTest green, and its Robolectric wiring test
+        // only runs on CI. These are the shapes both sessions used to resume
+        // past visibility; they must stay gone.
+        val study = sourceOf("StudyViewModel.kt")
+        val test = sourceOf("TestViewModel.kt")
+        for (file in listOf("StudyViewModel.kt" to study, "TestViewModel.kt" to test)) {
+            val (name, text) = file
+            assertTrue("$name should gate on clockMayRun", text.contains("clockMayRun("))
+            assertTrue(
+                "$name should feed the gate the last visibility it was told",
+                text.contains("questionInView = questionInView")
+            )
+        }
+        // The one start that does not come through resumeQuestionClock: a fresh
+        // card is clocked only if the screen last said the card is in view.
+        assertTrue(
+            "StudyViewModel.kt should clock a fresh card only while it is in view",
+            study.contains("clockRunning = questionInView")
+        )
+        for (needle in listOf(
+            // A resume that checks only the learner's pause, not visibility.
+            "if (!clockPausedByUser) resumeQuestionClock()",
+            "current.clockRunning || clockPausedByUser"
+        )) {
+            assertFalse("StudyViewModel.kt resumes past the gate: $needle", study.contains(needle))
+        }
+        for (needle in listOf(
+            // The foreground and setQuestionVisible shapes that ignored a cover.
+            "if (!_state.value.dwellPausedByUser) setDwellActive(true)",
+            "visible && !_state.value.dwellPausedByUser"
+        )) {
+            assertFalse("TestViewModel.kt resumes past the gate: $needle", test.contains(needle))
+        }
+    }
+
+    /** Constructions of [entity], not the `toXEntity(` calls that end in its name. */
+    private fun constructions(text: String, entity: String): Int =
+        Regex("(?<![A-Za-z])" + Regex.escape(entity) + "\\(").findAll(text).count()
 
     @Test
     fun allRenderersShareOneHtmlEscaper() {

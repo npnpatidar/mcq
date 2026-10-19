@@ -909,14 +909,17 @@ interface QuestionDao {
     /** Everything the content hash deliberately ignores. */
     @Query(
         "UPDATE questions SET explanation = :explanation, marks = :marks, " +
-            "difficulty = :difficulty, tags = :tags WHERE id = :id"
+            "difficulty = :difficulty, tags = :tags, " +
+            "image = :image, explanationImage = :explanationImage WHERE id = :id"
     )
     suspend fun updateNonHashedFields(
         id: String,
         explanation: String,
         marks: Double,
         difficulty: String,
-        tags: String
+        tags: String,
+        image: String?,
+        explanationImage: String?
     )
 
     /**
@@ -1177,6 +1180,18 @@ interface CardStateDao {
     suspend fun deleteByQuestions(questionIds: List<String>)
 
     /**
+     * Drops every card whose question lives in one category, resolved as a
+     * subquery: a category can hold a million questions, and the relation is a
+     * join, so the ids are never listed. Must run before the category (and its
+     * cascade) is deleted; the FK here points at the paper, not the question.
+     */
+    @Query(
+        "DELETE FROM card_state WHERE questionId IN " +
+            "(SELECT id FROM questions WHERE categoryId = :categoryId)"
+    )
+    suspend fun deleteAllForCategory(categoryId: String): Int
+
+    /**
      * Drops every SM-2 card for a paper. The foreign key already cascades, but
      * deleting explicitly keeps the intent visible and does not depend on the
      * foreign-key pragma being enabled.
@@ -1418,6 +1433,18 @@ interface ReviewLogDao {
     /** The bulk form of [deleteByQuestion]; the caller keeps ids chunked. */
     @Query("DELETE FROM review_log WHERE questionId IN (:questionIds)")
     suspend fun deleteByQuestions(questionIds: Collection<String>): Int
+
+    /**
+     * Drops the history of every question in one category, resolved as a
+     * subquery so the ids are never listed. Must run before the category (and
+     * its cascade) is deleted; the FK here points at the paper, not the
+     * question, so the question cascade cannot reach the log.
+     */
+    @Query(
+        "DELETE FROM review_log WHERE questionId IN " +
+            "(SELECT id FROM questions WHERE categoryId = :categoryId)"
+    )
+    suspend fun deleteAllForCategory(categoryId: String): Int
 }
 
 @Dao

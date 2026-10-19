@@ -33,7 +33,12 @@ object AnswerReview {
         flagged: Set<String>
     ): Row {
         val selected = selections[question.id].orEmpty()
-        val byId = question.options.associate { it.id to it.text }
+        // searchableText, not `text`: an option can be a table or a formula
+        // (textContent collects only TextElements, so those summaries came out
+        // blank) and an imported option keeps its inline markup (a row showed
+        // "<b>2</b>" verbatim). This is the same basis Browse and Search were
+        // moved to; `text` stays what scoring and duplicate detection compare.
+        val byId = question.options.associate { it.id to it.elements.searchableText }
         return Row(
             number = number,
             questionId = question.id,

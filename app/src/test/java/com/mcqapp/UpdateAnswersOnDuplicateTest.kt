@@ -12,6 +12,7 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.AppDatabase
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,7 +44,7 @@ class UpdateAnswersOnDuplicateTest {
         db.close()
     }
 
-    private fun file(questionId: String, correct: List<String>) = McqFileDto(
+    private fun file(questionId: String, correct: List<String>, image: String? = null) = McqFileDto(
         version = 1,
         papers = listOf(
             PaperDto(
@@ -55,6 +56,7 @@ class UpdateAnswersOnDuplicateTest {
                             QuestionDto(
                                 id = questionId,
                                 text = "2 + 2?",
+                                image = image,
                                 options = listOf(
                                     OptionDto(id = "a", text = "3"),
                                     OptionDto(id = "b", text = "4")
@@ -67,6 +69,17 @@ class UpdateAnswersOnDuplicateTest {
             )
         )
     )
+
+    /** A PNG larger than ImageDownscale's 1280 px cap, so import rewrites it. */
+    private fun oversizedPngDataUri(): String {
+        val bitmap = android.graphics.Bitmap.createBitmap(
+            1400, 1400, android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val out = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        bitmap.recycle()
+        return com.mcqapp.data.io.ImageDownscale.encodeDataUri("image/png", out.toByteArray())
+    }
 
     @Test
     fun theDefaultImporterLeavesTheCorrectionAlone() = kotlinx.coroutines.runBlocking {
@@ -110,5 +123,21 @@ class UpdateAnswersOnDuplicateTest {
 
         assertEquals(0, report.answersRefreshed)
         assertEquals(1, db.questionDao().countQuestions())
+    }
+
+    @Test
+    fun anOversizedImageDoesNotRefreshOnEveryReimport() = kotlinx.coroutines.runBlocking {
+        val image = oversizedPngDataUri()
+        Importer(db).import(file("q1", listOf("b"), image = image))
+        // The row stores the downscaled picture, not the file's bytes: that
+        // mismatch is what used to read as a permanent "non-hashed field".
+        val stored = db.questionDao().getById("q1")!!
+        assertNotEquals(image, stored.image)
+
+        val report = Importer(db, updateAnswersOnDuplicate = true)
+            .import(file("q1", listOf("b"), image = image))
+
+        assertEquals(0, report.answersRefreshed)
+        assertEquals(1, report.duplicateQuestions)
     }
 }

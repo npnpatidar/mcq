@@ -82,6 +82,36 @@ class TestSessionResumeTest {
         assertTrue("clearTestProgress() never completed", done.isCompleted)
     }
 
+    /**
+     * Runs a suspend call off the main thread, pumping the looper until it
+     * finishes.
+     *
+     * A snapshot's write goes through DataStore, whose actor runs the transform
+     * in the *caller's* context. From `runBlocking` on this thread that context
+     * is the blocked looper's own event loop, so it only works while nothing
+     * else is waiting on the looper - and a session left behind by an earlier
+     * test is. Seeding the restore through here keeps the looper free, the same
+     * way [clearProgressWithoutBlockingMain] does for the teardown.
+     */
+    private fun <T> offMain(block: suspend () -> T): T {
+        val done = CompletableDeferred<T>()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                done.complete(block())
+            } catch (t: Throwable) {
+                done.completeExceptionally(t)
+            }
+        }
+        var waited = 0
+        while (!done.isCompleted && waited < 600) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+            waited++
+        }
+        assertTrue("the seeded snapshot never landed", done.isCompleted)
+        return runBlocking { done.await() }
+    }
+
     private fun awaitCondition(condition: () -> Boolean): Boolean {
         repeat(400) {
             shadowOf(Looper.getMainLooper()).idle()
@@ -143,7 +173,7 @@ class TestSessionResumeTest {
     @Test
     fun staleAnswersOfAPaperAreNotOfferedIntoAFreshSession() {
         seed(3)
-        runBlocking {
+        offMain {
             app.repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
             // A session of p1 that got its answers written...
             app.repository.saveTestProgress(
@@ -171,7 +201,7 @@ class TestSessionResumeTest {
     @Test
     fun openingAnotherScopeOfTheSamePaperKeepsTheSavedAnswers() {
         seed(3)
-        runBlocking {
+        offMain {
             // A saved session of this paper whose scope is not the one opened
             // below — a whole-paper sitting and a narrower one, say.
             app.repository.saveTestProgress(
@@ -203,7 +233,7 @@ class TestSessionResumeTest {
         seed(4)
         // What an older build — or a restored backup — leaves behind: one
         // document with the answers inlined and no rows.
-        runBlocking {
+        offMain {
             app.repository.restoreTestProgress(
                 com.mcqapp.domain.TestSnapshot(
                     paperId = "p1",
@@ -239,7 +269,7 @@ class TestSessionResumeTest {
         // seed. Resuming used to materialise that order and then persist an
         // empty `questionIds` with no seed, so the *second* relaunch fell back
         // to authored order and silently re-shuffled the sitting.
-        runBlocking {
+        offMain {
             app.repository.restoreTestProgress(
                 com.mcqapp.domain.TestSnapshot(
                     paperId = "p1",

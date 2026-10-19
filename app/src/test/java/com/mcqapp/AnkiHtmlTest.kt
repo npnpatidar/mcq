@@ -153,6 +153,49 @@ class AnkiHtmlTest {
     }
 
     @Test
+    fun theHexMarkerDecodesWhateverTheCaseOfItsX() {
+        // `&#x2713;` was decoded but `&#X2713;` was not, because the pattern
+        // took a lowercase `x` only - while the app's other two decoders
+        // (data/docx/MathMlToOmml.kt, data/export/PdfMath.kt) accept either.
+        assertEquals("✓", AnkiHtml.decodeEntities("&#x2713;"))
+        assertEquals("✓", AnkiHtml.decodeEntities("&#X2713;"))
+        assertEquals("A", AnkiHtml.decodeEntities("&#X41;"))
+        assertEquals("A", AnkiHtml.decodeEntities("&#65;"))
+    }
+
+    @Test
+    fun aReferenceIsDecodedOnceAndNotAgain() {
+        // Decoding ran in two passes - the named replacements, then the
+        // numeric ones, then `&amp;` last - so a reference that decoded to
+        // `&amp;` was decoded again by the pass that followed it and the text
+        // lost a level. One pass over the source, as the other two decoders
+        // do, is what fixes the order.
+        assertEquals("&amp;", AnkiHtml.decodeEntities("&#38;amp;"))
+        assertEquals("&amp;", AnkiHtml.decodeEntities("&#x26;amp;"))
+        assertEquals("&", AnkiHtml.decodeEntities("&amp;"))
+        // An escaped ampersand is text, not the start of another reference:
+        // in HTML `&amp;#10003;` shows the seven characters `&#10003;`, and
+        // our own exporter produces exactly that for a question that contains
+        // the reference literally.
+        assertEquals("&#10003;", AnkiHtml.decodeEntities("&amp;#10003;"))
+    }
+
+    @Test
+    fun theSameNamedEntitiesDecodeAndNoOthers() {
+        // The set the old chain resolved, preserved exactly: a name outside it
+        // stays as written rather than vanishing.
+        assertEquals(" ", AnkiHtml.decodeEntities("&nbsp;"))
+        assertEquals("<", AnkiHtml.decodeEntities("&lt;"))
+        assertEquals(">", AnkiHtml.decodeEntities("&gt;"))
+        assertEquals("\"", AnkiHtml.decodeEntities("&quot;"))
+        assertEquals("'", AnkiHtml.decodeEntities("&apos;"))
+        assertEquals("'", AnkiHtml.decodeEntities("&#39;"))
+        assertEquals("&", AnkiHtml.decodeEntities("&amp;"))
+        assertEquals("&nope;", AnkiHtml.decodeEntities("&nope;"))
+        assertEquals("50% & more", AnkiHtml.decodeEntities("50% & more"))
+    }
+
+    @Test
     fun mediaFilenamesAreSafeForAnki() {
         // Anki rejects separators and control characters, and treats names
         // starting with `_` or `latex-` as static files it will not rewrite.

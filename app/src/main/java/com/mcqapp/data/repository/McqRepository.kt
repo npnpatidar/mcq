@@ -798,9 +798,13 @@ private class SearchPagingSource(
             while (out.size < target) {
                 val page = fetch(offset, window)
                 out += page.hits
-                val advanced = page.nextOffset ?: break
-                offset = advanced
+                // Assigned before the null check: a terminal window has to
+                // clear the key, or the next load re-fetches the window it
+                // just consumed and repeats those hits.
+                val advanced = page.nextOffset
                 nextKey = advanced
+                if (advanced == null) break
+                offset = advanced
             }
             androidx.paging.PagingSource.LoadResult.Page(
                 data = out,

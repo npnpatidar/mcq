@@ -520,12 +520,12 @@ object DocxPaperWriter {
                     // when the current one already has content — the first
                     // one must join its marker ("(a) Alpha", never a lone
                     // "(a)" on its own line).
-                    if (item.breaksParagraph && current.hasContent()) flush()
+                    if (item.breaksParagraph && current.hasRealContent()) flush()
                     current.add(item.specs)
                 }
                 is Math -> current.addMath(item.omml)
                 is Pic -> {
-                    if (item.breaksParagraph && current.hasContent()) flush()
+                    if (item.breaksParagraph && current.hasRealContent()) flush()
                     current.addPicture(item)
                 }
                 is Tbl -> {
@@ -679,6 +679,15 @@ object DocxPaperWriter {
         private var atStart = true
         private var wroteAnything = prefix != null
 
+        /**
+         * Real content — a text run, maths or a picture — as opposed to the
+         * marker prefix the field opens with. Only this may break a paragraph
+         * before the next block: counting the prefix as content orphaned every
+         * marker ("1.)" and "Ans. a" on lines of their own) because the first
+         * block flushed the prefix-only paragraph it was meant to join.
+         */
+        private var wroteContent = false
+
         init {
             if (!prefix.isNullOrBlank()) {
                 runs.append("<w:r><w:t xml:space=\"preserve\">")
@@ -714,6 +723,7 @@ object DocxPaperWriter {
                     runs.append(runXml(text, spec.flags))
                     atStart = false
                     wroteAnything = true
+                    wroteContent = true
                 }
             }
         }
@@ -722,12 +732,14 @@ object DocxPaperWriter {
             runs.append("<m:oMath>$omml</m:oMath>")
             atStart = false
             wroteAnything = true
+            wroteContent = true
         }
 
         fun addPicture(pic: Pic) {
             runs.append(drawingXml(pic))
             atStart = false
             wroteAnything = true
+            wroteContent = true
         }
 
         /** The paragraph XML, or null when it would be empty. */
@@ -737,6 +749,13 @@ object DocxPaperWriter {
         }
 
         fun hasContent(): Boolean = wroteAnything || runs.isNotEmpty()
+
+        /**
+         * Whether anything beyond the marker prefix was written. A paragraph
+         * break can only happen between real blocks, never between a prefix
+         * and the content that belongs with it.
+         */
+        fun hasRealContent(): Boolean = wroteContent
 
         fun addAndBuild(specs: List<RunSpec>): String {
             add(specs)
@@ -990,8 +1009,12 @@ object DocxPaperWriter {
  * entry never exists as an escaped copy of itself. Only `&`, `<` and `>` are
  * escaped, exactly as [escapeXmlText] does — an entity is never split across
  * two appends, so escaping chunk by chunk is the same as escaping the whole.
+ *
+ * Every append returns this appendable, as `Appendable` requires: a caller
+ * that chained onto the wrapped writer would write the rest of its text
+ * unescaped. Internal so the contract can be asserted directly.
  */
-private class XmlEscapingAppendable(private val out: Appendable) : Appendable {
+internal class XmlEscapingAppendable(private val out: Appendable) : Appendable {
 
     override fun append(csq: CharSequence?): Appendable = append(csq, 0, csq?.length ?: 0)
 
@@ -1010,7 +1033,10 @@ private class XmlEscapingAppendable(private val out: Appendable) : Appendable {
         return this
     }
 
-    override fun append(c: Char): Appendable = out.append(escaped(c))
+    override fun append(c: Char): Appendable {
+        out.append(escaped(c))
+        return this
+    }
 
     private fun escaped(c: Char): String = when (c) {
         '&' -> "\u0026amp;"

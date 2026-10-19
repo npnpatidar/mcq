@@ -257,9 +257,18 @@ class FsrsScheduler(
      */
     private fun intervalFor(stability: Double): Int {
         val days = (stability / factor) * (desiredRetention.pow(1.0 / decay) - 1.0)
+        // Clamp in Long, narrow last: `days` can sit past Int.MAX_VALUE, and
+        // `Math.round(days).toInt()` wraps — 2³¹ becomes -2147483648, 3e9
+        // becomes -1294967296 — so narrowing first floors a card that should
+        // hit the ceiling to 1 day. Reachable with a fitted set: the
+        // optimizer's bounds allow w17/w18 = 2.0 and w19 = 0.01, and the
+        // same-day branch, which has no retrievability damping, then grows
+        // stability a few hundredfold per grade (1.4e11 by the fifth in the
+        // test's sequence). The long-term formula is unbounded for the same
+        // reason w[9]'s lower bound is 0.0: it removes the S^(−w₉) damping.
         return Math.round(days)
+            .coerceIn(1L, config.maxIntervalDays.toLong())
             .toInt()
-            .coerceIn(1, config.maxIntervalDays)
     }
 
     /** Mirror of difficulty on SM-2's 1.3..3.0 ease scale, for export and UI. */

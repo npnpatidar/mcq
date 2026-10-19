@@ -250,4 +250,49 @@ class StudyViewModelPullTest {
         viewModel.toggleQuestionClock()
         assertTrue(viewModel.state.value.clockRunning)
     }
+
+    @Test
+    fun aHiddenCardDoesNotResumeItsClockWhenTheAppReturns() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue(awaitCondition {
+            viewModel.state.value.current != null && !viewModel.state.value.loading
+        })
+
+        viewModel.setQuestionVisible(true)
+        assertTrue("the clock runs while the card is on screen", viewModel.state.value.clockRunning)
+
+        // The card scrolls out of the viewport, then the app goes away and
+        // comes back. The screen's LaunchedEffect(questionOnScreen) does not
+        // re-fire on return - its key did not change - so the foreground used
+        // to restart the clock for a card nobody was looking at.
+        viewModel.setQuestionVisible(false)
+        viewModel.onAppBackgrounded()
+        viewModel.onAppForegrounded()
+        assertFalse("a hidden card must not resume its clock", viewModel.state.value.clockRunning)
+
+        // Coming back to the card still starts it.
+        viewModel.setQuestionVisible(true)
+        assertTrue(viewModel.state.value.clockRunning)
+    }
+
+    @Test
+    fun aCardAcceptedWhileTheLastReportWasHiddenDoesNotStartItsClock() {
+        // The simplified layout keeps Next in a fixed footer, so it can be
+        // tapped with the card scrolled past the viewport: the fresh card must
+        // not start charging until the screen reports it back in view.
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+
+        viewModel.setQuestionVisible(false)
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue(awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+        assertFalse("a fresh card must not be clocked while out of view", viewModel.state.value.clockRunning)
+
+        viewModel.setQuestionVisible(true)
+        assertTrue(viewModel.state.value.clockRunning)
+    }
 }

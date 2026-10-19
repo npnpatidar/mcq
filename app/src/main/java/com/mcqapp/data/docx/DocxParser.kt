@@ -854,6 +854,23 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
         )
     }
 
+    // An option's own text is a valid answer, and that text can legitimately
+    // contain a separator: "(c) Yes, definitely" is answered by "Ans. Yes,
+    // definitely", and "(b) Salt and pepper" by "Ans. Salt and pepper". Splitting
+    // those first would cut them into tokens and refuse the whole document, so
+    // the whole trimmed answer is offered to the options before the split is
+    // refused. The forms are tried in this order:
+    //   a run of letters -> the letters path below (unchanged),
+    //   the whole answer -> the option's own text or label,
+    //   several tokens   -> refused, as before,
+    //   one token        -> the older text/index forms, as before.
+    // The letters path stays first: a bare "b" names the option labelled (b),
+    // and only a pure letter run is ever read as letters.
+    val strippedAnswer = answer.trim()
+    val wholeAnswerNamesAnOption =
+        options.keys.any { it.equals(strippedAnswer, ignoreCase = true) } ||
+            options.values.any { it.equals(strippedAnswer, ignoreCase = true) }
+
     // "Ans. b" is one option; "Ans. b, d" or "Ans. b and d" is several. A letter
     // that names no option is an authoring mistake, and is refused here rather
     // than importing as a silently ungraded question.
@@ -870,6 +887,10 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
             )
         }
         correctIds = ids
+    } else if (wholeAnswerNamesAnOption) {
+        // The option's own text (or the label): left for the importer to resolve
+        // by text/id exactly as the single-token form always was.
+        correctIds = emptyList()
     } else if (tokens.size > 1) {
         fail(
             "answer '$answer' mixes letters with other text; write several answers as " +

@@ -184,6 +184,14 @@ internal class PaperStore(
             // Before the delete cascades this category's questions away; the
             // relation is a join, so a million-question category is not listed.
             db.bookmarkDao().removeAllByCategory(categoryId)
+            // `card_state` and `review_log` reference only the *paper*, so the
+            // question cascade below cannot reach them: their rows have to be
+            // swept here or they outlive their questions and keep inflating the
+            // stats distribution, the delete-impact count and backups. Both
+            // deletes resolve the category with a subquery, in this same
+            // transaction, before the questions are gone.
+            db.cardStateDao().deleteAllForCategory(categoryId)
+            db.reviewLogDao().deleteAllForCategory(categoryId)
             db.categoryDao().deleteById(categoryId)
         }
     }

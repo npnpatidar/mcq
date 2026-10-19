@@ -12,6 +12,9 @@ internal const val WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml
 internal const val REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 internal const val DRAWING_MAIN_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
+/** Word's legacy drawing format: `<v:shape><v:imagedata/></v:shape>`. */
+internal const val VML_NS = "urn:schemas-microsoft-com:vml"
+
 /** Blocks of the document body in order: text lines or tables. */
 internal sealed interface DocxBlock {
     /**
@@ -410,15 +413,25 @@ private class BodyReader(
     /** `<img src="data:…">` for an embedded drawing, or null with a warning. */
     private fun imageTag(drawing: Element): String? {
         // w:drawing/wp:inline/a:graphic/a:graphicData/pic:pic/
-        // pic:blipFill/a:blip, or VML w:pict/v:shape/v:imagedata.
+        // pic:blipFill/a:blip, or VML w:pict/v:shape/v:imagedata. Word's VML
+        // namespace is `urn:schemas-microsoft-com:vml` — a path-shaped
+        // endsWith("/vml") test never matched it, so a VML picture was skipped
+        // before its reference was even looked at.
         val blip = descendants(drawing).firstOrNull {
             (it.localName == "blip" || it.localName == "imagedata") &&
                 (it.namespaceURI == DRAWING_MAIN_NS || it.namespaceURI == WORD_NS ||
-                    it.namespaceURI?.endsWith("/vml") == true || it.namespaceURI == null)
+                    it.namespaceURI == VML_NS || it.namespaceURI?.endsWith("/vml") == true ||
+                    it.namespaceURI == null)
         }
         val ref = blip?.let {
-            val q = it.getAttribute("r:embed")
-            if (q.isNotBlank()) q else it.getAttributeNS(REL_NS, "embed")
+            // a:blip names its target with r:embed; VML's v:imagedata uses
+            // r:id. Both attributes live in the relationships namespace, so
+            // only the local name differs — and the NS lookup still finds it
+            // when a document binds that namespace to another prefix, since
+            // getAttribute is nodeName-based.
+            val local = if (it.localName == "imagedata") "id" else "embed"
+            val q = it.getAttribute("r:$local")
+            if (q.isNotBlank()) q else it.getAttributeNS(REL_NS, local)
         }
         if (ref.isNullOrBlank()) {
             warnings.add("A picture has no readable image reference and was skipped.")

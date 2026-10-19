@@ -215,4 +215,17 @@ class PdfMathTest {
         val spanned = spannedFromInlineHtml("a<br/>b &amp; 5 < 6")
         assertEquals("a\nb & 5 < 6", spanned.toString())
     }
+
+    @Test
+    fun spannedKeepsUnknownTagsVisible() {
+        // A legacy stem like `Pick <one> & "all"?` carries a tag-shaped token
+        // that is literal text. The HTML and DOCX writers keep it visible, so
+        // stripping it here made the same question read differently in the PDF.
+        val legacy = "Pick <one> & \"all\"?"
+        assertEquals(legacy, spannedFromInlineHtml(legacy).toString())
+        // An unknown close is text too; a stray close of a known tag is still
+        // dropped, as it was before.
+        assertEquals("a</one>b", spannedFromInlineHtml("a</one>b").toString())
+        assertEquals("ab", spannedFromInlineHtml("a</b>b").toString())
+    }
 }

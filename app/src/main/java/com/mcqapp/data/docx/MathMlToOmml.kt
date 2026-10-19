@@ -18,7 +18,16 @@ internal sealed interface MathNode {
     data class Txt(val text: String) : MathNode
 }
 
-private val mathTag = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)(\\s[^<>]*)?(/?)>")
+// The attribute group is lazy so it cannot swallow the self-closing slash:
+// `<mspace width="0.5em"/>` is one tag, not an open tag whose attributes
+// happen to end in "/".
+private val mathTag = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)(\\s[^<>]*?)?(/?)>")
+
+/** Elements that hold no content however a producer writes them. */
+private val voidElements = setOf("mspace")
+
+/** Elements whose character data is content, not layout. */
+private val tokenElements = setOf("mi", "mn", "mo", "mtext", "ms")
 
 /**
  * Parses a MathML string (bare, attribute-free tags, as the sanitizer
@@ -32,14 +41,18 @@ internal fun parseMathTree(mathml: String): List<MathNode> {
     fun attach(node: MathNode) {
         (stack.lastOrNull()?.children ?: root).add(node)
     }
+    fun attachText(text: String) {
+        if (text.isBlank() && stack.lastOrNull()?.name !in tokenElements) return
+        attach(MathNode.Txt(text))
+    }
     while (pos < mathml.length) {
         val match = mathTag.find(mathml, pos)
         if (match == null) {
-            attach(MathNode.Txt(mathml.substring(pos)))
+            attachText(mathml.substring(pos))
             break
         }
         if (match.range.first > pos) {
-            attach(MathNode.Txt(mathml.substring(pos, match.range.first)))
+            attachText(mathml.substring(pos, match.range.first))
         }
         val closing = match.groupValues[1] == "/"
         val selfClosing = match.groupValues[4] == "/"
@@ -51,7 +64,12 @@ internal fun parseMathTree(mathml: String): List<MathNode> {
                 val idx = stack.indexOfLast { it.name == name }
                 if (idx >= 0) while (stack.size > idx) stack.removeLast()
             }
-            selfClosing -> attach(MathNode.El(name))
+            // A space element is empty by definition. The sanitizer drops its
+            // self-closing slash along with its attributes, so a `<mspace>`
+            // reaches us looking like a container; opening one would make
+            // every following sibling its child, and convertNode("mspace")
+            // drops children — silently losing the rest of the formula.
+            selfClosing || name in voidElements -> attach(MathNode.El(name))
             else -> {
                 val el = MathNode.El(name)
                 attach(el)
@@ -171,8 +189,9 @@ private fun convertNode(node: MathNode): String? {
     is MathNode.El -> when (node.name) {
         "mi", "mn", "mo", "mtext", "ms" -> mathRun(node.flattenText())
         "mspace" -> mathRun(" ")
-        // Structural wrapper: transparent.
-        "mrow", "mpadded", "mphantom", "mstyle" -> convertAll(node.children)
+        // Structural wrapper: transparent. `math` is one too, for the
+        // lenient fragment path below, where the forest is not a lone root.
+        "mrow", "mpadded", "mphantom", "mstyle", "math" -> convertAll(node.children)
         "msup", "msub" -> {
             val parts = node.elementChildren()
             if (parts.size != 2) return null

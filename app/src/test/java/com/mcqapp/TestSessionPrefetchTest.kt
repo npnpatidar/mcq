@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -137,5 +138,48 @@ class TestSessionPrefetchTest {
         settle()
         vm.next()
         assertEquals("q2", vm.state.value.current?.id)
+
+        // Let the autosave that Next launched finish here. `persistProgress`
+        // writes its row first, so its DataStore edit is offered a moment later:
+        // if the test ends first, the edit slides in behind the teardown's
+        // clear, and the actor is left holding a transform for a looper the
+        // next class resets - every later write then waits forever.
+        settle()
+    }
+
+    @Test
+    fun aCoveredQuestionDoesNotResumeItsDwellWhenTheAppReturns() {
+        seed(2)
+        val vm = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition {
+            vm.state.value.currentQuestion != null && !vm.state.value.loading
+        })
+        // Same as the read-ahead test: let the load's own coroutines land
+        // before the visibility dance, so nothing is still in flight at the
+        // end of the sitting.
+        settle()
+
+        vm.setQuestionVisible(true)
+        assertTrue("dwell accrues while the question is on screen", vm.state.value.dwellActive)
+
+        // The palette opens over the question, then the app goes away and comes
+        // back. questionVisible stays false, so its LaunchedEffect does not
+        // re-fire; the foreground used to resume dwell behind the palette.
+        vm.setQuestionVisible(false)
+        vm.onAppBackgrounded()
+        vm.onAppForegrounded()
+        assertFalse("a covered question must not resume its dwell", vm.state.value.dwellActive)
+
+        // Closing the palette starts it again.
+        vm.setQuestionVisible(true)
+        assertTrue(vm.state.value.dwellActive)
+
+        // Leave the sitting idle and drained: this class's teardown is then the
+        // last thing that writes, as it is for the read-ahead test above. A
+        // session left clocking when the test ends keeps a coroutine on the
+        // main looper past the class, and the next class's setup is a plain
+        // runBlocking that blocks that looper (see the teardown's note).
+        vm.setQuestionVisible(false)
+        settle()
     }
 }

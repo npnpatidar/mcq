@@ -25,9 +25,9 @@ internal class MediaSpool : Closeable {
     /**
      * A directory of our own: `createTempFile` is the portable way to get a
      * unique name, so the file it makes is dropped and re-created as a
-     * directory. Names are flattened (see [add]), so no entry can escape it.
-     * Created on the first picture, so an export without images leaves nothing
-     * behind at all.
+     * directory. Every entry name is encoded into one file name (see
+     * [fileName]), so no entry can escape it. Created on the first picture, so
+     * an export without images leaves nothing behind at all.
      */
     private var dir: File? = null
 
@@ -53,10 +53,21 @@ internal class MediaSpool : Closeable {
     /** Spools [bytes] under [name]; a name already spooled is left alone. */
     fun add(name: String, bytes: ByteArray) {
         if (files.containsKey(name)) return
-        val file = File(directory, name.replace('/', '-'))
+        val file = File(directory, fileName(name))
         file.outputStream().use { it.write(bytes) }
         files[name] = file
     }
+
+    /**
+     * The one file name [name] gets in the spool directory. Entry names are
+     * paths ("images/img001.png") and a file name may not be one, so the
+     * separator is percent-encoded — and "%" with it, first, so the mapping
+     * stays injective: without that, "a/b" and a literal "a%2Fb" would still
+     * describe the same file, which is how `name.replace('/', '-')` let
+     * "a/b" and "a-b" alias each other and hand back the wrong bytes.
+     */
+    private fun fileName(name: String): String =
+        name.replace("%", "%25").replace("/", "%2F")
 
     /** Streams the picture spooled as [name] into [out]. */
     fun copyTo(name: String, out: OutputStream) {

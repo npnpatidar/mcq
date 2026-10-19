@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
@@ -135,6 +136,13 @@ class StudyViewModel(
     private var dwellJob: Job? = null
     private var clockPausedByUser = false
 
+    /**
+     * The last visibility the card reported (viewport or a covering surface).
+     * Remembered because the screen's visibility effect only re-runs when the
+     * flag flips; a foreground has to ask what it last said.
+     */
+    private var questionInView = true
+
     init {
         load()
         startDwellTicker()
@@ -233,7 +241,11 @@ class StudyViewModel(
                     isGuess = false,
                     questionStartedAt = now,
                     questionElapsedSeconds = 0L,
-                    clockRunning = true,
+                    // A fresh card is clocked only if the screen last said it
+                    // is in view. Advancing from the fixed footer can accept a
+                    // card while the previous one was scrolled past; a flip to
+                    // visible reports and resumes through the same gate.
+                    clockRunning = questionInView,
                     reviewsSinceNew = if (card.reason == StudyReason.NEW) 0 else it.reviewsSinceNew + 1,
                     finished = false
                 )
@@ -327,12 +339,13 @@ class StudyViewModel(
     }
 
     /**
-     * Starts a new active clock segment, unless the clock is already running,
-     * the learner paused it deliberately, or the card is not answerable.
+     * Starts a new active clock segment, unless the clock is already running
+     * or the gate refuses: the card is not on screen, the learner paused it, or
+     * it is not answerable.
      */
     fun resumeQuestionClock() {
         val current = _state.value
-        if (current.clockRunning || clockPausedByUser) return
+        if (current.clockRunning) return
         if (!clockCanRun(current)) return
         val now = System.currentTimeMillis()
         _state.update { it.copy(questionStartedAt = now, clockRunning = true) }
@@ -356,8 +369,9 @@ class StudyViewModel(
         pauseQuestionClock()
     }
 
+    /** The gate decides: a hidden card or a deliberate pause stays paused. */
     fun onAppForegrounded() {
-        if (!clockPausedByUser) resumeQuestionClock()
+        resumeQuestionClock()
     }
 
     /**
@@ -366,15 +380,20 @@ class StudyViewModel(
      * [resumeQuestionClock] refuses to run while the learner has paused.
      */
     fun setQuestionVisible(visible: Boolean) {
+        questionInView = visible
         if (visible) resumeQuestionClock() else pauseQuestionClock()
     }
 
     private fun clockCanRun(state: StudyUiState): Boolean =
-        !state.loading &&
-            state.loadError == null &&
-            !state.finished &&
-            !state.revealed &&
-            state.question != null
+        clockMayRun(
+            questionInView = questionInView,
+            pausedByUser = clockPausedByUser,
+            answerable = !state.loading &&
+                state.loadError == null &&
+                !state.finished &&
+                !state.revealed &&
+                state.question != null
+        )
 
     private fun startDwellTicker() {
         dwellJob?.cancel()

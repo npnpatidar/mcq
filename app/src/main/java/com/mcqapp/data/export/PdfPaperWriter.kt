@@ -17,6 +17,7 @@ import android.text.style.SubscriptSpan
 import android.text.style.SuperscriptSpan
 import android.text.style.UnderlineSpan
 import android.text.TextPaint
+import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import java.io.OutputStream
 
@@ -175,19 +176,18 @@ object PdfPaperWriter {
             onCategory = {},
             onQuestion = { question ->
                 number++
-                val answerText = SpannableStringBuilder(
-                    answerLabels(question.options, question.correctOptionIds).joinToString(", ")
-                )
-                val hasEntry = answerText.isNotEmpty() || question.explanationElements.isNotEmpty()
-                if (hasEntry) {
+                val entry = answerKeyEntry(question, number)
+                if (entry != null) {
                     if (!headingWritten) {
                         w.paragraph("Answer Key", 16f, Typeface.BOLD, Color.BLACK, spaceBefore = 16f)
                         headingWritten = true
                     }
-                    val line = SpannableStringBuilder("Q$number. ")
-                    if (answerText.isBlank()) line.append("—") else line.append(answerText)
-                    w.paragraph(line, 11f, Typeface.NORMAL, Color.rgb(46, 125, 50), spaceBefore = 6f)
-                    w.elements(question.explanationElements, question.explanationImage)
+                    w.paragraph(entry, 11f, Typeface.NORMAL, Color.rgb(46, 125, 50), spaceBefore = 6f)
+                    w.elements(
+                        question.explanationElements,
+                        question.explanationImage,
+                        question.explanation
+                    )
                 }
             }
         )
@@ -508,17 +508,31 @@ internal fun spannedFromInlineHtml(text: String): Spanned {
         if (chunk.isNotEmpty()) out.append(decodeEntities(chunk))
         val closing = match.groupValues[1] == "/"
         val tag = match.groupValues[2].lowercase()
-        if (isBlockBreak(tag)) {
-            if (out.isNotEmpty() && out[out.length - 1] != '\n') out.append("\n")
-        } else if (!closing && styleSpans(tag).isNotEmpty()) {
-            open.addLast(tag to out.length)
-        } else if (closing && open.lastOrNull()?.first == tag) {
-            val (_, start) = open.removeLast()
-            for (span in styleSpans(tag)) {
-                out.setSpan(span, start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val spans = styleSpans(tag)
+        when {
+            isBlockBreak(tag) -> {
+                if (out.isNotEmpty() && out[out.length - 1] != '\n') out.append("\n")
             }
+            spans.isNotEmpty() -> {
+                if (closing) {
+                    // A close with no matching open pops nothing and is
+                    // dropped, the way a real tag would be when rendered.
+                    if (open.lastOrNull()?.first == tag) {
+                        val (_, start) = open.removeLast()
+                        for (span in spans) {
+                            out.setSpan(span, start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                    }
+                } else {
+                    open.addLast(tag to out.length)
+                }
+            }
+            // Unknown tag shapes are literal text in legacy questions and must
+            // stay visible rather than vanish — the rule the DOCX writer's
+            // inlineRuns and the HTML writer already follow. `<one>` in
+            // `Pick <one> & "all"?` reads the same in all three exports.
+            else -> out.append(decodeEntities(match.value))
         }
-        // Unknown opens are stripped; stray closes pop nothing.
         pos = match.range.last + 1
     }
     val tail = text.substring(pos)
@@ -566,6 +580,24 @@ internal fun mathToLinear(mathml: String): String {
         }
     }
     return decoded.replace(Regex("\\s+"), " ").trim()
+}
+
+/**
+ * One answer-key line — `Q7. B`, or `Q7. —` when nothing is correct — or null
+ * when the question has neither an answer nor an explanation, in which case
+ * the key does not list it at all.
+ *
+ * Explanation counts whether it is rich content, the legacy text field or an
+ * image: they are the same thing to a reader, and the inline path already
+ * prints all three. Pure so the entry rules unit-test without Android.
+ */
+internal fun answerKeyEntry(question: QuestionDto, number: Int): String? {
+    val answer = answerLabels(question.options, question.correctOptionIds).joinToString(", ")
+    val hasExplanation = question.explanationElements.isNotEmpty() ||
+        question.explanation.isNotBlank() ||
+        question.explanationImage != null
+    if (answer.isEmpty() && !hasExplanation) return null
+    return "Q$number. " + if (answer.isEmpty()) "—" else answer
 }
 
 /**

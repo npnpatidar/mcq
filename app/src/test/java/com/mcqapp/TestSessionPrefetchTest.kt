@@ -147,6 +147,10 @@ class TestSessionPrefetchTest {
         assertTrue(awaitCondition {
             vm.state.value.currentQuestion != null && !vm.state.value.loading
         })
+        // Same as the read-ahead test: let the load's own coroutines land
+        // before the visibility dance, so nothing is still in flight at the
+        // end of the sitting.
+        settle()
 
         vm.setQuestionVisible(true)
         assertTrue("dwell accrues while the question is on screen", vm.state.value.dwellActive)
@@ -162,5 +166,13 @@ class TestSessionPrefetchTest {
         // Closing the palette starts it again.
         vm.setQuestionVisible(true)
         assertTrue(vm.state.value.dwellActive)
+
+        // Leave the sitting idle and drained: this class's teardown is then the
+        // last thing that writes, as it is for the read-ahead test above. A
+        // session left clocking when the test ends keeps a coroutine on the
+        // main looper past the class, and the next class's setup is a plain
+        // runBlocking that blocks that looper (see the teardown's note).
+        vm.setQuestionVisible(false)
+        settle()
     }
 }

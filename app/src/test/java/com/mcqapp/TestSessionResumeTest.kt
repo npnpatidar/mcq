@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -259,6 +260,59 @@ class TestSessionResumeTest {
         assertTrue(
             "legacy answers were not adopted as rows",
             awaitCondition { answerRows().toSet() == setOf("q0", "q2") }
+        )
+    }
+
+    /**
+     * The fresh session's countdown must not run behind the resume dialog.
+     * The dialog demands an explicit choice, and the count used to go on
+     * behind it: reaching zero auto-submitted an empty attempt, and submit()
+     * clears the snapshot — destroying the answers the dialog was offering —
+     * while the choice was still open.
+     */
+    @Test
+    fun theFreshCountdownDoesNotRunBehindTheResumeDialog() {
+        seed(3)
+        // The first session runs untimed: only the relaunch's countdown is
+        // under test, and a second timer on the same looper would reach zero
+        // on its own once the virtual clock advances.
+        val first = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { first.state.value.current?.id == "q0" })
+        first.toggleOption("a")
+        first.next()
+        assertTrue(awaitCondition { first.state.value.current?.id == "q1" })
+        first.toggleOption("b")
+        assertTrue("the answers never reached the store", awaitCondition { answerRows().size == 2 })
+
+        // The same paper, timed from here on: the relaunch now builds a
+        // one-minute countdown that used to tick away behind the offer.
+        offMain {
+            app.repository.db().paperDao().upsert(
+                com.mcqapp.data.local.PaperEntity(id = "p1", title = "Paper", durationMinutes = 1)
+            )
+        }
+        val relaunched = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue("no resume offer was made", awaitCondition { relaunched.state.value.resumeOffer != null })
+        assertEquals("the fresh session must open with a full countdown", 60, relaunched.state.value.remainingSeconds)
+
+        // A whole timed sitting behind the dialog: virtual time, so free.
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(61))
+
+        assertTrue("the offer must still be up", relaunched.state.value.resumeOffer != null)
+        assertEquals(
+            "the countdown must not have ticked behind the dialog",
+            60, relaunched.state.value.remainingSeconds
+        )
+        assertFalse("no empty attempt may be submitted behind the dialog", relaunched.state.value.submitted)
+        assertEquals("the offered answers must not be cleared", 2, answerRows().size)
+
+        // Resolving the dialog is what starts the fresh countdown.
+        relaunched.discardResume()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2))
+        assertTrue(
+            "the fresh countdown must run once the offer resolves: "
+                + "remaining=${relaunched.state.value.remainingSeconds}s",
+            relaunched.state.value.remainingSeconds < 60
         )
     }
 

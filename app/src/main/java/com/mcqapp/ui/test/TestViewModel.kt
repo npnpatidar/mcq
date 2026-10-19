@@ -286,7 +286,12 @@ class TestViewModel(
                 _state.update { it.copy(dwellActive = !drilled.isEmpty) }
                 resolveCurrent()
                 startDwellTicker()
-                if (totalSeconds > 0) startTimer()
+                // Not while an offer waits: the dialog demands an explicit
+                // choice, and a countdown running behind it would reach zero
+                // and auto-submit an empty attempt — clearing the snapshot
+                // the dialog is about to offer the user back. Resume and
+                // discard each start the timer when they resolve the offer.
+                if (totalSeconds > 0 && _state.value.resumeOffer == null) startTimer()
             } catch (e: Exception) {
                 // Without clearing `loading` the screen sat on "Loading…"
                 // forever with no retry and no explanation.
@@ -737,7 +742,12 @@ class TestViewModel(
     }
 
     fun resume() {
-        val saved = _state.value.resumeOffer ?: return
+        // The dialog can outlive the session it offered: once an attempt is
+        // submitted, submit() is clearing the very rows this snapshot came
+        // from, so resuming here would rebuild the screen mid-save.
+        val current = _state.value
+        if (current.submitted || current.saving) return
+        val saved = current.resumeOffer ?: return
         val ordered = resumeOrder
         if (ordered.isEmpty) {
             discardResume()
@@ -787,6 +797,11 @@ class TestViewModel(
         resumeOrder = SessionOrder.empty()
         legacyResumedIds = null
         _state.update { it.copy(resumeOffer = null) }
+        // Starting the fresh countdown is the choice's other half: load()
+        // withheld it while the offer was up (see the timer's start there),
+        // so whichever way the dialog resolves, it must be started here.
+        val current = _state.value
+        if (!current.submitted && current.totalSeconds > 0 && current.remainingSeconds > 0) startTimer()
     }
 
     /**

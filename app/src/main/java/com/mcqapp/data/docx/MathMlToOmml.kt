@@ -138,11 +138,21 @@ internal val xmlNamedEntities = mapOf(
     "angle" to "∠", "there4" to "∴"
 )
 
+/**
+ * Escapes the three XML-significant characters, and additionally drops the
+ * C0 control characters: XML 1.0 cannot carry them at all — only Tab, LF
+ * and CR are legal below U+0020 — so a U+0007 or a form feed in a question's
+ * text would otherwise land raw in `document.xml` and make Word and this
+ * app's own reader reject the entire package. They are dropped rather than
+ * replaced: XML has no character reference for them either, and the app's
+ * display layer cannot render one to begin with.
+ */
 internal fun escapeXmlText(s: String): String = buildString(s.length + 16) {
-    for (c in s) when (c) {
-        '&' -> append("\u0026amp;")
-        '<' -> append("\u0026lt;")
-        '>' -> append("\u0026gt;")
+    for (c in s) when {
+        c == '&' -> append("\u0026amp;")
+        c == '<' -> append("\u0026lt;")
+        c == '>' -> append("\u0026gt;")
+        c < ' ' && c != '\t' && c != '\n' && c != '\r' -> Unit
         else -> append(c)
     }
 }

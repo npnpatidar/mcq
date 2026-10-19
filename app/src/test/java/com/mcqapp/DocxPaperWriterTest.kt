@@ -350,6 +350,36 @@ class DocxPaperWriterTest {
         assertTrue(xml.contains("<w:t xml:space=\"preserve\"> (a) looks like an option"))
     }
 
+    /**
+     * Control characters are legal in stored text (a JSON import or an Anki
+     * field can carry them), but XML 1.0 has no way to write anything below
+     * U+0020 except Tab, LF and CR: one U+0007 in a stem made the raw byte
+     * land in `document.xml`, and Word — and the app's own reader — then
+     * rejected the entire package as having unreadable content.
+     */
+    @Test
+    fun xmlIllegalControlCharactersDoNotReachThePackage() {
+        val q = QuestionDto(
+            id = "q",
+            elements = listOf(
+                ContentElement.TextElement("bell:\u0007a. Build\u000Bform:\u000Cfeed\u001Fend")
+            ),
+            options = listOf(OptionDto(id = "a", text = "x"), OptionDto(id = "b", text = "y")),
+            correctOptionIds = listOf("a")
+        )
+        val xml = documentXml(
+            docxOf(
+                PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
+            )
+        )
+        for (c in xml) {
+            assertTrue(
+                "no XML-illegal character may reach the package: U+%04X".format(c.code),
+                c >= ' ' || c == '\t' || c == '\n' || c == '\r'
+            )
+        }
+    }
+
     @Test
     fun answerlessQuestionNamesFirstOption() {
         val q = QuestionDto(

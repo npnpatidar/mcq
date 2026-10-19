@@ -287,6 +287,44 @@ class DocxRoundTripTest {
         assertEquals("the explanation must come back verbatim", question.explanation, after.explanation)
     }
 
+    /**
+     * XML 1.0 cannot carry the C0 controls, so the writer drops them: the
+     * import must still succeed (it used to die with an XML parse error —
+     * one U+0007 made the whole package unreadable), and every legal
+     * character around them must survive untouched.
+     */
+    @Test
+    fun controlCharactersAreDroppedOnExportAndTheImportStillWorks() {
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-controls",
+            text = "Before\u0007after\u000Bform:\u000Cfeed\u001Fend",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto("a", "first"),
+                com.mcqapp.data.io.OptionDto("b", "second")
+            ),
+            correctOptionIds = listOf("a"),
+            explanation = "because\u001Bescape"
+        )
+        val paper = PaperDto(
+            id = "p-controls",
+            title = "Controls",
+            categories = listOf(
+                com.mcqapp.data.io.CategoryDto(id = "c1", title = "Category", questions = listOf(question))
+            )
+        )
+
+        val parsed = parseDocx(docxOf(paper))
+        val after = allQuestions(LegacyParser.parse(parsed.json).papers.single()).single()
+
+        assertEquals("the stem must come back with the controls dropped", "Beforeafterform:feedend", after.text)
+        assertEquals(
+            "the options must come back untouched",
+            question.options.map { it.text },
+            after.options.map { it.text }
+        )
+        assertEquals("the explanation must come back with the controls dropped", "becauseescape", after.explanation)
+    }
+
     @Test
     fun aSecondPassThroughTheFormatChangesNothing() {
         val bytes = export(samplePaper, sampleFile)

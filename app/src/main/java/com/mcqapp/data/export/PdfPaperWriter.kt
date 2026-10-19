@@ -508,17 +508,31 @@ internal fun spannedFromInlineHtml(text: String): Spanned {
         if (chunk.isNotEmpty()) out.append(decodeEntities(chunk))
         val closing = match.groupValues[1] == "/"
         val tag = match.groupValues[2].lowercase()
-        if (isBlockBreak(tag)) {
-            if (out.isNotEmpty() && out[out.length - 1] != '\n') out.append("\n")
-        } else if (!closing && styleSpans(tag).isNotEmpty()) {
-            open.addLast(tag to out.length)
-        } else if (closing && open.lastOrNull()?.first == tag) {
-            val (_, start) = open.removeLast()
-            for (span in styleSpans(tag)) {
-                out.setSpan(span, start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val spans = styleSpans(tag)
+        when {
+            isBlockBreak(tag) -> {
+                if (out.isNotEmpty() && out[out.length - 1] != '\n') out.append("\n")
             }
+            spans.isNotEmpty() -> {
+                if (closing) {
+                    // A close with no matching open pops nothing and is
+                    // dropped, the way a real tag would be when rendered.
+                    if (open.lastOrNull()?.first == tag) {
+                        val (_, start) = open.removeLast()
+                        for (span in spans) {
+                            out.setSpan(span, start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        }
+                    }
+                } else {
+                    open.addLast(tag to out.length)
+                }
+            }
+            // Unknown tag shapes are literal text in legacy questions and must
+            // stay visible rather than vanish — the rule the DOCX writer's
+            // inlineRuns and the HTML writer already follow. `<one>` in
+            // `Pick <one> & "all"?` reads the same in all three exports.
+            else -> out.append(decodeEntities(match.value))
         }
-        // Unknown opens are stripped; stray closes pop nothing.
         pos = match.range.last + 1
     }
     val tail = text.substring(pos)

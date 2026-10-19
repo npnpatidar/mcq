@@ -1009,8 +1009,12 @@ object DocxPaperWriter {
  * entry never exists as an escaped copy of itself. Only `&`, `<` and `>` are
  * escaped, exactly as [escapeXmlText] does — an entity is never split across
  * two appends, so escaping chunk by chunk is the same as escaping the whole.
+ *
+ * Every append returns this appendable, as `Appendable` requires: a caller
+ * that chained onto the wrapped writer would write the rest of its text
+ * unescaped. Internal so the contract can be asserted directly.
  */
-private class XmlEscapingAppendable(private val out: Appendable) : Appendable {
+internal class XmlEscapingAppendable(private val out: Appendable) : Appendable {
 
     override fun append(csq: CharSequence?): Appendable = append(csq, 0, csq?.length ?: 0)
 
@@ -1029,7 +1033,10 @@ private class XmlEscapingAppendable(private val out: Appendable) : Appendable {
         return this
     }
 
-    override fun append(c: Char): Appendable = out.append(escaped(c))
+    override fun append(c: Char): Appendable {
+        out.append(escaped(c))
+        return this
+    }
 
     private fun escaped(c: Char): String = when (c) {
         '&' -> "\u0026amp;"

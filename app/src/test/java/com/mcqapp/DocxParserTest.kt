@@ -20,6 +20,19 @@ class DocxParserTest {
         return stream.use { it.readBytes() }
     }
 
+    /** A .docx zip built from [parts], each named path to its bytes. */
+    private fun docxZip(parts: List<Pair<String, ByteArray>>): ByteArray {
+        val baos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(baos).use { zip ->
+            parts.forEach { (name, bytes) ->
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return baos.toByteArray()
+    }
+
     @Test
     fun fixtureParsesThreeQuestions() {
         val parsed = parseDocx(fixtureBytes())
@@ -108,6 +121,59 @@ class DocxParserTest {
                     it.mathml.contains("<msup>")
             }
         )
+    }
+
+    /**
+     * Word writes legacy pictures as VML — `w:r`/`w:pict`/`v:shape`/
+     * `v:imagedata` — and VML names its target with `r:id`; only DrawingML's
+     * `a:blip` uses `r:embed`. Two separate defects dropped such a picture:
+     * the reader looked for `r:embed` unconditionally, and its namespace
+     * filter accepted only path-shaped `/vml` namespaces while Word's is
+     * `urn:schemas-microsoft-com:vml`. Either defect alone is enough to leave
+     * the picture with no reference and warn, so the test fails if either
+     * fix is reverted.
+     */
+    @Test
+    fun aVmlPictureResolvesThroughItsRelationshipId() {
+        val wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        val rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        val vNs = "urn:schemas-microsoft-com:vml"
+        val documentXml = "<w:document xmlns:w=\"$wNs\" xmlns:r=\"$rNs\" xmlns:v=\"$vNs\">" +
+            "<w:body>" +
+            "<w:p><w:r><w:t>1.) Stem?</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(a) one</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(b) two</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(c) three</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>(d) four</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>Ans. a</w:t></w:r></w:p>" +
+            "<w:p><w:r><w:t>Exp: see </w:t>" +
+            "<w:pict><v:shape><v:imagedata r:id=\"rId7\"/></v:shape></w:pict></w:r></w:p>" +
+            "</w:body></w:document>"
+        val rels = "<Relationships xmlns=\"" +
+            "http://schemas.openxmlformats.org/package/2006/relationships\">" +
+            "<Relationship Id=\"rId7\" Type=\"" +
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\"" +
+            " Target=\"media/vml.png\"/></Relationships>"
+        val png = java.util.Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        val zip = docxZip(
+            listOf(
+                "[Content_Types].xml" to "<Types/>".toByteArray(),
+                "word/document.xml" to documentXml.toByteArray(),
+                "word/_rels/document.xml.rels" to rels.toByteArray(),
+                "word/media/vml.png" to png
+            )
+        )
+
+        val parsed = parseDocx(zip)
+
+        assertTrue("must not warn: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val file = LegacyParser.parse(parsed.json)
+        val image = file.papers[0].categories[0].questions[0].explanationElements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+            .single()
+        assertTrue("VML image: ${image.src}", image.src.startsWith("data:image/png;base64,"))
     }
 
     @Test

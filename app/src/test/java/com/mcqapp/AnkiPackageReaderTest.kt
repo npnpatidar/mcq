@@ -535,7 +535,7 @@ class AnkiPackageReaderTest {
         )
         db.execSQL(
             "insert into notes values (100, 'g1', 1, 0, 0, '', " +
-                "'The capital of {{c1::France}} is {{c2::Paris}}.'${us}'', '', 0, 0, '')"
+                "'The capital of {{c1::France}} is {{c2::Paris}}.${us}', '', 0, 0, '')"
         )
         db.execSQL(
             "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +
@@ -571,7 +571,7 @@ class AnkiPackageReaderTest {
         )
         db.execSQL(
             "insert into notes values (100, 'g1', 1, 0, 0, '', " +
-                "'The capital of {{c1::France}} is {{c2::Paris}}.'${us}'', '', 0, 0, '')"
+                "'The capital of {{c1::France}} is {{c2::Paris}}.${us}', '', 0, 0, '')"
         )
         db.execSQL(
             "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +

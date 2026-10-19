@@ -186,7 +186,11 @@ object ContentHash {
             storedExplanation != dtoExplanation ||
             stored.explanationImage != dto.explanationImage ||
             stored.marks != dto.marks ||
-            stored.difficulty != dto.difficulty ||
+            // The same difficulty can be spelled differently: a bookmark or
+            // selection export writes the label ("Medium"), a whole-bank export
+            // the stored value ("medium"), and Difficulty.fromLabel reads both
+            // as one. Casing alone is not a content change.
+            !stored.difficulty.equals(dto.difficulty, ignoreCase = true) ||
             stored.tags != dto.tags.joinToString(",") ||
             storedCorrectIds != dto.correctOptionIds.toSet()
     }

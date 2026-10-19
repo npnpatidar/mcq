@@ -488,10 +488,7 @@ class AnkiPackageReaderTest {
     @Test
     fun modernSchema14PackageIsReadFromNormalisedTables() {
         val db = newCollection(14)
-        db.execSQL("create table fields (ntid integer not null, ord integer not null, name text not null, primary key (ntid, ord))")
-        db.execSQL("create table notetypes (id integer primary key, name text not null, config blob)")
-        db.execSQL("create table templates (ntid integer not null, ord integer not null, qfmt text not null, primary key (ntid, ord))")
-        db.execSQL("create table decks (id integer primary key, name text not null, mtime_secs integer not null, usn integer not null, common blob not null, kind blob not null)")
+        modernTables(db)
         db.execSQL("insert into notetypes values (1, 'Basic', x'')")
         db.execSQL("insert into fields values (1, 0, 'Front'), (1, 1, 'Back')")
         db.execSQL("insert into templates values (1, 0, '{{Front}}')")
@@ -522,6 +519,77 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun schema15ProtobufConfigDrivesClozeNotetypesAndFilteredDecks() {
+        val db = newCollection(15)
+        modernTables(db)
+        // Anki 2.1.28+ stores these as prost blobs. x'0801' is
+        // Notetype.Config{kind: 1} (field 1, varint): a cloze notetype.
+        db.execSQL("insert into notetypes values (1, 'Cloze', x'0801')")
+        db.execSQL("insert into fields values (1, 0, 'Text'), (1, 1, 'Back Extra')")
+        db.execSQL("insert into templates values (1, 0, '{{cloze:Text}}')")
+        // x'0A00' is Deck.KindContainer{normal: {}} (field 1), x'1200' is
+        // {filtered: {}} (field 2), x'' has neither.
+        db.execSQL(
+            "insert into decks values (1, 'Default', 0, 0, x'', x''), " +
+                "(55, 'Chem::Bonds', 0, 0, x'', x'0A00'), (99, 'Filtered', 0, 0, x'', x'1200')"
+        )
+        db.execSQL(
+            "insert into notes values (100, 'g1', 1, 0, 0, '', " +
+                "'The capital of {{c1::France}} is {{c2::Paris}}.'${us}'', '', 0, 0, '')"
+        )
+        db.execSQL(
+            "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +
+                "lapses, left, odue, odid, flags, data) values " +
+                "(200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ''), " +
+                "(201, 100, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')"
+        )
+
+        val result = AnkiPackageReader.read(zipOf("collection.anki21" to bytesOf(db)))
+
+        // Cloze: each card's deletion is the answer, not a single-option recall
+        // of the raw stem (which is what a notetype read as `isCloze = false`
+        // produced).
+        val questions = result.file.papers.single().let(::allQuestions)
+        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        assertTrue(questions.all { "anki-cloze" in it.tags })
+        // The filtered deck is skipped; the normal and the empty-kind deck stay.
+        assertEquals(2, result.deckCount)
+        assertEquals(listOf("Chem"), result.file.papers.map { it.title })
+    }
+
+    @Test
+    fun schema14JsonConfigStillDrivesClozeNotetypesAndFilteredDecks() {
+        val db = newCollection(14)
+        modernTables(db)
+        // Before the Rust backend (schema 14) the same columns held JSON.
+        db.execSQL("insert into notetypes values (1, 'Cloze', '{\"kind\":1}')")
+        db.execSQL("insert into fields values (1, 0, 'Text'), (1, 1, 'Back Extra')")
+        db.execSQL("insert into templates values (1, 0, '{{cloze:Text}}')")
+        db.execSQL(
+            "insert into decks values (1, 'Default', 0, 0, x'', '{}'), " +
+                "(55, 'Chem::Bonds', 0, 0, x'', '{}'), (99, 'Filtered', 0, 0, x'', '{\"terms\":[]}')"
+        )
+        db.execSQL(
+            "insert into notes values (100, 'g1', 1, 0, 0, '', " +
+                "'The capital of {{c1::France}} is {{c2::Paris}}.'${us}'', '', 0, 0, '')"
+        )
+        db.execSQL(
+            "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +
+                "lapses, left, odue, odid, flags, data) values " +
+                "(200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ''), " +
+                "(201, 100, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')"
+        )
+
+        val result = AnkiPackageReader.read(zipOf("collection.anki21" to bytesOf(db)))
+
+        val questions = result.file.papers.single().let(::allQuestions)
+        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        assertTrue(questions.all { "anki-cloze" in it.tags })
+        assertEquals(2, result.deckCount)
+        assertEquals(listOf("Chem"), result.file.papers.map { it.title })
+    }
+
+    @Test
     fun aClozeNoteBecomesOneQuestionPerCard() {
         val apkg = legacyPackage(
             models = """{"1":{"id":1,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0},{"name":"Back Extra","ord":1}],"tmpls":[{"name":"Cloze","ord":0}]}}""",
@@ -536,6 +604,34 @@ class AnkiPackageReaderTest {
 
         assertEquals(2, questions.size)
         assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        // The stem hides the card's own cloze and reveals the other one, so it
+        // carries neither the answer nor the raw `{{cN::…}}` markup.
+        assertEquals(
+            listOf("The capital of [...] is Paris.", "The capital of France is [...]."),
+            questions.map { it.text }
+        )
+        assertFalse("stem leaks its answer", questions[0].text.contains("France"))
+        assertFalse("stem leaks its answer", questions[1].text.contains("Paris"))
+        assertTrue("raw cloze markup survived", questions.none { "{{c" in it.text })
+    }
+
+    @Test
+    fun aClozeCardIsResolvedByItsClozeNumberNotItsPosition() {
+        // Anki's card ord is the cloze number minus one. Here the note numbers
+        // its deletions c1 and c3, so the c3 card arrives with ord 2: reading
+        // the deletion by list position would find nothing and drop the card.
+        val apkg = legacyPackage(
+            models = """{"1":{"id":1,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0},{"name":"Back Extra","ord":1}],"tmpls":[{"name":"Cloze","ord":0}]}}""",
+            notes = listOf("{{c1::one}} then {{c3::three}}" to 1L),
+            cards = listOf(ClozeCard(10L, 1L, 1L, 2))
+        )
+
+        val questions = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions)
+
+        assertEquals(1, questions.size)
+        assertEquals("three", questions.single().options.single().text)
+        assertEquals("one then [...]", questions.single().text)
+        assertTrue("raw cloze markup survived", "{{c" !in questions.single().text)
     }
 
     @Test
@@ -872,6 +968,14 @@ class AnkiPackageReaderTest {
     private fun assertWithinADay(what: String, expected: Long, actual: Long) {
         val drift = Math.abs(expected - actual)
         assertTrue("$what drifted by ${drift}ms", drift <= 86_400_000L)
+    }
+
+    /** The schema-14+ notetype and deck tables Anki stores beside `notes`. */
+    private fun modernTables(db: SQLiteDatabase) {
+        db.execSQL("create table fields (ntid integer not null, ord integer not null, name text not null, primary key (ntid, ord))")
+        db.execSQL("create table notetypes (id integer primary key, name text not null, config blob)")
+        db.execSQL("create table templates (ntid integer not null, ord integer not null, qfmt text not null, primary key (ntid, ord))")
+        db.execSQL("create table decks (id integer primary key, name text not null, mtime_secs integer not null, usn integer not null, common blob not null, kind blob not null)")
     }
 
     private fun newCollection(ver: Int, crtSeconds: Long = 0L): SQLiteDatabase {

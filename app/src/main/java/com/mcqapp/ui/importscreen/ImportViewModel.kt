@@ -16,6 +16,7 @@ import com.mcqapp.data.io.SharedPrefsImportRunJournal
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.io.interruptedImportNotice
 import com.mcqapp.data.io.scanImportPreview
+import com.mcqapp.data.io.withDownscaledImages
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.getByIdsChunked
@@ -260,11 +261,15 @@ internal fun classifyPreview(
     val duplicates = HashSet<String>()
     val changed = HashSet<String>()
     hashed.forEach { (q, hash) ->
+        // The scaled twin, computed at most once and only when a stored row
+        // matches: scaling decodes the full bitmap before it can decide the
+        // picture already fits, and on a fresh import nothing matches at all.
+        val scaled by lazy { q.withDownscaledImages() }
         val sameContent = storedById[q.id]?.let { stored ->
             com.mcqapp.data.io.ContentHash.sameQuestionContent(
                 stored,
                 storedOptionsByQuestion[q.id].orEmpty(),
-                q
+                scaled
             )
         } == true
         if (hash in existingHashes && (sameContent || q.id in existingIds)) {
@@ -274,7 +279,7 @@ internal fun classifyPreview(
                 com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
                     stored,
                     correctById[q.id].orEmpty(),
-                    q
+                    scaled
                 )
             } == true
             if (changedAnswer) changed.add(q.id) else duplicates.add(q.id)

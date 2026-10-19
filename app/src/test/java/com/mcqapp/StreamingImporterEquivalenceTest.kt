@@ -217,6 +217,63 @@ class StreamingImporterEquivalenceTest {
         assertSameState()
     }
 
+    /** A brand-new paper with a category that names no questions at all. */
+    private val emptyCategoryBank = """
+    {
+      "papers": [
+        {
+          "id": "p-empty",
+          "title": "Empty Section Paper",
+          "categories": [
+            {"id": "ec", "title": "Empty Cat"}
+          ]
+        }
+      ]
+    }
+    """.trimIndent()
+
+    /**
+     * A new paper with ZERO questions is not the whole-file importer's
+     * "all questions already exist" case — its `incomingHashes` is empty, so
+     * the skip does not fire and even an empty category is created. The
+     * streaming skip dropped it, because "nothing needed writing" was read as
+     * "everything was a duplicate".
+     */
+    @Test
+    fun aNewPaperWithAnEmptyCategoryMatches() = runBlocking {
+        wholeFileImport(wholeFileDb, emptyCategoryBank)
+        streamingImport(streamingDb, emptyCategoryBank)
+        assertSameState()
+        // Both wrote the row for real, rather than both writing nothing.
+        assertEquals("Empty Cat", wholeFileDb.categoryDao().getById("ec")!!.title)
+        assertEquals("Empty Cat", streamingDb.categoryDao().getById("ec")!!.title)
+    }
+
+    /**
+     * The skip that the zero-question case must not join: a brand-new paper
+     * whose questions all already exist adds nothing, categories included.
+     * Seeded first under another paper so the hashes are already in the
+     * library when the copy arrives.
+     */
+    @Test
+    fun aNewPaperOfAllDuplicatesIsStillSkipped() = runBlocking {
+        val questions = """[
+            {"id":"d1","text":"Dup One","options":["a","b"],"correctOptionIds":["a"]},
+            {"id":"d2","text":"Dup Two","options":["a","b"],"correctOptionIds":["b"]}
+        ]"""
+        val seed = """{"papers":[{"id":"p-seed","title":"Seed","categories":[{"id":"sc","title":"Seed Cat","questions":$questions}]}]}"""
+        val copy = """{"papers":[{"id":"p-copy","title":"Copy","categories":[{"id":"cc","title":"Copy Cat","questions":$questions}]}]}"""
+
+        wholeFileImport(wholeFileDb, seed)
+        streamingImport(streamingDb, seed)
+        wholeFileImport(wholeFileDb, copy)
+        streamingImport(streamingDb, copy)
+        assertSameState()
+        // The skipped paper kept its shell and no categories.
+        assertEquals("Copy", streamingDb.paperDao().getById("p-copy")!!.title)
+        assertEquals(null, streamingDb.categoryDao().getById("cc"))
+    }
+
     private val singleCategoryBank = """
     {
       "papers": [

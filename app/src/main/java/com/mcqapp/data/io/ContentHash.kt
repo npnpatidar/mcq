@@ -111,6 +111,11 @@ object ContentHash {
      * therefore share a hash, and treating a hash hit as a duplicate silently
      * dropped the second one. The hash stays as the cheap pre-filter; this is
      * the authority.
+     *
+     * [dto] must be the *scaled* twin the importer stores (see
+     * `QuestionDto.withDownscaledImages`): the row holds the downscaled bytes,
+     * so comparing them against the file's original ones reads as different
+     * for any oversized picture.
      */
     fun sameQuestionContent(
         stored: QuestionEntity,
@@ -159,6 +164,11 @@ object ContentHash {
      * an update: the hash deliberately ignores the answer key, question image,
      * explanation, marks, difficulty and tags, so a file that fixes only those
      * is an update to the same question id, not a duplicate to skip.
+     *
+     * [dto] must be the *scaled* twin the importer stores (see
+     * `QuestionDto.withDownscaledImages`): the row's `image`/`explanationImage`
+     * hold the downscaled bytes, so comparing them against the file's original
+     * bytes reads as a permanent difference for any oversized picture.
      *
      * The stored explanation is elements JSON while the DTO carries plain text
      * (or elements), so both are compared as their text content.

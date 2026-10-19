@@ -354,11 +354,30 @@ class EditorViewModel(
     }
 
     fun addOption() = updateState {
-        val nextLetter = ('a' + it.options.size).toString()
+        val used = it.options.mapTo(HashSet()) { o -> o.id }
+        val nextId = generateSequence(0) { i -> i + 1 }
+            .map { i -> optionIdAt(i) }
+            .first { id -> id !in used }
         it.copy(options = it.options + OptionEditorState(
-            id = nextLetter,
+            id = nextId,
             elements = listOf(ContentElement.TextElement(""))
         ))
+    }
+
+    /**
+     * Spreadsheet-style lowercase ids: `a`…`z`, then `aa`…`az`, `ba`…`bz`, …
+     * (bijective base-26). Ids are derived positionally elsewhere, but the new
+     * option must avoid the ids already present: deriving it from `size` minted
+     * a duplicate after a middle option was removed (`a, c` + Add → `"c"` twice).
+     */
+    private fun optionIdAt(index: Int): String {
+        var n = index
+        val sb = StringBuilder()
+        do {
+            sb.append('a' + n % 26)
+            n = n / 26 - 1
+        } while (n >= 0)
+        return sb.reverse().toString()
     }
 
     fun removeOption(optionId: String) = updateState {

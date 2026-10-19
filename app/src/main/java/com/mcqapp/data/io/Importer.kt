@@ -168,29 +168,32 @@ class Importer(
                     scaledPaper.categories
                 }
 
-                // A brand-new paper whose questions ALL already exist adds nothing:
-                // skip creating the shell so the library doesn't fill with stubs.
-                val incomingHashes = effectiveCategories.flatMap { cat ->
-                    cat.questions.map { q -> ContentHash.of(q) }
-                }
+                // A brand-new paper whose questions ALL already exist adds
+                // nothing beyond its shell, which was already inserted above:
+                // skip writing its categories and questions, so the library
+                // does not fill with empty stubs. A paper with no questions at
+                // all is not this case — the skip needs a non-empty set.
+                val incomingQuestions = effectiveCategories.flatMap { it.questions }
+                val incomingHashes = incomingQuestions.map { q -> ContentHash.of(q) }
                 if (isNewPaper && incomingHashes.isNotEmpty() &&
                     incomingHashes.all { it in existingHashes }) {
                     // Matching hashes alone are not enough to skip: a question
                     // kept under the same id with a fixed answer key (or other
                     // non-hashed field) must still reach the per-question loop
                     // as an update.
-                    val incomingIds = effectiveCategories.flatMap { cat ->
-                        cat.questions.map { it.id }
-                    }
+                    val incomingIds = incomingQuestions.map { it.id }
                     val storedById = db.questionDao().getByIdsChunked(incomingIds).associateBy { it.id }
                     val storedCorrectById = db.correctAnswerDao().getForQuestionsChunked(incomingIds)
                         .groupBy({ it.questionId }, { it.optionId })
-                    val hasAnswerOnlyChange = effectiveCategories.flatMap { it.questions }.any { q ->
+                    // The scaled twins, because those hold the bytes the rows
+                    // store (see ContentHash.nonHashedFieldsDiffer).
+                    val incomingScaled = scaledCategories.flatMap { it.questions }
+                    val hasAnswerOnlyChange = incomingQuestions.zip(incomingScaled).any { (q, scaledQ) ->
                         storedById[q.id]?.let { stored ->
                             ContentHash.nonHashedFieldsDiffer(
                                 stored,
                                 storedCorrectById[q.id].orEmpty().toSet(),
-                                q
+                                scaledQ
                             )
                         } == true
                     }
@@ -320,7 +323,7 @@ class Importer(
                             if (sameContentId != null) {
                                 val stored = candidate.entity
                                 val storedCorrect = candidate.correctIds
-                                if (ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, questionDto)) {
+                                if (ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, scaledQuestion)) {
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                                     db.correctAnswerDao().upsertAll(
                                         questionDto.correctOptionIds.map { optionId ->
@@ -339,7 +342,9 @@ class Importer(
                                             .toContentJson(json),
                                         marks = questionDto.marks,
                                         difficulty = questionDto.difficulty,
-                                        tags = questionDto.tags.joinToString(",")
+                                        tags = questionDto.tags.joinToString(","),
+                                        image = scaledQuestion.image,
+                                        explanationImage = scaledQuestion.explanationImage
                                     )
                                     answersRefreshed++
                                     Logger.i(
@@ -370,7 +375,7 @@ class Importer(
                                 ContentHash.nonHashedFieldsDiffer(
                                     sameId.first,
                                     sameId.second,
-                                    questionDto
+                                    scaledQuestion
                                 )
                             if (!changedAnswer) {
                                 duplicateQuestions++

@@ -15,6 +15,7 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -618,16 +619,7 @@ object AnkiPackageReader {
         val kind = HashMap<Long, Int>()
         db.rawQuery("select id, config from notetypes", null).use { c ->
             while (c.moveToNext()) {
-                val id = c.getLong(0)
-                // kind 1 is cloze. The config blob is JSON in every schema we
-                // accept, but tolerate an opaque blob rather than failing.
-                val k = try {
-                    json.parseToJsonElement(String(c.getBlob(1) ?: ByteArray(0)))
-                        .jsonObject["kind"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-                } catch (e: Exception) {
-                    0
-                }
-                kind[id] = k
+                kind[c.getLong(0)] = notetypeKind(c.getBlob(1))
             }
         }
         return names.mapValues { (id, fieldNames) ->
@@ -643,18 +635,96 @@ object AnkiPackageReader {
         val out = mutableListOf<AnkiDeck>()
         db.rawQuery("select id, name, kind from decks order by id", null).use { c ->
             while (c.moveToNext()) {
-                // kind 1 is a filtered deck; it is not a real deck.
-                val isDynamic = try {
-                    json.parseToJsonElement(String(c.getBlob(2) ?: ByteArray(0)))
-                        .jsonObject.keys.contains("terms")
-                } catch (e: Exception) {
-                    false
-                }
-                if (isDynamic) continue
+                // kind 2 is a filtered deck; it is not a real deck.
+                if (deckIsFiltered(c.getBlob(2))) continue
                 out += AnkiDeck(c.getLong(0), c.getString(1))
             }
         }
         return out
+    }
+
+    /**
+     * `Notetype.Config.kind` (1 = cloze). Schema 14 stored the config as JSON;
+     * schema 15+ stores the prost [`Notetype.Config`] blob, which Anki's own
+     * Reader used to reject (the JSON parse threw and the catch defaulted every
+     * notetype to `isCloze = false`, so cloze notes imported as recall cards).
+     */
+    private fun notetypeKind(blob: ByteArray?): Int {
+        val bytes = blob ?: return 0
+        jsonObjectOrNull(bytes)?.get("kind")?.jsonPrimitive?.content?.toIntOrNull()?.let { return it }
+        // field 1, varint.
+        return protoFields(bytes).firstOrNull { it.number == 1 && it.wireType == 0 }?.varint?.toInt() ?: 0
+    }
+
+    /**
+     * Whether `decks.kind` holds a filtered (dynamic) deck. Schema 14 used JSON
+     * (`terms`); schema 15+ stores prost [`Deck.KindContainer`], whose `normal`
+     * member is field 1 and `filtered` field 2. A filtered deck imports as a
+     * real paper when this degrades to `false`.
+     */
+    private fun deckIsFiltered(blob: ByteArray?): Boolean {
+        val bytes = blob ?: return false
+        jsonObjectOrNull(bytes)?.let { return it.keys.contains("terms") }
+        return protoFields(bytes).any { it.number == 2 && it.wireType == 2 }
+    }
+
+    /** The blob parsed as a JSON object, or null when it is not JSON (protobuf). */
+    private fun jsonObjectOrNull(bytes: ByteArray): JsonObject? {
+        val text = String(bytes, Charsets.UTF_8).trim()
+        if (!text.startsWith("{")) return null
+        return try {
+            json.parseToJsonElement(text).jsonObject
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private class ProtoField(val number: Int, val wireType: Int, val varint: Long)
+
+    /**
+     * Walks the top-level fields of a protobuf blob, keeping varints and
+     * skipping the rest. Malformed trailing bytes stop the walk, so a caller
+     * sees whatever was decoded so far.
+     */
+    private fun protoFields(bytes: ByteArray): List<ProtoField> {
+        val out = ArrayList<ProtoField>()
+        var i = 0
+        while (i < bytes.size) {
+            val (key, afterKey) = readVarint(bytes, i) ?: break
+            i = afterKey
+            when ((key and 7L).toInt()) {
+                0 -> {
+                    val (value, next) = readVarint(bytes, i) ?: break
+                    out += ProtoField((key ushr 3).toInt(), 0, value)
+                    i = next
+                }
+                1 -> i += 8
+                2 -> {
+                    val (length, next) = readVarint(bytes, i) ?: break
+                    if (length < 0 || length > (bytes.size - next).toLong()) break
+                    out += ProtoField((key ushr 3).toInt(), 2, 0L)
+                    i = next + length.toInt()
+                }
+                5 -> i += 4
+                else -> break
+            }
+        }
+        return out
+    }
+
+    /** One base-128 varint starting at [start], with the index just past it. */
+    private fun readVarint(bytes: ByteArray, start: Int): Pair<Long, Int>? {
+        var result = 0L
+        var shift = 0
+        var i = start
+        while (i < bytes.size && shift < 64) {
+            val b = bytes[i].toInt() and 0xFF
+            result = result or ((b and 0x7F).toLong() shl shift)
+            i++
+            if (b and 0x80 == 0) return result to i
+            shift += 7
+        }
+        return null
     }
 
     // ---- notes and cards ----
@@ -998,27 +1068,56 @@ object AnkiPackageReader {
      * Splits a cloze note into one question per card. Anki generates a card per
      * deletion and sets that deletion's ord in the field it blanks, so the
      * hidden text is the answer.
+     *
+     * `ord` is Anki's cloze number − 1, not a position: a note numbered
+     * `{{c1::…}}` / `{{c3::…}}` with ord 2 must resolve to c3, so the deletion
+     * is chosen by parsed number. The stem hides the deletions of the current
+     * number (Anki's `[...]`) and reveals the others, so it never carries the
+     * answer nor the raw `{{cN::…}}` markup.
      */
     private fun clozeQuestion(note: AnkiNote, frontHtml: String, ord: Int, media: MediaIndex): QuestionDto? {
-        val text = fieldToText(frontHtml, media).first
-        val deletions = Regex("\\{\\{c(\\d+)::(.*?)(?:::.*?)?\\}\\}", RegexOption.DOT_MATCHES_ALL)
-            .findAll(frontHtml)
-            .map { (it.groupValues[1].toIntOrNull() ?: 0) to it.groupValues[2] }
+        val deletions = CLOZE_PATTERN.findAll(frontHtml)
+            .map { ClozeDeletion(it.groupValues[1].toIntOrNull() ?: 0, it) }
             .toList()
         if (deletions.isEmpty()) return null
-        val target = deletions.getOrNull(ord)
+        // By number, with the old by-position read kept as the fallback for a
+        // note whose numbering is not 1-based (a duplicated or skipped number).
+        val target = deletions.firstOrNull { it.number == ord + 1 } ?: deletions.getOrNull(ord)
         if (target == null) return null
-        val answer = AnkiHtml.toPlainText(target.second)
+        val text = fieldToText(clozeStem(frontHtml, deletions, target.number), media).first
+        val answer = AnkiHtml.toPlainText(target.match.groupValues[2])
         val questionId = "anki-${note.guid.ifBlank { note.id }}-$ord"
         return QuestionDto(
             id = questionId,
-            text = text.ifBlank { target.first.toString() },
+            text = text.ifBlank { CLOZE_BLANK },
             options = listOf(OptionDto("o0", answer)),
             correctOptionIds = listOf("o0"),
             explanation = "Cloze card from Anki.",
             tags = note.tags + "anki-cloze"
         )
     }
+
+    /** One `{{cN::text}}` in a cloze field, with its match for rebuilding. */
+    private class ClozeDeletion(val number: Int, val match: MatchResult)
+
+    /**
+     * The field with every deletion of [number] replaced by Anki's blank and
+     * the rest unwrapped to their text — Anki hides only the card's own cloze.
+     */
+    private fun clozeStem(frontHtml: String, deletions: List<ClozeDeletion>, number: Int): String =
+        buildString {
+            var last = 0
+            for (deletion in deletions) {
+                append(frontHtml, last, deletion.match.range.first)
+                if (deletion.number == number) {
+                    append(CLOZE_BLANK)
+                } else {
+                    append(deletion.match.groupValues[2])
+                }
+                last = deletion.match.range.last + 1
+            }
+            append(frontHtml, last, frontHtml.length)
+        }
 
     // ---- decks -> papers and categories ----
 
@@ -1227,6 +1326,13 @@ object AnkiPackageReader {
 
 private val IMG_TAG =
     Regex("<img\\s+[^>]*src\\s*=\\s*\"([^\"]+)\"[^>]*>", RegexOption.IGNORE_CASE)
+
+/** One `{{cN::answer}}` or `{{cN::answer::hint}}` in a cloze field. */
+private val CLOZE_PATTERN =
+    Regex("\\{\\{c(\\d+)::(.*?)(?:::.*?)?\\}\\}", RegexOption.DOT_MATCHES_ALL)
+
+/** What Anki renders in place of the cloze a card is asking for. */
+private const val CLOZE_BLANK = "[...]"
 
 /**
  * The collection entry names Anki has used, in the order they are preferred

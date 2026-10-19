@@ -370,4 +370,43 @@ class DocxParserTest {
         assertEquals("What?", parsed.text)
         assertEquals(listOf("a"), parsed.correctOptionIds)
     }
+
+    /**
+     * An option's own text is a valid answer, and that text can legitimately
+     * contain a separator: "(b) Yes, definitely" is answered by "Ans. Yes,
+     * definitely", and "(b) Salt and pepper" by "Ans. Salt and pepper". Splitting
+     * those on the comma/`and` used to leave several tokens that were neither
+     * letters nor a superset of them, and the whole document was refused as
+     * "mixes letters with other text".
+     */
+    @Test
+    fun anOptionTextWithASeparatorAnswersThatOption() {
+        val doc = "1.) First?\n" +
+            "(a) No\n" +
+            "(b) Yes, definitely\n" +
+            "(c) Maybe\n" +
+            "(d) Later\n" +
+            "Ans. Yes, definitely\n" +
+            "Exp: Because.\n" +
+            "2.) Second?\n" +
+            "(a) Pepper\n" +
+            "(b) Salt and pepper\n" +
+            "(c) Salt\n" +
+            "(d) Neither\n" +
+            "Ans. Salt and pepper\n" +
+            "Exp: Because."
+
+        val questions = splitDocxMarkersForTest(doc)
+        assertEquals(2, questions.size)
+        // The whole answer names an option, so it is left for the importer to
+        // resolve by text instead of being split into "Yes"/"definitely" or
+        // "Salt"/"pepper".
+        assertEquals(emptyList<String>(), questions[0].correctIds)
+        assertEquals(emptyList<String>(), questions[1].correctIds)
+
+        val json = questions.joinToString(",", "[", "]") { questionJsonForTest(it).toString() }
+        val parsed = LegacyParser.parse(json).papers[0].categories[0].questions
+        assertEquals(listOf("b"), parsed[0].correctOptionIds)
+        assertEquals(listOf("b"), parsed[1].correctOptionIds)
+    }
 }

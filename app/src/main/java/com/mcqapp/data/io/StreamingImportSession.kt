@@ -80,6 +80,14 @@ internal class StreamingImportSession(
     private val pendingCategories = mutableListOf<CategoryEntity>()
     private var flushEnabled = false
     private var needsWrite = false
+
+    /**
+     * Whether this paper had any question to consider at all — written,
+     * refreshed or found to be a duplicate. The whole-file importer's
+     * "all questions already exist" skip needs a non-empty set, so a
+     * brand-new paper with no questions must not be skipped; see [finishPaper].
+     */
+    private var sawAnyQuestion = false
     private var currentCategoryId: String? = null
     private var currentMaxSort = -1
     private var maxSortLoaded = false
@@ -282,9 +290,11 @@ internal class StreamingImportSession(
         // A re-import always writes its categories; a brand-new paper only
         // does once a question actually needs writing. That reproduces the
         // whole-file importer's "all questions already exist" skip, which
-        // leaves the paper shell but no categories.
+        // leaves the paper shell but no categories. A paper with no questions
+        // at all is not that case and writes them in finishPaper instead.
         flushEnabled = !isNewPaper
         needsWrite = false
+        sawAnyQuestion = false
         categoryIndex = 0
         currentCategoryId = null
         currentMaxSort = -1
@@ -297,12 +307,21 @@ internal class StreamingImportSession(
         if (!paperOpen) return
         if (flushEnabled) flushNow()
         if (isNewPaper) newPapers++ else updatedPapers++
-        val skipped = isNewPaper && !needsWrite
+        // The whole-file skip is `isNewPaper && incomingHashes.isNotEmpty() &&
+        // all already exist`: a brand-new paper with ZERO questions is not
+        // skipped, so its categories are still created (and its paper shell is
+        // already written by startPaper). Without `sawAnyQuestion` this treated
+        // zero questions like all-duplicates and dropped the empty categories.
+        val skipped = isNewPaper && !needsWrite && sawAnyQuestion
         if (skipped) {
             // The whole-file importer skips categories entirely when every
             // question already exists; the paper shell stays.
             pendingCategories.clear()
         } else {
+            // No question ever turned writes on, so the pending categories are
+            // still unwritten: a new paper with no questions writes them now.
+            // (After the flush above this is a no-op.)
+            flushNow()
             for ((passageId, categoryId) in paperPassageRecords) {
                 if (seenPassageIds.add(passageId)) {
                     passagePaper[passageId] = effectivePaperId
@@ -356,6 +375,9 @@ internal class StreamingImportSession(
             questions
         }
         if (applied.isEmpty()) return
+        // A question of this paper was seen, whether it is written or turns out
+        // to be a duplicate: the whole-file importer's skip needs at least one.
+        sawAnyQuestion = true
         val scaled = applied.map { it.withDownscaledImages() }
         val hashes = scaled.map { ContentHash.of(it) }
         val matchIds = db.questionDao().getMatchesByContentHashesChunked(hashes)
@@ -388,7 +410,7 @@ internal class StreamingImportSession(
                 val candidate = candidates[contentHash]?.firstOrNull()
                 val sameContentId = candidate?.entity?.id
                 if (sameContentId != null &&
-                    ContentHash.nonHashedFieldsDiffer(candidate.entity, candidate.correctIds, dto)
+                    ContentHash.nonHashedFieldsDiffer(candidate.entity, candidate.correctIds, scaledQuestion)
                 ) {
                     // A refreshed answer means the whole-file importer would
                     // not have taken its "all questions already exist" skip,
@@ -406,7 +428,9 @@ internal class StreamingImportSession(
                             .toContentJson(json),
                         marks = dto.marks,
                         difficulty = dto.difficulty,
-                        tags = dto.tags.joinToString(",")
+                        tags = dto.tags.joinToString(","),
+                        image = scaledQuestion.image,
+                        explanationImage = scaledQuestion.explanationImage
                     )
                     answersRefreshed++
                     return@forEachIndexed
@@ -416,7 +440,7 @@ internal class StreamingImportSession(
             if (inExisting && isSameContentAsAnyStored(contentHash, scaledQuestion, candidates, batchWritten)) {
                 val same = sameId[dto.id]
                 val changedAnswer = same != null &&
-                    ContentHash.nonHashedFieldsDiffer(same.first, same.second, dto)
+                    ContentHash.nonHashedFieldsDiffer(same.first, same.second, scaledQuestion)
                 if (!changedAnswer) {
                     duplicateQuestions++
                     return@forEachIndexed

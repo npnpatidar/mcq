@@ -1,10 +1,12 @@
 package com.mcqapp
 
+import com.mcqapp.data.docx.parseDocx
 import com.mcqapp.data.docx.parseXml
 import com.mcqapp.data.export.DocxPaperWriter
 import com.mcqapp.data.export.imageDimensions
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.io.CategoryDto
+import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
@@ -77,6 +79,16 @@ class DocxPaperWriterTest {
     private fun documentXml(bytes: ByteArray): String =
         entries(bytes).getValue("word/document.xml").toString(Charsets.UTF_8)
 
+    /** The visible text of each `<w:p>`, in document order. */
+    private fun paragraphTexts(xml: String): List<String> =
+        Regex("<w:p>.*?</w:p>", RegexOption.DOT_MATCHES_ALL).findAll(xml).map { block ->
+            Regex("<w:t[^>]*>(.*?)</w:t>", RegexOption.DOT_MATCHES_ALL)
+                .findAll(block.value).joinToString("") { it.groupValues[1] }
+        }.toList()
+
+    /** A paragraph holding one of these carries a marker and nothing else. */
+    private val orphanMarkers = setOf("1.)", "(a)", "(b)", "Exp:")
+
     @Test
     fun packageStructureIsComplete() {
         val files = entries(docxOf(paper()))
@@ -114,6 +126,67 @@ class DocxPaperWriterTest {
         assertTrue(xml.contains(">(b) <"))
         assertTrue(xml.contains(">Ans. b<"))
         assertTrue(xml.contains(">Exp: <"))
+    }
+
+    /**
+     * A marker must not be left alone in its own paragraph: the paragraph
+     * break belongs between real blocks, not between the prefix a field opens
+     * with and the content that follows it. This regressed because the prefix
+     * counted as "content", so the first block flushed "1.)" on its own line
+     * and every marker came out orphaned.
+     */
+    @Test
+    fun markersJoinTheContentTheyIntroduce() {
+        val xml = documentXml(docxOf(paper()))
+        val texts = paragraphTexts(xml)
+        assertTrue(
+            "the stem must join its 1.) marker: $texts",
+            texts.any { it.startsWith("1.) What is H2O") }
+        )
+        assertTrue("option (a) must join its marker: $texts", texts.any { it == "(a) Alpha" })
+        assertTrue("option (b) must join its marker: $texts", texts.any { it == "(b) Beta" })
+        assertTrue(
+            "the explanation must join its Exp: marker: $texts",
+            texts.any { it.startsWith("Exp: Because") }
+        )
+        assertTrue(
+            "a marker was left orphaned: ${texts.filter { it.trim() in orphanMarkers }}",
+            texts.none { it.trim() in orphanMarkers }
+        )
+
+        // And the document still reads back through the app's own parser.
+        val parsed = LegacyParser.parse(parseDocx(docxOf(paper())).json)
+        val q = parsed.papers[0].categories[0].questions.single()
+        assertTrue("the stem must survive: ${q.text}", q.text.contains("What is H2O"))
+        assertEquals(listOf("Alpha", "Beta"), q.options.map { it.text })
+        assertEquals(listOf("b"), q.correctOptionIds)
+    }
+
+    /**
+     * The other half of the same rule: a field with nothing to write still
+     * keeps its marker paragraph, as it always did. The parser needs the "(b)"
+     * marker to know the option run continues; dropping it would renumber the
+     * options or fail the whole document.
+     */
+    @Test
+    fun anEmptyFieldStillWritesItsMarkerParagraph() {
+        val q = QuestionDto(
+            id = "q", text = "Stem",
+            options = listOf(
+                OptionDto(id = "a", text = "Alpha"),
+                OptionDto(id = "b", text = "")
+            ),
+            correctOptionIds = listOf("a")
+        )
+        val xml = documentXml(
+            docxOf(
+                PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
+            )
+        )
+        assertTrue(
+            "the empty option's marker must still be written: ${paragraphTexts(xml)}",
+            paragraphTexts(xml).contains("(b) ")
+        )
     }
 
     @Test

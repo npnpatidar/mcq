@@ -735,6 +735,24 @@ class RepositoryTest {
     }
 
     @Test
+    fun deletingACategoryClearsItsQuestionsSchedulesAndHistory() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Other"))
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q2", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+
+        repository.deleteCategory("c1")
+
+        // card_state and review_log reference only the paper, so the question
+        // cascade never reached them: without the sweep the deleted category's
+        // schedule and history survived and kept inflating the stats.
+        assertEquals(listOf("q2"), db.cardStateDao().getByPaper("p1").map { it.questionId })
+        assertEquals(listOf("q2"), db.reviewLogDao().getAll().map { it.questionId })
+    }
+
+    @Test
     fun deletingACategoryPromotesItsChildrenInsteadOfOrphaningThem() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Algebra")
         db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Quadratics", parentId = "c1"))

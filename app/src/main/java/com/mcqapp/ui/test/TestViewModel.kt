@@ -12,6 +12,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.AnswerReview
 import com.mcqapp.domain.AutoAdvance
+import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
@@ -131,6 +132,13 @@ class TestViewModel(
 
     private var timerJob: Job? = null
     private var dwellJob: Job? = null
+
+    /**
+     * The last visibility the screen reported (viewport or a covering surface).
+     * Remembered because the screen's visibility effect only re-runs when the
+     * flag flips; a foreground has to ask what it last said.
+     */
+    private var questionInView = true
     /** Seed for the per-question option shuffle; 0 when options stay put. */
     private var optionShuffleSeed: Long = 0L
     /** The session's shuffle/drill seeds, so the resume snapshot can
@@ -411,24 +419,26 @@ class TestViewModel(
     }
 
     private fun dwellShouldRun(state: TestUiState): Boolean =
-        !state.submitted && state.currentQuestion != null && !state.loading
+        clockMayRun(
+            questionInView = questionInView,
+            pausedByUser = state.dwellPausedByUser,
+            answerable = !state.submitted && state.currentQuestion != null && !state.loading
+        )
 
     /** Backgrounding pauses dwell but never turns a deliberate pause off. */
     fun onAppBackgrounded() {
         setDwellActive(false)
     }
 
+    /** The gate decides: a covered card or a deliberate pause stays paused. */
     fun onAppForegrounded() {
-        if (!_state.value.dwellPausedByUser) setDwellActive(true)
+        setDwellActive(true)
     }
 
     /** Called when a dialog or question palette covers the question body. */
     fun setQuestionVisible(visible: Boolean) {
-        if (visible && !_state.value.dwellPausedByUser) {
-            setDwellActive(true)
-        } else {
-            setDwellActive(false)
-        }
+        questionInView = visible
+        setDwellActive(visible)
     }
 
     /** The tap-to-pause control on the question clock. */

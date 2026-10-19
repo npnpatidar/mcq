@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -137,5 +138,29 @@ class TestSessionPrefetchTest {
         settle()
         vm.next()
         assertEquals("q2", vm.state.value.current?.id)
+    }
+
+    @Test
+    fun aCoveredQuestionDoesNotResumeItsDwellWhenTheAppReturns() {
+        seed(2)
+        val vm = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition {
+            vm.state.value.currentQuestion != null && !vm.state.value.loading
+        })
+
+        vm.setQuestionVisible(true)
+        assertTrue("dwell accrues while the question is on screen", vm.state.value.dwellActive)
+
+        // The palette opens over the question, then the app goes away and comes
+        // back. questionVisible stays false, so its LaunchedEffect does not
+        // re-fire; the foreground used to resume dwell behind the palette.
+        vm.setQuestionVisible(false)
+        vm.onAppBackgrounded()
+        vm.onAppForegrounded()
+        assertFalse("a covered question must not resume its dwell", vm.state.value.dwellActive)
+
+        // Closing the palette starts it again.
+        vm.setQuestionVisible(true)
+        assertTrue(vm.state.value.dwellActive)
     }
 }

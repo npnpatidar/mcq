@@ -239,6 +239,46 @@ class NoDeadCodeTest {
         )
     }
 
+    @Test
+    fun bothSessionClocksGoThroughTheSameGate() {
+        // clockMayRun is the one rule: in view, not paused, answerable. The
+        // pure test pins the rule, but it cannot see whether a view model asks
+        // it - a call site that reverts to consulting only its own pause flag
+        // leaves every SessionClockTest green, and its Robolectric wiring test
+        // only runs on CI. These are the shapes both sessions used to resume
+        // past visibility; they must stay gone.
+        val study = sourceOf("StudyViewModel.kt")
+        val test = sourceOf("TestViewModel.kt")
+        for (file in listOf("StudyViewModel.kt" to study, "TestViewModel.kt" to test)) {
+            val (name, text) = file
+            assertTrue("$name should gate on clockMayRun", text.contains("clockMayRun("))
+            assertTrue(
+                "$name should feed the gate the last visibility it was told",
+                text.contains("questionInView = questionInView")
+            )
+        }
+        // The one start that does not come through resumeQuestionClock: a fresh
+        // card is clocked only if the screen last said the card is in view.
+        assertTrue(
+            "StudyViewModel.kt should clock a fresh card only while it is in view",
+            study.contains("clockRunning = questionInView")
+        )
+        for (needle in listOf(
+            // A resume that checks only the learner's pause, not visibility.
+            "if (!clockPausedByUser) resumeQuestionClock()",
+            "current.clockRunning || clockPausedByUser"
+        )) {
+            assertFalse("StudyViewModel.kt resumes past the gate: $needle", study.contains(needle))
+        }
+        for (needle in listOf(
+            // The foreground and setQuestionVisible shapes that ignored a cover.
+            "if (!_state.value.dwellPausedByUser) setDwellActive(true)",
+            "visible && !_state.value.dwellPausedByUser"
+        )) {
+            assertFalse("TestViewModel.kt resumes past the gate: $needle", test.contains(needle))
+        }
+    }
+
     /** Constructions of [entity], not the `toXEntity(` calls that end in its name. */
     private fun constructions(text: String, entity: String): Int =
         Regex("(?<![A-Za-z])" + Regex.escape(entity) + "\\(").findAll(text).count()

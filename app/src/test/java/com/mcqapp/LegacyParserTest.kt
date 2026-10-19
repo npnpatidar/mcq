@@ -9,6 +9,25 @@ import java.io.ByteArrayInputStream
 
 class LegacyParserTest {
 
+    /**
+     * A deeply nested value under a key the walker does not read is skipped.
+     * The skip used to recurse one frame per level, so a *valid* file that
+     * was merely deep crashed the whole-file import with an uncaught
+     * StackOverflowError — the slice reader's own depth budget never came
+     * into play, because the value is never read. `skipValue` in
+     * [com.mcqapp.data.io.JsonPull] now walks the containers iteratively.
+     */
+    @Test
+    fun deeplyNestedSkippedValuesDoNotOverflowTheStack() {
+        // A root key nothing reads, holding 50_000 nested arrays: well past
+        // any stack, trivially legal JSON.
+        val depth = 50_000
+        val json = "{\"version\":1,\"papers\":[],\"junk\":" +
+            "[".repeat(depth) + "]".repeat(depth) + "}"
+        val file = LegacyParser.parse(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
+        assertEquals(0, file.papers.size)
+    }
+
     @Test
     fun parsesCanonicalSchema() {
         val json = """

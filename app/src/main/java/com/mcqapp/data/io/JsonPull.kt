@@ -18,7 +18,9 @@ import java.io.InputStreamReader
  * hands out one small slice at a time, so nothing ever holds the whole
  * document in memory. Recursion is bounded by the parser's
  * [LegacyParser.MAX_NESTING_DEPTH] budget on the slice side; the token walk
- * itself iterates.
+ * itself iterates, [skipValue] included — a hostile file may nest its *read*
+ * values only to the budget, but its *skipped* values to any depth, and
+ * neither may grow the stack.
  */
 internal class JsonPull(input: InputStream) : Closeable {
 
@@ -96,23 +98,43 @@ internal class JsonPull(input: InputStream) : Closeable {
         valueConsumed()
     }
 
-    /** Consumes one whole value, whatever its shape. */
+    /**
+     * Consumes one whole value, whatever its shape.
+     *
+     * Iterative, matching the walk everywhere else: a hostile file nests its
+     * *skipped* members too (`{"junk": [[[[[…]]]]]}` is valid JSON at any
+     * depth), and one frame per level here would overflow the stack before
+     * the slice reader's own depth budget is ever reached.
+     */
     fun skipValue() {
-        when (current) {
-            Token.BEGIN_OBJECT -> {
-                beginObject()
-                while (hasNext()) {
-                    if (peek() == Token.NAME) nextName()
-                    skipValue()
+        if (current != Token.BEGIN_OBJECT && current != Token.BEGIN_ARRAY) {
+            valueConsumed()
+            return
+        }
+        // Container kinds, innermost last: each terminator is closed against
+        // the kind that opened it, so a malformed `}` reports exactly what
+        // the recursive form reported.
+        val open = ArrayDeque<Char>()
+        while (true) {
+            when (current) {
+                Token.BEGIN_OBJECT -> {
+                    beginObject(); open.addLast('{')
                 }
-                endObject()
+                Token.BEGIN_ARRAY -> {
+                    beginArray(); open.addLast('[')
+                }
+                Token.END_OBJECT, Token.END_ARRAY -> {
+                    if (open.removeLast() == '{') endObject() else endArray()
+                    if (open.isEmpty()) return
+                }
+                Token.EOF -> {
+                    // The value never closed; let expect() report it against
+                    // whichever container is open, as before.
+                    if (open.last() == '{') endObject() else endArray()
+                }
+                Token.NAME -> nextName()
+                else -> valueConsumed()
             }
-            Token.BEGIN_ARRAY -> {
-                beginArray()
-                while (hasNext()) skipValue()
-                endArray()
-            }
-            else -> { valueConsumed() }
         }
     }
 

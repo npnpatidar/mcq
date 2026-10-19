@@ -1,6 +1,7 @@
 package com.mcqapp.data.export
 
 import com.mcqapp.data.docx.decodeXmlEntities
+import com.mcqapp.data.docx.docxLineStartMarker
 import com.mcqapp.data.docx.escapeXmlText
 import com.mcqapp.data.docx.mathMlLinearText
 import com.mcqapp.data.docx.mathMlToOmml
@@ -663,17 +664,6 @@ object DocxPaperWriter {
         return out
     }
 
-    /**
-     * Lines that would be read as markers if they started a paragraph or
-     * followed a line break. A stem that continues "2.) …" on its own line
-     * would otherwise split into a phantom question; one leading space
-     * keeps it part of the field (the reader keeps authored leading space).
-     */
-    private val markerish = Regex(
-        "^(\\d{1,7}\\.\\)|\\([a-j]\\)|Ans\\.|Exp:|Passage:)",
-        RegexOption.IGNORE_CASE
-    )
-
     private class ParaBuilder(prefix: String? = null) {
         private val runs = StringBuilder()
         private var atStart = true
@@ -716,7 +706,10 @@ object DocxPaperWriter {
                         atStart = true
                     }
                     var text = line
-                    if (atStart && markerish.containsMatchIn(text)) {
+                    // A line the parser would take as a marker stays text
+                    // with one leading space; the grammar is the parser's own
+                    // (docxLineStartMarker), so it cannot drift from it.
+                    if (atStart && docxLineStartMarker.containsMatchIn(text)) {
                         text = " $text"
                     }
                     if (text.isEmpty()) continue

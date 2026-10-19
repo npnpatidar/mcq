@@ -519,6 +519,35 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun aSchema14CollectionIsReadFromColModels() {
+        // Schema 14 adds deck_config/config/tags but NOT the notetype tables:
+        // Anki's schema15_upgrade.sql creates fields/templates/notetypes/decks
+        // and only then sets ver = 15, so a ver=14 collection still carries its
+        // notetype and deck JSON in `col`. `collection.anki2` because that is
+        // the name these files use — `collection.anki21` arrived with the 15
+        // tables; the reader accepts either (COLLECTION_NAMES).
+        val apkg = legacyPackage(
+            version = 14,
+            models = """{"1":{"id":1,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0},{"name":"Back Extra","ord":1}],"tmpls":[{"name":"Cloze","ord":0}]}}""",
+            decks = """{"1":{"id":1,"name":"Default"},"55":{"id":55,"name":"Chem::Bonds"},"99":{"id":99,"name":"Filtered","dyn":1}}""",
+            notes = listOf("The capital of {{c1::France}} is {{c2::Paris}}." to 1L),
+            cards = listOf(
+                ClozeCard(200L, 1L, 55L, 0),
+                ClozeCard(201L, 1L, 55L, 1)
+            )
+        )
+
+        val result = AnkiPackageReader.read(apkg)
+
+        val questions = result.file.papers.single().let(::allQuestions)
+        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        assertTrue(questions.all { "anki-cloze" in it.tags })
+        // The dyn deck is skipped; the normal and the empty deck stay.
+        assertEquals(2, result.deckCount)
+        assertEquals(listOf("Chem"), result.file.papers.map { it.title })
+    }
+
+    @Test
     fun schema15ProtobufConfigDrivesClozeNotetypesAndFilteredDecks() {
         val db = newCollection(15)
         modernTables(db)
@@ -723,10 +752,12 @@ class AnkiPackageReaderTest {
         mediaBytes: Map<String, ByteArray> = emptyMap(),
         /** When the collection was created; a review card's due counts from it. */
         crtSeconds: Long = 0L,
+        /** `col.ver` to write. 11 is the legacy shape; 14 is still JSON-in-col. */
+        version: Int = 11,
         /** Scheduling and review-log rows, which the defaults above leave new. */
         extraSql: List<String> = emptyList()
     ): ByteArray {
-        val db = newCollection(11, crtSeconds)
+        val db = newCollection(version, crtSeconds)
         db.execSQL("update col set models = ?, decks = ?", arrayOf<Any>(models, decks))
         notes.forEachIndexed { i, (flds, did) ->
             val id = (i + 1).toLong()

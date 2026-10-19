@@ -30,10 +30,10 @@ import java.util.zip.ZipOutputStream
  * Reading tests for `.apkg` import.
  *
  * Anki packages come in two shapes and the reader has to accept both: a legacy
- * zip (schema 11, `col.models`/`col.decks` JSON) and the modern one (schema 14+
- * with normalised notetype and deck tables). The foreign-package tests build
- * those databases by hand so they exercise Anki's actual layout rather than our
- * own writer's output.
+ * zip (schema 11 and 14, `col.models`/`col.decks` JSON) and the modern one
+ * (schema 15+, with normalised notetype and deck tables). The foreign-package
+ * tests build those databases by hand so they exercise Anki's actual layout
+ * rather than our own writer's output.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -587,38 +587,6 @@ class AnkiPackageReaderTest {
     }
 
     @Test
-    fun schema14JsonConfigStillDrivesClozeNotetypesAndFilteredDecks() {
-        val db = newCollection(14)
-        modernTables(db)
-        // Before the Rust backend (schema 14) the same columns held JSON.
-        db.execSQL("insert into notetypes values (1, 'Cloze', '{\"kind\":1}')")
-        db.execSQL("insert into fields values (1, 0, 'Text'), (1, 1, 'Back Extra')")
-        db.execSQL("insert into templates values (1, 0, '{{cloze:Text}}')")
-        db.execSQL(
-            "insert into decks values (1, 'Default', 0, 0, x'', '{}'), " +
-                "(55, 'Chem::Bonds', 0, 0, x'', '{}'), (99, 'Filtered', 0, 0, x'', '{\"terms\":[]}')"
-        )
-        db.execSQL(
-            "insert into notes values (100, 'g1', 1, 0, 0, '', " +
-                "'The capital of {{c1::France}} is {{c2::Paris}}.${us}', '', 0, 0, '')"
-        )
-        db.execSQL(
-            "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +
-                "lapses, left, odue, odid, flags, data) values " +
-                "(200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ''), " +
-                "(201, 100, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')"
-        )
-
-        val result = AnkiPackageReader.read(zipOf("collection.anki21" to bytesOf(db)))
-
-        val questions = result.file.papers.single().let(::allQuestions)
-        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
-        assertTrue(questions.all { "anki-cloze" in it.tags })
-        assertEquals(2, result.deckCount)
-        assertEquals(listOf("Chem"), result.file.papers.map { it.title })
-    }
-
-    @Test
     fun aClozeNoteBecomesOneQuestionPerCard() {
         val apkg = legacyPackage(
             models = """{"1":{"id":1,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0},{"name":"Back Extra","ord":1}],"tmpls":[{"name":"Cloze","ord":0}]}}""",
@@ -1001,7 +969,7 @@ class AnkiPackageReaderTest {
         assertTrue("$what drifted by ${drift}ms", drift <= 86_400_000L)
     }
 
-    /** The schema-14+ notetype and deck tables Anki stores beside `notes`. */
+    /** The schema-15+ notetype and deck tables Anki stores beside `notes`. */
     private fun modernTables(db: SQLiteDatabase) {
         db.execSQL("create table fields (ntid integer not null, ord integer not null, name text not null, primary key (ntid, ord))")
         db.execSQL("create table notetypes (id integer primary key, name text not null, config blob)")

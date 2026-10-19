@@ -248,8 +248,20 @@ class AnkiStreamEquivalenceTest {
         assertSameDatabase(foreignPackage(), "foreign package")
     }
 
-    private fun foreignPackage(): ByteArray {
-        val db = newCollection(11, crtSeconds = 1_700_000_000L)
+    /**
+     * The same collection written with `ver = 14`. Schema 14 has the JSON in
+     * `col` but none of the notetype/deck tables (Anki's schema15 upgrade
+     * creates them and then sets ver = 15), so both readers must treat it as
+     * the legacy shape. The old `ver >= 14` gate sent it to `select 1 from
+     * fields`, which fails for a collection that has no `fields` table.
+     */
+    @Test
+    fun aSchema14ForeignPackageStreamsToTheSameDatabase() {
+        assertSameDatabase(foreignPackage(ver = 14), "schema-14 foreign package")
+    }
+
+    private fun foreignPackage(ver: Int = 11): ByteArray {
+        val db = newCollection(ver, crtSeconds = 1_700_000_000L)
         val models =
             """{"1":{"id":1,"name":"Basic","type":0,"flds":[{"name":"Front","ord":0},{"name":"Back","ord":1}],"tmpls":[{"name":"Card 1","ord":0}]},""" +
                 """ "2":{"id":2,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0}],"tmpls":[{"name":"Cloze","ord":0}]}}"""

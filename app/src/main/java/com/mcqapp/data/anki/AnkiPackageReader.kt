@@ -15,7 +15,6 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -44,10 +43,10 @@ class AnkiPackageException(message: String, cause: Throwable? = null) : Exceptio
  * Reads an Anki `.apkg` package into this app's import DTO.
  *
  * Handles both layouts Anki produces: the legacy zip (schema 11, plain
- * `collection.anki2` + a `media` manifest) and the modern one (schema 14+,
- * `collection.anki21`/`collection.anki21b` with per-table notetype and deck
- * storage). A package with no `meta` entry is the legacy form, which is what
- * this app exports.
+ * `collection.anki2` + a `media` manifest, notetypes and decks as JSON in
+ * `col`) and the modern one (schema 15+, `collection.anki21`/
+ * `collection.anki21b` with per-table notetype and deck storage). A package
+ * with no `meta` entry is the legacy form, which is what this app exports.
  *
  * Deck names encode their hierarchy with `::`, so `Biology::Cells` becomes a
  * paper "Biology" with a category "Cells". Each top-level deck becomes its own
@@ -60,7 +59,6 @@ class AnkiPackageException(message: String, cause: Throwable? = null) : Exceptio
  */
 object AnkiPackageReader {
 
-    private const val SCHEMA_14 = 14
     private val ZSTD_MAGIC = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -123,8 +121,11 @@ object AnkiPackageReader {
         val ver = col.version
         Logger.i("IMPORT", "Reading Anki collection, schema version $ver")
 
-        val notetypes = if (ver >= SCHEMA_14) readNotetypes14(db) else readNotetypes11(col.models)
-        val decks = if (ver >= SCHEMA_14) readDecks14(db) else readDecks11(col.decks)
+        // Which layout this collection uses is a property of its tables, not of
+        // `col.ver`: the notetype/deck tables arrive with the schema-15 upgrade.
+        val modern = hasModernTables(db)
+        val notetypes = if (modern) readNotetypesFromTables(db) else readNotetypes11(col.models)
+        val decks = if (modern) readDecksFromTables(db) else readDecks11(col.decks)
         if (decks.isEmpty()) throw AnkiPackageException("The Anki collection has no decks")
 
         val notes = readNotes(db, media)
@@ -289,8 +290,9 @@ object AnkiPackageReader {
     ): AnkiStreamTail {
         val col = readColMeta(db)
         Logger.i("IMPORT", "Streaming Anki collection, schema version ${col.version}")
-        val notetypes = if (col.version >= SCHEMA_14) readNotetypes14(db) else readNotetypes11(col.models)
-        val decks = if (col.version >= SCHEMA_14) readDecks14(db) else readDecks11(col.decks)
+        val modern = hasModernTables(db)
+        val notetypes = if (modern) readNotetypesFromTables(db) else readNotetypes11(col.models)
+        val decks = if (modern) readDecksFromTables(db) else readDecks11(col.decks)
         if (decks.isEmpty()) throw AnkiPackageException("The Anki collection has no decks")
         if (countRows(db, "notes") == 0L) throw AnkiPackageException("The Anki collection has no notes")
 
@@ -609,9 +611,24 @@ object AnkiPackageReader {
         }
     }
 
-    // ---- schema 14+ (notetypes/fields/templates and decks tables) ----
+    /**
+     * Whether the collection carries Anki's normalised notetype and deck
+     * tables. `schema15_upgrade.sql` creates them and then sets `ver = 15`
+     * (rslib `upgrades/mod.rs` runs it under `if ver < 15`), so a schema-14
+     * collection still holds its notetypes and decks as JSON in `col` and has
+     * neither table. Presence decides which reader runs — `col.ver` does not:
+     * a version comparison puts the schema-14 boundary on the wrong side.
+     */
+    private fun hasModernTables(db: SQLiteDatabase): Boolean = try {
+        db.rawQuery("select 1 from notetypes limit 1", null).use { true } &&
+            db.rawQuery("select 1 from decks limit 1", null).use { true }
+    } catch (e: Exception) {
+        false
+    }
 
-    private fun readNotetypes14(db: SQLiteDatabase): Map<Long, AnkiNotetype> {
+    // ---- schema 15+ (notetypes/fields/templates and decks tables) ----
+
+    private fun readNotetypesFromTables(db: SQLiteDatabase): Map<Long, AnkiNotetype> {
         val names = LinkedHashMap<Long, MutableList<String>>()
         db.rawQuery("select ntid, name from fields order by ntid, ord", null).use { c ->
             while (c.moveToNext()) names.getOrPut(c.getLong(0)) { mutableListOf() } += c.getString(1)
@@ -631,7 +648,7 @@ object AnkiPackageReader {
         }
     }
 
-    private fun readDecks14(db: SQLiteDatabase): List<AnkiDeck> {
+    private fun readDecksFromTables(db: SQLiteDatabase): List<AnkiDeck> {
         val out = mutableListOf<AnkiDeck>()
         db.rawQuery("select id, name, kind from decks order by id", null).use { c ->
             while (c.moveToNext()) {
@@ -644,39 +661,31 @@ object AnkiPackageReader {
     }
 
     /**
-     * `Notetype.Config.kind` (1 = cloze). Schema 14 stored the config as JSON;
-     * schema 15+ stores the prost [`Notetype.Config`] blob, which Anki's own
-     * Reader used to reject (the JSON parse threw and the catch defaulted every
-     * notetype to `isCloze = false`, so cloze notes imported as recall cards).
+     * `NotetypeConfig.kind` (1 = cloze), read from the notetype's protobuf
+     * `config` blob. These tables and this column exist only from schema 15,
+     * and they have held prost bytes since Anki created them: the 11 -> 15
+     * upgrade writes `nt.config.encode(..)` (rslib
+     * `storage/notetype/mod.rs`), and Anki's own read path is
+     * `NotetypeConfig::decode(..as_blob())`. There is no JSON phase to fall
+     * back to — the JSON parse this replaced is why every cloze notetype
+     * imported as a recall notetype.
      */
     private fun notetypeKind(blob: ByteArray?): Int {
         val bytes = blob ?: return 0
-        jsonObjectOrNull(bytes)?.get("kind")?.jsonPrimitive?.content?.toIntOrNull()?.let { return it }
         // field 1, varint.
         return protoFields(bytes).firstOrNull { it.number == 1 && it.wireType == 0 }?.varint?.toInt() ?: 0
     }
 
     /**
-     * Whether `decks.kind` holds a filtered (dynamic) deck. Schema 14 used JSON
-     * (`terms`); schema 15+ stores prost [`Deck.KindContainer`], whose `normal`
-     * member is field 1 and `filtered` field 2. A filtered deck imports as a
-     * real paper when this degrades to `false`.
+     * Whether `decks.kind` holds a filtered (dynamic) deck: `DeckKindContainer`,
+     * whose `normal` member is field 1 and `filtered` field 2, stored as
+     * protobuf from the moment the `decks` table exists (schema 15, both
+     * `DeckCommon::decode` and `DeckKindContainer::decode` read `as_blob()`).
+     * A filtered deck imports as a real paper when this degrades to `false`.
      */
     private fun deckIsFiltered(blob: ByteArray?): Boolean {
         val bytes = blob ?: return false
-        jsonObjectOrNull(bytes)?.let { return it.keys.contains("terms") }
         return protoFields(bytes).any { it.number == 2 && it.wireType == 2 }
-    }
-
-    /** The blob parsed as a JSON object, or null when it is not JSON (protobuf). */
-    private fun jsonObjectOrNull(bytes: ByteArray): JsonObject? {
-        val text = String(bytes, Charsets.UTF_8).trim()
-        if (!text.startsWith("{")) return null
-        return try {
-            json.parseToJsonElement(text).jsonObject
-        } catch (e: Exception) {
-            null
-        }
     }
 
     private class ProtoField(val number: Int, val wireType: Int, val varint: Long)

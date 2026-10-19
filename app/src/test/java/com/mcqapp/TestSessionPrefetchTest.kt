@@ -138,6 +138,13 @@ class TestSessionPrefetchTest {
         settle()
         vm.next()
         assertEquals("q2", vm.state.value.current?.id)
+
+        // Let the autosave that Next launched finish here. `persistProgress`
+        // writes its row first, so its DataStore edit is offered a moment later:
+        // if the test ends first, the edit slides in behind the teardown's
+        // clear, and the actor is left holding a transform for a looper the
+        // next class resets - every later write then waits forever.
+        settle()
     }
 
     @Test

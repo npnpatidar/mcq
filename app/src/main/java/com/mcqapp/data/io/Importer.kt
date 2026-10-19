@@ -278,17 +278,11 @@ class Importer(
                         seenPassageIds.add(passageId)
                         paperPassageIds.add(passageId)
                         val existing = db.passageDao().getById(passageId)
-                        val passageElements = passageDto.elements
-                            .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement("")) }
                         db.passageDao().upsert(
-                            PassageEntity(
-                                id = passageDto.id,
+                            passageDto.withDownscaledImages().toPassageEntity(
                                 categoryId = effectiveCatId,
-                                title = passageDto.title,
-                                text = passageElements.toContentJson(json),
-                                searchText = passageSearchText(passageDto.title, passageElements),
-                                image = ImageDownscale.downscaleDataUri(passageDto.image),
-                                sortOrder = existing?.sortOrder ?: 0
+                                sortOrder = existing?.sortOrder ?: 0,
+                                json = json
                             )
                         )
                     }
@@ -335,11 +329,7 @@ class Importer(
                                     )
                                     db.questionDao().updateNonHashedFields(
                                         id = sameContentId,
-                                        explanation = questionDto.explanationElements
-                                            .ifEmpty {
-                                                listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.explanation))
-                                            }
-                                            .toContentJson(json),
+                                        explanation = scaledQuestion.storedExplanationJson(json),
                                         marks = questionDto.marks,
                                         difficulty = questionDto.difficulty,
                                         tags = questionDto.tags.joinToString(","),
@@ -407,25 +397,14 @@ class Importer(
                         // NOTE: the question row below carries passageId from the
                         // file; the passage rows themselves were already written
                         // above, so the id always resolves inside this transaction.
-                        val questionElements = questionDto.elements
-                            .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.text)) }
+                        // Built from the scaled twin: the row's element JSON is
+                        // what the content hash reads back on the next import.
                         db.questionDao().upsert(
-                            QuestionEntity(
-                                id = questionDto.id,
+                            scaledQuestion.toQuestionEntity(
                                 categoryId = effectiveCatId,
-                                passageId = questionDto.passageId,
-                                text = questionElements.toContentJson(json),
-                                searchText = questionElements.searchableText,
-                                image = scaledQuestion.image,
-                                explanation = questionDto.explanationElements
-                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(questionDto.explanation)) }
-                                    .toContentJson(json),
-                                explanationImage = scaledQuestion.explanationImage,
-                                difficulty = questionDto.difficulty,
-                                marks = questionDto.marks,
-                                tags = questionDto.tags.joinToString(","),
                                 sortOrder = resolvedSortOrder,
-                                contentHash = contentHash
+                                contentHash = contentHash,
+                                json = json
                             )
                         )
                         existingHashes.add(contentHash)
@@ -468,20 +447,7 @@ class Importer(
                         }
 
                         db.optionDao().deleteByQuestion(questionDto.id)
-                        db.optionDao().upsertAll(
-                            scaledQuestion.options.mapIndexed { index, o ->
-                                val optionElements = o.elements
-                                    .ifEmpty { listOf(com.mcqapp.domain.ContentElement.TextElement(o.text)) }
-                                OptionEntity(
-                                    id = o.id,
-                                    questionId = questionDto.id,
-                                    text = optionElements.toContentJson(json),
-                                    searchText = optionElements.searchableText,
-                                    image = o.image,
-                                    sortOrder = index
-                                )
-                            }
-                        )
+                        db.optionDao().upsertAll(scaledQuestion.toOptionEntities(json))
                         db.correctAnswerDao().deleteByQuestion(questionDto.id)
                         db.correctAnswerDao().upsertAll(
                             questionDto.correctOptionIds.map { CorrectAnswerEntity(questionDto.id, it) }
@@ -773,7 +739,7 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
  * run before the import transaction.
  */
 internal fun McqFileDto.withDownscaledImages(): McqFileDto = copy(
-    passages = passages.map { passage -> passage.copy(image = ImageDownscale.downscaleDataUri(passage.image)) },
+    passages = passages.map { it.withDownscaledImages() },
     papers = papers.map { it.withDownscaledImages() }
 )
 
@@ -789,8 +755,117 @@ internal fun PaperDto.withDownscaledImages(): PaperDto = copy(
     }
 )
 
-internal fun QuestionDto.withDownscaledImages(): QuestionDto = copy(
-    image = ImageDownscale.downscaleDataUri(image),
-    explanationImage = ImageDownscale.downscaleDataUri(explanationImage),
-    options = options.map { it.copy(image = ImageDownscale.downscaleDataUri(it.image)) }
+/**
+ * The question-level scaler. An image hides in more than the scalar fields:
+ * the structured elements of the question, the explanation and every option
+ * can each carry a [ContentElement.ImageElement], and a foreign file (an Anki
+ * deck's media, a legacy JSON with an inline base64 picture) can put a
+ * full-size one there. Storing those untouched keeps the bloat this scaler
+ * exists to remove.
+ */
+internal fun QuestionDto.withDownscaledImages(): QuestionDto =
+    withScaledImages { ImageDownscale.downscaleDataUri(it) }
+
+/**
+ * The same traversal with the scaler injected, so the pure part can be
+ * asserted off-device: [withDownscaledImages] hands it [ImageDownscale], whose
+ * bitmap work needs a real device (Robolectric passes every image through
+ * untouched), so a fake scaler is the only way to pin which fields are visited.
+ */
+internal fun QuestionDto.withScaledImages(scale: (String?) -> String?): QuestionDto = copy(
+    elements = elements.withScaledImages(scale),
+    image = scale(image),
+    options = options.map {
+        it.copy(
+            elements = it.elements.withScaledImages(scale),
+            image = scale(it.image)
+        )
+    },
+    explanationElements = explanationElements.withScaledImages(scale),
+    explanationImage = scale(explanationImage)
 )
+
+/** Every image element's src goes through [scale]; every other element is untouched. */
+internal fun List<ContentElement>.withScaledImages(scale: (String?) -> String?): List<ContentElement> =
+    map { element ->
+        if (element is ContentElement.ImageElement) {
+            ContentElement.ImageElement(scale(element.src) ?: element.src)
+        } else {
+            element
+        }
+    }
+
+/** The passage-level scaler: a passage's elements carry pictures too, plus the scalar one. */
+internal fun PassageDto.withDownscaledImages(): PassageDto =
+    withScaledImages { ImageDownscale.downscaleDataUri(it) }
+
+internal fun PassageDto.withScaledImages(scale: (String?) -> String?): PassageDto = copy(
+    elements = elements.withScaledImages(scale),
+    image = scale(image)
+)
+
+/**
+ * The row a scaled question is stored as. [this] must be the scaled twin: the
+ * row's element JSON is what [ContentHash.sameQuestionContent] reads back, so a
+ * row built from the file's original bytes would read as changed on every
+ * re-import and the full-size picture would survive the scaler after all.
+ */
+internal fun QuestionDto.toQuestionEntity(
+    categoryId: String,
+    sortOrder: Int,
+    contentHash: String,
+    json: Json
+): QuestionEntity {
+    val elements = elements.ifEmpty { listOf(ContentElement.TextElement(text)) }
+    return QuestionEntity(
+        id = id,
+        categoryId = categoryId,
+        passageId = passageId,
+        text = elements.toContentJson(json),
+        searchText = elements.searchableText,
+        image = image,
+        explanation = storedExplanationJson(json),
+        explanationImage = explanationImage,
+        difficulty = difficulty,
+        marks = marks,
+        tags = tags.joinToString(","),
+        sortOrder = sortOrder,
+        contentHash = contentHash
+    )
+}
+
+/** The explanation column of a scaled question, derived the way `text` is. */
+internal fun QuestionDto.storedExplanationJson(json: Json): String =
+    explanationElements.ifEmpty { listOf(ContentElement.TextElement(explanation)) }.toContentJson(json)
+
+/** The option rows a scaled question is stored as, in file order. */
+internal fun QuestionDto.toOptionEntities(json: Json): List<OptionEntity> =
+    options.mapIndexed { index, option ->
+        val elements = option.elements.ifEmpty { listOf(ContentElement.TextElement(option.text)) }
+        OptionEntity(
+            id = option.id,
+            questionId = id,
+            text = elements.toContentJson(json),
+            searchText = elements.searchableText,
+            image = option.image,
+            sortOrder = index
+        )
+    }
+
+/** The row a scaled passage is stored as; its elements are the rendered body. */
+internal fun PassageDto.toPassageEntity(
+    categoryId: String,
+    sortOrder: Int,
+    json: Json
+): PassageEntity {
+    val elements = elements.ifEmpty { listOf(ContentElement.TextElement("")) }
+    return PassageEntity(
+        id = id,
+        categoryId = categoryId,
+        title = title,
+        text = elements.toContentJson(json),
+        searchText = passageSearchText(title, elements),
+        image = image,
+        sortOrder = sortOrder
+    )
+}

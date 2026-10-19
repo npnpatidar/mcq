@@ -9,7 +9,6 @@ import com.mcqapp.data.local.ContentHashMatch
 import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
-import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.applyQuestionStats
@@ -17,10 +16,6 @@ import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.domain.CardStateKind
-import com.mcqapp.domain.ContentElement
-import com.mcqapp.domain.passageSearchText
-import com.mcqapp.domain.searchableText
-import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
 import kotlinx.serialization.json.Json
@@ -423,9 +418,7 @@ internal class StreamingImportSession(
                     )
                     db.questionDao().updateNonHashedFields(
                         id = sameContentId,
-                        explanation = dto.explanationElements
-                            .ifEmpty { listOf(ContentElement.TextElement(dto.explanation)) }
-                            .toContentJson(json),
+                        explanation = scaledQuestion.storedExplanationJson(json),
                         marks = dto.marks,
                         difficulty = dto.difficulty,
                         tags = dto.tags.joinToString(","),
@@ -466,46 +459,18 @@ internal class StreamingImportSession(
             // under a new paper's category still needs that category.
             enableWrites()
             needsWrite = true
-            val entity = QuestionEntity(
-                id = dto.id,
+            val entity = scaledQuestion.toQuestionEntity(
                 categoryId = categoryId,
-                passageId = dto.passageId,
-                text = dto.elements
-                    .ifEmpty { listOf(ContentElement.TextElement(dto.text)) }
-                    .toContentJson(json),
-                searchText = dto.elements
-                    .ifEmpty { listOf(ContentElement.TextElement(dto.text)) }
-                    .searchableText,
-                image = scaledQuestion.image,
-                explanation = dto.explanationElements
-                    .ifEmpty { listOf(ContentElement.TextElement(dto.explanation)) }
-                    .toContentJson(json),
-                explanationImage = scaledQuestion.explanationImage,
-                difficulty = dto.difficulty,
-                marks = dto.marks,
-                tags = dto.tags.joinToString(","),
                 sortOrder = resolvedSortOrder,
-                contentHash = contentHash
+                contentHash = contentHash,
+                json = json
             )
             db.questionDao().upsert(entity)
             writtenById[dto.id] = entity
             batchWritten.getOrPut(contentHash) { mutableListOf() }.add(scaledQuestion)
 
             db.optionDao().deleteByQuestion(dto.id)
-            db.optionDao().upsertAll(
-                scaledQuestion.options.mapIndexed { optionIndex, o ->
-                    val optionElements = o.elements
-                        .ifEmpty { listOf(ContentElement.TextElement(o.text)) }
-                    OptionEntity(
-                        id = o.id,
-                        questionId = dto.id,
-                        text = optionElements.toContentJson(json),
-                        searchText = optionElements.searchableText,
-                        image = o.image,
-                        sortOrder = optionIndex
-                    )
-                }
-            )
+            db.optionDao().upsertAll(scaledQuestion.toOptionEntities(json))
             db.correctAnswerDao().deleteByQuestion(dto.id)
             db.correctAnswerDao().upsertAll(
                 dto.correctOptionIds.map { CorrectAnswerEntity(dto.id, it) }
@@ -598,17 +563,11 @@ internal class StreamingImportSession(
                 continue
             }
             val existing = db.passageDao().getById(passageId)
-            val passageElements = passageDto.elements
-                .ifEmpty { listOf(ContentElement.TextElement("")) }
             db.passageDao().upsert(
-                PassageEntity(
-                    id = passageDto.id,
+                passageDto.withDownscaledImages().toPassageEntity(
                     categoryId = passageCategory.getValue(passageId),
-                    title = passageDto.title,
-                    text = passageElements.toContentJson(json),
-                    searchText = passageSearchText(passageDto.title, passageElements),
-                    image = ImageDownscale.downscaleDataUri(passageDto.image),
-                    sortOrder = existing?.sortOrder ?: 0
+                    sortOrder = existing?.sortOrder ?: 0,
+                    json = json
                 )
             )
         }

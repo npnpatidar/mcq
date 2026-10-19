@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -159,6 +160,47 @@ class NoDeadCodeTest {
             importer.contains("paperDto.withDownscaledImages()")
         )
     }
+
+    @Test
+    fun theStoredRowsComeFromTheScaledTwin() {
+        // Scaling the DTO is only half: the row's element JSON is what
+        // ContentHash.sameQuestionContent reads back, so a row built from the
+        // file's original bytes reads as changed on every re-import - and the
+        // full-size picture stays stored. The row builders are the one
+        // construction site each; both write paths hand them the twin.
+        val importer = sourceOf("Importer.kt")
+        val streaming = sourceOf("StreamingImportSession.kt")
+        val builders = listOf("QuestionEntity", "OptionEntity", "PassageEntity")
+        for (builder in builders) {
+            assertEquals(
+                "$builder should be built in one place",
+                1,
+                constructions(importer, builder)
+            )
+            assertEquals(
+                "$builder should not be built inline in the streaming path",
+                0,
+                constructions(streaming, builder)
+            )
+        }
+        for (file in listOf("Importer.kt" to importer, "StreamingImportSession.kt" to streaming)) {
+            val (name, text) = file
+            assertTrue("$name stores the scaled question", text.contains("scaledQuestion.toQuestionEntity("))
+            assertTrue("$name stores the scaled options", text.contains("scaledQuestion.toOptionEntities("))
+            assertTrue(
+                "$name stores the scaled passage",
+                text.contains("passageDto.withDownscaledImages().toPassageEntity(")
+            )
+            assertTrue(
+                "$name refreshes with the scaled explanation",
+                text.contains("scaledQuestion.storedExplanationJson(json)")
+            )
+        }
+    }
+
+    /** Constructions of [entity], not the `toXEntity(` calls that end in its name. */
+    private fun constructions(text: String, entity: String): Int =
+        Regex("(?<![A-Za-z])" + Regex.escape(entity) + "\\(").findAll(text).count()
 
     @Test
     fun allRenderersShareOneHtmlEscaper() {

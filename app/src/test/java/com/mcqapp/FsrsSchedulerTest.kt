@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
@@ -290,6 +291,73 @@ class FsrsSchedulerTest {
         var state = scheduler.next(scheduler.initial("q"), ReviewGrade.EASY, t0)
         repeat(60) { state = scheduler.next(state, ReviewGrade.EASY, state.dueAt) }
         assertEquals(SchedulerConfig().maxIntervalDays, state.intervalDays)
+    }
+
+    @Test
+    fun aStabilityPastTheIntRangeStillClampsToTheCeiling() {
+        // The optimizer's lower bound for w[9] is 0.0, so a fitted 0 lets
+        // stability grow multiplicatively without bound and the interval days
+        // can land past Int.MAX_VALUE. Rounding to Int before clamping wrapped
+        // these three - 2³¹ to -2147483648, 3e9 to -1294967296, 4_294_967_396
+        // to 100 - and the clamp then floored the first two to a 1-day
+        // interval, i.e. the card came back tomorrow instead of at the ceiling.
+        val stabilities = listOf(2_147_483_648.0, 3_000_000_000.0, 4_294_967_396.0)
+        val scheduler = exactScheduler()
+        val longAgo = CardState(
+            questionId = "q",
+            intervalDays = 30,
+            lastReviewedAt = t0,
+            difficulty = 5.0,
+            state = CardStateKind.REVIEW,
+            reviewCount = 5
+        )
+
+        stabilities.forEach { stability ->
+            val next = scheduler.next(
+                longAgo.copy(stability = stability),
+                ReviewGrade.GOOD,
+                t0 + 30 * dayMs
+            )
+            // Recall never shrinks stability, so the value really is still past
+            // Int.MAX_VALUE when the interval is taken from it.
+            assertTrue("stability $stability shrank", next.stability >= Int.MAX_VALUE)
+            assertEquals(SchedulerConfig().maxIntervalDays, next.intervalDays)
+        }
+    }
+
+    @Test
+    fun sameDayGradingWithFittedWeightsNeverWrapsTheInterval() {
+        // A fitted set can sit on the tuner's own bounds: w17 = w18 = 2.0
+        // (UPPER_BOUNDS) and w19 = 0.01 (LOWER_BOUNDS[19]). Same-day EASY then
+        // grows stability a few hundredfold per grade, past Int.MAX_VALUE by
+        // the fifth one - measured, before the fix, as a 1-day interval for
+        // grade 5 (stability 1.4e11) and for most later grades.
+        val tuned = SchedulerConfig().fsrsParameters.toMutableList().also {
+            it[17] = 2.0
+            it[18] = 2.0
+            it[19] = 0.01
+        }
+        val scheduler = FsrsScheduler(
+            parameters = tuned,
+            config = SchedulerConfig(dayStartHour = 0),
+            zoneOffset = { 0L }
+        )
+        var state = scheduler.initial("q")
+        var now = t0
+        repeat(12) { i ->
+            now += 60_000L
+            state = scheduler.next(state, ReviewGrade.EASY, now)
+            if (state.stability >= Int.MAX_VALUE) {
+                assertEquals(
+                    "grade ${i + 1}, stability ${state.stability}",
+                    SchedulerConfig().maxIntervalDays,
+                    state.intervalDays
+                )
+            }
+        }
+        // The sequence has to reach the wrapped range, or the loop above proves
+        // nothing.
+        assertTrue(state.stability >= Int.MAX_VALUE)
     }
 
     // ---- previews and wiring ----

@@ -16,7 +16,18 @@ object AnkiHtml {
     private val RICH_TAG = Regex("<(/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>")
     private val WHITESPACE = Regex("[ \\t]+")
     private val BLANK_LINES = Regex("\n{3,}")
-    private val NUMERIC_ENTITY = Regex("&#(x?[0-9a-fA-F]+);")
+    /**
+     * One character reference: decimal or hex (`[xX]`, because exporters
+     * write both), or a named one. The same shape as the decoders in
+     * `data/docx/MathMlToOmml.kt` and `data/export/PdfMath.kt`.
+     */
+    private val ENTITY = Regex("&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);")
+
+    /** The named references that resolve; any other name stays as written. */
+    private val NAMED_ENTITIES = mapOf(
+        "nbsp" to " ", "lt" to "<", "gt" to ">", "quot" to "\"",
+        "apos" to "'", "amp" to "&"
+    )
 
     /** Inline formatting tags kept verbatim by [toRichText]. */
     private val RICH_KEEP = setOf(
@@ -63,25 +74,28 @@ object AnkiHtml {
      * Decodes HTML entities, including numeric ones. `&#10003;` and `&#10007;`
      * are how check and cross marks are usually written in Anki fields, and
      * decks from other exporters rely on that.
+     *
+     * One pass over the source, as the app's other two decoders do
+     * (`data/docx/MathMlToOmml.kt`, `data/export/PdfMath.kt`), so a reference
+     * that decodes to text which looks like another reference is not decoded
+     * again: `&#38;amp;` is the text `&amp;`, not a second decode to `&`.
      */
-    fun decodeEntities(text: String): String = NUMERIC_ENTITY.replace(
-        text.replace("&nbsp;", " ")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&apos;", "'")
-    ) { match ->
-        val digits = match.groupValues[1].dropLastWhile { it == ';' }
-        val code = if (digits.startsWith("x", ignoreCase = true)) {
-            digits.drop(1).toIntOrNull(16)
-        } else {
-            digits.toIntOrNull()
+    fun decodeEntities(text: String): String = ENTITY.replace(text) { match ->
+        val body = match.groupValues[1]
+        when {
+            body.startsWith("#") -> {
+                val code = if (body[1] == 'x' || body[1] == 'X') {
+                    body.substring(2).toIntOrNull(16)
+                } else {
+                    body.substring(1).toIntOrNull()
+                }
+                // A code point we cannot represent is left as written rather
+                // than replaced by a replacement character.
+                code?.takeIf { it in 1..0x10FFFF }?.let { String(Character.toChars(it)) } ?: match.value
+            }
+            else -> NAMED_ENTITIES[body] ?: match.value
         }
-        // A code point we cannot represent is left as written rather than
-        // replaced by a replacement character.
-        code?.takeIf { it in 1..0x10FFFF }?.let { String(Character.toChars(it)) } ?: match.value
-    }.replace("&amp;", "&")
+    }
 
     private const val CORRECT_MARK = "✓"
     private const val WRONG_MARK = "✗"

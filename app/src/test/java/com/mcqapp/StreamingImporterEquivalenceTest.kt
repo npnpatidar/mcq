@@ -185,6 +185,24 @@ class StreamingImporterEquivalenceTest {
     }
 
     @Test
+    fun aSecondImportOnTheSameInstanceStillParses() = runBlocking {
+        wholeFileImport(wholeFileDb, richBank, times = 2)
+        // One instance, two runs: the importer's own source doc on [import]
+        // promises a retry may open the same bytes again on the same object,
+        // so the second run must parse again too. Everything already exists,
+        // so the second report is the all-duplicates one — and it must not
+        // be the all-zeros report of a parse whose every offer was already
+        // cancelled by a run-scoped flag that outlived its run.
+        val importer = StreamingImporter(streamingDb)
+        val first = importer.import(source = { ByteArrayInputStream(richBank.toByteArray()) })
+        assertEquals(3, first.newQuestions)
+        val second = importer.import(source = { ByteArrayInputStream(richBank.toByteArray()) })
+        assertEquals("the second run must parse again: $second", 3, second.duplicateQuestions)
+        assertEquals(0, second.newQuestions)
+        assertSameState()
+    }
+
+    @Test
     fun aChangedAnswerKeyRefreshesIdentically() = runBlocking {
         val corrected = richBank.replace(
             """{"id": "q1", "text": "One", "options": ["x", "y"], "correctOptionIds": ["x"], "passageId": "ps1"}""",

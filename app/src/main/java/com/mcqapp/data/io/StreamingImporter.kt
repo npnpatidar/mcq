@@ -4,6 +4,7 @@ import com.mcqapp.data.local.AppDatabase
 import java.io.InputStream
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -99,10 +100,33 @@ class StreamingImporter(
         val queue = ArrayBlockingQueue<StreamEvent>(16)
         val tailRef = AtomicReference<LegacyParser.StreamedFile>()
         val errorRef = AtomicReference<Throwable>()
+        // The parser opens the stream on its own thread; the reference lets
+        // the consumer's finally close it out from under a blocked read.
+        val inputRef = AtomicReference<InputStream?>()
+
+        // Cancellation belongs to this run, not to the importer object — the
+        // class KDoc promises a retry may open the source again on the same
+        // instance, and a second import must parse again. A local Atomic
+        // Boolean (not a field) cannot outlive importHere, so no flag can
+        // leak into the next run and silence it.
+        val cancelled = AtomicBoolean(false)
+
+        fun offer(queue: ArrayBlockingQueue<StreamEvent>, event: StreamEvent) {
+            if (cancelled.get()) return
+            try {
+                queue.put(event)
+            } catch (_: InterruptedException) {
+                // Once cancelled the parser is being torn down; the interrupt
+                // flag staying set only turns later puts into instant throws.
+                if (cancelled.get()) return
+                Thread.currentThread().interrupt()
+            }
+        }
 
         val parser = Thread({
             try {
                 val tail = source().use { input ->
+                    inputRef.set(input)
                     LegacyParser.streamImport(input, object : LegacyParser.ImportStreamSink {
                         override fun onPaper(header: LegacyParser.PaperHeader) =
                             offer(queue, StreamEvent.Paper(header))
@@ -154,20 +178,19 @@ class StreamingImporter(
                 }
             }
         } finally {
+            // The consumer is leaving, normally or by throwing — the parser
+            // must stop, not keep chewing through the rest of the file.
+            // Interrupt alone re-arms on every dispatch and a blocked read
+            // ignores it entirely; closing the source turns the parser's
+            // next read into an IOException and ends the parse.
+            cancelled.set(true)
             parser.interrupt()
+            inputRef.get()?.close()
             parser.join(2000)
         }
         errorRef.get()?.let { throw it }
         tailRef.get()?.let { session.finish(it) }
         return session.report()
-    }
-
-    private fun offer(queue: ArrayBlockingQueue<StreamEvent>, event: StreamEvent) {
-        try {
-            queue.put(event)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
     }
 
     private sealed interface StreamEvent {

@@ -381,9 +381,17 @@ private fun graftScalarImage(scalar: String?, visibleElements: List<ContentEleme
  * with a newline the payload does not have — and case folded. A freshness
  * key, not an identity: two stems that differ only in spacing are the same
  * question for this purpose.
+ *
+ * Markup breaks normalise before the entities decode, so `<br>`, `<br/>` and
+ * `<br />` are a break the same way the visible document's `\n` is one. Decoding
+ * after the replace is what keeps an *authored* `&lt;br&gt;` literal: it must
+ * not be read as a break merely because it looks like the markup.
  */
 private fun normalizeStem(text: String): String =
-    decodeXmlEntities(text).replace(Regex("\\s+"), "").lowercase()
+    text.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), " ")
+        .let(::decodeXmlEntities)
+        .replace(Regex("\\s+"), "")
+        .lowercase()
 
 internal data class DocxLine(val html: String, val heading: Int?)
 

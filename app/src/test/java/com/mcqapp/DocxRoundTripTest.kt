@@ -288,6 +288,58 @@ class DocxRoundTripTest {
     }
 
     /**
+     * A stored line break is invisible to freshness. Stored markup carries
+     * breaks as literal `<br>` while the visible document carries `\\n`, and
+     * the freshness canon compares the *content* (`normalizeStem` deletes all
+     * whitespace), so a break must normalise the same way on both sides.
+     *
+     * Before the break normalisation, every question whose text carried
+     * `<br>` read as an edited document on the way back: the hidden payload
+     * was refused, the import fell back to the visible text, and the
+     * marks/difficulty/tags the markers cannot carry were silently lost.
+     */
+    @Test
+    fun lineBreaksInStoredTextDoNotMakeThePayloadStale() {
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-br",
+            text = "Pick<br>one",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto("a", "first<br>answer one"),
+                com.mcqapp.data.io.OptionDto("b", "second")
+            ),
+            correctOptionIds = listOf("a"),
+            explanation = "because<br>it is so",
+            // Exactly what the markers cannot carry, so the only way these
+            // survive is through a payload the canon accepts.
+            marks = 2.5,
+            difficulty = "hard",
+            tags = listOf("algebra")
+        )
+        val paper = PaperDto(
+            id = "p-br",
+            title = "Breaks",
+            categories = listOf(
+                com.mcqapp.data.io.CategoryDto(id = "c1", title = "Category", questions = listOf(question))
+            )
+        )
+
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue("import must not warn: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val after = allQuestions(LegacyParser.parse(parsed.json).papers.single()).single()
+
+        assertEquals("the stem must come back verbatim", question.text, after.text)
+        assertEquals(
+            "every option must come back verbatim",
+            question.options.map { it.text },
+            after.options.map { it.text }
+        )
+        assertEquals("the explanation must come back verbatim", question.explanation, after.explanation)
+        assertEquals("marks ride the payload", question.marks, after.marks, 0.0)
+        assertEquals("difficulty rides the payload", question.difficulty, after.difficulty)
+        assertEquals("tags ride the payload", question.tags, after.tags)
+    }
+
+    /**
      * XML 1.0 cannot carry the C0 controls, so the writer drops them: the
      * import must still succeed (it used to die with an XML parse error —
      * one U+0007 made the whole package unreadable), and every legal

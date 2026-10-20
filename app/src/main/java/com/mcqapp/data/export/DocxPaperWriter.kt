@@ -861,16 +861,13 @@ object DocxPaperWriter {
      * extra sizing knob.
      */
     internal fun emuExtent(w: Int, h: Int): Pair<Int, Int> {
-        var cx = w.toLong() * EMU_PER_PX
-        var cy = h.toLong() * EMU_PER_PX
+        var cx = w * EMU_PER_PX
+        var cy = h * EMU_PER_PX
         if (cx > MAX_CX) {
-            cy = cy * MAX_CX / cx
-            cx = MAX_CX.toLong()
+            cy = (cy.toLong() * MAX_CX / cx).toInt()
+            cx = MAX_CX
         }
-        // A lone huge height (narrow but 900k px tall header) would overflow
-        // cy on its own after the unperturbed cx path; clamp it the same way.
-        if (cy > MAX_CX) cy = MAX_CX.toLong()
-        return cx.toInt() to cy.toInt()
+        return cx to cy
     }
 
     /** Option letters the marker grammar supports; (a)…(j). */

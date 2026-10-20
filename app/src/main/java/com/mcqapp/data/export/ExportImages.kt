@@ -28,8 +28,7 @@ fun parseDataUri(src: String?): EmbeddedImage? {
  * image and could not be read; any other src keeps the provenance label it
  * always had (remote URLs and bare names are short by construction).
  */
-internal fun unreadableImageLabel(src: String): String =
-    if (src.startsWith("data:")) "[unreadable image]" else "[image: $src]"
+internal fun unreadableImageLabel(src: String): String = "[image: $src]"
 
 fun imageExtension(mimeType: String): String = when (mimeType.lowercase()) {
     "image/jpeg" -> "jpg"

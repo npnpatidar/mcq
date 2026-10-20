@@ -114,7 +114,7 @@ internal fun escapeHtmlText(s: String): String {
     // (displays as &), and stored `&amp;amp;` decodes to the characters
     // `&amp;` whose escape re-encodes only the ampersand — so it renders as
     // `&amp;`, not as `&`. No double decode.
-    val decoded = decodeHtmlEntities(s)
+    val decoded = s
     return decoded
         .replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -130,7 +130,6 @@ private val namedEntityValues = mapOf(
     "gt" to ">",
     "quot" to "\"",
     "apos" to "'",
-    "nbsp" to "\u00A0"
 )
 
 /**

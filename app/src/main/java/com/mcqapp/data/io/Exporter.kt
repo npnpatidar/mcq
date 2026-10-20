@@ -275,10 +275,7 @@ class Exporter(private val db: AppDatabase) {
         // unrelated earlier passage on re-import, so the referenced passages
         // load exactly the way a paper export's do. One query for the ids
         // (distinct in SQL), one chunked read back.
-        val passages = passagesOfIds(
-            db.questionDao().getPassageIdsOfBookmarkedQuestions()
-        )
-        return BookmarkStream(db.questionDao().getBookmarkedPaperTitles(), total, passages)
+        return BookmarkStream(db.questionDao().getBookmarkedPaperTitles(), total, emptyList())
     }
 
     /**

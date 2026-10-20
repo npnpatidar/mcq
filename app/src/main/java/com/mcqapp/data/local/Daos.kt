@@ -82,6 +82,17 @@ interface CategoryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(category: CategoryEntity)
 
+    /**
+     * The re-ensure update: IDENTITY columns only (paperId, title).
+     * parentId and sortOrder belong to the category's own editor calls —
+     * writing a category with REPLACE (or a full updateFields) from the
+     * ensure path used to zero sortOrder and clear parentId on an existing
+     * row, and REPLACE is worse: it DELETES the row, and the foreign-key
+     * cascade takes its questions, options, answers and schedules.
+     */
+    @Query("UPDATE categories SET paperId = :paperId, title = :title WHERE id = :id")
+    suspend fun updateIdentity(id: String, paperId: String, title: String)
+
     @Query("UPDATE categories SET paperId = :paperId, title = :title, parentId = :parentId, sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateFields(id: String, paperId: String, title: String, parentId: String?, sortOrder: Int)
 

@@ -190,6 +190,10 @@ internal class PaperStore(
         // collide with the first category and leave the order to the title
         // tiebreak.
         val next = (db.categoryDao().getByPaper(paperId).maxOfOrNull { it.sortOrder } ?: -1) + 1
+        // upsert(REPLACE) is safe HERE ONLY: the id is freshly minted, so it
+        // can never hit an existing row and never fires the cascade. Any
+        // caller writing an id that may already exist must go through
+        // insertIgnore + `updateIdentity` (see ensurePaperAndCategory).
         db.categoryDao().upsert(
             CategoryEntity(
                 id = id,

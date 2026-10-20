@@ -169,18 +169,32 @@ internal class QuestionStore(
     }
 
     suspend fun ensurePaperAndCategory(paperId: String, paperTitle: String, categoryId: String, categoryTitle: String) {
-        // IGNORE + targeted fields, never REPLACE — the cascade reasoning is
-        // upsertPaperKeepingChildren's, one store over. Two writes on the
-        // same millisecond id (or a future "edit paper") must not cascade
-        // the paper's children away.
+        // IGNORE + targeted fields, never REPLACE — at BOTH levels. The
+        // paper half keeps its children (see upsertPaperKeepingChildren);
+        // the CATEGORY half is the same finding one level down and it is
+        // NOT cosmetic: CategoryDao.upsert was REPLACE, so re-writing an
+        // existing category row DELETED it and the foreign-key cascade
+        // removed its questions, options, answers and schedules. Latent
+        // today, like the paper half: the only caller is the unused
+        // McqRepository.ensurePaperAndCategory wrapper, nothing in the UI
+        // reaches it in main — so this store method is exercised directly
+        // by the tests, as the report specified. The identity update
+        // deliberately excludes parentId and sortOrder: a replace used to
+        // zero the sort order (part of the same bug) and streak the row's
+        // parent; those belong to the editor's own calls.
         db.paperDao().insertIgnore(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
         db.paperDao().updateFields(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }, description = "", durationMinutes = 0, negativeMarking = 0.0)
-        db.categoryDao().upsert(
+        db.categoryDao().insertIgnore(
             CategoryEntity(
                 id = categoryId,
                 paperId = paperId,
                 title = categoryTitle.ifBlank { "Uncategorized" }
             )
+        )
+        db.categoryDao().updateIdentity(
+            id = categoryId,
+            paperId = paperId,
+            title = categoryTitle.ifBlank { "Uncategorized" }
         )
     }
 

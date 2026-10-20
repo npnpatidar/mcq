@@ -281,20 +281,29 @@ class DeletePaperCascadeTest {
     }
 
     /**
-     * Writing a paper whose id ALREADY exists must not rebuild it with a
-     * DELETE: `INSERT OR REPLACE` is a delete-then-insert, and Room fires the
-     * declared foreign-key cascades on the delete half — the second
-     * savePaper/category-ensure call erased every category, question, option,
-     * answer key and card schedule under the paper, leaving an empty-looking
-     * shell. Latent today (`paper-<millis>` ids are fresh and there is no
-     * edit-paper flow), so this drives the STORES directly: seed everything,
-     * then write the same id again through savePaper and
-     * ensurePaperAndCategory, and every child must have survived — with the
-     * fix, the paper's EDITABLE columns take the second write's values.
+     * Writing a paper or CATEGORY whose id ALREADY exists must not rebuild
+     * the row with a DELETE: `INSERT OR REPLACE` is a delete-then-insert and
+     * Room fires the declared foreign-key cascades on the delete half. This
+     * test therefore drives BOTH halves of ensurePaperAndCategory, and both
+     * are LATENT today — the only caller is the unused
+     * McqRepository.ensurePaperAndCategory wrapper, nothing in main's UI
+     * reaches it — which is why the stores are driven DIRECTLY, as the
+     * report specified:
      *
-     * Room/SQLite — CI is the authority. Mutant: restore the
-     * `@Insert(REPLACE)` paper upsert — every child count below goes red
-     * (children erased by the cascade on the replace's delete half).
+     * - the paper half: the first write-back (savePaper) guards an already-
+     *   existing paper row (paper-<millis> ids are fresh and no edit-paper
+     *   flow exists);
+     * - the category half — proven by the SECOND ensure call: CategoryDao
+     *   kept a REPLACE upsert, so re-writing the existing category row
+     *   deleted it and the cascade took its questions, options, answer keys
+     *   and card schedules; a REPLACE also zeroed its sortOrder (part of
+     *   the same bug). The identity update deliberately excludes
+     *   parentId/sortOrder; the editor owns that ordering.
+     *
+     * Room/SQLite — CI is the authority. Mutant: restore the REPLACE
+     * upserts (paper or category, either alone) — the child counts below
+     * go red: the paper mutant erases everything under p1, the category
+     * mutant erases the questions under c1 (and the cards with them).
      */
     @Test
     fun resavingAPaperNeverErasesItsChildren() = runBlocking {
@@ -311,9 +320,13 @@ class DeletePaperCascadeTest {
         val questionsBefore = db.questionDao().countByPaper("p1")
         val cardsBefore = db.cardStateDao().countByPaper("p1")
         val attemptsBefore = db.attemptDao().countByPaper("p1")
+        val sortOrderBefore = db.categoryDao().getById("c1")?.sortOrder
         assertTrue(categoriesBefore > 0 && questionsBefore > 0 && cardsBefore > 0)
 
-        // The same id, written again through the store APIs.
+        // The same pair of ids, written again through the store APIs: the
+        // savePaper round covers the paper row, and the ensurePaperAndCategory
+        // call BELOW is what exercises the category row (the same ids as the
+        // seed, so its REPLACE history would delete the row in place).
         repository.savePaper(
             com.mcqapp.domain.Paper(
                 id = "p1",
@@ -325,6 +338,10 @@ class DeletePaperCascadeTest {
         repository.ensurePaperAndCategory("p1", "Paper re-ensured", "c1", "Cat")
 
         assertEquals("the category survived the re-save", categoriesBefore, db.categoryDao().getByPaper("p1").size)
+        assertEquals(
+            "the re-ensure kept the row the editor ordered",
+            sortOrderBefore, db.categoryDao().getById("c1")?.sortOrder
+        )
         assertEquals("the questions survived the re-save", questionsBefore, db.questionDao().countByPaper("p1"))
         assertEquals("the card schedules survived the re-save", cardsBefore, db.cardStateDao().countByPaper("p1"))
         assertEquals("the attempt history survived the re-save", attemptsBefore, db.attemptDao().countByPaper("p1"))

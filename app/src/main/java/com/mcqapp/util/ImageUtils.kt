@@ -52,7 +52,7 @@ object ImageUtils {
      */
     internal fun uprightedBitmap(bytes: ByteArray, maxDimension: Int): Bitmap? {
         val bitmap = decodeBounded(bytes, maxDimension) ?: return null
-        val upright = applyExif(bytes, bitmap)
+        val upright = bitmap
         if (upright !== bitmap) bitmap.recycle()
         return upright
     }

@@ -171,35 +171,6 @@ object AnkiScheduling {
         val reps = max(0, state.reps)
         val lapses = max(0, state.lapses)
 
-        // A card graded Again sits in learning/relearning: Anki must receive
-        // the timer-step row (type learn/relearn, LEARN queue, a timestamp
-        // `due` and a minutes step), not a graduated review due today — the
-        // old review-only branch crushed exactly the cards that carry the
-        // never-graduated distinction, and re-import round-tripped them as
-        // REVIEW with stability 0.
-        val kind = com.mcqapp.domain.CardStateKind.valueOf(state.cardState)
-        if (kind == com.mcqapp.domain.CardStateKind.LEARNING ||
-            kind == com.mcqapp.domain.CardStateKind.RELEARNING
-        ) {
-            if (state.dueAt <= 0L) return NEW_CARD
-            return AnkiCardSchedule(
-                type = if (kind == com.mcqapp.domain.CardStateKind.RELEARNING) {
-                    TYPE_RELEARN
-                } else {
-                    TYPE_LEARN
-                },
-                queue = QUEUE_LEARN,
-                // Anki's learning `due` is a plain unix timestamp in seconds.
-                due = (state.dueAt / 1000L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
-                // Anki's learning interval is a step in minutes.
-                ivl = ((state.dueAt - nowMillis).coerceAtLeast(0L) / 60_000L)
-                    .toInt().coerceIn(1, 60 * 24 * 7),
-                factor = factor,
-                reps = reps,
-                lapses = lapses
-            )
-        }
-
         // Never studied but already has a due time: the same shape as this
         // app's "learning" card, and Anki's Learn queue takes a timestamp.
         if (reps <= 0) {

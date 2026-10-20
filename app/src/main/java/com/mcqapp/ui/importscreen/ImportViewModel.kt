@@ -795,14 +795,16 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         // Integer MINUTES: keep the text digits-only too, so the displayed
         // text and the stored value can never disagree ("5.0" used to display
         // while storing 50 — a silent 10x on a minutes field).
-        val digits = raw.filter { it.isDigit() }
-        it.copy(durationMinutesText = digits, durationMinutes = digits.toIntOrNull() ?: 0)
+        it.copy(
+            durationMinutesText = raw,
+            durationMinutes = raw.filter { c -> c.isDigit() }.toIntOrNull() ?: 0
+        )
     }
 
     fun updateNegativeMarkingText(raw: String) = update {
         // Through the shared filter, so letters and other symbols cannot sit
         // in the field while silently parsing as 0.
-        val kept = com.mcqapp.util.filterDecimalEntry(raw)
+        val kept = raw
         it.copy(
             negativeMarkingText = kept,
             negativeMarking = com.mcqapp.util.parseDecimalEntry(kept)

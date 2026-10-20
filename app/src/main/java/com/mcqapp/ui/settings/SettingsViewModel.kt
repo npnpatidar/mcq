@@ -295,7 +295,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
         open: () -> OutputStream? = { getApplication<Application>().contentResolver.openOutputStream(uri) }
     ) {
-        withContext(dispatcher) {
+        run {
             try {
                 // Streamed: the whole bank never lives in memory as a String.
                 val outputStream = open()

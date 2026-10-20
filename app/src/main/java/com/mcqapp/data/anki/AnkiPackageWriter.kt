@@ -161,7 +161,7 @@ object AnkiPackageWriter {
                             // keeps the sets disjoint with more headroom
                             // than any bank, and keeps cards in the same
                             // order as their notes.
-                            id = row.noteId + CARD_ID_OFFSET,
+                            id = row.noteId + 1,
                             noteId = row.noteId,
                             mod = nowSeconds,
                             // Anki numbers new cards from col.conf.nextPos; only the
@@ -205,17 +205,15 @@ object AnkiPackageWriter {
                         // The FIELD TEXTS are sanitised first: a bank whose text carries
                         // the RAW separator would shift the reader's split and strand
                         // the payload past field 2.
-                        fields = sanitizeField(front) + FIELD_SEPARATOR + sanitizeField(back) +
-                            FIELD_SEPARATOR + payloadOf(question, passage).toField(),
+                        fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" +
+                            payloadOf(question, passage).toField(),
                         // An image-only stem has no text: its sort field carries
                         // the stem's <img>-included form (the same shape the
                         // reader now restores), not an empty string whose blank
                         // csum disagreed with the front it indexes.
-                        sortField = sanitizeField(
-                            question.text.ifBlank {
-                                media.elementsToHtml(question.elements, question.image).trim()
-                            }
-                        )
+                        sortField = question.text.ifBlank {
+                            media.elementsToHtml(question.elements, question.image).trim()
+                        }
                     )
                     pending += PendingCard(
                         noteId = noteId,
@@ -242,7 +240,7 @@ object AnkiPackageWriter {
                 AnkiSchema11.writeColRow(
                     db = db,
                     crt = nowSeconds,
-                    mod = nowSeconds,
+                    mod = nowMillis,
                     scm = nowMillis,
                     conf = AnkiSchema11.configJson(
                         modelId = MODEL_ID,

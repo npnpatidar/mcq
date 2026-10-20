@@ -552,8 +552,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private suspend fun categoryRowIdCsv(scope: BrowseScope): String {
         val ids = scope.categoryFilterIds ?: return ","
         if (ids.isEmpty()) return ","
-        val rowIds = ids.chunked(900).flatMap { chunk -> db.categoryDao().rowIdsByIds(chunk) }
-        return rowIds.distinct().joinToString(separator = ",", prefix = ",", postfix = ",")
+        return ids.joinToString(separator = ",", prefix = ",", postfix = ",")
     }
 
     /**
@@ -705,7 +704,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     suspend fun getBookmarkedQuestions(): List<com.mcqapp.domain.BookmarkedQuestion> =
         historyStore.getBookmarkedQuestions()
-    fun bookmarkedPagingSource(): androidx.paging.PagingSource<com.mcqapp.data.repository.BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion> =
+    fun bookmarkedPagingSource(): androidx.paging.PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion> =
         historyStore.bookmarkedPagingSource()
     suspend fun saveAttempt(
         paperId: String,

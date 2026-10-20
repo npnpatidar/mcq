@@ -318,10 +318,6 @@ internal class QuestionStore(
             db.questionDao().deleteById(questionId)
             db.cardStateDao().deleteByQuestion(questionId)
             db.reviewLogDao().deleteByQuestion(questionId)
-            // question_stats has no FK to questions, so without this the
-            // lifetime aggregate outlives the question and History's
-            // "Hardest questions" keeps listing it forever.
-            db.questionStatsDao().deleteByQuestion(questionId)
             // No FK on bookmarks: backup restores tolerate dangling bookmark ids,
             // so stale ones are removed here instead of by cascade.
             db.bookmarkDao().remove(questionId)
@@ -335,7 +331,6 @@ internal class QuestionStore(
             questionIds.forEach {
                 db.questionDao().deleteById(it)
                 db.cardStateDao().deleteByQuestion(it)
-                db.questionStatsDao().deleteByQuestion(it)
             }
             // The log has no FK to questions, so it is swept in the same bulk
             // form rather than per id — the log must not outlive its card.
@@ -432,7 +427,7 @@ internal class QuestionStore(
                 marks,
                 difficulty?.label,
                 tagsCsv,
-                tagsCsv?.lowercase()
+                tagsCsv
             )
             Logger.i("REPO", "bulkUpdateQuestions($count ids)")
         }

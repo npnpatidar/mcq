@@ -425,6 +425,79 @@ class StreamingImporterEquivalenceTest {
         assertEquals(99999L, streamingDb.cardStateDao().get("p1", "q1")!!.dueAt)
     }
 
+    /**
+     * The import tail folds a passage's strays — members the file scattered
+     * across other categories — into the passage's own category, appended
+     * after it in member order. The fold only reads each member's id and
+     * category, so it went over to an (id, categoryId) projection instead of
+     * materialising every member's full row; this pins the fold's whole
+     * observable outcome — which strays folded, in what order, with what
+     * sortOrder — identically through both importers. What the projection
+     * saves (the heap of the full rows) is not observable in a unit test;
+     * the memory argument is structural, and the audit mutant is the
+     * projection's absence, under which this suite stays green.
+     */
+    @Test
+    fun passageStraysFoldInTheSameOrderThroughBothImporters() = runBlocking {
+        // qb2 is written before qb1 on purpose: within their own category
+        // the members must be folded in stored sortOrder order, not file order.
+        val bank = """
+            {
+              "papers": [
+                {
+                  "id": "p1", "title": "Paper", "categories": [
+                    {"id": "a", "title": "A", "questions": [
+                      {"id": "qa", "text": "Member in the passage category",
+                       "options": ["x", "y"], "correctOptionIds": ["x"],
+                       "passageId": "ps"}
+                    ]},
+                    {"id": "b", "title": "B", "questions": [
+                      {"id": "qb2", "text": "Stray two",
+                       "options": ["x", "y"], "correctOptionIds": ["y"],
+                       "passageId": "ps"},
+                      {"id": "qb1", "text": "Stray one",
+                       "options": ["x", "y"], "correctOptionIds": ["x"],
+                       "passageId": "ps"}
+                    ]},
+                    {"id": "c", "title": "C", "questions": [
+                      {"id": "qc", "text": "Stray from another category",
+                       "options": ["x", "y"], "correctOptionIds": ["y"],
+                       "passageId": "ps"}
+                    ]}
+                  ]
+                }
+              ],
+              "passages": [
+                {"id": "ps", "title": "Passage", "text": "Shared context."}
+              ]
+            }
+        """.trimIndent()
+        wholeFileImport(wholeFileDb, bank)
+        streamingImport(streamingDb, bank)
+        assertSameState()
+        for (db in listOf(wholeFileDb, streamingDb)) {
+            val byId = db.query(
+                "SELECT id, sortOrder, categoryId FROM questions WHERE passageId = 'ps'",
+                null
+            ).use { c ->
+                buildMap {
+                    while (c.moveToNext()) put(c.getString(0), c.getInt(1) to c.getString(2))
+                }
+            }
+            assertEquals(
+                "every member folds into the passage category, strays appended " +
+                    "after it in member order",
+                mapOf(
+                    "qa" to (0 to "a"),
+                    "qb1" to (1 to "a"),
+                    "qb2" to (2 to "a"),
+                    "qc" to (3 to "a")
+                ),
+                byId
+            )
+        }
+    }
+
     @Test
     fun progressIsMonotonicAndEndsAtTheTotal() = runBlocking {
         val n = 7

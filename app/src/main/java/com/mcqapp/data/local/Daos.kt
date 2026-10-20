@@ -1027,6 +1027,20 @@ interface QuestionDao {
     )
     suspend fun getMembersByPassage(passageId: String): List<QuestionEntity>
 
+    /**
+     * What the import tail's stray fold actually reads: the members sorted
+     * in exactly [getMembersByPassage]'s order, reduced to id + category.
+     * The fold only compares each member's category and moves the strays'
+     * ids, so loading every member's full row (stem, options JSON,
+     * explanation) materialised a shared-context passage's whole membership
+     * for nothing — tens of thousands of full rows per passage on big banks.
+     */
+    @Query(
+        "SELECT id, categoryId FROM questions WHERE passageId = :passageId " +
+            "ORDER BY categoryId, sortOrder, rowid"
+    )
+    suspend fun getMemberCategoriesByPassage(passageId: String): List<QuestionCategoryRow>
+
     @Query("SELECT * FROM questions WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<QuestionEntity>
 

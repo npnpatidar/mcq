@@ -466,7 +466,7 @@ class Importer(
                 // contiguous run.
                 for (passageId in paperPassageIds) {
                     val passage = db.passageDao().getById(passageId) ?: continue
-                    val strays = db.questionDao().getMembersByPassage(passageId)
+                    val strays = db.questionDao().getMemberCategoriesByPassage(passageId)
                         .filter { it.categoryId != passage.categoryId }
                     if (strays.isEmpty()) continue
                     Logger.i("IMPORT", "Folding ${strays.size} passage member(s) of " +

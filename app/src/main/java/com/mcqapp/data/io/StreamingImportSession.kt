@@ -597,7 +597,7 @@ internal class StreamingImportSession(
         for (passageIds in byPaper.values) {
             for (passageId in passageIds) {
                 val passage = db.passageDao().getById(passageId) ?: continue
-                val strays = db.questionDao().getMembersByPassage(passageId)
+                val strays = db.questionDao().getMemberCategoriesByPassage(passageId)
                     .filter { it.categoryId != passage.categoryId }
                 if (strays.isEmpty()) continue
                 Logger.i("STREAMIMPORT", "Folding ${strays.size} passage member(s) of " +

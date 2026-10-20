@@ -103,6 +103,15 @@ data class ImportUiState(
     val paperDescription: String = "",
     val durationMinutes: Int = 0,
     val negativeMarking: Double = 0.0,
+    /**
+     * The numeric fields' TYPED text, owned here so the composables render
+     * it verbatim. The old value-clause (`if (x == 0) ""`) re-rendered every
+     * keystroke's parse, so typing "0" blanked the field and "0.5" was
+     * un-typeable; the raw text survives until the next parse produces a
+     * different zero-free value or a fresh file load.
+     */
+    val durationMinutesText: String = "",
+    val negativeMarkingText: String = "",
     val categoryName: String = "Uncategorized",
     /** Existing library paper titles, for the title field's suggestions. */
     val paperTitleSuggestions: List<String> = emptyList(),
@@ -361,6 +370,14 @@ internal fun buildImportFile(
     )
 }
 
+/**
+ * The display text for a numeric value the state learned from OUTSIDE the
+ * field (a file load): zero reads as the empty field it always did.
+ */
+internal fun numericTextFor(value: Double): String = if (value == 0.0) "" else value.toString()
+
+internal fun numericTextFor(value: Int): String = if (value == 0) "" else value.toString()
+
 class ImportViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -609,7 +626,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             paperTitle = header.title,
             paperDescription = header.description,
             durationMinutes = header.durationMinutes,
+            durationMinutesText = numericTextFor(header.durationMinutes),
             negativeMarking = header.negativeMarking,
+            negativeMarkingText = numericTextFor(header.negativeMarking),
             categoryName = preview.effectiveCategoryTitle,
             questions = sampleQuestions,
             parseWarnings = listOfNotNull(interruptedNotice) + preview.warnings + backupNotice,
@@ -742,7 +761,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             paperTitle = titleOverride ?: paper.title,
             paperDescription = paper.description,
             durationMinutes = paper.durationMinutes,
+            durationMinutesText = numericTextFor(paper.durationMinutes),
             negativeMarking = paper.negativeMarking,
+            negativeMarkingText = numericTextFor(paper.negativeMarking),
             categoryName = effectiveCategory,
             questions = allQuestions,
             parseWarnings = extraWarnings + backupNotice + file.warnings,
@@ -772,6 +793,28 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     fun updatePaperDescription(value: String) = update { it.copy(paperDescription = value) }
     fun updateDuration(value: Int) = update { it.copy(durationMinutes = value) }
     fun updateNegativeMarking(value: Double) = update { it.copy(negativeMarking = value) }
+
+    /**
+     * The numeric fields' text is owned by these two: the TYPED text is kept
+     * verbatim (so a first keystroke "0" survives instead of being
+     * canonicalised back to ""), and the value derives from the shared
+     * comma-folding parse — a comma-locale decimal key enters `0,5` and it
+     * lands as 0.5 with the field untouched. A caller that sets the value
+     * directly must keep the text twins in step with it.
+     */
+    fun updateDurationText(raw: String) = update {
+        it.copy(
+            durationMinutesText = raw,
+            durationMinutes = raw.filter { c -> c.isDigit() }.toIntOrNull() ?: 0
+        )
+    }
+
+    fun updateNegativeMarkingText(raw: String) = update {
+        it.copy(
+            negativeMarkingText = raw,
+            negativeMarking = com.mcqapp.util.parseDecimalEntry(raw)
+        )
+    }
     fun updateCategoryName(value: String) = update { it.copy(categoryName = value) }
 
     fun deleteQuestion(questionId: String) = update {

@@ -268,18 +268,18 @@ fun ImportScreen(
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
-                            value = if (state.durationMinutes == 0) "" else state.durationMinutes.toString(),
-                            onValueChange = { input -> viewModel.updateDuration(input.filter { it.isDigit() }.toIntOrNull() ?: 0) },
+                            // The typed text lives in the state (durationMinutesText);
+                            // rendering from the parsed value blanked the field under
+                            // the first keystroke, so "0.5" was un-typeable.
+                            value = state.durationMinutesText,
+                            onValueChange = viewModel::updateDurationText,
                             label = { Text(stringResource(R.string.duration_min)) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
-                            value = if (state.negativeMarking == 0.0) "" else state.negativeMarking.toString(),
-                            onValueChange = { input ->
-                                val filtered = input.filter { it.isDigit() || it == '.' }
-                                viewModel.updateNegativeMarking(filtered.toDoubleOrNull() ?: 0.0)
-                            },
+                            value = state.negativeMarkingText,
+                            onValueChange = viewModel::updateNegativeMarkingText,
                             label = { Text(stringResource(R.string.negative_marking)) },
                             singleLine = true,
                             modifier = Modifier.weight(1f)

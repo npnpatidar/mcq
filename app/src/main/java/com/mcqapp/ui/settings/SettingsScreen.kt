@@ -929,9 +929,11 @@ private fun AnkiNumberRow(
         OutlinedTextField(
             value = text,
             onValueChange = { input ->
-                // Allow digits, one dot, and a leading minus so a negative entry
-                // can be typed and rejected rather than silently swallowed.
-                val filtered = input.filter { it.isDigit() || it == '.' || (it == '-' && input.indexOf('-') == 0) }
+                // One shared numeric-entry pipeline: comma-locale keyboards type
+                // ',' for the decimal key, so that folds to '.' before filtering
+                // (sealed by util/NumericInput.kt, shared with the library and
+                // import screens).
+                val filtered = com.mcqapp.util.filterDecimalEntry(input, allowLeadingMinus = true)
                 text = filtered
                 val candidate = filtered.trim().toDoubleOrNull()
                 if (candidate != null && candidate >= range.start && candidate <= range.endInclusive) {

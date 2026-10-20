@@ -661,11 +661,6 @@ class StudyViewModel(
                 // fresh pass, and the world has moved on — cards graded
                 // during the first pass carry new schedules, a card that
                 // lapsed since (here or from another session) has joined the
-                // drill, and one since cured or reset by a question edit has
-                // left it. The main session pulls live and needs no re-pull.
-                if (leechesOnly) {
-                    drillCards = repository.getStudyQueue(paperId, leechesOnly = true)
-                }
                 drillIndex = 0
                 _state.update {
                     it.copy(

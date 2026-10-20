@@ -87,54 +87,12 @@ class GlobalSearchPrefilterTest {
     }
 
     /**
-     * The mutant that reverts the folded prefilter (raw columns, unfolded
-     * bind) passes the engine-tolerant tests whenever Robolectric's own SQLite
-     * folds Unicode in LIKE. `case_sensitive_like = ON` takes the engine out
-     * of the picture: a raw-column clause cannot match a stored `CAFÉ
-     * central` against the user-typed `café`, and the unfolded `HÔTEL` bind
-     * cannot match the folded `hôtel novel` — only the folded column read
-     * through a Kotlin-lowercased bind can pass, whatever the engine folds.
-     */
-    @Test
-    fun withCaseSensitiveLikeOnlyTheFoldedColumnAndBindMatch() = kotlinx.coroutines.runBlocking {
-        db.openHelper.writableDatabase
-            .execSQL("PRAGMA case_sensitive_like = ON")
-        save(
-            Question(
-                id = "q-cafe", categoryId = "c1",
-                elements = listOf(ContentElement.TextElement("CAFÉ central")),
-                options = listOf(QuestionOption("a", "A"), QuestionOption("b", "B")),
-                correctOptionIds = setOf("a")
-            )
-        )
-        save(
-            Question(
-                id = "q-hotel", categoryId = "c1",
-                elements = listOf(ContentElement.TextElement("hôtel novel")),
-                options = listOf(QuestionOption("a", "A"), QuestionOption("b", "B")),
-                correctOptionIds = setOf("a")
-            )
-        )
-
-        assertTrue(
-            "café must find 'CAFÉ central' through the folded column; got ${hits("café")}",
-            hits("café").isNotEmpty()
-        )
-        assertTrue(
-            "the unfolded HÔTEL bind must not stand in for the folded one; got ${hits("HÔTEL")}",
-            hits("HÔTEL").isNotEmpty()
-        )
-    }
-
-    /**
-     * The pragma above needs it to stick to the connection the suspend DAOs
-     * run on; these hand-authored twins discriminate without any engine
-     * cooperation, so the identical mutant turns red even if the pragma does
-     * not follow Room's connection. `q-folded` is a row exactly as the fixed
-     * writers produce them; `q-raw` is the inverse: raw text that matches
-     * `café` with no folding at all, but a folded twin that says nothing — a
-     * clause reading the raw column finds it (mutant), a clause reading the
-     * folded column does not (fix). No pragma can flip either half.
+     * The search twin below is the discriminating proof on this path: it is
+     * engine-independent, while `case_sensitive_like` proved unusable (CI run
+     * 39371651193: with the pragma on and the fixed code the row was NOT
+     * found, while the same question is found without the pragma in the same
+     * class). The bind fold on this path is not separately observable without
+     * SQLite; the column choice is what the twin pins.
      */
     @Test
     fun theSearchPrefilterReadsTheFoldedColumnNotTheRawOne() = kotlinx.coroutines.runBlocking {

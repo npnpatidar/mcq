@@ -76,8 +76,18 @@ object ImageDownscale {
             val (tw, th) = targetSize(bounds.outWidth, bounds.outHeight, maxDimension)
             if (tw == bounds.outWidth && th == bounds.outHeight) return src
             val original = decodeBounded(bytes, maxDimension) ?: return src
-            val scaled = Bitmap.createScaledBitmap(original, tw, th, true)
-            original.recycle()
+            // createScaledBitmap returns the SOURCE itself when the target
+            // matches it and the source is immutable (the AOSP fast path),
+            // and a subsampled decode of a source whose long edge is an
+            // exact multiple of the limit lands exactly on the target.
+            // Recycling the source then would recycle the bitmap that is
+            // about to be compressed — the compress would throw, and the
+            // oversized source would be passed through untouched.
+            val scaled = if (tw == original.width && th == original.height) {
+                original
+            } else {
+                Bitmap.createScaledBitmap(original, tw, th, true).also { original.recycle() }
+            }
             val keepPng = mime == "image/png"
             val out = ByteArrayOutputStream()
             val ok = scaled.compress(

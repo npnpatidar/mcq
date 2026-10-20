@@ -152,4 +152,98 @@ class AnkiRoundTripTest {
             file.delete()
         }
     }
+
+    /**
+     * A stem that is only a picture exists fine in Anki (field-0 is nothing
+     * but the `<img>`); the reader used to blank-strip it to "" and return
+     * null, so the note VANISHED from the deck with no counter and no warning,
+     * and the writer's sfld/csum disagreed with the front it indexed. The
+     * reader keeps the note — the image travels as `question.image` — and the
+     * writer's sfld carries the stem's img form. The completely-empty stem
+     * (neither text nor image) is still dropped, now counted and warned.
+     */
+    @Test
+    fun anImageOnlyStemIsNotVanishedOnRoundTrip() {
+        val imgSrc = "data:image/png;base64,iVBORw0KGgo="
+        val paper = PaperDto(
+            id = "p1",
+            title = "Diagrams",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Figures",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "",
+                            image = imgSrc,
+                            options = listOf(OptionDto("a", "Yes"), OptionDto("b", "No")),
+                            correctOptionIds = listOf("a"),
+                            explanation = "The diagram shows it."
+                        )
+                    )
+                )
+            )
+        )
+        val apkg = apkgOf(paper)
+        val read = AnkiPackageReader.read(apkg)
+        val q = read.file.papers.single().categories.single().questions.single()
+        assertEquals("", q.text)
+        assertEquals(imgSrc, q.image)
+        // The card front keeps the picture for Anki's own display/template.
+        val front = collectionFields(apkg).single().substringBefore("\u001f")
+        assertTrue("front must carry the <img>", front.contains("<img"))
+
+        // The sort field is the stem's img-included form, not "" (whose blank
+        // csum disagreed with the front it indexed for the same shape).
+        val sfld = collectionSortFields(apkg).single()
+        assertTrue("sfld must name the image, got \"$sfld\"", sfld.contains("<img"))
+    }
+
+    @Test
+    fun aCompletelyEmptyNoteIsStillDropped() {
+        // text, image, options, explanation all empty: the front field arrives
+        // empty and there is no image to restore — a note with nothing on it is
+        // dropped (with the count/warning in the log), never a half-broken
+        // question.
+        val paper = PaperDto(
+            id = "p1",
+            title = "Empty",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Uh",
+                    questions = listOf(
+                        QuestionDto(id = "q-blank", text = "", options = emptyList())
+                    )
+                )
+            )
+        )
+        val read = AnkiPackageReader.read(apkgOf(paper))
+        assertTrue(read.file.papers.all { it.categories.all { c -> c.questions.isEmpty() } } ||
+            read.file.papers.isEmpty())
+        assertTrue("no question may survive a fully empty note",
+            read.file.papers.flatMap { it.categories.flatMap { c -> c.questions } }.isEmpty())
+    }
+
+    private fun collectionSortFields(apkg: ByteArray): List<String> {
+        val collection = ZipInputStream(apkg.inputStream()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null && entry.name != "collection.anki2") entry = zip.nextEntry
+            entry?.let { zip.readBytes() } ?: throw AssertionError("no collection.anki2")
+        }
+        val file = File.createTempFile("apkg-roundtrip-sfld", ".anki2")
+        file.writeBytes(collection)
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            val fields = mutableListOf<String>()
+            db.rawQuery("select sfld from notes order by id", null).use { c ->
+                while (c.moveToNext()) fields += c.getString(0)
+            }
+            return fields
+        } finally {
+            db.close()
+            file.delete()
+        }
+    }
 }

@@ -819,6 +819,9 @@ object AnkiPackageReader {
     /** A question plus whether it had to be reduced to a single option. */
     private data class ParsedQuestion(val question: QuestionDto, val isRecall: Boolean)
 
+    /** Notes whose entire stem is empty (neither text nor image), for the log. */
+    private var droppedEmptyStems = 0
+
     private fun toQuestion(
         note: AnkiNote,
         notetype: AnkiNotetype?,
@@ -836,7 +839,19 @@ object AnkiPackageReader {
 
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
         val front = fieldToText(frontHtml, media)
-        if (front.first.isBlank()) return null
+        if (front.first.isBlank() && front.second == null) {
+            droppedEmptyStems++
+            Logger.w(
+                "IMPORT",
+                "Dropped a note with a completely empty stem (no text, no image): " +
+                    "${note.guid.ifBlank { note.id }} — dropped #$droppedEmptyStems"
+            )
+            return null
+        }
+        // A blank stem that still has an <img> is a picture question: the
+        // paths below keep it — the image travels as question content (or,
+        // for our own cards, the payload's elements) — instead of vanishing
+        // the note from the deck.
 
         val backHtml = note.fields.getOrNull(1).orEmpty()
         if (payload != null) {

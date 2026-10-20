@@ -178,7 +178,13 @@ object AnkiPackageWriter {
                         // the unit separator; the template only renders the first two.
                         fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" +
                             payloadOf(question, passage).toField(),
-                        sortField = question.text
+                        // An image-only stem has no text: its sort field carries
+                        // the stem's <img>-included form (the same shape the
+                        // reader now restores), not an empty string whose blank
+                        // csum disagreed with the front it indexes.
+                        sortField = question.text.ifBlank {
+                            media.elementsToHtml(question.elements, question.image).trim()
+                        }
                     )
                     pending += PendingCard(
                         noteId = noteId,

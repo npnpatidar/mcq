@@ -580,17 +580,22 @@ class BrowseViewModel(
                 val selected = repository.getQuestionsByIds(questionIds.toList())
                     .sortedBy { q -> questionIds.indexOf(q.id) }
                 if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
+                // The passages the selection's member questions reference,
+                // resolved the same way a paper export's are.
+                val exporter = com.mcqapp.data.export.PaperExporter(repository.db())
                 val dto = com.mcqapp.data.io.SelectionExport.paperDto(
                     title = title,
                     questions = selected,
-                    categoryTitleById = categoryTitles()
+                    categoryTitleById = categoryTitles(),
+                    passages = exporter.passagesOfIds(
+                        selected.mapNotNull { it.passageId }.distinct()
+                    )
                 )
                 val file = (
                     getApplication<Application>().contentResolver.openOutputStream(uri)
                         ?: throw IllegalStateException("Could not open output stream")
                     ).use { sink ->
-                    com.mcqapp.data.export.PaperExporter(repository.db())
-                        .exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                    exporter.exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
                 }
                 Logger.i("BROWSEVM", "Exported ${selected.size} questions as ${file.fileName}")
                 _exportError.value = null

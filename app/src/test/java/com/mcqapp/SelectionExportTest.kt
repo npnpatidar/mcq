@@ -61,7 +61,8 @@ class SelectionExportTest {
                 question("q2", "cat-science"),
                 question("q3", "cat-history")
             ),
-            categoryTitleById = mapOf("cat-science" to "Science", "cat-history" to "History")
+            categoryTitleById = mapOf("cat-science" to "Science", "cat-history" to "History"),
+            passages = emptyList()
         )
         assertEquals(listOf("History", "Science"), dto.categories.map { it.title })
         assertEquals(2, dto.categories.first { it.title == "Science" }.questions.size)
@@ -74,7 +75,8 @@ class SelectionExportTest {
         val dto = SelectionExport.paperDto(
             title = "Demo",
             questions = listOf(question("q1", "cat-gone")),
-            categoryTitleById = emptyMap()
+            categoryTitleById = emptyMap(),
+            passages = emptyList()
         )
         assertEquals(SelectionExport.FALLBACK_CATEGORY, dto.categories.single().title)
         assertEquals(1, dto.categories.single().questions.size)
@@ -97,7 +99,8 @@ class SelectionExportTest {
         val physicsOnly = SelectionExport.paperDto(
             title = "Sel 1",
             questions = listOf(question("q1", "cat-physics")),
-            categoryTitleById = mapOf("cat-physics" to "Physics")
+            categoryTitleById = mapOf("cat-physics" to "Physics"),
+            passages = emptyList()
         )
         val physicsId = physicsOnly.categories.single().id
         assertTrue("the id names the exported selection", physicsId.startsWith("selection-"))
@@ -105,7 +108,8 @@ class SelectionExportTest {
         val chemistryAndPhysics = SelectionExport.paperDto(
             title = "Sel 2",
             questions = listOf(question("q1", "cat-physics"), question("q2", "cat-chem")),
-            categoryTitleById = mapOf("cat-physics" to "Physics", "cat-chem" to "Chemistry")
+            categoryTitleById = mapOf("cat-physics" to "Physics", "cat-chem" to "Chemistry"),
+            passages = emptyList()
         )
         val physicsAgain = chemistryAndPhysics.categories.single { it.title == "Physics" }.id
         val chemistry = chemistryAndPhysics.categories.single { it.title == "Chemistry" }.id
@@ -137,7 +141,8 @@ class SelectionExportTest {
         val dto = SelectionExport.paperDto(
             title = "Demo",
             questions = listOf(question("q1", "cat", formula = "<math><mi>x</mi></math>")),
-            categoryTitleById = mapOf("cat" to "Cat")
+            categoryTitleById = mapOf("cat" to "Cat"),
+            passages = emptyList()
         )
         val option = dto.categories.single().questions.single().options.first { it.id == "a" }
         assertEquals(1, option.elements.size)
@@ -154,7 +159,8 @@ class SelectionExportTest {
             questions = listOf(
                 question("q1", "cat", image = "data:image/png;base64,AAAA")
             ),
-            categoryTitleById = mapOf("cat" to "Cat")
+            categoryTitleById = mapOf("cat" to "Cat"),
+            passages = emptyList()
         )
         val copied = dto.categories.single().questions.single()
         assertEquals("q1", copied.id)
@@ -163,5 +169,35 @@ class SelectionExportTest {
         assertEquals(2.0, copied.marks, 0.0001)
         assertEquals(listOf("tag"), copied.tags)
         assertEquals("data:image/png;base64,AAAA", copied.options.first { it.id == "b" }.image)
+    }
+
+    @Test
+    fun passageMembersKeepTheirSharedContext() {
+        // A selection that includes a passage-member question must carry the
+        // passage itself: the caller resolves exactly the referenced ids
+        // (Exporter.passagesOfIds), and the DTO keeps them alongside the
+        // Questions, whose own passageId survives — so every writer can place
+        // the shared context above the member instead of dropping ("as per
+        // the passage above…" unreadable) or misattributing it.
+        val dto = SelectionExport.paperDto(
+            title = "Sel",
+            questions = listOf(
+                question("q1", "cat").copy(passageId = "pass-1")
+            ),
+            categoryTitleById = mapOf("cat" to "Cat"),
+            passages = listOf(
+                com.mcqapp.data.io.PassageDto(
+                    id = "pass-1",
+                    title = "Waves",
+                    elements = listOf(ContentElement.TextElement("wave body"))
+                )
+            )
+        )
+        assertEquals("pass-1", dto.passages.single().id)
+        assertEquals("Waves", dto.passages.single().title)
+        val element = dto.passages.single().elements.single()
+        assertTrue("the body is content, not a dropped block",
+            element is ContentElement.TextElement && element.text == "wave body")
+        assertEquals("pass-1", dto.categories.single().questions.single().passageId)
     }
 }

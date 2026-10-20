@@ -298,6 +298,19 @@ interface QuestionDao {
     suspend fun countBookmarkedQuestions(): Int
 
     /**
+     * Which passages the bookmarked questions are members of — the export
+     * walks bookmark pages but a passage-member question's text ("as per the
+     * passage above…") is unreadable without its passage, so the bookmark
+     * stream loads these the same way a paper export loads its categories'.
+     */
+    @Query(
+        "SELECT DISTINCT questions.passageId FROM questions " +
+            "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
+            "WHERE questions.passageId IS NOT NULL"
+    )
+    suspend fun getPassageIdsOfBookmarkedQuestions(): List<String>
+
+    /**
      * One keyset page of a title group's bookmarked questions, most recently
      * bookmarked first. [afterQuestionId] is null for the first page; the
      * `(createdAt, questionId)` key is then passed back for the next one, so a

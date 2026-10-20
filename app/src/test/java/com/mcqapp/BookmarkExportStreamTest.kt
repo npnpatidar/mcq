@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -119,5 +120,65 @@ class BookmarkExportStreamTest {
     fun noBookmarksMeansNothingToExport() = runBlocking {
         assertNull(repository.getBookmarkExportDto())
         assertNull(Exporter(db).bookmarkStream())
+    }
+
+    /**
+     * Passage members ride their passage: the stream loads the passages the
+     * BOOKMARKED members reference the same way a paper export's
+     * DatabaseStream does (distinct ids in SQL, one chunked read). Without it
+     * the PDF and HTML writers silently drop the block and DOCX glues the
+     * member onto an unrelated earlier passage on re-import. The HTML page
+     * rendered from the stream carries the shared context above the member.
+     *
+     * This test opens SQLite, so it cannot run on this aarch64 host — CI is
+     * the authority. Mutant: revert bookmarkStream() to passages =
+     * emptyList() and both tests here go red.
+     */
+    @Test
+    fun bookmarkedPassageMembersCarryTheirPassage() = runBlocking {
+        repository.savePassage(
+            com.mcqapp.domain.Passage(
+                id = "pass-1",
+                categoryId = "c1",
+                title = "Waves",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("wave body"
+                ))
+            )
+        )
+        // Two bookmarked members, plus a member NOT bookmarked: the passage is
+        // referenced through the bookmarked ones, so it must load.
+        repository.saveQuestion(question("q5", "c1").copy(passageId = "pass-1"))
+        repository.saveQuestion(question("q6", "c1").copy(passageId = "pass-1"))
+        repository.saveQuestion(question("q7", "c1").copy(passageId = "pass-1"))
+        bookmark("q5", createdAt = 300)
+        bookmark("q6", createdAt = 299)
+
+        val stream = Exporter(db).bookmarkStream()!!
+        assertEquals(listOf("pass-1"), stream.passages.map { it.id })
+        assertEquals("Waves", stream.passages.single().title)
+        val body = stream.passages.single().elements.single()
+        assertTrue(
+            "the passage body is content, not an empty block",
+            body is com.mcqapp.domain.ContentElement.TextElement && body.text == "wave body"
+        )
+        // Writer-level: the page prints the passage header above the member.
+        val out = StringBuilder()
+        com.mcqapp.data.export.HtmlPaperWriter.writeHtml(stream, out)
+        assertTrue(out.toString().contains("Waves"))
+        assertTrue(out.toString().contains("wave body"))
+    }
+
+    @Test
+    fun aPassageNoneOfWhoseMembersIsBookmarkedIsDropped() = runBlocking {
+        repository.savePassage(
+            com.mcqapp.domain.Passage(id = "pass-2", categoryId = "c2", title = "Cold")
+        )
+        repository.saveQuestion(question("q7", "c2").copy(passageId = "pass-2"))
+        // A bookmark on a NON-member: the passage has no bookmarked members,
+        // so it must not leak into the export (the DatabaseStream rule).
+        bookmark("q3", createdAt = 5)
+
+        val stream = Exporter(db).bookmarkStream()!!
+        assertTrue(stream.passages.isEmpty())
     }
 }

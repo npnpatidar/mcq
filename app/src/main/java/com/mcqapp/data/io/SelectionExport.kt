@@ -36,7 +36,8 @@ object SelectionExport {
     fun paperDto(
         title: String,
         questions: List<Question>,
-        categoryTitleById: Map<String, String>
+        categoryTitleById: Map<String, String>,
+        passages: List<PassageDto>
     ): PaperDto {
         val categories = questions
             .groupBy { categoryTitleById[it.categoryId] ?: FALLBACK_CATEGORY }
@@ -49,10 +50,17 @@ object SelectionExport {
                     questions = grouped.map { it.toQuestionDto() }
                 )
             }
+        // Passage members keep their shared context: without it the PDF and
+        // HTML writers drop the member block and DOCX glues it onto some
+        // unrelated earlier passage on re-import. The caller loads exactly the
+        // passages the selected questions reference (Exporter.passagesOfIds),
+        // so a member question can carry "as per the passage above…" and still
+        // read whole, and nothing outside the selection leaks in.
         return PaperDto(
             id = "paper-selection",
             title = title,
-            categories = categories
+            categories = categories,
+            passages = passages
         )
     }
 }

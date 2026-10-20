@@ -270,8 +270,26 @@ class Exporter(private val db: AppDatabase) {
     suspend fun bookmarkStream(): PaperStream? {
         val total = db.questionDao().countBookmarkedQuestions()
         if (total == 0) return null
-        return BookmarkStream(db.questionDao().getBookmarkedPaperTitles(), total)
+        // Passage-member questions ride their passage: without it the PDF and
+        // HTML writers drop the member block and DOCX glues it onto an
+        // unrelated earlier passage on re-import, so the referenced passages
+        // load exactly the way a paper export's do. One query for the ids
+        // (distinct in SQL), one chunked read back.
+        val passages = passagesOfIds(
+            db.questionDao().getPassageIdsOfBookmarkedQuestions()
+        )
+        return BookmarkStream(db.questionDao().getBookmarkedPaperTitles(), total, passages)
     }
+
+    /**
+     * The passages with the given ids, decoded once, for exports assembled
+     * outside [DatabaseStream] — the selection export sources its passages
+     * here. Callers pass the distinct member ids of the exact questions being
+     * exported, so a passage never leaks outside what the user selected.
+     */
+    suspend fun passagesOfIds(ids: List<String>): List<PassageDto> =
+        if (ids.isEmpty()) emptyList()
+        else db.passageDao().getByIdsChunked(ids).map { it.toPassageDto() }
 
     private suspend fun streamFor(
         paper: PaperEntity,
@@ -351,7 +369,8 @@ class Exporter(private val db: AppDatabase) {
      */
     private inner class BookmarkStream(
         private val titles: List<String>,
-        override val totalQuestions: Int
+        override val totalQuestions: Int,
+        override val passages: List<PassageDto>
     ) : PaperStream {
 
         override val id: String get() = BookmarkExport.PAPER_ID
@@ -363,7 +382,6 @@ class Exporter(private val db: AppDatabase) {
             get() = titles.mapIndexed { index, name ->
                 CategoryDto(id = "bookmarked-$index", title = name)
             }
-        override val passages: List<PassageDto> get() = emptyList()
         override val looseQuestions: List<QuestionDto> get() = emptyList()
 
         override suspend fun walk(

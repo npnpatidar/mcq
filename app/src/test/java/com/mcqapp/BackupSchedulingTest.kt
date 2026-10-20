@@ -219,7 +219,15 @@ class BackupSchedulingTest {
      *
      * This opens SQLite, so it cannot run on this aarch64 host — CI is the
      * authority. Mutant: apply the page at streaming time as before and the
-     * reversed-order half reports restoredSchedules 0 with no card state.
+     * control stays 1 (its questions are already settled when their page
+     * arrives) while the REVERSED half reports restoredSchedules 0 with no
+     * card state — that is the red this finding needs.
+     *
+     * Each half imports into a FRESH database: setUp() already saved q1 into
+     * the shared one, and a duplicate is skipped on purpose —
+     * acceptedSchedules never records it, so its schedule entry is rightly
+     * dropped and the control's restoredSchedules would read 0 for a reason
+     * this finding does not touch.
      */
     @Test
     fun schedulesPrecedingThePapersAreStillRestored() = runBlocking {
@@ -252,12 +260,15 @@ class BackupSchedulingTest {
         val badOrder = "{\n\"version\": 3,\n$schedules,\n$papers\n}"
 
         // Control: the writer's own order still restores exactly as it did.
+        // Into a fresh database — setUp() pre-saves q1, and a duplicate's
+        // schedule is skipped on purpose, which would make this 0.
+        rebuildFreshDb()
         var report = StreamingImporter(db, captureSchedules = true)
             .import({ java.io.ByteArrayInputStream(goodOrder.toByteArray()) })
         assertEquals(1, report.restoredSchedules)
         val good = repository.cardState("p1", "q1")!!
 
-        // Fresh database, then the reversed member order.
+        // Fresh database again, then the reversed member order.
         rebuildFreshDb()
         report = StreamingImporter(db, captureSchedules = true)
             .import({ java.io.ByteArrayInputStream(badOrder.toByteArray()) })

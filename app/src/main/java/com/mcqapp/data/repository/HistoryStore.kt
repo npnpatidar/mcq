@@ -113,22 +113,33 @@ internal class HistoryStore(
     /**
      * Bookmarked questions as a paged list, newest bookmark first. Content is
      * decoded per requested page only, so a "bookmark everything" bank never
-     * materialises its whole reading list.
+     * materialises its whole reading list. The page continues from [BookmarkPageKey],
+     * the last item of the previous page — not a row count — so edits ahead
+     * of the cursor cannot shift the window.
      */
-    fun bookmarkedPagingSource(): PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion> =
-        BookmarksPagingSource { offset, limit -> bookmarkedPage(offset, limit) }
+    fun bookmarkedPagingSource(): PagingSource<BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion> =
+        BookmarksPagingSource { key, limit -> bookmarkedPage(key, limit) }
 
-    private suspend fun bookmarkedPage(offset: Int, limit: Int): BookmarkPage {
-        val entities = db.questionDao().getBookmarkedQuestionsPage(offset, limit)
-        if (entities.isEmpty()) return BookmarkPage(emptyList(), hasMore = false)
-        val questions = mapper.toDomainBulk(entities)
+    private suspend fun bookmarkedPage(key: BookmarkPageKey?, limit: Int): BookmarkPage {
+        val entities =
+            db.questionDao().pageBookmarkedQuestions(
+                key?.afterCreatedAt ?: 0L,
+                key?.afterQuestionId,
+                limit
+            )
+        if (entities.isEmpty()) return BookmarkPage(emptyList(), cursor = null, hasMore = false)
+        val questions = mapper.toDomainBulk(entities.map { it.question })
         val paperIdByCategory = categoryPaperIdsOf(questions.map { it.categoryId }.toSet())
         val items = questions.mapNotNull { question ->
             paperIdByCategory[question.categoryId]?.let {
                 com.mcqapp.domain.BookmarkedQuestion(it, question)
             }
         }
-        return BookmarkPage(items, hasMore = entities.size == limit)
+        return BookmarkPage(
+            items,
+            cursor = entities.last().let { BookmarkPageKey(it.bookmarkCreatedAt, it.question.id) },
+            hasMore = entities.size == limit
+        )
     }
 
     /**
@@ -530,32 +541,59 @@ internal class HistoryStore(
 /** One bookmarks page plus whether more rows exist past it. */
 private data class BookmarkPage(
     val items: List<com.mcqapp.domain.BookmarkedQuestion>,
+    /** The cursor the next page continues strictly after, when [hasMore]. */
+    val cursor: BookmarkPageKey?,
     val hasMore: Boolean
 )
 
+/** Cursor for [BookmarksPagingSource]: the last item's bookmark key. A page
+ * continues strictly after it, so deleting or adding a bookmark anywhere
+ * ahead of the cursor cannot duplicate or skip a following page the way
+ * `LIMIT/OFFSET` did. */
+data class BookmarkPageKey(val afterCreatedAt: Long, val afterQuestionId: String)
+
 private class BookmarksPagingSource(
-    private val fetch: suspend (offset: Int, limit: Int) -> BookmarkPage
-) : PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion>() {
+    private val fetch: suspend (BookmarkPageKey?, Int) -> BookmarkPage
+) : PagingSource<BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion>() {
 
     override suspend fun load(
-        params: LoadParams<Int>
-    ): LoadResult<Int, com.mcqapp.domain.BookmarkedQuestion> {
-        val offset = params.key ?: 0
+        params: LoadParams<BookmarkPageKey>
+    ): LoadResult<BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion> {
         return try {
-            val page = fetch(offset, params.loadSize.coerceAtLeast(1))
+            val page = fetch(params.key, params.loadSize.coerceAtLeast(1))
             LoadResult.Page(
                 data = page.items,
                 prevKey = null,
-                nextKey = if (page.hasMore) offset + params.loadSize else null
+                nextKey = if (page.hasMore) page.cursor else null
             )
         } catch (e: Exception) {
             LoadResult.Error(e)
         }
     }
 
+    /**
+     * A refresh resumes from the user's reached position, not from the top:
+     * with pages keyed by cursor, the key that continues past the loaded page
+     * before the anchor is exactly that page's nextKey. Only an anchor inside
+     * the first loaded page restarts from the initial load, which for a list
+     * that only appends older rows is the same thing the first load already
+     * is. The null refresh key used to scroll every invalidation back to the
+     * newest bookmark no matter how deep the reader was.
+     */
     override fun getRefreshKey(
-        state: PagingState<Int, com.mcqapp.domain.BookmarkedQuestion>
-    ): Int? = null
+        state: PagingState<BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion>
+    ): BookmarkPageKey? {
+        val anchor = state.anchorPosition ?: return null
+        var seen = 0
+        var candidate: BookmarkPageKey? = null
+        for (page in state.pages) {
+            if (anchor >= seen + page.data.size) {
+                (page.nextKey as? BookmarkPageKey)?.let { candidate = it }
+                seen += page.data.size
+            } else break
+        }
+        return candidate
+    }
 }
 
 /** Cursor for [ResultsPagingSource]: last scanned row id plus rows skipped. */

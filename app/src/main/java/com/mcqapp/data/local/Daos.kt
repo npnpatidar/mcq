@@ -261,18 +261,31 @@ interface QuestionDao {
     @Query("SELECT COUNT(*) FROM questions WHERE categoryId IN (:categoryIds)")
     suspend fun countInCategories(categoryIds: List<String>): Int
 
-    /** One page of bookmarked questions, newest bookmark first (the order the
-     * bookmarks screen has always shown). Only requested pages carry the full
-     * question content, so a "bookmark everything" bank no longer loads every
-     * bookmarked question at once.
+    /**
+     * One keyset page of bookmarked questions, newest bookmark first. The cursor
+     * is the last row's (bookmark.createdAt, questionId), exactly as
+     * [pageBookmarkedQuestionsForTitle] keys a title group: a bookmark toggled
+     * anywhere AHEAD of the cursor no longer shifts every following page, the way
+     * `LIMIT/OFFSET` did (a toggle removed one row ahead of the window and the
+     * next page either duplicated or silently skipped its first slot).
+     * [afterQuestionId] is null for the initial load. Only requested pages carry
+     * the full question content, so a "bookmark everything" bank no longer loads
+     * every bookmarked question at once.
      */
     @Query(
-        "SELECT questions.* FROM questions " +
+        "SELECT questions.*, bookmarks.createdAt AS bookmarkCreatedAt " +
+            "FROM questions " +
             "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
-            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC " +
-            "LIMIT :limit OFFSET :offset"
+            "WHERE :afterQuestionId IS NULL OR " +
+            "  bookmarks.createdAt < :afterCreatedAt OR " +
+            "  (bookmarks.createdAt = :afterCreatedAt AND bookmarks.questionId < :afterQuestionId) " +
+            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC LIMIT :limit"
     )
-    suspend fun getBookmarkedQuestionsPage(offset: Int, limit: Int): List<QuestionEntity>
+    suspend fun pageBookmarkedQuestions(
+        afterCreatedAt: Long,
+        afterQuestionId: String?,
+        limit: Int
+    ): List<BookmarkedQuestionRow>
 
     /**
      * The distinct paper titles the bookmarked questions came from, sorted, for

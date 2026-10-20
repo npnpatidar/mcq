@@ -671,7 +671,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     suspend fun getBookmarkedQuestions(): List<com.mcqapp.domain.BookmarkedQuestion> =
         historyStore.getBookmarkedQuestions()
-    fun bookmarkedPagingSource(): androidx.paging.PagingSource<Int, com.mcqapp.domain.BookmarkedQuestion> =
+    fun bookmarkedPagingSource(): androidx.paging.PagingSource<com.mcqapp.data.repository.BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion> =
         historyStore.bookmarkedPagingSource()
     suspend fun saveAttempt(
         paperId: String,

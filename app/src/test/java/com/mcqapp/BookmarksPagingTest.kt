@@ -20,6 +20,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -131,8 +132,13 @@ class BookmarksPagingTest {
      * implementation recomputed OFFSET 4 over the shortened list and delivered
      * an empty page — q1 silently vanished from the scrolled list.
      *
-     * Room/SQLite — CI is the authority. Mutant: restore the OFFSET query and
-     * `nextKey = offset + loadSize` — this test goes red on the walk's total.
+     * Pages are a LOG of what the reader saw: q3 was already DELIVERED in
+     * page 2 before the toggle, so the aggregate keeps it — a delete after
+     * the reader has seen a row cannot un-show it.
+     *
+     * Room/SQLite — CI is the authority. Mutant: drop the keyset WHERE
+     * clause and key nothing — page 3 re-delivers pages 1's rows and this
+     * test goes red on the aggregate's distinctness and page-3 content.
      */
     @Test
     fun deletingAheadOfTheCursorDoesNotShiftFollowingPages() = runBlocking {
@@ -148,11 +154,17 @@ class BookmarksPagingTest {
         repository.toggleBookmark("q3")
 
         val page3 = source.load(PagingSource.LoadParams.Append(page2.nextKey!!, 2, false)) as PagingSource.LoadResult.Page
-        assertEquals(listOf("q1"), page3.data.map { it.question.id })
+        assertEquals("the page AFTER the cursor continues, never re-delivers", listOf("q1"), page3.data.map { it.question.id })
+        assertFalse("page 3 must not contain the deleted q3", page3.data.any { it.question.id == "q3" })
+        val delivered = (page1 + page2 + page3).map { it.question.id }
         assertEquals(
-            "the scrolled list must keep every undeleted bookmark, none skipped or duplicated",
-            listOf("q5", "q4", "q3", "q2", "q1").filter { it != "q3" },
-            (page1 + page2 + page3).map { it.question.id }
+            "the full delivered sequence keeps every scene the reader saw, once",
+            listOf("q5", "q4", "q3", "q2", "q1"),
+            delivered
+        )
+        assertEquals(
+            "no duplicate anywhere in the scroll (q3 was delivered before the delete)",
+            delivered.size, delivered.distinct().size
         )
     }
 

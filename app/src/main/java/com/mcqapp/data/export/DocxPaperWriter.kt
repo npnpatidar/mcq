@@ -815,12 +815,7 @@ object DocxPaperWriter {
                 rid
             }
             val (w, h) = imageDimensions(image.bytes) ?: (320 to 240)
-            var cx = w * EMU_PER_PX
-            var cy = h * EMU_PER_PX
-            if (cx > MAX_CX) {
-                cy = (cy.toLong() * MAX_CX / cx).toInt()
-                cx = MAX_CX
-            }
+            val (cx, cy) = emuExtent(w, h)
             return Pic(rid, cx, cy, ++docPrCounter)
         }
 
@@ -852,6 +847,31 @@ object DocxPaperWriter {
 
     private const val EMU_PER_PX = 9525
     private const val MAX_CX = 5486400
+
+    /**
+     * Pixels → the drawing's EMU extent, computed in LONG: pixel headers the
+     * imageDimensions bound still accepts (1..1,000,000 px) overflow the Int
+     * multiply at 225,443 px (225,443 × 9525 = 2,148,463,375, Int.MAX is
+     * 2,147,483,647), the wrapped negative then slipped past the `> MAX_CX`
+     * rescale and was written straight into `<wp:extent cx="-…">`, which Word
+     * refuses the whole file for ("unreadable content"). Long math, clamped
+     * before the store back to Int, so every in-bounds header yields a
+     * positive extent and the writer's clamp is the whole fix — the import
+     * bound stays where it is: its job is rejecting corrupt headers, not an
+     * extra sizing knob.
+     */
+    internal fun emuExtent(w: Int, h: Int): Pair<Int, Int> {
+        var cx = w.toLong() * EMU_PER_PX
+        var cy = h.toLong() * EMU_PER_PX
+        if (cx > MAX_CX) {
+            cy = cy * MAX_CX / cx
+            cx = MAX_CX.toLong()
+        }
+        // A lone huge height (narrow but 900k px tall header) would overflow
+        // cy on its own after the unperturbed cx path; clamp it the same way.
+        if (cy > MAX_CX) cy = MAX_CX.toLong()
+        return cx.toInt() to cy.toInt()
+    }
 
     /** Option letters the marker grammar supports; (a)…(j). */
     private val OPTION_LETTERS = ('a'..'j').map { it.toString() }

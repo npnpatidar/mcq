@@ -4,6 +4,7 @@ import com.mcqapp.data.export.HtmlPaperWriter
 import com.mcqapp.data.export.ZipPaperWriter
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.export.unreadableImageLabel
+import com.mcqapp.data.export.DocxPaperWriter
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
@@ -213,6 +214,28 @@ class ExportWritersTest {
         // Non-data srcs keep the provenance label they always had.
         assertEquals("[image: photo.jpg]", unreadableImageLabel("photo.jpg"))
         assertEquals("[image: http://host/img.png]", unreadableImageLabel("http://host/img.png"))
+    }
+
+    @Test
+    fun aMonsterPixelHeaderYieldsAPositiveClampedExtent() {
+        // 225,443 px × 9525 EMU/px = 2,148,463,375 — past Int.MAX when computed
+        // in Int, the wrapped negative slipped past the >MAX_CX rescale and
+        // went straight into <wp:extent cx="-…">: Word refused the whole file.
+        val (cx, cy) = DocxPaperWriter.emuExtent(225_443, 100)
+        assertTrue("cx must be positive, got $cx", cx > 0)
+        assertEquals(5486400, cx)
+        assertTrue("cy must be positive, got $cy", cy > 0)
+        // Aspect preserved through the clamp: 100 px wide × MAX_CX/2148463375.
+        assertEquals((100L * 9525 * 5486400 / (225_443L * 9525)).toInt(), cy)
+        // The import bound's extrema (1..1_000_000 accepted) clamp, not wrap.
+        val (w1, h1) = DocxPaperWriter.emuExtent(1_000_000, 1_000_000)
+        assertEquals(5486400 to 5486400, w1 to h1)
+        // A lone huge height on a narrow header overflows cy by itself.
+        val (w2, h2) = DocxPaperWriter.emuExtent(100, 900_000)
+        assertEquals(952500, w2)
+        assertEquals(5486400, h2)
+        // Ordinary sizes are byte-for-byte what the writer always produced.
+        assertEquals(3048000 to 2286000, DocxPaperWriter.emuExtent(320, 240))
     }
 
     @Test

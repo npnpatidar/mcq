@@ -138,6 +138,11 @@ class GlobalSearchPrefilterTest {
      */
     @Test
     fun theSearchPrefilterReadsTheFoldedColumnNotTheRawOne() = kotlinx.coroutines.runBlocking {
+        // The twins are inserted directly through the DAO, so the foreign key
+        // (Room runs PRAGMA foreign_keys = ON) needs its parents here: this
+        // class seeds nothing in setUp and every other test goes through
+        // save(), which is what ensures the paper and category.
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         com.mcqapp.data.local.QuestionEntity(
             id = "q-folded", categoryId = "c1",
             text = "x", searchText = "CAFÉ central",

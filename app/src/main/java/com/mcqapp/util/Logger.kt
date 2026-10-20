@@ -100,27 +100,13 @@ object Logger {
 
     fun e(tag: String, message: String, throwable: Throwable? = null) = write("E", tag, message, throwable)
 
-    fun crash(throwable: Throwable) {
-        val message = throwable.javaClass.name + ": " + throwable.message
-        val line = formatLine("CRASH", "UNCAUGHT", message, throwable)
-        publish("CRASH", "UNCAUGHT", message)
-        // The crash line is written to the file SYNCHRONOUSLY. The uncaught
-        // handler calls this and then hands off to the previous handler,
-        // which kills the process — a line queued on the log executor
-        // routinely never ran, so the one report that matters most was the
-        // one most likely to be lost.
-        try {
-            appendToFile(line)
-        } catch (e: Throwable) {
-            // A disk failure must never escape the handler: the crash
-            // itself is what is being reported.
-            try {
-                Log.w(TAG, "Failed to write the crash log: ${e.message}")
-            } catch (_: Throwable) {
-                // Nothing left to do.
-            }
-        }
-    }
+    // AUDIT MUTANT: the crash line is queued like every other line again.
+    fun crash(throwable: Throwable) = write(
+        "CRASH",
+        "UNCAUGHT",
+        throwable.javaClass.name + ": " + throwable.message,
+        throwable
+    )
 
     /**
      * A bounded ring of the most recent error/crash lines, for tests: a

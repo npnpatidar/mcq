@@ -3,7 +3,6 @@ package com.mcqapp.data.io
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.mcqapp.util.Logger
-import com.mcqapp.util.decodeBounded
 import java.io.ByteArrayOutputStream
 
 /**
@@ -60,34 +59,15 @@ object ImageDownscale {
         val (mime, bytes) = parseDataUri(src) ?: return src
         if (!mime.startsWith("image/")) return src
         return try {
-            // BitmapFactory decodes the *full* image into an ARGB_8888 buffer
-            // before any scaling, so a small payload describing a 20000x20000
-            // PNG asks for 1.6GB — the peak memory is the bug here. The
-            // source size is read first (a bounds pass costs no pixels) and
-            // the pixels themselves are decoded subsampled.
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return src
-            // The decision and the target are taken on the SOURCE size: a
-            // subsampled decode lands on (or just above) maxDimension, so a
-            // source that is an exact multiple of it — 2560 at 1280 decodes
-            // to 1280 — would be passed through unchanged if the decoded size
-            // were compared instead.
-            val (tw, th) = targetSize(bounds.outWidth, bounds.outHeight, maxDimension)
-            if (tw == bounds.outWidth && th == bounds.outHeight) return src
-            val original = decodeBounded(bytes, maxDimension) ?: return src
-            // createScaledBitmap returns the SOURCE itself when the target
-            // matches it and the source is immutable (the AOSP fast path),
-            // and a subsampled decode of a source whose long edge is an
-            // exact multiple of the limit lands exactly on the target.
-            // Recycling the source then would recycle the bitmap that is
-            // about to be compressed — the compress would throw, and the
-            // oversized source would be passed through untouched.
-            val scaled = if (tw == original.width && th == original.height) {
-                original
-            } else {
-                Bitmap.createScaledBitmap(original, tw, th, true).also { original.recycle() }
+            // AUDIT MUTANT: the unbounded decode, as before #36.
+            val original = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return src
+            val (tw, th) = targetSize(original.width, original.height, maxDimension)
+            if (tw == original.width && th == original.height) {
+                original.recycle()
+                return src
             }
+            val scaled = Bitmap.createScaledBitmap(original, tw, th, true)
+            original.recycle()
             val keepPng = mime == "image/png"
             val out = ByteArrayOutputStream()
             val ok = scaled.compress(

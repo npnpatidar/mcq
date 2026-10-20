@@ -33,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -222,15 +221,7 @@ fun BookmarksScreen(
                 showFormatDialog = false
                 pendingFormat = null
             },
-            title = {
-                Text(
-                    pluralStringResource(
-                        R.plurals.export_bookmarked_questions,
-                        state.count,
-                        state.count
-                    )
-                )
-            },
+            title = { Text("Export ${state.count} bookmarked questions") },
             text = {
                 Column {
                     ExportFormat.entries.forEach { format ->

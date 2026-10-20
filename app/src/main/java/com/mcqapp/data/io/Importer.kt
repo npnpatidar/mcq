@@ -157,6 +157,18 @@ class Importer(
 
                 val effectiveCategories = if (paperDto.categories.isEmpty()) {
                     listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = paperDto.topLevelQuestions()))
+                } else if (paperDto.questions.isNotEmpty()) {
+                    // A bank that keeps a paper's standalone questions beside
+                    // its categories: the whole-file JSON reader folds them
+                    // into a synthesized "Uncategorized" category, and the
+                    // Anki reader hands them over the same way. This DTO path
+                    // has to agree with both, or the questions are dropped on
+                    // the floor while the restore report counts them.
+                    paperDto.categories + CategoryDto(
+                        id = "$effectivePaperId-root",
+                        title = "Uncategorized",
+                        questions = paperDto.topLevelQuestions()
+                    )
                 } else {
                     paperDto.categories
                 }
@@ -164,6 +176,12 @@ class Importer(
                 // synthesized category mirrors the paper's top-level questions.
                 val scaledCategories = if (paperDto.categories.isEmpty()) {
                     listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = scaledPaper.topLevelQuestions()))
+                } else if (paperDto.questions.isNotEmpty()) {
+                    scaledPaper.categories + CategoryDto(
+                        id = "$effectivePaperId-root",
+                        title = "Uncategorized",
+                        questions = scaledPaper.topLevelQuestions()
+                    )
                 } else {
                     scaledPaper.categories
                 }

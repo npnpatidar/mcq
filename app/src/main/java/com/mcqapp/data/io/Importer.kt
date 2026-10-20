@@ -336,7 +336,7 @@ class Importer(
                                         // One CSV folded in Kotlin for both binds:
                                         // SQL lower() is the A-Z fold this bug is.
                                         tags = tagsCsv,
-                                        tagsFolded = tagsCsv.lowercase(),
+                                        tagsFolded = tagsCsv,
                                         image = scaledQuestion.image,
                                         explanationImage = scaledQuestion.explanationImage
                                     )

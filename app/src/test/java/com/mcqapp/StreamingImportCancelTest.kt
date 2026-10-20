@@ -78,8 +78,8 @@ class StreamingImportCancelTest {
     }
 
     /**
-     * A bank far wider than any bounded read-ahead: 40k questions at ~160
-     * bytes each, about 6MB. The parser blocks on the bounded queue long
+     * A bank far wider than any bounded read-ahead: 10k questions at ~160
+     * bytes each, about 1.6MB. The parser blocks on the bounded queue long
      * before it has seen a fraction of this, so a parse that keeps going
      * after the consumer throws walks the file end to end and the byte
      * count gives it away. (A 47MB bank made the test JVM run out of
@@ -110,8 +110,8 @@ class StreamingImportCancelTest {
     fun aConsumerThrowStopsTheParse() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
         val file = File(context.cacheDir, "cancel-bank.json")
-        writeBank(file, questionsPerCategory = 40_000)
-        assertTrue(file.length() > 5_000_000L)
+        writeBank(file, questionsPerCategory = 10_000)
+        assertTrue(file.length() > 1_000_000L)
         val started = System.currentTimeMillis()
         val parserThreadsBefore = importStreamThreads().toSet()
         val counting = CountingInputStream(FileInputStream(file))
@@ -132,7 +132,7 @@ class StreamingImportCancelTest {
         // count with a deadline. The parse must both finish (this test's
         // parser threads leave) and stop reading (the byte count settles
         // near what the bounded read-ahead had already pulled).
-        val deadline = System.currentTimeMillis() + 20_000
+        val deadline = System.currentTimeMillis() + 10_000
         var lastBytes = -1L
         var settled = false
         var threadsLeft = Int.MAX_VALUE
@@ -143,20 +143,26 @@ class StreamingImportCancelTest {
             lastBytes = now
             if (threadsLeft > 0 || !settled) Thread.sleep(50)
         }
-        assertTrue(
-            "the parser thread must stop after the consumer throws " +
-                "(waited ${System.currentTimeMillis() - started}ms)",
-            importStreamThreads().filter { it !in parserThreadsBefore }.isEmpty()
-        )
-        // The bounded read-ahead (a 16-event queue of small batches plus the
-        // reader's own buffers) keeps what it already had; anything near the
-        // file's size means the parse kept going. 2MB is far under this
-        // bank and far over the deductible.
+        // The guarantee the fix makes is that the parse stopped reading, so
+        // that is asserted first: a failure about the thread alone must not
+        // hide whether the bytes were fine.
         val finalBytes = counting.bytesRead.get()
         assertTrue(
             "the parse must stop reading soon after the consumer throws: " +
                 "read $finalBytes of ${file.length()} bytes",
-            finalBytes < 2_000_000L
+            finalBytes < 500_000L
+        )
+        // Then the thread itself. If it is still parked, its stack says where
+        // it is waiting — in the queue's put, or in a read the close never
+        // reached — instead of leaving it to be guessed at.
+        val stuck = importStreamThreads().filter { it !in parserThreadsBefore }
+        assertTrue(
+            "the parser thread must stop after the consumer throws " +
+                "(waited ${System.currentTimeMillis() - started}ms)\n" +
+                stuck.joinToString("\n") { thread ->
+                    thread.stackTrace.take(25).joinToString("\n") { "    $it" }
+                },
+            stuck.isEmpty()
         )
     }
 }

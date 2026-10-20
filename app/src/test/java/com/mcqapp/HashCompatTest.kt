@@ -54,6 +54,9 @@ class HashCompatTest {
         categoryId = "c1",
         text = "2 + 2?",
         searchText = "2 + 2?",
+        searchTextFolded = "2 + 2?".lowercase(),
+        tags = "",
+        tagsFolded = "",
         difficulty = difficulty
     )
 }

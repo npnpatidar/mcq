@@ -166,9 +166,9 @@ class StatsRetentionStreamTest {
         db.categoryDao().upsert(CategoryEntity("c2", "p2", "Beta"))
         db.questionDao().upsertAll(
             listOf(
-                QuestionEntity("a1", "c1", text = "", searchText = ""),
-                QuestionEntity("a2", "c1", text = "", searchText = ""),
-                QuestionEntity("b1", "c2", text = "", searchText = "")
+                QuestionEntity("a1", "c1", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = ""),
+                QuestionEntity("a2", "c1", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = ""),
+                QuestionEntity("b1", "c2", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = "")
             )
         )
 

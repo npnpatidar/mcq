@@ -823,12 +823,14 @@ internal fun QuestionDto.toQuestionEntity(
         passageId = passageId,
         text = elements.toContentJson(json),
         searchText = elements.searchableText,
+        searchTextFolded = elements.searchableText.lowercase(),
         image = image,
         explanation = storedExplanationJson(json),
         explanationImage = explanationImage,
         difficulty = difficulty,
         marks = marks,
         tags = tags.joinToString(","),
+        tagsFolded = tags.joinToString(",").lowercase(),
         sortOrder = sortOrder,
         contentHash = contentHash
     )
@@ -847,6 +849,7 @@ internal fun QuestionDto.toOptionEntities(json: Json): List<OptionEntity> =
             questionId = id,
             text = elements.toContentJson(json),
             searchText = elements.searchableText,
+            searchTextFolded = elements.searchableText.lowercase(),
             image = option.image,
             sortOrder = index
         )
@@ -865,6 +868,7 @@ internal fun PassageDto.toPassageEntity(
         title = title,
         text = elements.toContentJson(json),
         searchText = passageSearchText(title, elements),
+        searchTextFolded = passageSearchText(title, elements).lowercase(),
         image = image,
         sortOrder = sortOrder
     )

@@ -200,12 +200,14 @@ internal class QuestionStore(
                     passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
                     searchText = question.elements.searchableText,
+                    searchTextFolded = question.elements.searchableText.lowercase(),
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
                     explanationImage = question.explanationImage,
                     difficulty = question.difficulty.label,
                     marks = question.marks,
                     tags = question.tags.joinToString(","),
+                    tagsFolded = question.tags.joinToString(",").lowercase(),
                     sortOrder = sortOrder,
                     contentHash = contentHash
                 )
@@ -219,6 +221,7 @@ internal class QuestionStore(
                         questionId = question.id,
                         text = o.elements.toContentJson(mapper.json),
                         searchText = o.elements.searchableText,
+                        searchTextFolded = o.elements.searchableText.lowercase(),
                         image = o.image,
                         sortOrder = index
                     )
@@ -272,12 +275,14 @@ internal class QuestionStore(
                 passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
                 searchText = q.elements.searchableText,
+                searchTextFolded = q.elements.searchableText.lowercase(),
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
                 explanationImage = q.explanationImage,
                 difficulty = q.difficulty.label,
                 marks = q.marks,
                 tags = q.tags.joinToString(","),
+                tagsFolded = q.tags.joinToString(",").lowercase(),
                 sortOrder = sortOrder,
                 contentHash = mapper.contentHashOf(q)
             )
@@ -289,6 +294,7 @@ internal class QuestionStore(
                     id = o.id,
                     text = o.elements.toContentJson(mapper.json),
                     searchText = o.elements.searchableText,
+                    searchTextFolded = o.elements.searchableText.lowercase(),
                     image = o.image,
                     sortOrder = index
                 )

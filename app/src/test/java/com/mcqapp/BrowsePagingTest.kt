@@ -145,6 +145,63 @@ class BrowsePagingTest {
         assertEquals(listOf("q-tag", "q-stem"), walk { source(query = "Plain stem") })
     }
 
+    /**
+     * SQL `LIKE` — and SQLite's own `lower()` — case-fold A–Z only, so a
+     * query whose case differed from the stored text on a non-ASCII letter
+     * rejected the row in every branch *before* the authoritative in-memory
+     * filter (which folds with full Unicode) ever saw it, in browse as well
+     * as in global search. Every branch now matches its Kotlin-folded column
+     * (`searchTextFolded` on the question, its tags, the option, the
+     * passage) against a Kotlin-lowercased query, so the SQL pass is as
+     * case-insensitive as the in-memory filter.
+     */
+    @Test
+    fun aNonAsciiCaseDifferenceStillFindsRowsInEveryBranch() = runBlocking {
+        repository.saveQuestion(
+            Question(
+                id = "q-cafe-text",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("CAFÉ central")),
+                options = listOf(QuestionOption("a", "Nothing")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        repository.saveQuestion(
+            Question(
+                id = "q-cafe-tag",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Plain stem")),
+                options = listOf(QuestionOption("a", "Nothing")),
+                correctOptionIds = setOf("a"),
+                tags = listOf("CAFÉ Tag")
+            )
+        )
+        repository.saveQuestion(
+            Question(
+                id = "q-cafe-option",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Another stem")),
+                options = listOf(QuestionOption("a", "CAFÉ option")),
+                correctOptionIds = setOf("a")
+            )
+        )
+
+        val all = listOf("q-cafe-text", "q-cafe-tag", "q-cafe-option")
+        assertEquals(all, walk { source(query = "café") })
+        assertEquals(all, walk { source(query = "CAFÉ") })
+        // The tag and option branches individually.
+        assertEquals(listOf("q-cafe-tag"), walk { source(query = "café tag") })
+        assertEquals(listOf("q-cafe-option"), walk { source(query = "café opt") })
+        // And the count path agrees with the list path — the scope's size
+        // would otherwise host the same veto one query lower.
+        assertEquals(
+            3,
+            repository.browseFilteredCount(
+                McqRepository.BrowseScope.of("p1", "café", BrowseListFilter.ALL, null)
+            )
+        )
+    }
+
     @Test
     fun theNoExplanationChipMatchesTheShapesTheAppWrites() = runBlocking {
         // The editor stores `[]`; both importers store a blank text element.
@@ -155,6 +212,9 @@ class BrowsePagingTest {
             categoryId = "c1",
             text = """[{"type":"text","content":"Has stem"}]""",
             searchText = "Has stem",
+            searchTextFolded = "Has stem".lowercase(),
+            tags = "",
+            tagsFolded = "",
             explanation = "[]"
         )
         db.questionDao().upsertAll(

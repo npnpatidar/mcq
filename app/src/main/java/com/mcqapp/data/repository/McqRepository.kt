@@ -241,15 +241,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         if (query.isBlank()) return GlobalSearchPage(emptyList(), null)
         // DAO prefilter must cover option texts whenever the scope needs them.
         // The prefilter is a SQL LIKE, so the user query is escaped first;
-        // the in-memory post-filter below keeps matching the raw query.
-        val like = com.mcqapp.domain.QuestionSearch.escapeLike(query)
+        // the in-memory post-filter below keeps matching the raw query. The
+        // bound value is also Kotlin-lowercased: the prefilter matches the
+        // Kotlin-folded column, so a non-ASCII literal folds the way the
+        // in-memory authority folds instead of the way SQL's A-Z folds.
+        val like = com.mcqapp.domain.QuestionSearch.escapeLike(query.lowercase())
         // The SQL pass is a prefilter, not the answer: `questions.text` holds the
         // elements JSON with markup in it, so a phrase straddling a tag or two
         // table cells is not a literal substring of it. Or in the longest single
         // word, which is contiguous within a tag, so the prefilter can no longer
         // veto a row the real filter would have matched.
         val fragment = com.mcqapp.domain.QuestionSearch.escapeLike(
-            com.mcqapp.domain.QuestionSearch.prefilterKey(query)
+            com.mcqapp.domain.QuestionSearch.prefilterKey(query).lowercase()
         )
         val raw = when (scope) {
             com.mcqapp.domain.QuestionSearch.Scope.QUESTION ->
@@ -501,7 +504,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 categoryFilterIds: Set<String>?
             ): BrowseScope = BrowseScope(
                 paperId = paperId,
-                query = com.mcqapp.domain.QuestionSearch.escapeLike(query.trim()),
+                // Folded like the search prefilter: the browse queries match
+                // a Kotlin-lowercased value against the Kotlin-folded
+                // columns, so a non-ASCII literal (`CAFÉ` vs `café`) folds
+                // the way the in-memory authority folds instead of the way
+                // SQL's A-Z case-folding folds.
+                query = com.mcqapp.domain.QuestionSearch
+                    .escapeLike(query.trim().lowercase()),
                 noAnswer = if (filter == BrowseListFilter.NO_ANSWER) 1 else 0,
                 noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
                 uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,

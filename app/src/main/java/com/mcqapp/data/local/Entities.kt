@@ -1,5 +1,6 @@
 package com.mcqapp.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -94,12 +95,30 @@ data class QuestionEntity(
      * path cannot silently store an empty, unsearchable row.
      */
     val searchText: String,
+    /**
+     * [searchText] case-folded with Kotlin's full-Unicode [String.lowercase]
+     * at write time. The SQL `LIKE` prefilter matches *this* column against a
+     * Kotlin-lowercased query so non-ASCII literals (`CAFÉ` vs `café`,
+     * Cyrillic, Greek) fold the same way the in-memory
+     * [com.mcqapp.domain.QuestionSearch.filter] folds — SQLite's own
+     * `lower()` and `LIKE` fold A–Z only. No Kotlin default: every writer
+     * must set it, like [searchText].
+     */
+    @ColumnInfo(defaultValue = "''")
+    val searchTextFolded: String,
     val image: String? = null,
     val explanation: String = "",
     val explanationImage: String? = null,
     val difficulty: String = "medium",
     val marks: Double = 1.0,
     val tags: String = "",
+    /**
+     * [tags] folded exactly like [searchTextFolded]: the tag branches of the
+     * search/prefilter queries match a folded query against it, so a `CAFÉ`
+     * tag is found by `café` and vice versa.
+     */
+    @ColumnInfo(defaultValue = "''")
+    val tagsFolded: String,
     val sortOrder: Int = 0,
     val contentHash: String = ""
 )
@@ -123,6 +142,13 @@ data class OptionEntity(
     val text: String,
     /** Flattened text of [text], as on [QuestionEntity.searchText]. */
     val searchText: String,
+    /**
+     * [searchText] folded like [QuestionEntity.searchTextFolded]: the
+     * option branch of every search/prefilter query matches a
+     * Kotlin-lowercased query against this column.
+     */
+    @ColumnInfo(defaultValue = "''")
+    val searchTextFolded: String,
     val image: String? = null,
     val sortOrder: Int = 0
 )

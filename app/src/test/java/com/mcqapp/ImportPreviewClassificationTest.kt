@@ -54,6 +54,9 @@ class ImportPreviewClassificationTest {
         categoryId = "c1",
         text = listOf(ContentElement.TextElement(text)).toContentJson(json),
         searchText = listOf(ContentElement.TextElement(text)).searchableText,
+        searchTextFolded = listOf(ContentElement.TextElement(text)).searchableText.lowercase(),
+        tags = "",
+        tagsFolded = "",
         explanation = listOf(ContentElement.TextElement("Because")).toContentJson(json)
     )
 
@@ -64,6 +67,7 @@ class ImportPreviewClassificationTest {
                 id = ('a' + index).toString(),
                 text = listOf(ContentElement.TextElement(t)).toContentJson(json),
                 searchText = listOf(ContentElement.TextElement(t)).searchableText,
+                searchTextFolded = listOf(ContentElement.TextElement(t)).searchableText.lowercase(),
                 sortOrder = index
             )
         }

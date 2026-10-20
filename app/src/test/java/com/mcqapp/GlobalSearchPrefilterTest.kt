@@ -56,6 +56,35 @@ class GlobalSearchPrefilterTest {
         repository.searchGlobal(query).map { it.question.text }
     }
 
+    /**
+     * SQL `LIKE` — and SQLite's own `lower()` — case-fold A–Z only, so a
+     * query whose case differed from the stored text on a non-ASCII letter
+     * (`CAFÉ` vs `café`, Cyrillic, Greek) rejected the row *before* the
+     * authoritative in-memory filter — which folds with full Unicode Kotlin
+     * — ever saw it. The prefilter now matches this query against the
+     * Kotlin-folded columns, so its case-folding is the authority's.
+     */
+    @Test
+    fun aNonAsciiCaseDifferenceIsNotAVeto() {
+        save(
+            Question(
+                id = "q-cafe", categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("CAFÉ central")),
+                options = listOf(QuestionOption("a", "A"), QuestionOption("b", "B")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        assertTrue(
+            "LIKE folded A-Z only, so 'café' vetoed the 'CAFÉ' row before the " +
+                "in-memory filter saw it; got ${hits("café")}",
+            hits("café").isNotEmpty()
+        )
+        assertTrue(
+            "folding must work in the other direction too; got ${hits("CAFÉ")}",
+            hits("CAFÉ").isNotEmpty()
+        )
+    }
+
     @Test
     fun aPhraseSplitByMarkupIsFoundAcrossPapers() {
         save(

@@ -439,15 +439,20 @@ class StreamingImporterEquivalenceTest {
      */
     @Test
     fun passageStraysFoldInTheSameOrderThroughBothImporters() = runBlocking {
-        // qb2 is written before qb1 on purpose: within their own category
-        // the members must be folded in stored sortOrder order, not file order.
+        // The categories are in the file in an order their ids do not sort
+        // by (c, b, a), so the fold's own order — the members grouped by
+        // their category, then by their sortOrder — differs from the order
+        // the file's questions were written in (qc, qb2, qb1, qa). A fold
+        // that followed the write order would put qb2 first; the query's
+        // grouping puts qa first, and B's two keep their stored order
+        // (qb2 was written before qb1, so it is qb2's turn first).
         val bank = """
             {
               "papers": [
                 {
                   "id": "p1", "title": "Paper", "categories": [
-                    {"id": "a", "title": "A", "questions": [
-                      {"id": "qa", "text": "Member in the passage category",
+                    {"id": "c", "title": "C", "questions": [
+                      {"id": "qc", "text": "Member in the passage category",
                        "options": ["x", "y"], "correctOptionIds": ["x"],
                        "passageId": "ps"}
                     ]},
@@ -459,8 +464,8 @@ class StreamingImporterEquivalenceTest {
                        "options": ["x", "y"], "correctOptionIds": ["x"],
                        "passageId": "ps"}
                     ]},
-                    {"id": "c", "title": "C", "questions": [
-                      {"id": "qc", "text": "Stray from another category",
+                    {"id": "a", "title": "A", "questions": [
+                      {"id": "qa", "text": "Stray from another category",
                        "options": ["x", "y"], "correctOptionIds": ["y"],
                        "passageId": "ps"}
                     ]}
@@ -488,10 +493,10 @@ class StreamingImporterEquivalenceTest {
                 "every member folds into the passage category, strays appended " +
                     "after it in member order",
                 mapOf(
-                    "qa" to (0 to "a"),
-                    "qb1" to (1 to "a"),
-                    "qb2" to (2 to "a"),
-                    "qc" to (3 to "a")
+                    "qc" to (0 to "c"),
+                    "qa" to (1 to "c"),
+                    "qb2" to (2 to "c"),
+                    "qb1" to (3 to "c")
                 ),
                 byId
             )

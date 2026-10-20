@@ -36,6 +36,9 @@ interface PaperDao {
     // (upsertPaperKeepingChildren); a paper row is deleted only by
     // deletePaper, whose cascade is intended and transactional.
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(paper: PaperEntity)
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(paper: PaperEntity)
 
@@ -284,6 +287,14 @@ interface QuestionDao {
      * header count. Chunked at the call site: a paper may hold 1000 of them. */
     @Query("SELECT COUNT(*) FROM questions WHERE categoryId IN (:categoryIds)")
     suspend fun countInCategories(categoryIds: List<String>): Int
+
+    @Query(
+        "SELECT questions.* FROM questions " +
+            "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
+            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC " +
+            "LIMIT :limit OFFSET :offset"
+    )
+    suspend fun getBookmarkedQuestionsPage(offset: Int, limit: Int): List<QuestionEntity>
 
     /**
      * One keyset page of bookmarked questions, newest bookmark first. The cursor
@@ -609,7 +620,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || questions.categoryId || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )
@@ -745,7 +756,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0)"
+            "INSTR(:categoryFilterRowIdCsv, ',' || questions.categoryId || ',') > 0)"
     )
     suspend fun countBrowseIds(
         paperId: String,
@@ -781,7 +792,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || questions.categoryId || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid LIMIT 1 OFFSET :offset"
     )
@@ -821,7 +832,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || questions.categoryId || ',') > 0) " +
             "AND (categories.sortOrder, categories.title, questions.sortOrder, questions.rowid) " +
             "< (anchorCategory.sortOrder, anchorCategory.title, anchor.sortOrder, anchor.rowid)"
     )

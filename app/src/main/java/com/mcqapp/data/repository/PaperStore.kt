@@ -114,14 +114,7 @@ internal class PaperStore(
      * explicit restore hook).
      */
     suspend fun upsertPaperKeepingChildren(paper: PaperEntity) {
-        db.paperDao().insertIgnore(paper)
-        db.paperDao().updateFields(
-            id = paper.id,
-            title = paper.title,
-            description = paper.description,
-            durationMinutes = paper.durationMinutes,
-            negativeMarking = paper.negativeMarking
-        )
+        db.paperDao().upsert(paper)
     }
 
     suspend fun savePaper(paper: Paper) {

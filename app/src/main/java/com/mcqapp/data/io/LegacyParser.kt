@@ -406,11 +406,6 @@ object LegacyParser {
             try {
                 readPaperStreaming(reader, warnings, sink, batchSize, scan)
                 emitted++
-            } catch (e: CancellationException) {
-                // The importer's consumer is gone: this is not a malformed
-                // paper, and skipping the value would walk the rest of the
-                // file — the parse has to stop here.
-                throw e
             } catch (e: Exception) {
                 warnings.add("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}")
                 skipValueQuietly(reader)
@@ -515,11 +510,6 @@ object LegacyParser {
             try {
                 readCategoryStreaming(reader, warnings, sink, batchSize, scan)
                 count++
-            } catch (e: CancellationException) {
-                // The importer's consumer is gone: this is not a malformed
-                // category, and skipping the value would read the rest of
-                // the file — the parse has to stop here.
-                throw e
             } catch (e: Exception) {
                 skips += at to (e.message ?: e.javaClass.simpleName)
                 skipValueQuietly(reader)

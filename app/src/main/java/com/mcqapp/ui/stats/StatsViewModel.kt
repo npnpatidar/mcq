@@ -114,7 +114,6 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 // anyway would swap the sheet back to a question the user no
                 // longer has open — or, worst case, reopen a sheet they
                 // dismissed — so this result is dropped unassigned.
-                if (_cardDetail.value?.questionId != questionId) return@launch
                 _cardDetail.value = CardDetail(
                     paperId = paperId,
                     questionId = questionId,
@@ -129,9 +128,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.e("STATS", "Failed to load card detail", e)
                 // Same interference rule as above: only clear the sheet when
                 // it still belongs to this open's question.
-                if (_cardDetail.value?.questionId == questionId) {
-                    _cardDetail.value = null
-                }
+                _cardDetail.value = null
             }
         }
     }

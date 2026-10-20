@@ -62,6 +62,9 @@ class StreamingImporter(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Mutant: the cancel flag outlives the run, so a retry is silenced. */
+    private val cancelled = AtomicBoolean(false)
+
     /**
      * Streams the file [source] opens and writes it. [source] is called exactly
      * once, on the parsing thread, and may be called again by a retry; it must
@@ -105,12 +108,6 @@ class StreamingImporter(
         // the consumer's finally close it out from under a blocked read.
         val inputRef = AtomicReference<InputStream?>()
 
-        // Cancellation belongs to this run, not to the importer object — the
-        // class KDoc promises a retry may open the source again on the same
-        // instance, and a second import must parse again. A local Atomic
-        // Boolean (not a field) cannot outlive importHere, so no flag can
-        // leak into the next run and silence it.
-        val cancelled = AtomicBoolean(false)
 
         fun offer(queue: ArrayBlockingQueue<StreamEvent>, event: StreamEvent) {
             if (cancelled.get()) {

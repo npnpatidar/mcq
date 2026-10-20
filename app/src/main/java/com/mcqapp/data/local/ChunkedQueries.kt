@@ -96,9 +96,10 @@ suspend fun QuestionDao.updateBulkFieldsChunked(
     ids: Collection<String>,
     marks: Double?,
     difficulty: String?,
-    tags: String?
+    tags: String?,
+    tagsFolded: String?
 ): Int =
-    ids.toList().chunks().sumOf { updateBulkFields(it, marks, difficulty, tags) }
+    ids.toList().chunks().sumOf { updateBulkFields(it, marks, difficulty, tags, tagsFolded) }
 
 suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { deleteByQuestions(it) }

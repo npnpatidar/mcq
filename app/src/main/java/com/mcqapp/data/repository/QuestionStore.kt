@@ -422,12 +422,17 @@ internal class QuestionStore(
         db.withTransaction {
             // One COALESCE update per chunk replaces a getQuestion/saveQuestion
             // round-trip per question; null binds keep the column, matching the
-            // null fields are kept contract.
+            // null fields are kept contract. The tags pair travels together:
+            // the folded bind is the same CSV Kotlin-lowercased, so a bulk edit
+            // to a differently-cased or non-ASCII tag cannot leave the folded
+            // twin stale (see MIGRATION_17_18's contract).
+            val tagsCsv = tags?.joinToString(",")
             val count = db.questionDao().updateBulkFieldsChunked(
                 questionIds,
                 marks,
                 difficulty?.label,
-                tags?.joinToString(",")
+                tagsCsv,
+                tagsCsv?.lowercase()
             )
             Logger.i("REPO", "bulkUpdateQuestions($count ids)")
         }

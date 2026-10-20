@@ -13,7 +13,9 @@ import com.mcqapp.domain.QuestionOption
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -141,6 +143,45 @@ class BulkOpsDbTest {
     fun duplicateQuestionChainsSuffixes() = runBlocking {
         assertEquals("q1-copy-2", repository.duplicateQuestion("q1"))
         assertEquals(PNG, repository.getQuestion("q1-copy-2")?.explanationImage)
+    }
+
+    /**
+     * A bulk edit rewrites `tags` wholesale through the COALESCE update, and
+     * it used to leave the folded twin at its previous value: editing `alpha`
+     * to `CAFÉ` made tag search `café` miss the row and `alpha` keep matching
+     * a tag the row no longer has. The pair travels together, folded in
+     * Kotlin by the caller — `bulkUpdateQuestions` is the editor's bulk-edit
+     * path, so the failure was reachable from the UI.
+     */
+    @Test
+    fun aBulkEditsNewTagsAreFoldedWithTheColumn() = runBlocking {
+        val seed = repository.getQuestion("q1")!!
+        assertEquals(listOf("tq1"), seed.tags)
+
+        repository.bulkUpdateQuestions(
+            listOf("q1"), marks = null, difficulty = null, tags = listOf("CAFÉ")
+        )
+
+        assertEquals(listOf("CAFÉ"), repository.getQuestion("q1")!!.tags)
+        assertEquals(
+            "the folded twin must follow the rewritten tags",
+            "café", db.questionDao().getById("q1")!!.tagsFolded
+        )
+        assertTrue(
+            "café must find the row through its edited tag; got "
+                + db.questionDao().search("café", "café", 10, 0).map { it.id },
+            db.questionDao().search("café", "café", 10, 0).any { it.id == "q1" }
+        )
+        assertFalse(
+            "tq1 must stop matching the replaced tag; got "
+                + db.questionDao().search("tq1", "tq1", 10, 0).map { it.id },
+            db.questionDao().search("tq1", "tq1", 10, 0).any { it.id == "q1" }
+        )
+
+        // The null-keeps contract extends to the pair: a bulk edit that does
+        // not touch tags keeps both columns.
+        repository.bulkUpdateQuestions(listOf("q1"), marks = 4.0, difficulty = null, tags = null)
+        assertEquals("café", db.questionDao().getById("q1")!!.tagsFolded)
     }
 
     @Test

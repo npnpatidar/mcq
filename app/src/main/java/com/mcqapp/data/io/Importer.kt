@@ -327,12 +327,16 @@ class Importer(
                                             )
                                         }
                                     )
+                                    val tagsCsv = questionDto.tags.joinToString(",")
                                     db.questionDao().updateNonHashedFields(
                                         id = sameContentId,
                                         explanation = scaledQuestion.storedExplanationJson(json),
                                         marks = questionDto.marks,
                                         difficulty = questionDto.difficulty,
-                                        tags = questionDto.tags.joinToString(","),
+                                        // One CSV folded in Kotlin for both binds:
+                                        // SQL lower() is the A-Z fold this bug is.
+                                        tags = tagsCsv,
+                                        tagsFolded = tagsCsv.lowercase(),
                                         image = scaledQuestion.image,
                                         explanationImage = scaledQuestion.explanationImage
                                     )

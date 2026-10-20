@@ -913,7 +913,7 @@ interface QuestionDao {
     /** Everything the content hash deliberately ignores. */
     @Query(
         "UPDATE questions SET explanation = :explanation, marks = :marks, " +
-            "difficulty = :difficulty, tags = :tags, " +
+            "difficulty = :difficulty, tags = :tags, tagsFolded = :tagsFolded, " +
             "image = :image, explanationImage = :explanationImage WHERE id = :id"
     )
     suspend fun updateNonHashedFields(
@@ -922,6 +922,14 @@ interface QuestionDao {
         marks: Double,
         difficulty: String,
         tags: String,
+        /**
+         * [tags] Kotlin-folded by the caller, the same string that is bound to
+         * [tags]: the duplicate-refresh path rewrites `tags` without touching
+         * the folded twin, so a re-imported `CAFÉ` tag left `tagsFolded` at the
+         * previous value forever — `café` missed the row and `alpha` matched a
+         * dead tag. Never folded in SQL; `lower()` is the bug's A–Z fold.
+         */
+        tagsFolded: String,
         image: String?,
         explanationImage: String?
     )
@@ -1012,17 +1020,24 @@ interface QuestionDao {
      * Bulk edits marks/difficulty/tags in one statement; a null bind keeps the
      * column's current value, matching the per-question coalescing the caller
      * used to do in Kotlin over a full delete-and-reinsert per question.
+     *
+     * `tags` and `tagsFolded` are one pair: a non-null [tagsFolded] is the
+     * Kotlin lowercase of [tags] (never SQL `lower()`), folded by the caller,
+     * and a null pair keeps both columns — so a bulk edit to `CAFÉ` cannot
+     * leave the folded twin at its previous value.
      */
     @Query(
         "UPDATE questions SET marks = COALESCE(:marks, marks), " +
             "difficulty = COALESCE(:difficulty, difficulty), " +
-            "tags = COALESCE(:tags, tags) WHERE id IN (:ids)"
+            "tags = COALESCE(:tags, tags), " +
+            "tagsFolded = COALESCE(:tagsFolded, tagsFolded) WHERE id IN (:ids)"
     )
     suspend fun updateBulkFields(
         ids: List<String>,
         marks: Double?,
         difficulty: String?,
-        tags: String?
+        tags: String?,
+        tagsFolded: String?
     ): Int
 
     @Query("SELECT MAX(sortOrder) FROM questions WHERE categoryId = :categoryId")

@@ -12,7 +12,9 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.AppDatabase
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,6 +81,67 @@ class UpdateAnswersOnDuplicateTest {
         bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
         bitmap.recycle()
         return com.mcqapp.data.io.ImageDownscale.encodeDataUri("image/png", out.toByteArray())
+    }
+
+    private fun taggedFile(questionId: String, correct: List<String>, tags: List<String>) =
+        McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "p1", title = "Paper",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c1", title = "Cat",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = questionId,
+                                    text = "2 + 2?",
+                                    options = listOf(
+                                        OptionDto(id = "a", text = "3"),
+                                        OptionDto(id = "b", text = "4")
+                                    ),
+                                    correctOptionIds = correct,
+                                    tags = tags
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+    /**
+     * The duplicate-refresh path rewrites `tags` (and the answer key, and
+     * marks...) wholesale, and `updateNonHashedFields` used to leave the
+     * folded twin at the FIRST import's value: after re-importing a stored
+     * `alpha` tag as `CAFÉ`, tag search `café` missed the row — the exact
+     * veto the folded columns exist to remove — while `alpha` kept matching a
+     * tag the row no longer has. The twin is rewritten in the same UPDATE,
+     * folded in Kotlin by the caller like every other write path.
+     */
+    @Test
+    fun theDuplicateRefreshPathRewritesTheFoldedTagTwin() = kotlinx.coroutines.runBlocking {
+        Importer(db).import(taggedFile("q1", listOf("a"), tags = listOf("alpha")))
+        val report = Importer(db, updateAnswersOnDuplicate = true)
+            .import(taggedFile("q2", listOf("b"), tags = listOf("CAFÉ")))
+
+        assertEquals("the refresh path must have run", 1, report.answersRefreshed)
+        val q1 = db.questionDao().getById("q1")!!
+        assertEquals("CAFÉ", q1.tags)
+        assertEquals(
+            "the folded twin must follow the rewritten tags",
+            "café", q1.tagsFolded
+        )
+        assertTrue(
+            "café must find the row through its refreshed tag; got "
+                + db.questionDao().search("café", "café", 10, 0).map { it.id },
+            db.questionDao().search("café", "café", 10, 0).any { it.id == "q1" }
+        )
+        assertFalse(
+            "alpha must stop matching the tag the row no longer has; got "
+                + db.questionDao().search("alpha", "alpha", 10, 0).map { it.id },
+            db.questionDao().search("alpha", "alpha", 10, 0).any { it.id == "q1" }
+        )
     }
 
     @Test

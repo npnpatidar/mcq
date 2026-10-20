@@ -416,12 +416,16 @@ internal class StreamingImportSession(
                     db.correctAnswerDao().upsertAll(
                         dto.correctOptionIds.map { CorrectAnswerEntity(sameContentId, it) }
                     )
+                    val tagsCsv = dto.tags.joinToString(",")
                     db.questionDao().updateNonHashedFields(
                         id = sameContentId,
                         explanation = scaledQuestion.storedExplanationJson(json),
                         marks = dto.marks,
                         difficulty = dto.difficulty,
-                        tags = dto.tags.joinToString(","),
+                        // One CSV folded in Kotlin for both binds: SQL lower()
+                        // is the A-Z fold this bug is.
+                        tags = tagsCsv,
+                        tagsFolded = tagsCsv.lowercase(),
                         image = scaledQuestion.image,
                         explanationImage = scaledQuestion.explanationImage
                     )

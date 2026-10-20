@@ -287,8 +287,12 @@ class TestSessionResumeTest {
         // The same paper, timed from here on: the relaunch now builds a
         // one-minute countdown that used to tick away behind the offer.
         offMain {
-            app.repository.db().paperDao().upsert(
-                com.mcqapp.data.local.PaperEntity(id = "p1", title = "Paper", durationMinutes = 1)
+            // updateFields, not upsert: a REPLACE upsert deletes the p1 row
+            // and cascades its categories, questions and the test_progress
+            // answers away, leaving the relaunch a question-less paper whose
+            // load clears the slot — no offer, ever.
+            app.repository.db().paperDao().updateFields(
+                "p1", "Paper", "", 1, 0.0
             )
         }
         val relaunched = TestViewModel(app, "p1", listOf("c1"))

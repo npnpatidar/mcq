@@ -200,6 +200,56 @@ class AnkiRoundTripTest {
         assertTrue("sfld must name the image, got \"$sfld\"", sfld.contains("<img"))
     }
 
+    /**
+     * A payload that omits the `image` key (older or hand-edited one) used to
+     * fall back to the first `<img>` on the question half of the front — and
+     * splitFront's "question half" keeps the passage block, whose picture was
+     * embedded above the stem. The passage was then also restored separately
+     * with its own picture: duplicated under questions.image, the stem showed
+     * it twice, and any branching on question.image != null misdirected.
+     */
+    @Test
+    fun aPassagePictureIsNotAttributedToItsMemberQuestion() {
+        val pngSrc =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        val paper = PaperDto(
+            id = "p1",
+            title = "Reading",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Figures",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "As per the diagram, what is shown?",
+                            options = listOf(OptionDto("a", "A cell"), OptionDto("b", "A rock")),
+                            correctOptionIds = listOf("a"),
+                            explanation = "Cells have organelles.",
+                            passageId = "pass-1"
+                        )
+                    )
+                )
+            )
+        )
+        val passages = mapOf(
+            "pass-1" to Passage(id = "pass-1", categoryId = "c1", title = "Figure")
+            // NOTE: no elements either — only the image rides with the passage.
+        )
+        // The passage only carries a picture; build it through the writer with
+        // an image-carrying Passage so buildFront embeds that <img> above the
+        // stem, then read it back.
+        val passageWithPicture = passages.getValue("pass-1").copy(image = pngSrc)
+
+        val apkg = apkgOf(paper, passages = mapOf("pass-1" to passageWithPicture))
+        val read = AnkiPackageReader.read(apkg)
+
+        assertEquals("the member question's own image stays null (its payload has no image)",
+            null, read.file.papers.single().categories.single().questions.single().image)
+        assertEquals("the passage keeps its picture for its own block",
+            pngSrc, read.file.passages.single().image)
+    }
+
     @Test
     fun aCompletelyEmptyNoteIsStillDropped() {
         // text, image, options, explanation all empty: the front field arrives

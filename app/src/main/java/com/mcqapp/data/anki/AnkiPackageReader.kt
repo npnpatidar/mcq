@@ -822,6 +822,26 @@ object AnkiPackageReader {
     /** Notes whose entire stem is empty (neither text nor image), for the log. */
     private var droppedEmptyStems = 0
 
+    /**
+     * The stem-image fallback for a payload that omits `image` (older or
+     * hand-edited one). buildFront embeds the passage — with its picture —
+     * ABOVE the question in field 0, and splitFront's "question half" keeps
+     * the passage block, so a first-<img>-anywhere search attributed the
+     * PASSAGE's picture to the question: duplicated under
+     * `questions.image` at import, the stem rendered it twice, and any
+     * branching on `question.image != null` misdirected.
+     *
+     * Two gates, in order: the payload's own elements are the question's
+     * self-description — if they contain an image there is nothing to look
+     * for; otherwise only the half BELOW the passage block (the writer
+     * separates the block from the stem with `<hr>`) is searched.
+     */
+    private fun stemImageFromFront(payload: AnkiMcqPayload, questionHtml: String): String? {
+        if (payload.elements.any { it is ContentElement.ImageElement }) return null
+        val belowPassage = if (questionHtml.contains("<hr")) questionHtml.substringAfterLast("<hr>") else questionHtml
+        return IMG_TAG.find(belowPassage)?.groupValues?.get(1)
+    }
+
     private fun toQuestion(
         note: AnkiNote,
         notetype: AnkiNotetype?,
@@ -869,7 +889,7 @@ object AnkiPackageReader {
                     ))
                 },
                 image = media.rewrite(payload.image)
-                    ?: IMG_TAG.find(questionHtml)?.groupValues?.get(1),
+                    ?: stemImageFromFront(payload, questionHtml),
                 options = payload.options.map {
                     OptionDto(
                         id = it.id,

@@ -317,10 +317,23 @@ class StudyViewModelPullTest {
             )
             val day = 86_400_000L
             val now = System.currentTimeMillis()
-            // q1 and q3 lapsed: the drill loads them. q2 is untouched new
-            // material — a new card is never a leech.
-            repository.recordStudyReview("p1", "q1", ReviewGrade.AGAIN, now = now - day)
-            repository.recordStudyReview("p1", "q3", ReviewGrade.AGAIN, now = now - day)
+            // The drill serves leeches that are due. A card graded AGAIN
+            // from new stays LEARNING with no lapse, so it is not a leech
+            // at all — the seed is a review card that lapsed once and came
+            // due. The row is written by a real review (which stores the
+            // question's own content hash — a row with a stale hash would be
+            // reset to a fresh schedule) and then shaped into the leech the
+            // drill expects. q2 is a due review card that has not lapsed:
+            // the drill leaves it alone, and it becomes a leech later.
+            for ((id, lapses) in listOf("q1" to 1, "q3" to 1, "q2" to 0)) {
+                repository.recordStudyReview("p1", id, ReviewGrade.AGAIN, now = now - 2 * day)
+                repository.db().openHelper.writableDatabase.execSQL(
+                    "UPDATE card_state SET cardState = 'REVIEW', reps = 3, reviewCount = 3, " +
+                        "lapses = ?, leech = ?, dueAt = ?, lastReviewedAt = ?, stability = 10.0 " +
+                        "WHERE questionId = ?",
+                    arrayOf<Any>(lapses, if (lapses > 0) 1 else 0, now - day, now - day, id)
+                )
+            }
         }
         val viewModel = StudyViewModel(app, "p1", leechesOnly = true)
         assertTrue(awaitCondition { viewModel.state.value.current != null })
@@ -356,7 +369,7 @@ class StudyViewModelPullTest {
             )
             repository.db().openHelper.writableDatabase.execSQL(
                 "UPDATE card_state SET lapses = 0, leech = 0, cardState = 'NEW', " +
-                    "dueAt = 0 WHERE questionId = 'q3'"
+                    "dueAt = 0, reps = 0, reviewCount = 0 WHERE questionId = 'q3'"
             )
         }
         val fresh = runBlocking { repository.getStudyQueue("p1", leechesOnly = true) }

@@ -33,6 +33,16 @@ import java.util.concurrent.atomic.AtomicLong
 @Config(sdk = [34])
 class StreamingImportCancelTest {
 
+    /**
+     * The batch the parser hands over at a time. Small on purpose: the
+     * read-ahead is the queue's depth times a batch, so a small batch keeps
+     * the deductible — what the parser may legitimately have read before the
+     * consumer died — far below the bound the test asserts.
+     */
+    private companion object {
+        const val BATCH = 50
+    }
+
     private lateinit var db: AppDatabase
 
     @Before
@@ -68,10 +78,12 @@ class StreamingImportCancelTest {
     }
 
     /**
-     * A bank far wider than any bounded read-ahead: ~300k questions at ~160
-     * bytes each. The parser blocks on the bounded queue long before it has
-     * seen a fraction of this, so a parse that keeps going after the consumer
-     * throws walks the file end to end and the byte count gives it away.
+     * A bank far wider than any bounded read-ahead: 40k questions at ~160
+     * bytes each, about 6MB. The parser blocks on the bounded queue long
+     * before it has seen a fraction of this, so a parse that keeps going
+     * after the consumer throws walks the file end to end and the byte
+     * count gives it away. (A 47MB bank made the test JVM run out of
+     * heap on CI, so the bank is sized to the proof, not to the drama.)
      */
     private fun writeBank(file: File, questionsPerCategory: Int) {
         file.outputStream().bufferedWriter(Charsets.US_ASCII).use { w ->
@@ -98,14 +110,14 @@ class StreamingImportCancelTest {
     fun aConsumerThrowStopsTheParse() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
         val file = File(context.cacheDir, "cancel-bank.json")
-        writeBank(file, questionsPerCategory = 300_000)
-        assertTrue(file.length() > 45_000_000L)
+        writeBank(file, questionsPerCategory = 40_000)
+        assertTrue(file.length() > 5_000_000L)
         val started = System.currentTimeMillis()
         val parserThreadsBefore = importStreamThreads().toSet()
         val counting = CountingInputStream(FileInputStream(file))
         val propagated = try {
             runBlocking {
-                StreamingImporter(db).import(
+                StreamingImporter(db, batchSize = BATCH).import(
                     source = { counting },
                     onProgress = { throw IllegalStateException("consumer gone") }
                 )
@@ -136,15 +148,15 @@ class StreamingImportCancelTest {
                 "(waited ${System.currentTimeMillis() - started}ms)",
             importStreamThreads().filter { it !in parserThreadsBefore }.isEmpty()
         )
-        // The bounded read-ahead (a 16-event queue of 2000-question batches
-        // plus the reader's own buffers) keeps what it already had; anything
-        // near the file's size means the parse kept going. 12MB is far under
-        // this bank and far over the deductible.
+        // The bounded read-ahead (a 16-event queue of small batches plus the
+        // reader's own buffers) keeps what it already had; anything near the
+        // file's size means the parse kept going. 2MB is far under this
+        // bank and far over the deductible.
         val finalBytes = counting.bytesRead.get()
         assertTrue(
             "the parse must stop reading soon after the consumer throws: " +
                 "read $finalBytes of ${file.length()} bytes",
-            finalBytes < 12_000_000L
+            finalBytes < 2_000_000L
         )
     }
 }

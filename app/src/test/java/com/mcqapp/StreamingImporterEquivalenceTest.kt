@@ -195,9 +195,16 @@ class StreamingImporterEquivalenceTest {
         // cancelled by a run-scoped flag that outlived its run.
         val importer = StreamingImporter(streamingDb)
         val first = importer.import(source = { ByteArrayInputStream(richBank.toByteArray()) })
-        assertEquals(3, first.newQuestions)
+        // Four questions: the bank's three categorized ones and the
+        // paper-level one, which the importer folds into the paper's
+        // Uncategorized category.
+        assertEquals(4, first.newQuestions)
         val second = importer.import(source = { ByteArrayInputStream(richBank.toByteArray()) })
-        assertEquals("the second run must parse again: $second", 3, second.duplicateQuestions)
+        assertEquals(
+            "the second run must parse again: $second",
+            first.newQuestions,
+            second.duplicateQuestions
+        )
         assertEquals(0, second.newQuestions)
         assertSameState()
     }

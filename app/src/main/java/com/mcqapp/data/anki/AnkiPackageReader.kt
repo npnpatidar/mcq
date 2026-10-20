@@ -349,6 +349,21 @@ object AnkiPackageReader {
                     noteCount += counts.total
                     recallCount += counts.recall
                 }
+                // The paper's own deck, after the nodes: its notes are the
+                // paper's uncategorised questions. The whole-file reader
+                // keeps them in the paper's top-level question list, and the
+                // importer folds those into a synthesized "Uncategorized"
+                // category — so the stream has to offer the same category,
+                // or the paper's own questions never reach the library. The
+                // deck is offered only when it holds a question the reader
+                // would keep, the same condition the whole-file side uses.
+                if (rootDeck != null && (scan.counts[rootDeck.id] ?: 0) > 0) {
+                    val rootCategoryId = "$paperId-root"
+                    sink.onCategory(CategoryDto(id = rootCategoryId, title = "Uncategorized"))
+                    val counts = streamDeck(db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId, sink, batchSize, nowMillis)
+                    noteCount += counts.total
+                    recallCount += counts.recall
+                }
             }
         }
         Logger.i(

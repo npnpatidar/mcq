@@ -1288,6 +1288,32 @@ object LegacyParser {
         }
     }
 
+    /**
+     * Keeps every option of a question addressable: the first occurrence of
+     * an id stays as the file wrote it (so `correctOptionIds` still resolves
+     * to the option it named), each later duplicate is renamed to the first
+     * free `id-2`, `id-3`, … — skipping ids the file itself already used —
+     * and one import warning names each rename. The text is never touched.
+     */
+    private fun uniqueOptionIds(options: List<OptionDto>, warnings: MutableList<String>): List<OptionDto> {
+        if (options.size < 2) return options
+        val occurrences = HashMap<String, Int>()
+        val usedIds = options.mapTo(HashSet()) { it.id }
+        return options.map { option ->
+            val n = occurrences.merge(option.id, 1, Int::plus)!!
+            if (n == 1) {
+                option
+            } else {
+                var m = n
+                while ("${option.id}-$m" in usedIds) m++
+                val renamed = "${option.id}-$m"
+                usedIds += renamed
+                warnings.add("Duplicate option id '${option.id}' renamed to '$renamed'")
+                option.copy(id = renamed)
+            }
+        }
+    }
+
     private fun stableQuestionId(text: String, options: List<OptionDto>): String {
         val raw = text + "|" + options.joinToString(",") { it.id + "=" + it.text }
         val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
@@ -1321,7 +1347,15 @@ object LegacyParser {
             else -> null
         } ?: emptyList()
 
-        val options = parseOptions(obj)
+        // Options are stored keyed by (questionId, optionId) with REPLACE
+        // upserts, so two options sharing one id would write one over the
+        // other — silently losing an option and leaving the stored row count
+        // permanently behind the file's, which makes the same file read as
+        // changed on every re-import. Rename each later duplicate the way
+        // [uniqueIds] renames questions: the first occurrence keeps its id
+        // (the answer key names that one), the rest become `id-2`, `id-3`, …
+        // skipping ids the file already used, and every rename is warned.
+        val options = uniqueOptionIds(parseOptions(obj), warnings)
         val correctIds = parseCorrectIds(obj, options, warnings)
         val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: stableQuestionId(text, options)

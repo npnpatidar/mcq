@@ -539,6 +539,48 @@ class AnkiPackageWriterTest {
     }
 
     /**
+     * Cards live in their own id domain: across a multi-note package the
+     * note id set and the card id set must be DISJOINT (the old
+     * `card.id = note.id + 1` put note j's card exactly on note j+1's id,
+     * interleaving the sets), while note ids themselves stay the
+     * consecutive idBase+index run. Every card also still references its
+     * note and orders with it.
+     *
+     * Room/SQLite — CI is the authority. Mutant: restore
+     * `id = row.noteId + 1` — the disjointness assert goes red at the first
+     * shared id.
+     */
+    @Test
+    fun cardIdsNeverShareTheNoteIdSpace() {
+        val apkg = apkgOf(samplePaper())
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            val noteIds = mutableListOf<Long>()
+            db.rawQuery("select id from notes order by id", null).use { c ->
+                while (c.moveToNext()) noteIds += c.getLong(0)
+            }
+            assertTrue("more than one note: the sets must interleave-prove", noteIds.size >= 2)
+            val cardRows = mutableListOf<Pair<Long, Long>>() // card id to nid
+            db.rawQuery("select id, nid from cards order by id", null).use { c ->
+                while (c.moveToNext()) cardRows += c.getLong(0) to c.getLong(1)
+            }
+            assertEquals("one card per note", noteIds.size, cardRows.size)
+            // Note ids unchanged: the consecutive idBase+index run.
+            noteIds.zipWithNext().forEach { (a, b) -> assertEquals("consecutive note ids", 1L, b - a) }
+            val noteSet = noteIds.toSet()
+            val cardIdSet = cardRows.map { it.first }.toSet()
+            assertTrue("id sets must be disjoint", cardIdSet.intersect(noteSet).isEmpty())
+            assertEquals("card ids unique", cardIdSet.size, cardRows.size)
+            cardRows.forEach { (cid, nid) ->
+                assertTrue("the card's note exists", nid in noteSet)
+                assertTrue("a card never ids its own note", cid != nid)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    /**
      * Schema 11's units: `col.crt` and `col.mod` are SECONDS, `col.scm` (the
      * schema-mod stamp) is MILLISECONDS. The row used to bind ONE millisecond
      * value into both mod and scm, so the exported collection carried a mod

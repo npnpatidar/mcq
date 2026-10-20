@@ -58,6 +58,13 @@ object AnkiPackageWriter {
      */
     private const val NOTE_BATCH = 500
 
+    /**
+     * Card ids never share a note id: notes take `idBase..idBase+n`, cards
+     * take the same sequence shifted a trillion up (the note id is only the
+     * order anchor). More headroom than any bank can occupy.
+     */
+    private const val CARD_ID_OFFSET = 1_000_000_000_000L
+
     /** Fixed ids keep the output deterministic and diffable across exports. */
     const val DECK_ID = 1L
     const val DECK_CONFIG_ID = 1L
@@ -135,7 +142,15 @@ object AnkiPackageWriter {
                             ?.let { AnkiScheduling.toAnki(it, nowSeconds, nowMillis) }
                             ?: AnkiScheduling.NEW_CARD
                         AnkiCardRow(
-                            id = row.noteId + 1,
+                            // Cards live in their own id domain: the old
+                            // `noteId + 1` put EVERY card id onto a note id
+                            // (note j's card took note j+1's id — the two
+                            // sets interleaved by construction). Offsetting
+                            // a trillion notes past this package's note ids
+                            // keeps the sets disjoint with more headroom
+                            // than any bank, and keeps cards in the same
+                            // order as their notes.
+                            id = row.noteId + CARD_ID_OFFSET,
                             noteId = row.noteId,
                             mod = nowSeconds,
                             // Anki numbers new cards from col.conf.nextPos; only the

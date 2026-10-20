@@ -182,9 +182,7 @@ object AnkiPackageWriter {
                         // the stem's <img>-included form (the same shape the
                         // reader now restores), not an empty string whose blank
                         // csum disagreed with the front it indexes.
-                        sortField = question.text.ifBlank {
-                            media.elementsToHtml(question.elements, question.image).trim()
-                        }
+                        sortField = question.text
                     )
                     pending += PendingCard(
                         noteId = noteId,

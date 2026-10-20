@@ -204,7 +204,7 @@ internal class StreamingImportSession(
             }
             return
         }
-        bufferedSchedules += entries
+        db.withTransaction { applySchedulePage(entries, targets) }
     }
 
     /** One page of the file's `attempts`, written as it streams past. */

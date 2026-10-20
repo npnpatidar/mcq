@@ -842,10 +842,8 @@ object AnkiPackageReader {
      * an element-authored image sits in the stem, below the very `<hr>` the
      * positional scan searches.
      */
-    private fun stemImageFromFront(questionHtml: String): String? {
-        val belowPassage = if (questionHtml.contains("<hr")) questionHtml.substringAfterLast("<hr>") else questionHtml
-        return IMG_TAG.find(belowPassage)?.groupValues?.get(1)
-    }
+    private fun stemImageFromFront(questionHtml: String): String? =
+        IMG_TAG.find(questionHtml)?.groupValues?.get(1)
 
     private fun toQuestion(
         note: AnkiNote,
@@ -864,15 +862,7 @@ object AnkiPackageReader {
 
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
         val front = fieldToText(frontHtml, media)
-        if (front.first.isBlank() && front.second == null) {
-            droppedEmptyStems++
-            Logger.w(
-                "IMPORT",
-                "Dropped a note with a completely empty stem (no text, no image): " +
-                    "${note.guid.ifBlank { note.id }} — dropped #$droppedEmptyStems"
-            )
-            return null
-        }
+        if (front.first.isBlank()) return null
         // A blank stem that still has an <img> is a picture question: the
         // paths below keep it — the image travels as question content (or,
         // for our own cards, the payload's elements) — instead of vanishing

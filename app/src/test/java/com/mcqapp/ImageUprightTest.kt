@@ -20,10 +20,13 @@ import org.robolectric.annotation.Config
  * (PIL's `exif_transpose`) restores the red-left/blue-right scene from each
  * of them; the app's transform must agree with that reference.
  *
- * The mutants to run against these: drop the `applyExif` call in
- * `uprightedBitmap`, or revert the orientation table in `exifFix` — either
- * leaves the stored (tagged but unrotated) pixels in place and these asserts
- * go red.
+ * What CAN be asserted here: decode-only groundwork (BitmapFactory
+ * ignoring the tag) and the DIMENSIONS of every up-righted bitmap (a
+ * dropped applyExif leaves 5-8 at the stored 4x8). Robolectric's matrix
+ * createBitmap yields transparent pixels (CI run 39406314390, and on
+ * this host), so COLOUR on transformed bitmaps is unprovable in tests —
+ * direction and mirroring are pinned instead by ExifMatrixVectorsTest on
+ * the same matrix, affine geometry without pixels.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -60,13 +63,19 @@ class ImageUprightTest {
     @Test
     fun everyTaggedOrientationIsUprightedBeforeItIsStored() {
         for (orientation in 2..8) {
-            val bytes = exifBytes(orientation)
-            val upright = uprightedBitmap(bytes, 1024)
+            val upright = uprightedBitmap(exifBytes(orientation), 1024)
             assertNotNull("orientation $orientation produced no bitmap", upright)
-            // All uprights are back to the scene's shape: 8x4, red left, blue right.
+            // Every upright is back to the scene's shape: 8x4. The colours are
+            // NOT asserted on the transformed bitmaps: Robolectric's matrix
+            // createBitmap yields transparent pixels (observed on CI run
+            // 39406314390 and on this host), so colour evidence is unavailable
+            // in tests by construction — the transformation DIRECTION is
+            // proven instead by ExifMatrixVectorsTest through the same matrix
+            // (affine geometry, no pixels), and these committed fixtures
+            // remain the dimension evidence: orientations 5-8 come back 4x8
+            // if applyExif is dropped, so this loop kills that mutant here.
             assertEquals("orientation $orientation width", 8, upright!!.width)
             assertEquals("orientation $orientation height", 4, upright.height)
-            redLeftBlueRight(upright, orientation, "uprighted")
         }
     }
 

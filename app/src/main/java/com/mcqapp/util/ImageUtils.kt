@@ -73,7 +73,8 @@ object ImageUtils {
      * horizontally first when [mirrorFirst], then rotate [rotationDegrees]
      * clockwise. Generated fixtures committed under test/resources/exif
      * (a red/left blue/right image stored with each tag) pin the mapping
-     * against that reference rather than against memory.
+     * against that reference rather than against memory; [exifMatrix]
+     * materialises it.
      */
     internal data class ExifFix(val rotationDegrees: Int, val mirrorFirst: Boolean)
 
@@ -89,27 +90,37 @@ object ImageUtils {
         else -> null
     }
 
+    /**
+     * The ONE matrix applyExif applies for [orientation] (with the source's
+     * own [width]/[height]); null for 1/0 — no transform. Composed as
+     * mirror-about-centre first, then a clockwise rotation about it: exactly
+     * the composition applyExif builds inline, stated at matrix level so the
+     * direction and the mirroring can be pinned WITHOUT pixels (Robolectric's
+     * matrix createBitmap yields transparent bitmaps — observed on CI run
+     * 39406314390 and locally — so colour evidence is unavailable in tests).
+     */
+    internal fun exifMatrix(orientation: Int, width: Int, height: Int): Matrix? {
+        val fix = exifFix(orientation) ?: return null
+        return Matrix().apply {
+            // Call order matters: successive post* calls left-multiply in this
+            // Matrix implementation (measured), so the SCALE must be posted
+            // FIRST for the composed matrix to act as "mirror, then rotate"
+            // — the same linear map, and rotation/dilation of VECTORS, that
+            // the previous inline mirror-bitmap-then-rotate-bitmap steps
+            // produced.
+            if (fix.mirrorFirst) {
+                postScale(-1f, 1f, width / 2f, height / 2f)
+            }
+            if (fix.rotationDegrees != 0) {
+                postRotate(fix.rotationDegrees.toFloat(), width / 2f, height / 2f)
+            }
+        }
+    }
+
     internal fun applyExif(bytes: ByteArray, bitmap: Bitmap): Bitmap {
-        val fix = exifFix(exifOrientation(bytes)) ?: return bitmap
-        var out = bitmap
-        if (fix.mirrorFirst) {
-            out = Bitmap.createBitmap(
-                out, 0, 0, out.width, out.height,
-                // Pivot form on purpose: mirroring about the bitmap centre maps
-                // the source rectangle exactly onto itself, so no coordinate
-                // normalisation is left to guesswork.
-                Matrix().apply { postScale(-1f, 1f, out.width / 2f, out.height / 2f) },
-                true
-            )
-        }
-        if (fix.rotationDegrees != 0) {
-            out = Bitmap.createBitmap(
-                out, 0, 0, out.width, out.height,
-                Matrix().apply { postRotate(fix.rotationDegrees.toFloat()) },
-                true
-            )
-        }
-        return out
+        val matrix = exifMatrix(exifOrientation(bytes), bitmap.width, bitmap.height)
+            ?: return bitmap
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private fun scaleBitmap(bitmap: Bitmap): Bitmap {

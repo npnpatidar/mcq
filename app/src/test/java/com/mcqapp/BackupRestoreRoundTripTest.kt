@@ -263,6 +263,64 @@ class BackupRestoreRoundTripTest {
         }
     }
 
+    /**
+     * The bank wire format keeps a paper's standalone questions beside its
+     * categories, and the importer folds them into the paper Uncategorized
+     * category on restore — so a backup built from a bank in that shape
+     * restores them just the same, and the restore report must count them.
+     * Counting only the category lists undercounts precisely the questions
+     * the restore wrote.
+     */
+    @Test
+    fun aPaperLevelQuestionIsRestoredAndCounted() = kotlinx.coroutines.runBlocking {
+        val content = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-1",
+                    title = "Backup Paper",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q-standalone",
+                            text = "Standalone question",
+                            options = listOf(
+                                OptionDto(id = "a", text = "Yes"),
+                                OptionDto(id = "b", text = "No")
+                            ),
+                            correctOptionIds = listOf("a")
+                        )
+                    ),
+                    categories = listOf(
+                        CategoryDto(
+                            id = "cat-root",
+                            title = "Root",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "q-1",
+                                    text = "Categorized question",
+                                    options = listOf(
+                                        OptionDto(id = "a", text = "Yes"),
+                                        OptionDto(id = "b", text = "No")
+                                    ),
+                                    correctOptionIds = listOf("b")
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val backup = McqBackupFormat.Backup(
+            manifest = McqBackupFormat.Manifest(dbVersion = db.openHelper.readableDatabase.version),
+            content = content,
+            study = McqBackupFormat.StudyFile(),
+            settings = McqBackupFormat.SettingsFile()
+        )
+        val report = BackupRestorer(db).restore(backup)
+        assertTrue("report must count the standalone question too: $report", report.contains("2 questions"))
+        assertEquals(listOf("q-1", "q-standalone"), allQuestionIds().sorted())
+    }
+
     @Test
     fun aBackupOfARestoredLibraryDescribesTheSameState() = kotlinx.coroutines.runBlocking {
         seed()

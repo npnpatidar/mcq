@@ -26,7 +26,11 @@ import androidx.compose.material3.Text
 import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -54,6 +58,19 @@ fun HistoryScreen(
     val attempts by viewModel.attempts.collectAsStateWithLifecycle()
     val hardest by viewModel.hardest.collectAsStateWithLifecycle()
     val weakest by viewModel.weakest.collectAsStateWithLifecycle()
+
+    // Reviews logged elsewhere (a study session) must show up when coming
+    // back: this screen's top-lists are read on demand, not observed.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         topBar = {

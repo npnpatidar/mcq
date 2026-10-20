@@ -369,7 +369,7 @@ object PdfPaperWriter {
                 com.mcqapp.util.decodeBounded(it.bytes, com.mcqapp.util.MAX_EXPORT_DIMENSION)
             }
             if (bitmap == null) {
-                val label = if (embedded == null) "[image: $src]" else "[unreadable image]"
+                val label = if (embedded == null) unreadableImageLabel(src) else "[unreadable image]"
                 paragraph(label, 10f, Typeface.NORMAL, Color.GRAY, indent = indent)
                 return
             }

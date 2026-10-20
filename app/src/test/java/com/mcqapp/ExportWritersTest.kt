@@ -3,6 +3,7 @@ package com.mcqapp
 import com.mcqapp.data.export.HtmlPaperWriter
 import com.mcqapp.data.export.ZipPaperWriter
 import com.mcqapp.data.export.parseDataUri
+import com.mcqapp.data.export.unreadableImageLabel
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
@@ -198,6 +199,20 @@ class ExportWritersTest {
         assertNotNull(img)
         assertEquals("image/png", img!!.mimeType)
         assertTrue(img.bytes.isNotEmpty())
+    }
+
+    @Test
+    fun aRejectedDataUriSrcLabelsItselfUnreadableNotMegabytes() {
+        // A `data:` src parseDataUri rejects (raw payload, no ;base64) printed
+        // as its entire literal self — a 2 MB failed image was hundreds of
+        // pages of base64 in the paper, with no hint it was an image. The
+        // regression is a LENGTH assertion, not an eyeball.
+        val blob = "data:image/png," + "A".repeat(16_384)
+        assertEquals("[unreadable image]", unreadableImageLabel(blob))
+        assertTrue("label must stay bounded, got ${unreadableImageLabel(blob).length}", unreadableImageLabel(blob).length < 40)
+        // Non-data srcs keep the provenance label they always had.
+        assertEquals("[image: photo.jpg]", unreadableImageLabel("photo.jpg"))
+        assertEquals("[image: http://host/img.png]", unreadableImageLabel("http://host/img.png"))
     }
 
     @Test

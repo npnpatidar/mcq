@@ -19,6 +19,18 @@ fun parseDataUri(src: String?): EmbeddedImage? {
     }
 }
 
+/**
+ * The fallback label a PDF prints when an image src cannot be resolved to
+ * pixels. A src shaped `data:…` that [parseDataUri] rejects (broken base64,
+ * missing `;base64`, no comma) used to print as its ENTIRE literal self — a
+ * 2 MB failed image is hundreds of pages of base64 masquerading as text,
+ * with no hint that it was an image. Such a src says only that it was an
+ * image and could not be read; any other src keeps the provenance label it
+ * always had (remote URLs and bare names are short by construction).
+ */
+internal fun unreadableImageLabel(src: String): String =
+    if (src.startsWith("data:")) "[unreadable image]" else "[image: $src]"
+
 fun imageExtension(mimeType: String): String = when (mimeType.lowercase()) {
     "image/jpeg" -> "jpg"
     "image/png" -> "png"

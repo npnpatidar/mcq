@@ -537,4 +537,38 @@ class AnkiPackageWriterTest {
             AnkiPackageWriter.guidFor("p1", "q1") != AnkiPackageWriter.guidFor("p2", "q1")
         )
     }
+
+    /**
+     * Schema 11's units: `col.crt` and `col.mod` are SECONDS, `col.scm` (the
+     * schema-mod stamp) is MILLISECONDS. The row used to bind ONE millisecond
+     * value into both mod and scm, so the exported collection carried a mod
+     * ~1000× in the future — the stored value, not the call, is what this
+     * opens and reads.
+     *
+     * Room/SQLite — CI is the authority. Mutant: bind milliseconds into mod
+     * again — the asserts below go red (mod ~1.7e12 against a ~1.7e9 crt;
+     * scm == mod instead of ≈ mod × 1000).
+     */
+    @Test
+    fun theCollectionStampCarriesModInSecondsAndScmInMilliseconds() {
+        val apkg = apkgOf(samplePaper())
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery("select crt, mod, scm from col", null).use { c ->
+                assertTrue(c.moveToFirst())
+                val crt = c.getLong(0)
+                val mod = c.getLong(1)
+                val scm = c.getLong(2)
+                assertTrue("crt is seconds, not ms ($crt)", crt < 4_000_000_000L)
+                assertTrue("mod is seconds, not ms ($mod)", mod < 4_000_000_000L)
+                assertTrue("mod is roughly crt (±2s)", kotlin.math.abs(mod - crt) <= 2)
+                assertTrue(
+                    "scm is ms, roughly mod × 1000 ($scm vs $mod)",
+                    kotlin.math.abs(scm - mod * 1000) <= 3_000L
+                )
+            }
+        } finally {
+            file.delete()
+        }
+    }
 }

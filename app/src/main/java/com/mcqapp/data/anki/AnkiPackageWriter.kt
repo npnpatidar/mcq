@@ -211,7 +211,8 @@ object AnkiPackageWriter {
                 AnkiSchema11.writeColRow(
                     db = db,
                     crt = nowSeconds,
-                    mod = nowMillis,
+                    mod = nowSeconds,
+                    scm = nowMillis,
                     conf = AnkiSchema11.configJson(
                         modelId = MODEL_ID,
                         // One note per question, and Anki numbers new cards from

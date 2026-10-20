@@ -3,6 +3,7 @@ package com.mcqapp.data.io
 import com.mcqapp.data.local.AppDatabase
 import java.io.InputStream
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -112,13 +113,21 @@ class StreamingImporter(
         val cancelled = AtomicBoolean(false)
 
         fun offer(queue: ArrayBlockingQueue<StreamEvent>, event: StreamEvent) {
-            if (cancelled.get()) return
+            if (cancelled.get()) {
+                // The consumer is gone: the parse stops here, at the next
+                // event boundary. Relying on the closed source alone would
+                // leave the parser to whatever the reader does with a closed
+                // stream — and a reader is not obliged to stop. The sink
+                // callbacks are not wrapped in a catch by the parser, so
+                // this ends the parse and the thread with it.
+                throw CancellationException("import cancelled")
+            }
             try {
                 queue.put(event)
             } catch (_: InterruptedException) {
                 // Once cancelled the parser is being torn down; the interrupt
                 // flag staying set only turns later puts into instant throws.
-                if (cancelled.get()) return
+                if (cancelled.get()) throw CancellationException("import cancelled")
                 Thread.currentThread().interrupt()
             }
         }
@@ -149,7 +158,14 @@ class StreamingImporter(
             } catch (t: Throwable) {
                 errorRef.set(t)
             } finally {
-                offer(queue, StreamEvent.End)
+                // The End sentinel is only worth offering to a consumer that
+                // is still there; after a cancellation the parse is over and
+                // the offer has nowhere to go.
+                try {
+                    offer(queue, StreamEvent.End)
+                } catch (_: Throwable) {
+                    // The consumer is gone; nothing left to tell it.
+                }
             }
         }, "import-stream")
         parser.isDaemon = true

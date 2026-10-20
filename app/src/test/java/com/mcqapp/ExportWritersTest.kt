@@ -139,6 +139,32 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlPrintsAnImageOnlyExplanation() {
+        // explanationElements empty and explanation blank, only the image:
+        // the guard used to omit explanationImage, so the block vanished from
+        // both pages while PDF (answer key) and DOCX rendered it.
+        val src = "data:image/jpeg;base64,QUJDREVG"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Stem",
+            options = listOf(OptionDto(id = "a", text = "A"), OptionDto(id = "b", text = "B")),
+            correctOptionIds = listOf("a"),
+            explanation = "",
+            explanationImage = src
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "T",
+            categories = listOf(CategoryDto(id = "c1", title = "C", questions = listOf(q)))
+        )
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            assertTrue("answer-shown=$quiz body", html.contains("<p class=\"expl\">Explanation: "))
+            assertTrue("answer-shown=$quiz image", html.contains("<img src=\"$src\""))
+        }
+    }
+
+    @Test
     fun exportFileNamesAreDistinctPerFormat() {
         assertEquals(
             "My-Paper-quiz.html",

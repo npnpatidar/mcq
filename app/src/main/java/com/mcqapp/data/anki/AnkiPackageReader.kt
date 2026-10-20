@@ -831,13 +831,18 @@ object AnkiPackageReader {
      * `questions.image` at import, the stem rendered it twice, and any
      * branching on `question.image != null` misdirected.
      *
-     * Two gates, in order: the payload's own elements are the question's
-     * self-description — if they contain an image there is nothing to look
-     * for; otherwise only the half BELOW the passage block (the writer
-     * separates the block from the stem with `<hr>`) is searched.
+     * The fix is positional ONLY: scan below the passage block when the front
+     * carries one (the writer separates the block from the stem with `<hr>`;
+     * a stem holding its own `<hr>` before a later image is out of this
+     * fallback's grammar — the writer's separator is). An elements-vs-image
+     * gate was tried here and deleted: the first pass is DOCUMENTED to hydrate
+     * `questions.image` from a picture authored as a content element (the
+     * SamplePaperApkgRoundTripTest invariant "the first pass only adds derived
+     * fields", which CI 39434947811 proved red when the gate disabled it), and
+     * an element-authored image sits in the stem, below the very `<hr>` the
+     * positional scan searches.
      */
-    private fun stemImageFromFront(payload: AnkiMcqPayload, questionHtml: String): String? {
-        if (payload.elements.any { it is ContentElement.ImageElement }) return null
+    private fun stemImageFromFront(questionHtml: String): String? {
         val belowPassage = if (questionHtml.contains("<hr")) questionHtml.substringAfterLast("<hr>") else questionHtml
         return IMG_TAG.find(belowPassage)?.groupValues?.get(1)
     }
@@ -889,7 +894,7 @@ object AnkiPackageReader {
                     ))
                 },
                 image = media.rewrite(payload.image)
-                    ?: stemImageFromFront(payload, questionHtml),
+                    ?: stemImageFromFront(questionHtml),
                 options = payload.options.map {
                     OptionDto(
                         id = it.id,

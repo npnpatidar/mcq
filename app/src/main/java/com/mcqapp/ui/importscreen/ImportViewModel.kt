@@ -791,28 +791,21 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updatePaperTitle(value: String) = update { it.copy(paperTitle = value) }
     fun updatePaperDescription(value: String) = update { it.copy(paperDescription = value) }
-    fun updateDuration(value: Int) = update { it.copy(durationMinutes = value) }
-    fun updateNegativeMarking(value: Double) = update { it.copy(negativeMarking = value) }
-
-    /**
-     * The numeric fields' text is owned by these two: the TYPED text is kept
-     * verbatim (so a first keystroke "0" survives instead of being
-     * canonicalised back to ""), and the value derives from the shared
-     * comma-folding parse — a comma-locale decimal key enters `0,5` and it
-     * lands as 0.5 with the field untouched. A caller that sets the value
-     * directly must keep the text twins in step with it.
-     */
     fun updateDurationText(raw: String) = update {
-        it.copy(
-            durationMinutesText = raw,
-            durationMinutes = raw.filter { c -> c.isDigit() }.toIntOrNull() ?: 0
-        )
+        // Integer MINUTES: keep the text digits-only too, so the displayed
+        // text and the stored value can never disagree ("5.0" used to display
+        // while storing 50 — a silent 10x on a minutes field).
+        val digits = raw.filter { it.isDigit() }
+        it.copy(durationMinutesText = digits, durationMinutes = digits.toIntOrNull() ?: 0)
     }
 
     fun updateNegativeMarkingText(raw: String) = update {
+        // Through the shared filter, so letters and other symbols cannot sit
+        // in the field while silently parsing as 0.
+        val kept = com.mcqapp.util.filterDecimalEntry(raw)
         it.copy(
-            negativeMarkingText = raw,
-            negativeMarking = com.mcqapp.util.parseDecimalEntry(raw)
+            negativeMarkingText = kept,
+            negativeMarking = com.mcqapp.util.parseDecimalEntry(kept)
         )
     }
     fun updateCategoryName(value: String) = update { it.copy(categoryName = value) }

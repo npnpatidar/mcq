@@ -36,7 +36,27 @@ class ImportFieldTextTest {
         val vm = viewModel()
         vm.updateNegativeMarkingText("0,5")
         val s = vm.state.value
-        assertEquals("the field keeps what was typed", "0,5", s.negativeMarkingText)
+        // The comma folds through the shared filter, so the field reads the
+        // normalised text — the comma KEY works either way.
+        assertEquals("0.5", s.negativeMarkingText)
         assertEquals(0.5, s.negativeMarking, 0.0)
+    }
+
+    @Test
+    fun symbolJunkCannotSitInTheFieldWhileParsingAsZero() {
+        val vm = viewModel()
+        vm.updateNegativeMarkingText("abc!@")
+        val s = vm.state.value
+        assertEquals("", s.negativeMarkingText)
+        assertEquals(0.0, s.negativeMarking, 0.0)
+    }
+
+    @Test
+    fun aMinuteEntryWithADotCannotDisplayTextThatDisagreesWithTheValue() {
+        val vm = viewModel()
+        vm.updateDurationText("5.0")
+        // Text and value from the same digit string: never a silent 10x.
+        assertEquals("50", vm.state.value.durationMinutesText)
+        assertEquals(50, vm.state.value.durationMinutes)
     }
 }

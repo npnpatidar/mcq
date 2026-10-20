@@ -553,7 +553,25 @@ class AnkiPackageWriterTest {
      */
     @Test
     fun cardIdsNeverShareTheNoteIdSpace() {
-        val apkg = apkgOf(samplePaper())
+        // Two distinct notes of our own: apkgOf's fixture paper writes a
+        // SINGLE note, and the interleaving proof needs at least two.
+        val questions = listOf(
+            Question(
+                id = "q-x1",
+                categoryId = "c1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("one")),
+                options = listOf(com.mcqapp.domain.QuestionOption("a", "A")),
+                correctOptionIds = setOf("a")
+            ),
+            Question(
+                id = "q-x2",
+                categoryId = "c1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("two")),
+                options = listOf(com.mcqapp.domain.QuestionOption("a", "A")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        val apkg = apkgOfQuestions(samplePaper(), questions)
         val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
         try {
             val noteIds = mutableListOf<Long>()

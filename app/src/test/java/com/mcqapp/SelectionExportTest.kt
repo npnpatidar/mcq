@@ -6,6 +6,7 @@ import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.Question
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -77,6 +78,44 @@ class SelectionExportTest {
         )
         assertEquals(SelectionExport.FALLBACK_CATEGORY, dto.categories.single().title)
         assertEquals(1, dto.categories.single().questions.size)
+    }
+
+    /**
+     * The category id an exported selection carries used to be its title's
+     * alphabetical position in *that* selection (`selection-0` = first
+     * title). Import matches ids first, so a second selection of different
+     * titles handed Chemistry to the row the first export's `selection-0`
+     * had created — the row was retitled, and any Physics question the
+     * second selection omitted stayed filed under the wrong category.
+     *
+     * The id is now a stable function of the title alone: re-exporting the
+     * same categories in any combination mints the same ids, so the id-first
+     * match lands every export in the row its first export created.
+     */
+    @Test
+    fun aCategorysExportIdDoesNotMoveWhenOtherTitlesComeAndGo() {
+        val physicsOnly = SelectionExport.paperDto(
+            title = "Sel 1",
+            questions = listOf(question("q1", "cat-physics")),
+            categoryTitleById = mapOf("cat-physics" to "Physics")
+        )
+        val physicsId = physicsOnly.categories.single().id
+        assertTrue("the id names the exported selection", physicsId.startsWith("selection-"))
+
+        val chemistryAndPhysics = SelectionExport.paperDto(
+            title = "Sel 2",
+            questions = listOf(question("q1", "cat-physics"), question("q2", "cat-chem")),
+            categoryTitleById = mapOf("cat-physics" to "Physics", "cat-chem" to "Chemistry")
+        )
+        val physicsAgain = chemistryAndPhysics.categories.single { it.title == "Physics" }.id
+        val chemistry = chemistryAndPhysics.categories.single { it.title == "Chemistry" }.id
+
+        assertEquals(
+            "Physics keeps the id its first export minted",
+            physicsId,
+            physicsAgain
+        )
+        assertNotEquals(physicsId, chemistry)
     }
 
     @Test

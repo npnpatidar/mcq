@@ -44,27 +44,8 @@ private fun tokenize(input: String): List<Tok> {
 }
 
 private val leafTags = setOf("mi", "mn", "mo", "mtext")
-private val entityPattern = Regex("&(#\\d+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);")
 
-internal fun decodeEntities(s: String): String {
-    if (!s.contains('&')) return s
-    return entityPattern.replace(s) { match ->
-        val body = match.groupValues[1]
-        when {
-            body.startsWith("#") -> {
-                val code = if (body[1] == 'x' || body[1] == 'X') body.substring(2).toIntOrNull(16)
-                else body.substring(1).toIntOrNull()
-                if (code != null && code in 0..0x10FFFF) String(Character.toChars(code)) else match.value
-            }
-            body == "amp" -> "&"
-            body == "lt" -> "<"
-            body == "gt" -> ">"
-            body == "quot" -> "\""
-            body == "apos" -> "'"
-            else -> match.value
-        }
-    }
-}
+internal fun decodeEntities(s: String): String = com.mcqapp.data.decodeHtmlEntities(s)
 
 private class Cursor(val toks: List<Tok>) {
     var index = 0

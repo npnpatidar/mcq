@@ -104,11 +104,55 @@ internal fun sanitizeMathmlReporting(mathml: String): Pair<String, Boolean> {
 
 internal fun sanitizeMathml(mathml: String): String = sanitizeMathmlReporting(mathml).first
 
-internal fun escapeHtmlText(s: String): String = s
-    .replace("&", "&amp;")
-    .replace("<", "&lt;")
-    .replace(">", "&gt;")
-    .replace("\"", "&quot;")
+internal fun escapeHtmlText(s: String): String {
+    // Stored text may carry entity references (machine-escaped banks, hand
+    // edits): they are characters to DISPLAY once decoded, exactly how the
+    // in-app renderer (InlineHtml), the PDF writer and the DOCX writer all
+    // treat them — HTML export was the one renderer that escaped the stored
+    // `&lt;` into literal characters instead. Decode ONCE here, at the input,
+    // then escape the decoded characters: a literal `&` stays `&amp;`
+    // (displays as &), and stored `&amp;amp;` decodes to the characters
+    // `&amp;` whose escape re-encodes only the ampersand — so it renders as
+    // `&amp;`, not as `&`. No double decode.
+    val decoded = decodeHtmlEntities(s)
+    return decoded
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+}
+
+private val entityRefPattern = Regex("&(#\\d+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);")
+
+private val namedEntityValues = mapOf(
+    "amp" to "&",
+    "lt" to "<",
+    "gt" to ">",
+    "quot" to "\"",
+    "apos" to "'",
+    "nbsp" to "\u00A0"
+)
+
+/**
+ * One pass of entity decoding, the table InlineHtml, the PDF writer
+ * (`PdfMath.decodeEntities`) and the DOCX writer share: numeric references
+ * and the XML named five plus `nbsp`; any unknown or out-of-range reference
+ * stays as its literal characters, the way the in-app renderer keeps it.
+ */
+internal fun decodeHtmlEntities(s: String): String {
+    if (!s.contains('&')) return s
+    return entityRefPattern.replace(s) { match ->
+        val body = match.groupValues[1]
+        when {
+            body.startsWith("#") -> {
+                val code = if (body[1] == 'x' || body[1] == 'X') body.substring(2).toIntOrNull(16)
+                else body.substring(1).toIntOrNull()
+                if (code != null && code in 0..0x10FFFF) String(Character.toChars(code)) else match.value
+            }
+            else -> namedEntityValues[body] ?: match.value
+        }
+    }
+}
 
 // Matches a well-formed tag only; a stray "<" (unescaped markup in an
 // otherwise-text chunk) fails the match and is escaped as text instead of

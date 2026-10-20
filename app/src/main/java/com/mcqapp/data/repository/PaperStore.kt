@@ -139,6 +139,10 @@ internal class PaperStore(
             // longer exists, and question_results still reference dead questions.
             db.attemptDao().deleteByPaper(paperId)
             db.cardStateDao().deleteByPaper(paperId)
+            // The stats aggregate keys on the question id alone, so this sweep
+            // must resolve the paper's questions while they still exist: after
+            // the cascade below the weakest-categories buckets would survive.
+            db.questionStatsDao().deleteAllForPaper(paperId)
             db.paperDao().deleteById(paperId)
         }
         // A snapshot is one global slot, so it has to be dropped by hand — and
@@ -192,6 +196,10 @@ internal class PaperStore(
             // transaction, before the questions are gone.
             db.cardStateDao().deleteAllForCategory(categoryId)
             db.reviewLogDao().deleteAllForCategory(categoryId)
+            // The aggregate keys on the question id alone and has no FK here,
+            // so it must be swept while the questions still exist - otherwise
+            // History keeps ranking the deleted category's questions.
+            db.questionStatsDao().deleteAllForCategory(categoryId)
             db.categoryDao().deleteById(categoryId)
         }
     }

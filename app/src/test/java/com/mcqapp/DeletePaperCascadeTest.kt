@@ -144,6 +144,76 @@ class DeletePaperCascadeTest {
         assertEquals(1, db.attemptDao().countByPaper("p2"))
     }
 
+    /**
+     * `question_stats` has no foreign key to questions (its PK is the question
+     * id alone), so the orphan sweeps that already cover `card_state` and
+     * `review_log` stopped one table short: the lifetime aggregate outlived
+     * its question, and since History's hardest/weakest reads go straight to
+     * the aggregate without joining the question rows, deleted questions kept
+     * ranking and a deleted paper's (paper, category) buckets kept counting
+     * forever — for a lifetime view that is supposed to be the honest one.
+     * Every delete site now sweeps the aggregate the same way it sweeps the
+     * other two tables.
+     */
+    @Test
+    fun deletedQuestionsAndPapersStopRankingInTheHistoryAggregates() = runBlocking {
+        seedPaper("p1", "c1")
+        seedPaper("p2", "c2")
+        seedPaper("p3", "c3")
+        listOf("p1", "p2", "p3").forEach { paperId ->
+            val questions = repository.getQuestionsForPaper(paperId)
+            repository.saveAttempt(
+                paperId = paperId,
+                paperTitle = "Paper $paperId",
+                questions = questions,
+                // Wrong on purpose: the question has to rank in "hardest".
+                selections = questions.associate { it.id to setOf("${it.id}-b") },
+                negativeMarking = 0.0,
+                durationSeconds = 30,
+                finishedAt = System.currentTimeMillis()
+            )
+        }
+        // Sanity: all six rank while everything is alive, and each paper owns
+        // one weakest-categories bucket.
+        assertEquals(6, repository.getHardestQuestions(limit = 10).size)
+        assertEquals(
+            setOf("p1", "p2", "p3"),
+            repository.getWeakestCategories(limit = 10).map { it.paperId }.toSet()
+        )
+
+        // A deleted question leaves the ranking at its own delete site...
+        repository.deleteQuestion("q-p1-1")
+        assertTrue(
+            "the deleted question still ranks in hardest",
+            repository.getHardestQuestions(limit = 10).none { it.questionId == "q-p1-1" }
+        )
+        // ...and the bulk delete sweeps each id the same way.
+        repository.deleteQuestions(listOf("q-p1-2"))
+        assertTrue(
+            "the bulk delete left the aggregated question ranking",
+            repository.getHardestQuestions(limit = 10).none { it.questionId == "q-p1-2" }
+        )
+
+        // A deleted paper's aggregates go with the paper: no ranking, no
+        // weakest-categories bucket.
+        repository.deletePaper("p2")
+        assertTrue(
+            "the deleted paper's question still ranks in hardest",
+            repository.getHardestQuestions(limit = 10).none { it.questionId.startsWith("q-p2-") }
+        )
+        assertTrue(
+            "the deleted paper still owns a weakest-categories bucket",
+            repository.getWeakestCategories(limit = 10).none { it.paperId == "p2" }
+        )
+
+        // A deleted category's questions leave the ranking with their cascade.
+        repository.deleteCategory("c3")
+        assertTrue(
+            "the deleted category's question still ranks in hardest",
+            repository.getHardestQuestions(limit = 10).none { it.questionId.startsWith("q-p3-") }
+        )
+    }
+
     @Test
     fun deletingAPaperDiscardsItsResumeSnapshot() = runBlocking {
         seedPaper("p1", "c1")

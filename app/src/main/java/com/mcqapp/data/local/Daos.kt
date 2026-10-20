@@ -1758,6 +1758,44 @@ interface QuestionStatsDao {
             "LIMIT :limit"
     )
     suspend fun getWeakestCategories(limit: Int): List<CategoryMasteryRow>
+
+    /**
+     * Drops one question's lifetime aggregate. `question_stats` has no foreign
+     * key to questions (the PK is the question id alone), so this is what every
+     * delete site that sweeps `card_state` and `review_log` must call too — the
+     * orphan-sweep work stopped at those tables. Unswept, the aggregate row
+     * outlives its question: History's "Hardest questions" keeps listing it and
+     * every backup carries it.
+     */
+    @Query("DELETE FROM question_stats WHERE questionId = :questionId")
+    suspend fun deleteByQuestion(questionId: String): Int
+
+    /**
+     * One [getWeakestCategories] bucket per (paper, category): a deleted
+     * paper's buckets would otherwise keep counting forever, so the paper's
+     * question aggregates go with the paper. Resolves the paper's questions
+     * as a subquery and must run inside the deleting transaction, before the
+     * paper (and its cascade) is gone.
+     */
+    @Query(
+        "DELETE FROM question_stats WHERE questionId IN " +
+            "(SELECT id FROM questions WHERE categoryId IN " +
+            "(SELECT id FROM categories WHERE paperId = :paperId))"
+    )
+    suspend fun deleteAllForPaper(paperId: String): Int
+
+    /**
+     * Drops the aggregates of every question in one category, resolved as a
+     * subquery so the ids are never listed. Must run before the category (and
+     * its cascade) is deleted, for the same reason as
+     * [CardStateDao.deleteAllForCategory]: the row keys on the question id
+     * alone, so the question cascade cannot reach it.
+     */
+    @Query(
+        "DELETE FROM question_stats WHERE questionId IN " +
+            "(SELECT id FROM questions WHERE categoryId = :categoryId)"
+    )
+    suspend fun deleteAllForCategory(categoryId: String): Int
 }
 
 /**

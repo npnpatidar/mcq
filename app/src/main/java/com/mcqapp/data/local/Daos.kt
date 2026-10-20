@@ -63,6 +63,15 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<CategoryEntity>
 
+    /**
+     * The rowids of the given category ids, for the browse filter's bound
+     * numeric CSV: a categoryId is an arbitrary imported string, so the
+     * INSTR match runs on rowids — a number cannot contain the comma
+     * separator (see [QuestionDao.pagingRefsByCategories]).
+     */
+    @Query("SELECT rowid FROM categories WHERE id IN (:ids)")
+    suspend fun rowIdsByIds(ids: List<String>): List<Long>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(category: CategoryEntity)
 
@@ -554,9 +563,15 @@ interface QuestionDao {
      *   file carried no explanation text, so the column is never `''`.
      *   Comparing the flattened text would mean decoding the elements JSON per
      *   row, which SQL cannot do here.
-     * - `categoryFilterCsv` is `,id,id,…` matched with `INSTR`, so a whole
+     * - `categoryFilterRowIdCsv` is the SELECTED CATEGORIES' rowids as
+     *   `,id,id,…` matched with `INSTR` against `categories.rowid`, so a whole
      *   subtree of categories costs one bind variable instead of one per
-     *   category. The `Int` filter flags are 0/1 for reuse of one statement.
+     *   category. Rowids, not the ids themselves: ids are arbitrary imported
+     *   strings, and a literal `a,b` in an id made the INSTR needle-or-CSV
+     *   splits a lie (a selection of {a, b} matched the row whose id was
+     *   `a,b`; selecting `a,b` alone leaked its neighbour `a`). A rowid is a
+     *   number, so it can never contain the separating comma. The `Int`
+     *   filter flags are 0/1 for reuse of one statement.
      */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
@@ -579,7 +594,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )
@@ -590,7 +605,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): PagingSource<Int, QuestionRef>
 
     /**
@@ -715,7 +730,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0)"
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0)"
     )
     suspend fun countBrowseIds(
         paperId: String,
@@ -724,7 +739,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): Int
 
     /**
@@ -751,7 +766,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid LIMIT 1 OFFSET :offset"
     )
@@ -763,7 +778,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): String?
 
     /**
@@ -791,7 +806,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
             "AND (categories.sortOrder, categories.title, questions.sortOrder, questions.rowid) " +
             "< (anchorCategory.sortOrder, anchorCategory.title, anchor.sortOrder, anchor.rowid)"
     )
@@ -803,7 +818,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): Int
 
     @Query(

@@ -494,7 +494,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val noExplanation: Int,
         val uncategorized: Int,
         val categoryFilter: Int,
-        val categoryFilterCsv: String
+        /** The SELECTED subtree's category ids; the SQL binds their rowids. */
+        val categoryFilterIds: Set<String>?
     ) {
         companion object {
             fun of(
@@ -515,8 +516,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 noExplanation = if (filter == BrowseListFilter.NO_EXPLANATION) 1 else 0,
                 uncategorized = if (filter == BrowseListFilter.UNCATEGORIZED) 1 else 0,
                 categoryFilter = if (categoryFilterIds.isNullOrEmpty()) 0 else 1,
-                categoryFilterCsv = categoryFilterIds.orEmpty()
-                    .joinToString(separator = ",", prefix = ",", postfix = ",")
+                categoryFilterIds = categoryFilterIds
             )
         }
     }
@@ -538,11 +538,45 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ) { _, _ -> Unit }
 
     /**
+     * The category filter as ONE bound CSV of the selected categories' ROWIDS,
+     * resolved once per read in Kotlin (chunked, so a big subtree never hits
+     * the 999-variable wall, and too big to split for the page query itself —
+     * LIMIT/OFFSET pagination needs the `:categoryFilter` flag constants, and
+     * a bound IN list cannot survive inside a LIMIT page). Rowids, not the ids
+     * themselves: a categoryId is an arbitrary imported string, and an id of
+     * `a,b` made the old `INSTR` split a lie in both directions — a selection
+     * of {a, b} matched the row whose id was literally `a,b`, and selecting
+     * `a,b` alone leaked its neighbour `a`. A rowid is a number and cannot
+     * contain the separating comma.
+     */
+    private suspend fun categoryRowIdCsv(scope: BrowseScope): String {
+        val ids = scope.categoryFilterIds ?: return ","
+        if (ids.isEmpty()) return ","
+        val rowIds = ids.chunked(900).flatMap { chunk -> db.categoryDao().rowIdsByIds(chunk) }
+        return rowIds.distinct().joinToString(separator = ",", prefix = ",", postfix = ",")
+    }
+
+    /**
+     * The browse list's csv is resolved OUTSIDE [browseRefsSource]: Pager's
+     * factory is not a suspend context, and one resolved csv belongs to the
+     * filter change that produced the scope (the list's refreshes re-bind
+     * that one value; category writes deliberately do not invalidate, see
+     * the scope's comments). The count and cursor calls resolve fresh per
+     * call; the SQL that consumes it is shared verbatim by all of them, so
+     * list, count and Prev/Next can never drift.
+     */
+    suspend fun browseCategoryRowIdCsv(scope: BrowseScope): String = categoryRowIdCsv(scope)
+
+    /**
      * A fresh browse [androidx.paging.PagingSource] for one filter set. Room
      * invalidates it on any question/category/answer write, the same
-     * refetch-on-write behaviour the observe-based list had.
+     * refetch-on-write behaviour the observe-based list had. Bind the csv
+     * [browseCategoryRowIdCsv] resolved for this scope.
      */
-    fun browseRefsSource(scope: BrowseScope): androidx.paging.PagingSource<Int, QuestionRef> =
+    fun browseRefsSource(
+        scope: BrowseScope,
+        categoryFilterRowIdCsv: String
+    ): androidx.paging.PagingSource<Int, QuestionRef> =
         db.questionDao().pagingRefsByCategories(
             paperId = scope.paperId,
             query = scope.query,
@@ -550,7 +584,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             noExplanation = scope.noExplanation,
             uncategorized = scope.uncategorized,
             categoryFilter = scope.categoryFilter,
-            categoryFilterCsv = scope.categoryFilterCsv
+            categoryFilterRowIdCsv = categoryFilterRowIdCsv
         )
 
     /** One category's refs in order. Reorder math works per category. */
@@ -570,21 +604,21 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun browseFilteredCount(scope: BrowseScope): Int =
         db.questionDao().countBrowseIds(
             scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
-            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
+            scope.uncategorized, scope.categoryFilter, categoryRowIdCsv(scope)
         )
 
     /** The id at one position in the scope, for the editor's Prev/Next. */
     suspend fun browseFilteredIdAt(offset: Int, scope: BrowseScope): String? =
         db.questionDao().browseIdAtIndex(
             offset, scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
-            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
+            scope.uncategorized, scope.categoryFilter, categoryRowIdCsv(scope)
         )
 
     /** The anchor's index in the scope, for the editor's "N of M". */
     suspend fun browseFilteredIndexOf(anchorId: String, scope: BrowseScope): Int =
         db.questionDao().browseIndexBefore(
             anchorId, scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
-            scope.uncategorized, scope.categoryFilter, scope.categoryFilterCsv
+            scope.uncategorized, scope.categoryFilter, categoryRowIdCsv(scope)
         )
     suspend fun getQuestion(questionId: String): Question? = questionStore.getQuestion(questionId)
     suspend fun getQuestionsByIds(ids: List<String>): List<Question> =

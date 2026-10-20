@@ -69,14 +69,15 @@ class BrowsePagingTest {
         query: String = "",
         filter: BrowseListFilter = BrowseListFilter.ALL,
         categoryFilterIds: Set<String>? = null
-    ): PagingSource<Int, QuestionRef> = repository.browseRefsSource(
-        McqRepository.BrowseScope.of(
+    ): PagingSource<Int, QuestionRef> {
+        val scope = McqRepository.BrowseScope.of(
             paperId = "p1",
             query = query,
             filter = filter,
             categoryFilterIds = categoryFilterIds
         )
-    )
+        return repository.browseRefsSource(scope, repository.browseCategoryRowIdCsv(scope))
+    }
 
     /** Walks every page at a small size, crossing window boundaries. */
     private suspend fun walk(factory: suspend () -> PagingSource<Int, QuestionRef>): List<String> =

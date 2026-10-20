@@ -123,7 +123,9 @@ class QuestionRefTextTest {
             filter = BrowseListFilter.ALL,
             categoryFilterIds = null
         )
-        assertReadable(walkPaging(2, { repository.browseRefsSource(browse) }, paramsFor()))
+        assertReadable(walkPaging(2, {
+            repository.browseRefsSource(browse, repository.browseCategoryRowIdCsv(browse))
+        }, paramsFor()))
         assertReadable(walkPaging(2, { repository.passageMembersSource("pa") }, paramsFor()))
     }
 

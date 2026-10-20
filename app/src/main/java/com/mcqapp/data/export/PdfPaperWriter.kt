@@ -2,6 +2,7 @@ package com.mcqapp.data.export
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
@@ -29,9 +30,9 @@ object PdfPaperWriter {
 
     private const val PAGE_W = 595
     private const val PAGE_H = 842
-    private const val MARGIN = 40
-    private val CONTENT_W = (PAGE_W - MARGIN * 2).toFloat()
-    private val BOTTOM = (PAGE_H - MARGIN).toFloat()
+    internal const val MARGIN = 40
+    internal val CONTENT_W = (PAGE_W - MARGIN * 2).toFloat()
+    internal val BOTTOM = (PAGE_H - MARGIN).toFloat()
 
     /**
      * Renders the document straight to [out]: `PdfDocument.writeTo` already
@@ -57,7 +58,7 @@ object PdfPaperWriter {
     ) {
         val doc = PdfDocument()
         try {
-            val w = Writer(doc, twoColumn)
+            val w = Writer(PdfPages(doc, PAGE_W, PAGE_H), twoColumn)
             w.paragraph(stream.title, 20f, Typeface.BOLD, Color.BLACK, spaceAfter = 4f)
             val meta = buildList {
                 if (stream.description.isNotBlank()) add(stream.description)
@@ -193,11 +194,45 @@ object PdfPaperWriter {
         )
     }
 
-    private class Writer(private val doc: PdfDocument, private val twoColumn: Boolean) {
+    /**
+     * The page surface the writer draws on. PdfDocument's page is adapted by
+     * [PdfPages]; the oversized-block test injects a recorder instead,
+     * because Robolectric cannot construct a PdfDocument page ("document is
+     * closed!") — but it CAN run StaticLayout and Canvas, so this seam is
+     * what makes the page/draw output observable without a real file.
+     */
+    internal interface PdfPageHost {
+        val canvas: Canvas
+        fun finish()
+    }
+
+    internal fun interface PdfPageSink {
+        /** Starts page [pageNum] (1-based); page [pageNum-1] is already finished. */
+        fun startPage(pageNum: Int): PdfPageHost
+    }
+
+    internal class PdfPages(
+        private val doc: PdfDocument,
+        private val width: Int = PAGE_W,
+        private val height: Int = PAGE_H
+    ) : PdfPageSink {
+        override fun startPage(pageNum: Int): PdfPageHost {
+            val p = doc.startPage(PdfDocument.PageInfo.Builder(width, height, pageNum).create())
+            return object : PdfPageHost {
+                override val canvas = p.canvas
+                override fun finish() = doc.finishPage(p)
+            }
+        }
+    }
+
+    internal class Writer(
+        private val pages: PdfPageSink,
+        private val twoColumn: Boolean
+    ) {
         private val geometry = PdfColumns(PAGE_W.toFloat(), MARGIN.toFloat(), twoColumn)
         private var col = 0
         private var pageNum = 0
-        private var page: PdfDocument.Page = newPage()
+        private var page: PdfPageHost = newPage()
         private var y = MARGIN.toFloat()
 
         private fun paint(size: Float, style: Int, color: Int) = TextPaint().apply {
@@ -207,17 +242,15 @@ object PdfPaperWriter {
             isAntiAlias = true
         }
 
-        private fun newPage(): PdfDocument.Page {
+        private fun newPage(): PdfPageHost {
             pageNum++
-            val info = PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, pageNum).create()
-            val p = doc.startPage(info)
             y = MARGIN.toFloat()
-            return p
+            return pages.startPage(pageNum)
         }
 
         fun finish() {
             footer()
-            doc.finishPage(page)
+            page.finish()
         }
 
         private fun footer() {
@@ -228,7 +261,7 @@ object PdfPaperWriter {
 
         private fun nextPage() {
             footer()
-            doc.finishPage(page)
+            page.finish()
             page = newPage()
         }
 
@@ -273,12 +306,59 @@ object PdfPaperWriter {
                 y += spaceBefore
             }
             val canvas = page.canvas
-            canvas.save()
-            canvas.translate(geometry.originX(col) + indent, y)
-            layout.draw(canvas)
-            canvas.restore()
-            y += layout.height + spaceAfter
+            if (y + layout.height <= BOTTOM) {
+                canvas.save()
+                canvas.translate(geometry.originX(col) + indent, y)
+                layout.draw(canvas)
+                canvas.restore()
+                y += layout.height
+            } else {
+                // A block taller than one printable page: band it. advance()
+                // protects a block's START only, so this used to draw the
+                // whole layout once from the top of the fresh page and lose
+                // everything below the page bottom.
+                drawTallBands(layout.height.toFloat()) { canvas0, blockTop, bandHeight ->
+                    canvas0.save()
+                    canvas0.translate(geometry.originX(col) + indent, y - blockTop)
+                    canvas0.clipRect(
+                        0f, blockTop.toFloat(),
+                        (layout.width).toFloat(), (blockTop + bandHeight).toFloat()
+                    )
+                    layout.draw(canvas0)
+                    canvas0.restore()
+                }
+            }
+            y += spaceAfter
         }
+
+        /**
+         * Slices one oversized block into page-sized bands, calling [band]
+         * once per band with (canvas, block-space top, band height); the
+         * callback draws the band clipped at the current [y]. Everything
+         * after the first band starts on a fresh page/column ([advance]
+         * sets y = MARGIN), so each band fills `BOTTOM - y` of the page it
+         * lands on, and [y] ends at the last band's bottom edge.
+         */
+        private fun drawTallBands(blockHeight: Float, band: (Canvas, Int, Int) -> Unit) {
+            var blockTop = 0
+            var bandNo = 0
+            while (true) {
+                if (bandNo > 0) advance()
+                val bandHeight = minOf(
+                    (BOTTOM - y).toInt(),
+                    (blockHeight - blockTop).toInt()
+                ).coerceAtLeast(1) // a single line taller than a page: draw it, clipped
+                band(page.canvas, blockTop, bandHeight)
+                y += bandHeight
+                blockTop += bandHeight
+                if (blockTop >= blockHeight) break
+                bandNo++
+                check(bandNo < 100_000) { "oversized block banding did not advance" }
+            }
+        }
+
+        /** The oversized-block test observes the draining of the flow here. */
+        internal fun finalY(): Float = y
 
         fun image(src: String?, indent: Float = 0f) {
             if (src == null) return
@@ -439,15 +519,56 @@ object PdfPaperWriter {
                     edges = computeEdges()
                 }
                 val top = y
-                for (c in 0 until cols) {
-                    page.canvas.drawRect(edges[c], top, edges[c + 1], top + h, linePaint)
-                    val layout = layouts[c] ?: continue
-                    page.canvas.save()
-                    page.canvas.translate(edges[c] + pad, top + pad)
-                    layout.draw(page.canvas)
-                    page.canvas.restore()
+                if (top + h <= BOTTOM) {
+                    for (c in 0 until cols) {
+                        page.canvas.drawRect(edges[c], top, edges[c + 1], top + h, linePaint)
+                        val layout = layouts[c] ?: continue
+                        page.canvas.save()
+                        page.canvas.translate(edges[c] + pad, top + pad)
+                        layout.draw(page.canvas)
+                        page.canvas.restore()
+                    }
+                    y = top + h
+                } else {
+                    // A row taller than one printable page: band it over ROW
+                    // space so the ruling stays aligned across columns —
+                    // every page draws one band of all cells. The old code
+                    // drew the whole row once below the page bottom and lost
+                    // the tail of the giant cell.
+                    val contentH = h - (2 * pad).toInt()
+                    var rowTop = 0
+                    var bandNo = 0
+                    while (true) {
+                        if (bandNo > 0) {
+                            advance()
+                            edges = computeEdges()
+                        }
+                        val bandH = minOf(
+                            (BOTTOM - y - 2 * pad).toInt(),
+                            contentH - rowTop
+                        ).coerceAtLeast(1)
+                        for (c in 0 until cols) {
+                            page.canvas.drawRect(
+                                edges[c], y, edges[c + 1],
+                                y + pad + bandH + pad, linePaint
+                            )
+                            val layout = layouts[c] ?: continue
+                            page.canvas.save()
+                            page.canvas.translate(edges[c] + pad, y + pad - rowTop)
+                            page.canvas.clipRect(
+                                0f, rowTop.toFloat(),
+                                (layout.width).toFloat(), (rowTop + bandH).toFloat()
+                            )
+                            layout.draw(page.canvas)
+                            page.canvas.restore()
+                        }
+                        y += pad + bandH + pad
+                        rowTop += bandH
+                        if (rowTop >= contentH) break
+                        bandNo++
+                        check(bandNo < 100_000) { "oversized row banding did not advance" }
+                    }
                 }
-                y = top + h
             }
             y += 6f
         }

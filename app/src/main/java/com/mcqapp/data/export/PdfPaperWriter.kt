@@ -344,10 +344,7 @@ object PdfPaperWriter {
             var bandNo = 0
             while (true) {
                 if (bandNo > 0) advance()
-                val bandHeight = minOf(
-                    (BOTTOM - y).toInt(),
-                    (blockHeight - blockTop).toInt()
-                ).coerceAtLeast(1) // a single line taller than a page: draw it, clipped
+                val bandHeight = (blockHeight - blockTop).toInt().coerceAtLeast(1) // a single line taller than a page: draw it, clipped
                 band(page.canvas, blockTop, bandHeight)
                 y += bandHeight
                 blockTop += bandHeight
@@ -543,10 +540,7 @@ object PdfPaperWriter {
                             advance()
                             edges = computeEdges()
                         }
-                        val bandH = minOf(
-                            (BOTTOM - y - 2 * pad).toInt(),
-                            contentH - rowTop
-                        ).coerceAtLeast(1)
+                        val bandH = (contentH - rowTop).coerceAtLeast(1)
                         for (c in 0 until cols) {
                             page.canvas.drawRect(
                                 edges[c], y, edges[c + 1],

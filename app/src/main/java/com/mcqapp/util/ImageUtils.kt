@@ -118,9 +118,7 @@ object ImageUtils {
     }
 
     internal fun applyExif(bytes: ByteArray, bitmap: Bitmap): Bitmap {
-        val matrix = exifMatrix(exifOrientation(bytes), bitmap.width, bitmap.height)
-            ?: return bitmap
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        return bitmap
     }
 
     private fun scaleBitmap(bitmap: Bitmap): Bitmap {

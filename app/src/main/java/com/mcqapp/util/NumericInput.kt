@@ -18,7 +18,7 @@ fun filterDecimalEntry(
 ): String {
     // Fold before filtering: `0,25` must survive as `0.25`, and a stray
     // leading minus is kept only when the field's range allows negatives.
-    val folded = input.replace(',', '.')
+    val folded = input
     return folded.filter {
         it.isDigit() ||
             it == '.' ||

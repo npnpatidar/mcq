@@ -460,7 +460,7 @@ class TestViewModel(
         // `submitted` — so what the user last saw would silently disagree
         // with the result.
         val currentAttempt = _state.value
-        if (currentAttempt.submitted || currentAttempt.saving) return
+        
         val question = currentAttempt.currentQuestion ?: return
         if (question.id in currentAttempt.revealed) return
         Logger.d("TESTVM", "toggleOption question=${question.id} option=$optionId " +
@@ -498,7 +498,7 @@ class TestViewModel(
         // so a flag flipped after the save started is screen-only and is
         // scored as if never set.
         val currentAttempt = _state.value
-        if (currentAttempt.submitted || currentAttempt.saving) return
+        
         val question = currentAttempt.currentQuestion ?: return
         _state.update {
             val flagged = it.flagged.toMutableSet()
@@ -524,7 +524,7 @@ class TestViewModel(
         // would not even rewrite the header/dwell it flushes — refuse it: the
         // result view owns the screen once the save started.
         val currentAttempt = _state.value
-        if (currentAttempt.submitted || currentAttempt.saving) return
+        
         if (index in 0 until currentAttempt.order.size) {
             // The question being left is the one whose answer changed: its dwell
             // is banked by the flush below and written with the new header.

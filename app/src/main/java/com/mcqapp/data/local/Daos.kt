@@ -539,12 +539,12 @@ interface QuestionDao {
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -675,12 +675,12 @@ interface QuestionDao {
         "SELECT COUNT(*) FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -711,12 +711,12 @@ interface QuestionDao {
         "SELECT questions.id FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -751,12 +751,12 @@ interface QuestionDao {
             "INNER JOIN questions anchor ON anchor.id = :anchorId " +
             "INNER JOIN categories anchorCategory ON anchorCategory.id = anchor.categoryId " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -1062,13 +1062,13 @@ interface QuestionDao {
      */
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
-            "WHERE questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "WHERE questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
-            "(SELECT id FROM passages WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "(SELECT id FROM passages WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR searchText LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
             "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun search(
@@ -1080,13 +1080,13 @@ interface QuestionDao {
 
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions LEFT JOIN options " +
-            "ON options.questionId = questions.id WHERE questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' OR options.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR questions.tagsFolded LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "ON options.questionId = questions.id WHERE questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
-            "(SELECT id FROM passages WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "(SELECT id FROM passages WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR searchText LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
             "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun searchIncludingOptions(

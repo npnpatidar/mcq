@@ -382,14 +382,16 @@ class StudyViewModelPullTest {
         assertEquals(fresh[0].state, viewModel.state.value.current!!.state)
 
         // Walk the restarted drill: exactly the fresh queue, q3 never back.
-        val visited = mutableSetOf(viewModel.state.value.current!!.questionId)
+        // The card on screen is read at the top of the loop, not from the
+        // transition: next() pulls asynchronously, so the state right after
+        // it still holds the card that was graded.
+        val visited = mutableSetOf<String>()
         while (viewModel.state.value.current != null) {
             val id = viewModel.state.value.current!!.questionId
+            visited += id
             viewModel.toggleOption("$id-a")
             viewModel.check()
             viewModel.next()
-            val next = viewModel.state.value.current?.questionId
-            if (next != null && next != id) visited += next
             assertTrue(awaitCondition {
                 viewModel.state.value.finished || viewModel.state.value.current?.questionId != id
             })

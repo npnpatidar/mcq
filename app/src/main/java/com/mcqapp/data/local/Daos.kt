@@ -29,8 +29,12 @@ interface PaperDao {
     @Query("SELECT * FROM papers WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
     suspend fun getByTitle(title: String): PaperEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(paper: PaperEntity)
+    // Papers have NO INSERT-OR-REPLACE upsert — REPLACE deletes the row and
+    // fires the foreign-key cascades over every category, question, schedule
+    // and attempt under it (renameCategory was rebuilt with targeted updates
+    // for exactly this reason). Writes go through IGNORE + updateFields
+    // (upsertPaperKeepingChildren); a paper row is deleted only by
+    // deletePaper, whose cascade is intended and transactional.
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(paper: PaperEntity)

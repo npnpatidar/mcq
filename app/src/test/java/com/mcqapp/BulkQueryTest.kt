@@ -110,7 +110,7 @@ class BulkQueryTest {
         // the database and filter in Kotlin, so another paper's attempts
         // leaked into these numbers.
         // Paper first: categories carry a foreign key to it.
-        db.paperDao().upsert(
+        db.paperDao().insertIgnore(
             com.mcqapp.data.local.PaperEntity(id = "p2", title = "Other paper")
         )
         db.categoryDao().upsert(
@@ -147,7 +147,7 @@ class BulkQueryTest {
     fun bookmarksCarryTheirPaperId() = runBlocking {
         // Without the paper id the editor loads no categories and the category
         // picker silently disappears.
-        db.paperDao().upsert(com.mcqapp.data.local.PaperEntity(id = "p2", title = "Other"))
+        db.paperDao().insertIgnore(com.mcqapp.data.local.PaperEntity(id = "p2", title = "Other"))
         db.categoryDao().upsert(
             com.mcqapp.data.local.CategoryEntity(id = "c2", paperId = "p2", title = "Other")
         )

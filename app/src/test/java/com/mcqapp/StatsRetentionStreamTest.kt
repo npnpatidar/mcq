@@ -78,8 +78,8 @@ class StatsRetentionStreamTest {
 
     /** Two papers, three cards, reviews on nine days, one day reviewed twice. */
     private suspend fun seedLog() {
-        db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper One"))
-        db.paperDao().upsert(PaperEntity(id = "p2", title = "Paper Two"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Paper Two"))
         val tenDaysAgo = todayStart - 10 * day + 2 * hour
         log("q1", rating = 3, reviewedAt = tenDaysAgo)
         log("q1", rating = 1, reviewedAt = tenDaysAgo + hour)
@@ -160,8 +160,8 @@ class StatsRetentionStreamTest {
         // reading every question in the bank, even with one paper selected.
         // These two keyset pages are the scoped replacement, so they must never
         // return another paper's rows.
-        db.paperDao().upsert(PaperEntity("p1", "Paper One"))
-        db.paperDao().upsert(PaperEntity("p2", "Paper Two"))
+        db.paperDao().insertIgnore(PaperEntity("p1", "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity("p2", "Paper Two"))
         db.categoryDao().upsert(CategoryEntity("c1", "p1", "Alpha"))
         db.categoryDao().upsert(CategoryEntity("c2", "p2", "Beta"))
         db.questionDao().upsertAll(

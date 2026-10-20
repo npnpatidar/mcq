@@ -451,7 +451,7 @@ class RepositoryTest {
     @Test
     fun movingAQuestionAcrossPapersResetsItsHistoryHereToo() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper 1", "c1", "Cat 1")
-        db.paperDao().upsert(
+        db.paperDao().insertIgnore(
             com.mcqapp.data.local.PaperEntity(id = "p2", title = "Paper 2", createdAt = 1L)
         )
         db.categoryDao().upsert(

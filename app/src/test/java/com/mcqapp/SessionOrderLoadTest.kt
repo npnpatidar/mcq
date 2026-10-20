@@ -43,7 +43,7 @@ class SessionOrderLoadTest {
             .allowMainThreadQueries().build()
         repository = McqRepository(db, context)
         runBlocking {
-            db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper"))
+            db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper"))
             // B (sortOrder 0) first, then C and A tied on sortOrder 1 — C
             // wins on title.
             db.categoryDao().upsert(CategoryEntity(id = "cA", paperId = "p1", title = "Alpha", sortOrder = 1))

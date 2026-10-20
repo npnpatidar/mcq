@@ -93,9 +93,40 @@ internal class PaperStore(
         return build(null, countMap)
     }
 
+    /**
+     * Papers (and the questions/categories under them) are written by
+     * `INSERT IGNORE` plus a targeted `updateFields`, never `INSERT OR
+     * REPLACE`: REPLACE is a DELETE + INSERT, and Room fires the declared
+     * FOREIGN-KEY cascades on its delete half — categories, questions,
+     * options, correct answers, card schedules — so replacing the row of a
+     * paper that already existed wiped it down to an empty-looking shell
+     * (renameCategory was rebuilt with targeted updateFields for exactly
+     * this reason, and the importer writes IGNORE the same way). Latent
+     * today: `paper-<millis>` ids are always fresh and there is no "edit
+     * paper" flow — but any future edit that routes through [savePaper] with
+     * an existing id, or a second device minting the same millisecond id,
+     * would arm it.
+     *
+     * Columns: the same four REPLACE changed (title, description, duration,
+     * negative marking). One deliberate difference in the SAFE direction:
+     * REPLACE stamped createdAt with the new entity's default on an existing
+     * row; this keeps the row's own createdAt (updateCreatedAt is the
+     * explicit restore hook).
+     */
+    suspend fun upsertPaperKeepingChildren(paper: PaperEntity) {
+        db.paperDao().insertIgnore(paper)
+        db.paperDao().updateFields(
+            id = paper.id,
+            title = paper.title,
+            description = paper.description,
+            durationMinutes = paper.durationMinutes,
+            negativeMarking = paper.negativeMarking
+        )
+    }
+
     suspend fun savePaper(paper: Paper) {
         Logger.d("REPO", "savePaper(${paper.id}, '${paper.title}')")
-        db.paperDao().upsert(
+        upsertPaperKeepingChildren(
             PaperEntity(
                 id = paper.id,
                 title = paper.title,

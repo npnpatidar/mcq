@@ -279,4 +279,61 @@ class DeletePaperCascadeTest {
         )
         assertEquals(listOf("q-p2-1"), repository.observeBookmarks().first())
     }
+
+    /**
+     * Writing a paper whose id ALREADY exists must not rebuild it with a
+     * DELETE: `INSERT OR REPLACE` is a delete-then-insert, and Room fires the
+     * declared foreign-key cascades on the delete half — the second
+     * savePaper/category-ensure call erased every category, question, option,
+     * answer key and card schedule under the paper, leaving an empty-looking
+     * shell. Latent today (`paper-<millis>` ids are fresh and there is no
+     * edit-paper flow), so this drives the STORES directly: seed everything,
+     * then write the same id again through savePaper and
+     * ensurePaperAndCategory, and every child must have survived — with the
+     * fix, the paper's EDITABLE columns take the second write's values.
+     *
+     * Room/SQLite — CI is the authority. Mutant: restore the
+     * `@Insert(REPLACE)` paper upsert — every child count below goes red
+     * (children erased by the cascade on the replace's delete half).
+     */
+    @Test
+    fun resavingAPaperNeverErasesItsChildren() = runBlocking {
+        seedEverything()
+        repository.saveTestProgress(
+            TestSnapshot(
+                paperId = "p1",
+                categoryIds = listOf("c1"),
+                questionIds = listOf("q-p1-1", "q-p1-2")
+            ),
+            changed = emptyList()
+        )
+        val categoriesBefore = db.categoryDao().getByPaper("p1").size
+        val questionsBefore = db.questionDao().countByPaper("p1")
+        val cardsBefore = db.cardStateDao().countByPaper("p1")
+        val attemptsBefore = db.attemptDao().countByPaper("p1")
+        assertTrue(categoriesBefore > 0 && questionsBefore > 0 && cardsBefore > 0)
+
+        // The same id, written again through the store APIs.
+        repository.savePaper(
+            com.mcqapp.domain.Paper(
+                id = "p1",
+                title = "Paper p1 retitled",
+                description = "again",
+                durationMinutes = 45
+            )
+        )
+        repository.ensurePaperAndCategory("p1", "Paper re-ensured", "c1", "Cat")
+
+        assertEquals("the category survived the re-save", categoriesBefore, db.categoryDao().getByPaper("p1").size)
+        assertEquals("the questions survived the re-save", questionsBefore, db.questionDao().countByPaper("p1"))
+        assertEquals("the card schedules survived the re-save", cardsBefore, db.cardStateDao().countByPaper("p1"))
+        assertEquals("the attempt history survived the re-save", attemptsBefore, db.attemptDao().countByPaper("p1"))
+        assertEquals(
+            "the resume header survived the re-save",
+            "p1",
+            repository.loadTestSnapshot()?.paperId
+        )
+        val paper = db.paperDao().getById("p1")
+        assertEquals("the second write's title landed", "Paper re-ensured", paper?.title)
+    }
 }

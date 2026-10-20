@@ -41,7 +41,7 @@ class BrowseCursorTest {
             .allowMainThreadQueries().build()
         repository = McqRepository(db, context)
         runBlocking {
-            db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper"))
+            db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper"))
             db.categoryDao().upsert(CategoryEntity(id = "c1", paperId = "p1", title = "Alpha", sortOrder = 0))
             db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Beta", sortOrder = 1))
         }

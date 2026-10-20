@@ -116,8 +116,8 @@ class StatsOverviewStreamTest {
      * carry a whole-day interval, so the average is exactly 20 days.
      */
     private suspend fun seed() {
-        db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper One"))
-        db.paperDao().upsert(PaperEntity(id = "p2", title = "Paper Two"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Paper Two"))
 
         card("q1", intervalDays = 30, dueAt = now + 2 * hour, stability = 20.0)
         card("q2", intervalDays = 10, dueAt = todayStart - 2 * day, lapses = 9, leech = true, stability = 5.0)

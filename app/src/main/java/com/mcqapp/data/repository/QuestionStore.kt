@@ -169,7 +169,12 @@ internal class QuestionStore(
     }
 
     suspend fun ensurePaperAndCategory(paperId: String, paperTitle: String, categoryId: String, categoryTitle: String) {
-        db.paperDao().upsert(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
+        // IGNORE + targeted fields, never REPLACE — the cascade reasoning is
+        // upsertPaperKeepingChildren's, one store over. Two writes on the
+        // same millisecond id (or a future "edit paper") must not cascade
+        // the paper's children away.
+        db.paperDao().insertIgnore(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
+        db.paperDao().updateFields(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }, description = "", durationMinutes = 0, negativeMarking = 0.0)
         db.categoryDao().upsert(
             CategoryEntity(
                 id = categoryId,

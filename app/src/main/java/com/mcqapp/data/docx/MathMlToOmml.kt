@@ -139,21 +139,37 @@ internal val xmlNamedEntities = mapOf(
 )
 
 /**
- * Escapes the three XML-significant characters, and additionally drops the
- * C0 control characters: XML 1.0 cannot carry them at all — only Tab, LF
- * and CR are legal below U+0020 — so a U+0007 or a form feed in a question's
- * text would otherwise land raw in `document.xml` and make Word and this
- * app's own reader reject the entire package. They are dropped rather than
+ * Escapes the three XML-significant characters, and additionally drops every
+ * code point outside XML 1.0's `Char` production: Tab, LF and CR, U+0020
+ * through U+D7FF, U+E000 through U+FFFD, and astral characters carried as a
+ * well-formed surrogate pair (U+10000..U+10FFFF). Everything else — the C0
+ * controls, U+FFFE, U+FFFF, a lone surrogate half — is a character XML 1.0
+ * cannot carry, not even as a character reference, so a U+0007 or `\uFFFF`
+ * reaching a question's text would land raw in `document.xml` and make Word
+ * and this app's own reader reject the entire package. Dropped rather than
  * replaced: XML has no character reference for them either, and the app's
  * display layer cannot render one to begin with.
  */
 internal fun escapeXmlText(s: String): String = buildString(s.length + 16) {
-    for (c in s) when {
-        c == '&' -> append("\u0026amp;")
-        c == '<' -> append("\u0026lt;")
-        c == '>' -> append("\u0026gt;")
-        c < ' ' && c != '\t' && c != '\n' && c != '\r' -> Unit
-        else -> append(c)
+    var i = 0
+    while (i < s.length) {
+        val c = s[i++]
+        when {
+            c == '&' -> append("\u0026amp;")
+            c == '<' -> append("\u0026lt;")
+            c == '>' -> append("\u0026gt;")
+            c == '\t' || c == '\n' || c == '\r' -> append(c)
+            c < ' ' -> Unit
+            c == '\uFFFE' || c == '\uFFFF' -> Unit
+            c in '\uDC00'..'\uDFFF' -> Unit // a lone low half is not a character
+            c in '\uD800'..'\uDBFF' ->
+                // A well-formed pair is one XML code point; a lone high half is dropped.
+                if (i < s.length && s[i] in '\uDC00'..'\uDFFF') {
+                    append(c)
+                    append(s[i++])
+                } else Unit
+            else -> append(c)
+        }
     }
 }
 

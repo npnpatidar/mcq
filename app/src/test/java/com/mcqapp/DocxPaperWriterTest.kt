@@ -352,17 +352,27 @@ class DocxPaperWriterTest {
 
     /**
      * Control characters are legal in stored text (a JSON import or an Anki
-     * field can carry them), but XML 1.0 has no way to write anything below
-     * U+0020 except Tab, LF and CR: one U+0007 in a stem made the raw byte
-     * land in `document.xml`, and Word — and the app's own reader — then
-     * rejected the entire package as having unreadable content.
+     * field can carry them), but XML 1.0's Char production excludes more than
+     * the obvious: only Tab, LF and CR are legal below U+0020, U+FFFE, U+FFFF
+     * and every lone surrogate half are forbidden everywhere, and a valid
+     * astral character (an emoji, say) may only appear as a well-formed pair.
+     * A U+0007 or a `\uFFFF` in a stem made the raw byte land in
+     * `document.xml`, and Word — and the app's own reader — rejected the
+     * entire package as having unreadable content.
      */
     @Test
-    fun xmlIllegalControlCharactersDoNotReachThePackage() {
+    fun xmlIllegalCodePointsDoNotReachThePackage() {
         val q = QuestionDto(
             id = "q",
             elements = listOf(
-                ContentElement.TextElement("bell:\u0007a. Build\u000Bform:\u000Cfeed\u001Fend")
+                ContentElement.TextElement(
+                    // bell, vertical tab, form feed: the C0 half.
+                    "bell:\u0007a. Build\u000Bform:\u000Cfeed\u001Fend. " +
+                        // U+FFFE and U+FFFF, trivially representable in JSON.
+                        "nonchars:\uFFFE\uFFFFdone. " +
+                        // A lone high half, then a well-formed pair (U+1F600).
+                        "surrogate:lone\uD800pair\ud83d\ude00."
+                )
             ),
             options = listOf(OptionDto(id = "a", text = "x"), OptionDto(id = "b", text = "y")),
             correctOptionIds = listOf("a")
@@ -372,12 +382,24 @@ class DocxPaperWriterTest {
                 PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
             )
         )
-        for (c in xml) {
+        for (cp in xml.codePoints()) {
+            val legal = cp in '\t'.code..'\n'.code || cp == '\r'.code ||
+                cp in '\u0020'.code..'\uD7FF'.code || cp in '\uE000'.code..'\uFFFD'.code ||
+                cp in 0x10000..0x10FFFF
             assertTrue(
-                "no XML-illegal character may reach the package: U+%04X".format(c.code),
-                c >= ' ' || c == '\t' || c == '\n' || c == '\r'
+                "no XML-illegal code point may reach the package: U+%04X".format(cp),
+                legal
             )
         }
+        // The pair survived: the emoji is read back as one whole code point.
+        assertTrue("an emoji pair must survive the escape", "\ud83d\ude00" in xml)
+        // The escaper's input and the document around it stay well-formed: the
+        // reader would refuse a document holding a lone half (it is checked in
+        // the round trip), so assert none leaked even inside the written bytes.
+        assertTrue(
+            "the legal text must survive untouched",
+            xml.contains("bell:a. Buildform:feedend. nonchars:done. surrogate:lonepair")
+        )
     }
 
     @Test

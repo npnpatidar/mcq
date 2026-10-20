@@ -112,13 +112,9 @@ class StreamingImporter(
         val cancelled = AtomicBoolean(false)
 
         fun offer(queue: ArrayBlockingQueue<StreamEvent>, event: StreamEvent) {
-            if (cancelled.get()) return
             try {
                 queue.put(event)
             } catch (_: InterruptedException) {
-                // Once cancelled the parser is being torn down; the interrupt
-                // flag staying set only turns later puts into instant throws.
-                if (cancelled.get()) return
                 Thread.currentThread().interrupt()
             }
         }
@@ -183,9 +179,7 @@ class StreamingImporter(
             // Interrupt alone re-arms on every dispatch and a blocked read
             // ignores it entirely; closing the source turns the parser's
             // next read into an IOException and ends the parse.
-            cancelled.set(true)
             parser.interrupt()
-            inputRef.get()?.close()
             parser.join(2000)
         }
         errorRef.get()?.let { throw it }

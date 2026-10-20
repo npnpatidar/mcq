@@ -631,7 +631,7 @@ class BackupSource(private val db: AppDatabase) {
             exportedAt = System.currentTimeMillis(),
             papers = papers,
             questions = content.papers.sumOf { paper ->
-                paper.categories.sumOf { it.questions.size } + paper.questions.size
+                paper.categories.sumOf { it.questions.size }
             },
             attempts = attempts,
             reviews = reviews
@@ -735,7 +735,7 @@ class BackupRestorer(private val db: AppDatabase) {
         // them) are restored just the same, so both the log line and the
         // report must count them.
         val questionCount = content.papers.sumOf { paper ->
-            paper.categories.sumOf { it.questions.size } + paper.questions.size
+            paper.categories.sumOf { it.questions.size }
         }
         Logger.i(
             "BACKUP",

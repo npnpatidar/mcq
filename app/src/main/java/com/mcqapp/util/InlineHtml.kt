@@ -87,12 +87,22 @@ object InlineHtml {
                         openTags.addLast(tag)
                     }
                     // Unknown tags are stripped.
-                } else if (openTags.lastOrNull() == tag) {
-                    openTags.removeLast()
-                    pop()
+                } else {
+                    // A close whose tag sits UNDER the top: the mis-nested
+                    // close ends the tags above it too. Pop until found,
+                    // bounded by the stack, so neither the found span nor the
+                    // ones closed over it can leak past the misplaced close
+                    // (looks: `<b>a <i>b</b> c` used to leave BOTH styles on
+                    // " c" and everything after). A close with no matching
+                    // opener still pops nothing and eats no span.
+                    val found = openTags.lastIndexOf(tag)
+                    if (found >= 0) {
+                        repeat(openTags.size - found) {
+                            openTags.removeLast()
+                            pop()
+                        }
+                    }
                 }
-                // A stray closing tag pops nothing, so it cannot eat an
-                // unrelated span.
                 pos = match.range.last + 1
             }
             appendDecoded(text.substring(pos))

@@ -320,6 +320,59 @@ class TestSessionResumeTest {
         )
     }
 
+    /**
+     * The screen stays interactive while the attempt saves: submit() sets
+     * `submitted`/`saving` synchronously and then writes rows for seconds on a
+     * big paper. toggleOption/toggleFlag/goTo used to keep working through
+     * that window - and after it, since the result stays on screen - changing
+     * what the user saw without changing either the scored map or the
+     * persisted rows (the progress saver bails on `submitted`), so the score
+     * silently disagreed with the last thing on screen. Every mutating
+     * entry point now refuses once the save started.
+     */
+    @Test
+    fun aSubmittedAttemptRefusesFurtherEdits() {
+        seed(3)
+        val vm = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { vm.state.value.current?.id == "q0" })
+
+        vm.toggleOption("a")
+        assertEquals(setOf("a"), vm.state.value.selections["q0"])
+        vm.toggleFlag()
+        assertTrue("q0" in vm.state.value.flagged)
+
+        vm.submit()
+        // The save runs for real on the looper: wait for it to land, so the
+        // refusals under test cover the post-save window too, not just the
+        // in-flight one.
+        assertTrue(
+            "the save never landed",
+            awaitCondition { vm.state.value.attemptId != null && !vm.state.value.saving }
+        )
+        assertTrue("the attempt must stay submitted", vm.state.value.submitted)
+
+        val selections = vm.state.value.selections
+        val flagged = vm.state.value.flagged
+        val currentIndex = vm.state.value.currentIndex
+
+        vm.toggleOption("b")
+        vm.toggleFlag()
+        vm.goTo(2)
+
+        assertEquals(
+            "a post-submit answer edit changed the scored map",
+            selections, vm.state.value.selections
+        )
+        assertEquals(
+            "a post-submit flag flip was taken",
+            flagged, vm.state.value.flagged
+        )
+        assertEquals(
+            "a post-submit navigation was taken",
+            currentIndex, vm.state.value.currentIndex
+        )
+    }
+
     @Test
     fun aLegacyOrderSurvivesASecondResume() {
         seed(5)

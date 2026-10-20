@@ -454,8 +454,15 @@ class TestViewModel(
     }
 
     fun toggleOption(optionId: String) {
-        val question = _state.value.currentQuestion ?: return
-        if (question.id in _state.value.revealed) return
+        // A submitted (or in-flight-submitted) attempt is scored already: an
+        // edit now changes what the screen shows without changing either the
+        // scored map or the persisted rows — the progress saver bails on
+        // `submitted` — so what the user last saw would silently disagree
+        // with the result.
+        val currentAttempt = _state.value
+        if (currentAttempt.submitted || currentAttempt.saving) return
+        val question = currentAttempt.currentQuestion ?: return
+        if (question.id in currentAttempt.revealed) return
         Logger.d("TESTVM", "toggleOption question=${question.id} option=$optionId " +
             "multi=${question.isMultiCorrect}")
         _state.update { state ->
@@ -487,7 +494,12 @@ class TestViewModel(
     }
 
     fun toggleFlag() {
-        val question = _state.value.currentQuestion ?: return
+        // Same reason as toggleOption: `persistProgress` bails on `submitted`,
+        // so a flag flipped after the save started is screen-only and is
+        // scored as if never set.
+        val currentAttempt = _state.value
+        if (currentAttempt.submitted || currentAttempt.saving) return
+        val question = currentAttempt.currentQuestion ?: return
         _state.update {
             val flagged = it.flagged.toMutableSet()
             if (!flagged.add(question.id)) flagged.remove(question.id)
@@ -508,10 +520,15 @@ class TestViewModel(
     }
 
     fun goTo(index: Int) {
-        if (index in 0 until _state.value.order.size) {
+        // A submitted attempt's persistProgress already bailed, so moving on
+        // would not even rewrite the header/dwell it flushes — refuse it: the
+        // result view owns the screen once the save started.
+        val currentAttempt = _state.value
+        if (currentAttempt.submitted || currentAttempt.saving) return
+        if (index in 0 until currentAttempt.order.size) {
             // The question being left is the one whose answer changed: its dwell
             // is banked by the flush below and written with the new header.
-            val leaving = _state.value.order.idAtOrNull(_state.value.currentIndex)
+            val leaving = currentAttempt.order.idAtOrNull(currentAttempt.currentIndex)
             flushDwell()
             _state.update { it.copy(currentIndex = index) }
             // The header reads the live value, so it has to follow the

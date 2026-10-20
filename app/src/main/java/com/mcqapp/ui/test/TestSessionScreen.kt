@@ -253,7 +253,13 @@ fun TestSessionScreen(
                     val question = state.currentQuestion
                     if (question != null) {
                         if (ExamMode.canFlag(state.strictMode)) {
-                            IconButton(onClick = { viewModel.toggleFlag() }) {
+                            // The result is being saved (or already is): the real
+                        // guard lives in the view model, this only keeps the
+                        // control from promising otherwise.
+                        IconButton(
+                            onClick = { viewModel.toggleFlag() },
+                            enabled = !(state.saving || state.submitted)
+                        ) {
                                 Icon(
                                     Icons.Default.Flag,
                                     contentDescription = stringResource(R.string.flag_question),
@@ -527,6 +533,9 @@ fun TestSessionScreen(
                         revealed = revealed,
                         isCorrectOption = isCorrectOption,
                         multi = question.isMultiCorrect,
+                        // Saving the scored attempt: no more edits, visual as
+                        // well as logical (the view model refuses them too).
+                        enabled = !(state.saving || state.submitted),
                         onClick = { viewModel.toggleOption(option.id) }
                     )
                     Spacer(Modifier.height(8.dp))
@@ -547,7 +556,7 @@ fun TestSessionScreen(
             ) {
                 OutlinedButton(
                     onClick = { viewModel.previous() },
-                    enabled = state.currentIndex > 0
+                    enabled = !(state.saving || state.submitted) && state.currentIndex > 0
                 ) {
                     Text(stringResource(R.string.previous))
                 }
@@ -562,7 +571,10 @@ fun TestSessionScreen(
                     )
                 }
                 if (state.currentIndex < state.questionCount - 1) {
-                    Button(onClick = { viewModel.next() }) { Text(stringResource(R.string.next)) }
+                    Button(
+                        onClick = { viewModel.next() },
+                        enabled = !(state.saving || state.submitted)
+                    ) { Text(stringResource(R.string.next)) }
                 } else {
                     Button(onClick = { showSubmitDialog = true }) { Text(stringResource(R.string.submit)) }
                 }
@@ -798,6 +810,7 @@ private fun OptionRow(
     revealed: Boolean,
     isCorrectOption: Boolean,
     multi: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     val verdicts = verdictColors()
@@ -824,7 +837,7 @@ private fun OptionRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(
             width = if (selected || revealed) 2.dp else 1.dp,
@@ -838,9 +851,9 @@ private fun OptionRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (multi) {
-                Checkbox(checked = selected, onCheckedChange = { onClick() })
+                Checkbox(checked = selected, onCheckedChange = { onClick() }, enabled = enabled)
             } else {
-                RadioButton(selected = selected, onClick = onClick)
+                RadioButton(selected = selected, onClick = onClick, enabled = enabled)
             }
             CompositionLocalProvider(LocalContentColor provides bodyColor) {
                 Column(modifier = Modifier.weight(1f)) {

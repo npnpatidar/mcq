@@ -859,15 +859,7 @@ object AnkiPackageReader {
 
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
         val front = fieldToText(frontHtml, media)
-        if (front.first.isBlank() && front.second == null) {
-            droppedEmptyStems++
-            Logger.w(
-                "IMPORT",
-                "Dropped a note with a completely empty stem (no text, no image): " +
-                    "${note.guid.ifBlank { note.id }} — dropped #$droppedEmptyStems"
-            )
-            return null
-        }
+        if (front.first.isBlank()) return null
         // A blank stem that still has an <img> is a picture question: the
         // paths below keep it — the image travels as question content (or,
         // for our own cards, the payload's elements) — instead of vanishing
@@ -889,7 +881,7 @@ object AnkiPackageReader {
                     ))
                 },
                 image = media.rewrite(payload.image)
-                    ?: stemImageFromFront(payload, questionHtml),
+                    ?: IMG_TAG.find(questionHtml)?.groupValues?.get(1),
                 options = payload.options.map {
                     OptionDto(
                         id = it.id,

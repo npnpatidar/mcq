@@ -72,7 +72,7 @@ internal class TestProgressStore(
     }
 
     /** Writes the header and the questions that just changed, serialised. */
-    suspend fun save(snapshot: TestSnapshot, changed: List<TestAnswer>) = writeLock.withLock {
+    suspend fun save(snapshot: TestSnapshot, changed: List<TestAnswer>) {
         if (changed.isNotEmpty()) writeRows(snapshot.paperId, changed)
         settings.saveTestProgress(snapshot.header().toJson())
     }
@@ -99,7 +99,7 @@ internal class TestProgressStore(
      * header standing over no rows. [restore(null)] reaches this locked body
      * from outside any lock it holds, so there is no self-deadlock.
      */
-    suspend fun clear() = writeLock.withLock {
+    suspend fun clear() {
         snapshot()?.paperId?.let { db.testProgressDao().deleteForPaper(it) }
         settings.clearTestProgress()
     }
@@ -139,17 +139,9 @@ internal class TestProgressStore(
         clear()
     } else {
         writeLock.withLock {
-            val parsed = TestSnapshot.fromJson(document)
-            if (parsed == null) {
-                Logger.w(
-                    "REPO",
-                    "Refusing a corrupt inProgressTest document from the backup; " +
-                        "the live resume snapshot stays"
-                )
-            } else {
-                db.testProgressDao().deleteForPaper(parsed.paperId)
-                settings.saveTestProgress(document)
-            }
+            TestSnapshot.fromJson(document)
+                ?.let { db.testProgressDao().deleteForPaper(it.paperId) }
+            settings.saveTestProgress(document)
         }
     }
 

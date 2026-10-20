@@ -366,4 +366,52 @@ class AnkiSchedulingTest {
         com.mcqapp.domain.DayBoundary.DEFAULT_DAY_START_HOUR,
         TimeZone.getDefault().getOffset(millis).toLong()
     )
+
+    @Test
+    fun aLearningCardExportsAsALearningRowWithATimerDue() {
+        // Graded Again: kind LEARNING, interval 0, due in ten minutes.
+        val now = 1_700_092_800_000L
+        val card = AnkiScheduling.toAnki(
+            CardScheduleDto(
+                ease = 2.3,
+                intervalDays = 0,
+                dueAt = now + 10 * 60_000,
+                reps = 3,
+                lapses = 1,
+                cardState = CardStateKind.LEARNING.name
+            ),
+            crt,
+            now
+        )
+        // NOT the graduated review row (type=2, queue=2, due in days) the old
+        // branch produced — that misrepresented every never-graduated card
+        // and round-tripped it as REVIEW with stability 0.
+        assertEquals(AnkiScheduling.TYPE_LEARN, card.type)
+        assertEquals(AnkiScheduling.QUEUE_LEARN, card.queue)
+        // A learning card's due is a plain unix timestamp in seconds…
+        assertEquals(now / 1000L + 600L, card.due.toLong())
+        // …and its interval is a step in minutes, not days.
+        assertEquals(10, card.ivl)
+    }
+
+    @Test
+    fun aRelearningCardExportsTheRelearnTypeOnTheLearnQueue() {
+        val now = 1_700_001_200_000L
+        val card = AnkiScheduling.toAnki(
+            CardScheduleDto(
+                ease = 2.5,
+                intervalDays = 0,
+                dueAt = now + 60_000,
+                reps = 9,
+                lapses = 2,
+                cardState = CardStateKind.RELEARNING.name
+            ),
+            crt,
+            now
+        )
+        assertEquals(AnkiScheduling.TYPE_RELEARN, card.type)
+        assertEquals(AnkiScheduling.QUEUE_LEARN, card.queue)
+        // 60 s after `now`: the timestamp, not a day count.
+        assertEquals((now / 1000L) + 60L, card.due.toLong())
+    }
 }

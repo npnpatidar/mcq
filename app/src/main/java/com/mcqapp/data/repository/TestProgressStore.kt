@@ -5,6 +5,8 @@ import com.mcqapp.data.local.TestProgressEntity
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The resume snapshot and the answers that belong to it.
@@ -26,10 +28,31 @@ import com.mcqapp.util.Logger
  * uses, and it deliberately leaves a same-paper document alone rather than
  * deleting answers an open screen did not create.
  */
+/**
+ * The resume slot the header document lives in. A seam: the store's saves must
+ * be provably serialised, and a fake slot can record (and delay, deterministically,
+ * under the test's control) exactly what the real DataStore write hides.
+ */
+internal interface TestProgressSlot {
+    suspend fun saveTestProgress(json: String)
+    suspend fun loadTestProgress(): String?
+    suspend fun clearTestProgress()
+}
+
 internal class TestProgressStore(
     private val db: AppDatabase,
-    private val settings: SettingsStore
+    private val settings: TestProgressSlot
 ) {
+    /**
+     * Serialises every write that pairs rows with the header document. Two
+     * [save]s a few hundred ms apart used to interleave freely — both suspend
+     * between the row write and the DataStore header write — so the saved
+     * header could end up one question behind the rows around it; on a crash
+     * in that gap the resume offer is a session one step back. A paper's
+     * [restore] joins the same lock, since it replaces the same pair.
+     */
+    private val writeLock = Mutex()
+
     /**
      * The saved session header, or null when nothing is in progress. A document
      * that cannot be read is dropped here: it would otherwise be offered — and
@@ -45,8 +68,8 @@ internal class TestProgressStore(
         return parsed
     }
 
-    /** Writes the header and the questions that just changed. */
-    suspend fun save(snapshot: TestSnapshot, changed: List<TestAnswer>) {
+    /** Writes the header and the questions that just changed, serialised. */
+    suspend fun save(snapshot: TestSnapshot, changed: List<TestAnswer>) = writeLock.withLock {
         if (changed.isNotEmpty()) writeRows(snapshot.paperId, changed)
         settings.saveTestProgress(snapshot.header().toJson())
     }
@@ -93,14 +116,17 @@ internal class TestProgressStore(
      * Puts a backup's document back, verbatim, and drops the rows it supersedes:
      * the document is the newer truth, and its own answers are adopted as rows
      * when the session is next offered. A null document clears the slot.
+     * Joins [writeLock]: it replaces the same rows-then-header pair [save]
+     * writes, and must not land between another save's rows and its header.
      */
-    suspend fun restore(document: String?) {
-        if (document == null) {
-            clear()
-            return
+    suspend fun restore(document: String?) = if (document == null) {
+        clear()
+    } else {
+        writeLock.withLock {
+            TestSnapshot.fromJson(document)
+                ?.let { db.testProgressDao().deleteForPaper(it.paperId) }
+            settings.saveTestProgress(document)
         }
-        TestSnapshot.fromJson(document)?.let { db.testProgressDao().deleteForPaper(it.paperId) }
-        settings.saveTestProgress(document)
     }
 
     private suspend fun rows(paperId: String): List<TestAnswer> =

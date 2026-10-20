@@ -7,7 +7,9 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -130,5 +132,92 @@ class TestProgressStoreTest {
 
         assertNull(repository.loadTestSnapshot())
         assertTrue(db.testProgressDao().getForPaper("p1").isEmpty())
+    }
+
+    /**
+     * Two saves a few hundred ms apart both suspend between their row write
+     * and their DataStore header write, so the header could land out of order
+     * and end up one question behind the rows around it. The store serialises
+     * saves behind a mutex; the seam [TestProgressSlot] makes that PROVABLE
+     * rather than merely uncrashed: the fake holds save #1's header write
+     * open (deterministically, no sleeps), then the test observes that save #2
+     * has NOT written its rows while #1 is still inside — which is exactly
+     * what an unserialised save would have done — and that after the release
+     * the two headers land #1-then-#2, so the slot ends on the newest one.
+     *
+     * Opens SQLite: CI is the authority. Mutant: drop the writeLock from
+     * [save] — save #2's row shows up while #1's header is still held, and the
+     * header order assert goes red.
+     */
+    @Test
+    fun interleavedSavesSerialiseRowsThenHeader() = runBlocking {
+        val slot = RecordingSlot()
+        val store = com.mcqapp.data.repository.TestProgressStore(db, slot)
+
+        val rowsOne = listOf(TestAnswer("q1", selection = setOf("q1-a"), dwellSeconds = 1))
+        val rowsTwo = listOf(TestAnswer("q2", selection = setOf("q2-b"), dwellSeconds = 2))
+        val first = launch { saveOrThrow(store, header(index = 0), rowsOne) }
+
+        // Deterministic (no sleeps; pure scheduler turns, bounded by the
+        // repeat) wait for save #1 to enter its header write.
+        var entered = false
+        repeat(128) {
+            if (slot.started.isNotEmpty()) {
+                entered = true
+                return@repeat
+            }
+            yield()
+        }
+        assertTrue("save #1 must reach its header write", entered)
+
+        val second = launch { saveOrThrow(store, header(index = 1), rowsTwo) }
+        // Fair chance for save #2 to (wrongly) proceed while #1 is inside.
+        repeat(128) { yield() }
+        assertTrue(
+            "save #2 must wait for save #1's whole save, rows included",
+            db.testProgressDao().getForPaper("p1").none { it.questionId == "q2" }
+        )
+
+        slot.release()
+        first.join()
+        second.join()
+        assertEquals(
+            "both headers land in #1-then-#2 order: the slot ends on the newest",
+            listOf("header-hold", "header-end", "header-end"),
+            slot.started
+        )
+        assertEquals(header(index = 1).toJson(), slot.lastJson)
+        assertTrue("save #2's row lands, after the header #1 completes first",
+            db.testProgressDao().getForPaper("p1").any { it.questionId == "q2" })
+    }
+
+    private suspend fun saveOrThrow(
+        store: com.mcqapp.data.repository.TestProgressStore,
+        snapshot: TestSnapshot,
+        rows: List<TestAnswer>
+    ) = store.save(snapshot, rows)
+
+    /** The seam: records header-write stages, holds the FIRST header write. */
+    private inner class RecordingSlot : com.mcqapp.data.repository.TestProgressSlot {
+        val started = mutableListOf<String>()
+        var lastJson: String? = null
+        private val hold = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+        override suspend fun saveTestProgress(json: String) {
+            started += "header-hold"
+            hold.await() // exactly one write holds; the rest flow once released
+            started += "header-end"
+            lastJson = json
+        }
+
+        override suspend fun loadTestProgress(): String? = lastJson
+
+        override suspend fun clearTestProgress() {
+            lastJson = null
+        }
+
+        fun release() {
+            hold.complete(Unit)
+        }
     }
 }

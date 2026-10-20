@@ -33,7 +33,7 @@ internal val Context.dataStore by preferencesDataStore(name = "settings")
  * data and this file about user preferences — the two never interleave except
  * in [discardProgressFor], which paper deletion calls by hand.
  */
-internal class SettingsStore(private val context: Context) {
+internal class SettingsStore(private val context: Context) : TestProgressSlot {
 
     private val themeKey = stringPreferencesKey("theme_mode")
 
@@ -255,14 +255,15 @@ internal class SettingsStore(private val context: Context) {
 
     private val progressKey = stringPreferencesKey("in_progress_test")
 
-    suspend fun saveTestProgress(json: String) {
+    /** The resume slot: the store's saves are provable against this seam. */
+    override suspend fun saveTestProgress(json: String) {
         context.dataStore.edit { it[progressKey] = json }
     }
 
-    suspend fun loadTestProgress(): String? =
+    override suspend fun loadTestProgress(): String? =
         context.dataStore.data.map { it[progressKey] }.first()
 
-    suspend fun clearTestProgress() {
+    override suspend fun clearTestProgress() {
         context.dataStore.edit { it.remove(progressKey) }
     }
 

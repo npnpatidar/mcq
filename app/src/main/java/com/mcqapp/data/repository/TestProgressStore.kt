@@ -49,7 +49,10 @@ internal class TestProgressStore(
      * between the row write and the DataStore header write — so the saved
      * header could end up one question behind the rows around it; on a crash
      * in that gap the resume offer is a session one step back. A paper's
-     * [restore] joins the same lock, since it replaces the same pair.
+     * [restore] joins the same lock, since it replaces the same pair, and so
+     * does [clear]: a clear landing between another save's row write and its
+     * header left a header with no rows, resurrecting a session whose answers
+     * the user had already wiped.
      */
     private val writeLock = Mutex()
 
@@ -90,8 +93,13 @@ internal class TestProgressStore(
      * Drops the header and the answers of the paper it names. A paper's own
      * deletion needs no help — the rows cascade with the paper row — so this is
      * for submit, discard and the dead snapshots a load can find.
+     *
+     * Joins [writeLock]: it replaces exactly the pair [save] writes, and a
+     * clear landing between another save's rows and its header left that
+     * header standing over no rows. [restore(null)] reaches this locked body
+     * from outside any lock it holds, so there is no self-deadlock.
      */
-    suspend fun clear() {
+    suspend fun clear() = writeLock.withLock {
         snapshot()?.paperId?.let { db.testProgressDao().deleteForPaper(it) }
         settings.clearTestProgress()
     }
@@ -115,9 +123,11 @@ internal class TestProgressStore(
     /**
      * Puts a backup's document back, verbatim, and drops the rows it supersedes:
      * the document is the newer truth, and its own answers are adopted as rows
-     * when the session is next offered. A null document clears the slot.
-     * Joins [writeLock]: it replaces the same rows-then-header pair [save]
-     * writes, and must not land between another save's rows and its header.
+     * when the session is next offered. A null document clears the slot, via
+     * the locked [clear] — this call holds no lock at that point, so the
+     * delegation cannot self-deadlock. Joins [writeLock] either way: it
+     * replaces the same rows-then-header pair [save] writes, and must not land
+     * between another save's rows and its header.
      *
      * A document that cannot parse never reaches the slot: the parse guard used
      * to protect only the ROW delete, while the overwrite ran unconditionally —

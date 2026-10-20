@@ -184,8 +184,9 @@ class TestProgressStoreTest {
         assertEquals(
             "save #1's header write is held then completes, and save #2's flows " +
                 "through after it: the slot ends on the newest header. (Mutant, no " +
-                "writeLock: both saves park on the hold before either ends, giving " +
-                "held, held, header-end, header-end — red.)",
+                "writeLock: save #2 flows through the fake while #1 is still held, " +
+                "giving held, flowed, header-end, header-end with lastJson ending on " +
+                "#0 — red, after the no-q2-rows assert fires first.)",
             listOf("held", "header-end", "flowed", "header-end"),
             slot.started
         )
@@ -238,19 +239,82 @@ class TestProgressStoreTest {
     }
 
     /**
-     * The seam: records header-write stages. #24's test needs the FIRST header
-     * write held on [hold] so it can park a second save behind it; #25's only
-     * records what landed, so it constructs the slot ungated.
+     * clear() replaces exactly the pair save() writes, so it joins the same
+     * write lock: a clear landing between another save's row write and its
+     * header left that header standing over no rows, resurrecting a session
+     * whose answers the user had already wiped. The seam makes that provable:
+     * save #1 parks INSIDE its header write (its rows already landed), a clear
+     * is launched behind it, and while #1 is held the earlier save's state
+     * must be intact — slot still set, rows still there. Releasing the gate
+     * lets the save finish first, and only then does the clear land, ending
+     * with no slot and no rows.
+     *
+     * Opens SQLite: CI is the authority. Mutant (clear without writeLock): the
+     * clear runs straight through while #1 is held — it reads the still-standing
+     * earlier header, deletes both rows and wipes the slot — so the
+     * while-held asserts go red, and after release #1's header lands on a
+     * cleared slot, so the final asserts go red too.
+     */
+    @Test
+    fun aClearBehindAHeldSaveWaitsForTheWholeSave() = runBlocking {
+        val slot = RecordingSlot(holdCall = 2)
+        val store = com.mcqapp.data.repository.TestProgressStore(db, slot)
+
+        // A completed save first: its header (index 0) and a q0 row stand.
+        store.save(header(index = 0), listOf(TestAnswer("q0", selection = setOf("q0-a"), dwellSeconds = 1)))
+
+        // Save #1 rows its way to its header write, which the fake parks.
+        val saveJob = launch {
+            saveOrThrow(store, header(index = 1), listOf(TestAnswer("q1", selection = setOf("q1-b"), dwellSeconds = 2)))
+        }
+        var parked = false
+        repeat(128) {
+            if (slot.started.count { it == "held" } == 1) {
+                parked = true
+                return@repeat
+            }
+            yield()
+        }
+        assertTrue("save #1 must park inside its header write", parked)
+
+        val clearJob = launch { store.clear() }
+        // Fair chance for a (wrongly) unlocked clear to run while #1 is held.
+        repeat(128) { yield() }
+
+        assertEquals("the slot still holds save #0's header", header(index = 0).toJson(), slot.loadTestProgress())
+        val rowsWhileHeld = db.testProgressDao().getForPaper("p1").map { it.questionId }
+        assertTrue(
+            "both rows survive while #1 is held, got $rowsWhileHeld",
+            rowsWhileHeld.containsAll(listOf("q0", "q1"))
+        )
+
+        slot.release()
+        saveJob.join()
+        clearJob.join()
+
+        assertNull("the slot ends cleared", slot.loadTestProgress())
+        assertTrue("the rows end gone", db.testProgressDao().getForPaper("p1").isEmpty())
+    }
+
+    /**
+     * The seam: records header-write stages. #24's tests need a header write
+     * held on [hold] so they can park a write behind it; [holdCall] picks WHICH
+     * header write holds (1 = the first call, 2 = after one completed save).
+     * #25's only records what landed, so it constructs the slot ungated.
      */
     private inner class RecordingSlot(
-        private val gated: Boolean = true
+        private val gated: Boolean = true,
+        /** 1-based header-write call to park on [hold], or 0 (never hold). */
+        private val holdCall: Int = 1
     ) : com.mcqapp.data.repository.TestProgressSlot {
         val started = mutableListOf<String>()
         var lastJson: String? = null
         private val hold = kotlinx.coroutines.CompletableDeferred<Unit>()
+        private var calls = 0
 
         override suspend fun saveTestProgress(json: String) {
-            val held = gated && !hold.isCompleted
+            calls += 1
+            val held = gated && holdCall == calls && !hold.isCompleted
             started += if (held) "held" else "flowed"
             if (held) hold.await()
             started += "header-end"

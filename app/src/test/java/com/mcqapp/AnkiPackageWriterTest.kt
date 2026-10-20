@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -574,6 +575,51 @@ class AnkiPackageWriterTest {
             cardRows.forEach { (cid, nid) ->
                 assertTrue("the card's note exists", nid in noteSet)
                 assertTrue("a card never ids its own note", cid != nid)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    /**
+     * Fields are U+001F-separated: a bank whose visible text carries the RAW
+     * separator used to shift the reader's split — the mcqapp payload landed
+     * past field 2 and was lost, and the front truncated mid-sentence. The
+     * writer now carries the separator's VISIBLE symbol (U+241F, "␟") in the
+     * written fields instead, so the split stays a 3-field record and the
+     * text survives readably; storage-side nothing else is touched.
+     *
+     * Room/SQLite — CI is the authority. Mutant: write the fields raw again
+     * (`$front$FIELD_SEPARATOR$back…` unsanitised) — the field count assert
+     * goes red (4 parts) and payloadFromField finds nothing at field 2.
+     */
+    @Test
+    fun aRawUnitSeparatorInTheTextNeverShiftsTheFieldSplit() {
+        val question = Question(
+            id = "q1",
+            categoryId = "c1",
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Right \u001F answer?")),
+            options = listOf(com.mcqapp.domain.QuestionOption("a", "A")),
+            correctOptionIds = setOf("a")
+        )
+        val apkg = apkgOfQuestions(samplePaper(), listOf(question))
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery("select flds, sfld from notes", null).use { c ->
+                assertTrue(c.moveToFirst())
+                val flds = c.getString(0)
+                // The written fields contain only the WRITE's separators.
+                val parts = flds.split('\u001F')
+                assertEquals("front, back, payload — nothing shifted", 3, parts.size)
+                val payload = com.mcqapp.data.anki.payloadFromField(parts[2])
+                assertEquals("the payload is found at field 2", 1, payload?.options?.size)
+                assertTrue("the question text survives, readably", parts[0].contains("Right ␟ answer?"))
+                assertFalse(
+                    "no raw separator leaks into the visible field",
+                    parts[0].contains('\u001F')
+                )
+                val sfld = c.getString(1)
+                assertEquals("the sort field is sanitised too", "Right ␟ answer?", sfld)
             }
         } finally {
             file.delete()

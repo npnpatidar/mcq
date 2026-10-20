@@ -530,11 +530,15 @@ object DocxPaperWriter {
                     current.addPicture(item)
                 }
                 is Tbl -> {
-                    // The marker paragraph must exist before the table even
-                    // when the field opens with the table.
-                    if (pendingPrefix != null) {
-                        out.add(ParaBuilder(pendingPrefix).build()!!)
-                    }
+                    // A field that opens with the table still gets its marker
+                    // paragraph: flush() emits the prefix-only builder (its
+                    // build() counts the prefix as content), so the marker
+                    // paragraph exists before the table even when the field
+                    // opens with the table. The dead `if (pendingPrefix !=
+                    // null)` this replaces was unreachable — newBuilder()
+                    // consumed the prefix before the loop and every flush
+                    // re-consumes it — and had it ever fired it would have
+                    // emitted the marker paragraph TWICE.
                     flush()
                     out.add(tableXml(item.rows))
                 }

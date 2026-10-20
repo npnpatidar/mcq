@@ -182,8 +182,11 @@ class TestProgressStoreTest {
         first.join()
         second.join()
         assertEquals(
-            "both headers land in #1-then-#2 order: the slot ends on the newest",
-            listOf("header-hold", "header-end", "header-end"),
+            "save #1's header write is held then completes, and save #2's flows " +
+                "through after it: the slot ends on the newest header. (Mutant, no " +
+                "writeLock: both saves park on the hold before either ends, giving " +
+                "held, held, header-end, header-end — red.)",
+            listOf("held", "header-end", "flowed", "header-end"),
             slot.started
         )
         assertEquals(header(index = 1).toJson(), slot.lastJson)
@@ -197,15 +200,59 @@ class TestProgressStoreTest {
         rows: List<TestAnswer>
     ) = store.save(snapshot, rows)
 
-    /** The seam: records header-write stages, holds the FIRST header write. */
-    private inner class RecordingSlot : com.mcqapp.data.repository.TestProgressSlot {
+    /**
+     * A corrupt backup inProgressTest must not destroy the live session: the
+     * live header + rows survive the restore, and a VALID document still
+     * replaces both. The parse guard used to protect only the row delete
+     * while the slot overwrite ran unconditionally.
+     *
+     * Opens SQLite: CI is the authority. Mutant: the unconditional slot
+     * overwrite of the old code turns the live-snapshot assert red — the
+     * truncated document replaces the live header.
+     */
+    @Test
+    fun aCorruptRestoreKeepsTheLiveSnapshot() = runBlocking {
+        val slot = RecordingSlot(gated = false)
+        val store = com.mcqapp.data.repository.TestProgressStore(db, slot)
+        val live = header(index = 3)
+        store.save(live, listOf(TestAnswer("q5", selection = setOf("q5-a"), dwellSeconds = 4)))
+
+        store.restore("{\"paperId\": \"p1\", \"truncat") // corrupt document
+
+        assertEquals("the live header stays", live.toJson(), slot.loadTestProgress())
+        assertEquals("the live rows stay",
+            listOf("q5"), db.testProgressDao().getForPaper("p1").map { it.questionId })
+
+        // And a VALID document still replaces both, as always.
+        store.restore(
+            TestSnapshot(
+                paperId = "p2",
+                categoryIds = listOf("c1"),
+                currentIndex = 9
+            ).toJson()
+        )
+        assertEquals("a valid document replaces", "p2", slot.loadTestProgress()!!.let {
+            TestSnapshot.fromJson(it)!!.paperId
+        })
+        assertTrue(db.testProgressDao().getForPaper("p2").isEmpty())
+    }
+
+    /**
+     * The seam: records header-write stages. #24's test needs the FIRST header
+     * write held on [hold] so it can park a second save behind it; #25's only
+     * records what landed, so it constructs the slot ungated.
+     */
+    private inner class RecordingSlot(
+        private val gated: Boolean = true
+    ) : com.mcqapp.data.repository.TestProgressSlot {
         val started = mutableListOf<String>()
         var lastJson: String? = null
         private val hold = kotlinx.coroutines.CompletableDeferred<Unit>()
 
         override suspend fun saveTestProgress(json: String) {
-            started += "header-hold"
-            hold.await() // exactly one write holds; the rest flow once released
+            val held = gated && !hold.isCompleted
+            started += if (held) "held" else "flowed"
+            if (held) hold.await()
             started += "header-end"
             lastJson = json
         }

@@ -118,14 +118,28 @@ internal class TestProgressStore(
      * when the session is next offered. A null document clears the slot.
      * Joins [writeLock]: it replaces the same rows-then-header pair [save]
      * writes, and must not land between another save's rows and its header.
+     *
+     * A document that cannot parse never reaches the slot: the parse guard used
+     * to protect only the ROW delete, while the overwrite ran unconditionally —
+     * restoring a backup with a truncated/corrupt inProgressTest destroyed the
+     * live session's good header (and abandoned its rows), and the next load
+     * then discarded the damaged string. A live session stays live.
      */
     suspend fun restore(document: String?) = if (document == null) {
         clear()
     } else {
         writeLock.withLock {
-            TestSnapshot.fromJson(document)
-                ?.let { db.testProgressDao().deleteForPaper(it.paperId) }
-            settings.saveTestProgress(document)
+            val parsed = TestSnapshot.fromJson(document)
+            if (parsed == null) {
+                Logger.w(
+                    "REPO",
+                    "Refusing a corrupt inProgressTest document from the backup; " +
+                        "the live resume snapshot stays"
+                )
+            } else {
+                db.testProgressDao().deleteForPaper(parsed.paperId)
+                settings.saveTestProgress(document)
+            }
         }
     }
 

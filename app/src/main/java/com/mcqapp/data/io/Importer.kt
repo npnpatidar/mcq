@@ -157,6 +157,18 @@ class Importer(
 
                 val effectiveCategories = if (paperDto.categories.isEmpty()) {
                     listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = paperDto.topLevelQuestions()))
+                } else if (paperDto.questions.isNotEmpty()) {
+                    // A bank that keeps a paper's standalone questions beside
+                    // its categories: the whole-file JSON reader folds them
+                    // into a synthesized "Uncategorized" category, and the
+                    // Anki reader hands them over the same way. This DTO path
+                    // has to agree with both, or the questions are dropped on
+                    // the floor while the restore report counts them.
+                    paperDto.categories + CategoryDto(
+                        id = "$effectivePaperId-root",
+                        title = "Uncategorized",
+                        questions = paperDto.topLevelQuestions()
+                    )
                 } else {
                     paperDto.categories
                 }
@@ -164,6 +176,12 @@ class Importer(
                 // synthesized category mirrors the paper's top-level questions.
                 val scaledCategories = if (paperDto.categories.isEmpty()) {
                     listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = scaledPaper.topLevelQuestions()))
+                } else if (paperDto.questions.isNotEmpty()) {
+                    scaledPaper.categories + CategoryDto(
+                        id = "$effectivePaperId-root",
+                        title = "Uncategorized",
+                        questions = scaledPaper.topLevelQuestions()
+                    )
                 } else {
                     scaledPaper.categories
                 }
@@ -327,12 +345,16 @@ class Importer(
                                             )
                                         }
                                     )
+                                    val tagsCsv = questionDto.tags.joinToString(",")
                                     db.questionDao().updateNonHashedFields(
                                         id = sameContentId,
                                         explanation = scaledQuestion.storedExplanationJson(json),
                                         marks = questionDto.marks,
                                         difficulty = questionDto.difficulty,
-                                        tags = questionDto.tags.joinToString(","),
+                                        // One CSV folded in Kotlin for both binds:
+                                        // SQL lower() is the A-Z fold this bug is.
+                                        tags = tagsCsv,
+                                        tagsFolded = tagsCsv.lowercase(),
                                         image = scaledQuestion.image,
                                         explanationImage = scaledQuestion.explanationImage
                                     )
@@ -462,7 +484,7 @@ class Importer(
                 // contiguous run.
                 for (passageId in paperPassageIds) {
                     val passage = db.passageDao().getById(passageId) ?: continue
-                    val strays = db.questionDao().getMembersByPassage(passageId)
+                    val strays = db.questionDao().getMemberCategoriesByPassage(passageId)
                         .filter { it.categoryId != passage.categoryId }
                     if (strays.isEmpty()) continue
                     Logger.i("IMPORT", "Folding ${strays.size} passage member(s) of " +
@@ -823,12 +845,14 @@ internal fun QuestionDto.toQuestionEntity(
         passageId = passageId,
         text = elements.toContentJson(json),
         searchText = elements.searchableText,
+        searchTextFolded = elements.searchableText.lowercase(),
         image = image,
         explanation = storedExplanationJson(json),
         explanationImage = explanationImage,
         difficulty = difficulty,
         marks = marks,
         tags = tags.joinToString(","),
+        tagsFolded = tags.joinToString(",").lowercase(),
         sortOrder = sortOrder,
         contentHash = contentHash
     )
@@ -847,6 +871,7 @@ internal fun QuestionDto.toOptionEntities(json: Json): List<OptionEntity> =
             questionId = id,
             text = elements.toContentJson(json),
             searchText = elements.searchableText,
+            searchTextFolded = elements.searchableText.lowercase(),
             image = option.image,
             sortOrder = index
         )
@@ -865,6 +890,7 @@ internal fun PassageDto.toPassageEntity(
         title = title,
         text = elements.toContentJson(json),
         searchText = passageSearchText(title, elements),
+        searchTextFolded = passageSearchText(title, elements).lowercase(),
         image = image,
         sortOrder = sortOrder
     )

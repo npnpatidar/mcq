@@ -68,7 +68,7 @@ internal fun PaperDialog(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = negative,
-                    onValueChange = { input -> negative = input.filter { it.isDigit() || it == '.' } },
+                    onValueChange = { input -> negative = com.mcqapp.util.filterDecimalEntry(input) },
                     label = { Text(stringResource(R.string.negative_marking_e_g_0_33)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()

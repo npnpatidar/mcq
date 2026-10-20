@@ -143,6 +143,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // The unit-test worker runs the whole suite in one process, and it is
+    // thousands of SQLite-backed Robolectric tests: at the default 512MB the
+    // heap runs out in an unrelated small test, because the pressure is the
+    // suite's, not that test's. 2g is well above what the suite needs and
+    // well below the daemon's 4g.
+    testOptions {
+        unitTests.all { it.maxHeapSize = "2g" }
+    }
+
     buildFeatures {
         compose = true
         // For BuildConfig.VERSION_NAME, so the About row cannot drift from

@@ -169,13 +169,32 @@ internal class QuestionStore(
     }
 
     suspend fun ensurePaperAndCategory(paperId: String, paperTitle: String, categoryId: String, categoryTitle: String) {
-        db.paperDao().upsert(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
-        db.categoryDao().upsert(
+        // IGNORE + targeted fields, never REPLACE — at BOTH levels. The
+        // paper half keeps its children (see upsertPaperKeepingChildren);
+        // the CATEGORY half is the same finding one level down and it is
+        // NOT cosmetic: CategoryDao.upsert was REPLACE, so re-writing an
+        // existing category row DELETED it and the foreign-key cascade
+        // removed its questions, options, answers and schedules. Latent
+        // today, like the paper half: the only caller is the unused
+        // McqRepository.ensurePaperAndCategory wrapper, nothing in the UI
+        // reaches it in main — so this store method is exercised directly
+        // by the tests, as the report specified. The identity update
+        // deliberately excludes parentId and sortOrder: a replace used to
+        // zero the sort order (part of the same bug) and streak the row's
+        // parent; those belong to the editor's own calls.
+        db.paperDao().insertIgnore(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
+        db.paperDao().updateFields(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }, description = "", durationMinutes = 0, negativeMarking = 0.0)
+        db.categoryDao().insertIgnore(
             CategoryEntity(
                 id = categoryId,
                 paperId = paperId,
                 title = categoryTitle.ifBlank { "Uncategorized" }
             )
+        )
+        db.categoryDao().updateIdentity(
+            id = categoryId,
+            paperId = paperId,
+            title = categoryTitle.ifBlank { "Uncategorized" }
         )
     }
 
@@ -200,12 +219,14 @@ internal class QuestionStore(
                     passageId = question.passageId,
                     text = question.elements.toContentJson(mapper.json),
                     searchText = question.elements.searchableText,
+                    searchTextFolded = question.elements.searchableText.lowercase(),
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
                     explanationImage = question.explanationImage,
                     difficulty = question.difficulty.label,
                     marks = question.marks,
                     tags = question.tags.joinToString(","),
+                    tagsFolded = question.tags.joinToString(",").lowercase(),
                     sortOrder = sortOrder,
                     contentHash = contentHash
                 )
@@ -219,6 +240,7 @@ internal class QuestionStore(
                         questionId = question.id,
                         text = o.elements.toContentJson(mapper.json),
                         searchText = o.elements.searchableText,
+                        searchTextFolded = o.elements.searchableText.lowercase(),
                         image = o.image,
                         sortOrder = index
                     )
@@ -272,12 +294,14 @@ internal class QuestionStore(
                 passageId = q.passageId,
                 text = q.elements.toContentJson(mapper.json),
                 searchText = q.elements.searchableText,
+                searchTextFolded = q.elements.searchableText.lowercase(),
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
                 explanationImage = q.explanationImage,
                 difficulty = q.difficulty.label,
                 marks = q.marks,
                 tags = q.tags.joinToString(","),
+                tagsFolded = q.tags.joinToString(",").lowercase(),
                 sortOrder = sortOrder,
                 contentHash = mapper.contentHashOf(q)
             )
@@ -289,6 +313,7 @@ internal class QuestionStore(
                     id = o.id,
                     text = o.elements.toContentJson(mapper.json),
                     searchText = o.elements.searchableText,
+                    searchTextFolded = o.elements.searchableText.lowercase(),
                     image = o.image,
                     sortOrder = index
                 )
@@ -312,6 +337,10 @@ internal class QuestionStore(
             db.questionDao().deleteById(questionId)
             db.cardStateDao().deleteByQuestion(questionId)
             db.reviewLogDao().deleteByQuestion(questionId)
+            // question_stats has no FK to questions, so without this the
+            // lifetime aggregate outlives the question and History's
+            // "Hardest questions" keeps listing it forever.
+            db.questionStatsDao().deleteByQuestion(questionId)
             // No FK on bookmarks: backup restores tolerate dangling bookmark ids,
             // so stale ones are removed here instead of by cascade.
             db.bookmarkDao().remove(questionId)
@@ -325,6 +354,7 @@ internal class QuestionStore(
             questionIds.forEach {
                 db.questionDao().deleteById(it)
                 db.cardStateDao().deleteByQuestion(it)
+                db.questionStatsDao().deleteByQuestion(it)
             }
             // The log has no FK to questions, so it is swept in the same bulk
             // form rather than per id — the log must not outlive its card.
@@ -411,12 +441,17 @@ internal class QuestionStore(
         db.withTransaction {
             // One COALESCE update per chunk replaces a getQuestion/saveQuestion
             // round-trip per question; null binds keep the column, matching the
-            // null fields are kept contract.
+            // null fields are kept contract. The tags pair travels together:
+            // the folded bind is the same CSV Kotlin-lowercased, so a bulk edit
+            // to a differently-cased or non-ASCII tag cannot leave the folded
+            // twin stale (see MIGRATION_17_18's contract).
+            val tagsCsv = tags?.joinToString(",")
             val count = db.questionDao().updateBulkFieldsChunked(
                 questionIds,
                 marks,
                 difficulty?.label,
-                tags?.joinToString(",")
+                tagsCsv,
+                tagsCsv?.lowercase()
             )
             Logger.i("REPO", "bulkUpdateQuestions($count ids)")
         }

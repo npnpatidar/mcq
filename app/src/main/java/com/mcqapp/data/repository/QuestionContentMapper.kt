@@ -100,6 +100,7 @@ internal class QuestionContentMapper(private val db: AppDatabase) {
         title = passage.title,
         text = passage.elements.toContentJson(json),
         searchText = passageSearchText(passage.title, passage.elements),
+        searchTextFolded = passageSearchText(passage.title, passage.elements).lowercase(),
         image = passage.image,
         sortOrder = passage.sortOrder
     )

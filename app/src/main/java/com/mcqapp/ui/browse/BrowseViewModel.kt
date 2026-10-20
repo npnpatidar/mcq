@@ -177,6 +177,12 @@ class BrowseViewModel(
 
     val pagingData: Flow<PagingData<QuestionRef>> = filters
         .flatMapLatest { request ->
+            // The selected categories resolve to ROWIDS once per filter
+            // change, here in a suspend window: Pager's factory is not one,
+            // and the filter's csv is one unambiguous bound value the shared
+            // SQL matches on (see browseCategoryRowIdCsv — ids contain commas).
+            val scope = scopeFor(request.state)
+            val rowIdCsv = repository.browseCategoryRowIdCsv(scope)
             Pager(
                 PagingConfig(
                     pageSize = BROWSE_PAGE,
@@ -192,7 +198,7 @@ class BrowseViewModel(
                     enablePlaceholders = true
                 )
             ) {
-                repository.browseRefsSource(scopeFor(request.state))
+                repository.browseRefsSource(scope, rowIdCsv)
             }.flow
         }
         .cachedIn(viewModelScope)
@@ -580,17 +586,22 @@ class BrowseViewModel(
                 val selected = repository.getQuestionsByIds(questionIds.toList())
                     .sortedBy { q -> questionIds.indexOf(q.id) }
                 if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
+                // The passages the selection's member questions reference,
+                // resolved the same way a paper export's are.
+                val exporter = com.mcqapp.data.export.PaperExporter(repository.db())
                 val dto = com.mcqapp.data.io.SelectionExport.paperDto(
                     title = title,
                     questions = selected,
-                    categoryTitleById = categoryTitles()
+                    categoryTitleById = categoryTitles(),
+                    passages = exporter.passagesOfIds(
+                        selected.mapNotNull { it.passageId }.distinct()
+                    )
                 )
                 val file = (
                     getApplication<Application>().contentResolver.openOutputStream(uri)
                         ?: throw IllegalStateException("Could not open output stream")
                     ).use { sink ->
-                    com.mcqapp.data.export.PaperExporter(repository.db())
-                        .exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                    exporter.exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
                 }
                 Logger.i("BROWSEVM", "Exported ${selected.size} questions as ${file.fileName}")
                 _exportError.value = null

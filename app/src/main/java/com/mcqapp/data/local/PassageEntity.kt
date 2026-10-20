@@ -1,5 +1,6 @@
 package com.mcqapp.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -41,6 +42,9 @@ data class PassageEntity(
      * writer must set it.
      */
     val searchText: String,
+    /** [searchText] folded like [QuestionEntity.searchTextFolded]. */
+    @ColumnInfo(defaultValue = "''")
+    val searchTextFolded: String,
     val image: String? = null,
     val sortOrder: Int = 0
 )

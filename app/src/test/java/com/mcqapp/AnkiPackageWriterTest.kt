@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -536,5 +537,144 @@ class AnkiPackageWriterTest {
         assertTrue(
             AnkiPackageWriter.guidFor("p1", "q1") != AnkiPackageWriter.guidFor("p2", "q1")
         )
+    }
+
+    /**
+     * Cards live in their own id domain: across a multi-note package the
+     * note id set and the card id set must be DISJOINT (the old
+     * `card.id = note.id + 1` put note j's card exactly on note j+1's id,
+     * interleaving the sets), while note ids themselves stay the
+     * consecutive idBase+index run. Every card also still references its
+     * note and orders with it.
+     *
+     * Room/SQLite — CI is the authority. Mutant: restore
+     * `id = row.noteId + 1` — the disjointness assert goes red at the first
+     * shared id.
+     */
+    @Test
+    fun cardIdsNeverShareTheNoteIdSpace() {
+        // Two distinct notes of our own: apkgOf's fixture paper writes a
+        // SINGLE note, and the interleaving proof needs at least two.
+        val questions = listOf(
+            Question(
+                id = "q-x1",
+                categoryId = "c1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("one")),
+                options = listOf(com.mcqapp.domain.QuestionOption("a", "A")),
+                correctOptionIds = setOf("a")
+            ),
+            Question(
+                id = "q-x2",
+                categoryId = "c1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("two")),
+                options = listOf(com.mcqapp.domain.QuestionOption("a", "A")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        val apkg = apkgOfQuestions(samplePaper(), questions)
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            val noteIds = mutableListOf<Long>()
+            db.rawQuery("select id from notes order by id", null).use { c ->
+                while (c.moveToNext()) noteIds += c.getLong(0)
+            }
+            assertTrue("more than one note: the sets must interleave-prove", noteIds.size >= 2)
+            val cardRows = mutableListOf<Pair<Long, Long>>() // card id to nid
+            db.rawQuery("select id, nid from cards order by id", null).use { c ->
+                while (c.moveToNext()) cardRows += c.getLong(0) to c.getLong(1)
+            }
+            assertEquals("one card per note", noteIds.size, cardRows.size)
+            // Note ids unchanged: the consecutive idBase+index run.
+            noteIds.zipWithNext().forEach { (a, b) -> assertEquals("consecutive note ids", 1L, b - a) }
+            val noteSet = noteIds.toSet()
+            val cardIdSet = cardRows.map { it.first }.toSet()
+            assertTrue("id sets must be disjoint", cardIdSet.intersect(noteSet).isEmpty())
+            assertEquals("card ids unique", cardIdSet.size, cardRows.size)
+            cardRows.forEach { (cid, nid) ->
+                assertTrue("the card's note exists", nid in noteSet)
+                assertTrue("a card never ids its own note", cid != nid)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    /**
+     * Fields are U+001F-separated: a bank whose visible text carries the RAW
+     * separator used to shift the reader's split — the mcqapp payload landed
+     * past field 2 and was lost, and the front truncated mid-sentence. The
+     * writer now carries the separator's VISIBLE symbol (U+241F, "␟") in the
+     * written fields instead, so the split stays a 3-field record and the
+     * text survives readably; storage-side nothing else is touched.
+     *
+     * Room/SQLite — CI is the authority. Mutant: write the fields raw again
+     * (`$front$FIELD_SEPARATOR$back…` unsanitised) — the field count assert
+     * goes red (4 parts) and payloadFromField finds nothing at field 2.
+     */
+    @Test
+    fun aRawUnitSeparatorInTheTextNeverShiftsTheFieldSplit() {
+        val question = Question(
+            id = "q1",
+            categoryId = "c1",
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Right \u001F answer?")),
+            options = listOf(com.mcqapp.domain.QuestionOption("a", "A")),
+            correctOptionIds = setOf("a")
+        )
+        val apkg = apkgOfQuestions(samplePaper(), listOf(question))
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery("select flds, sfld from notes", null).use { c ->
+                assertTrue(c.moveToFirst())
+                val flds = c.getString(0)
+                // The written fields contain only the WRITE's separators.
+                val parts = flds.split('\u001F')
+                assertEquals("front, back, payload — nothing shifted", 3, parts.size)
+                val payload = com.mcqapp.data.anki.payloadFromField(parts[2])
+                assertEquals("the payload is found at field 2", 1, payload?.options?.size)
+                assertTrue("the question text survives, readably", parts[0].contains("Right ␟ answer?"))
+                assertFalse(
+                    "no raw separator leaks into the visible field",
+                    parts[0].contains('\u001F')
+                )
+                val sfld = c.getString(1)
+                assertEquals("the sort field is sanitised too", "Right ␟ answer?", sfld)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    /**
+     * Schema 11's units: `col.crt` and `col.mod` are SECONDS, `col.scm` (the
+     * schema-mod stamp) is MILLISECONDS. The row used to bind ONE millisecond
+     * value into both mod and scm, so the exported collection carried a mod
+     * ~1000× in the future — the stored value, not the call, is what this
+     * opens and reads.
+     *
+     * Room/SQLite — CI is the authority. Mutant: bind milliseconds into mod
+     * again — the asserts below go red (mod ~1.7e12 against a ~1.7e9 crt;
+     * scm == mod instead of ≈ mod × 1000).
+     */
+    @Test
+    fun theCollectionStampCarriesModInSecondsAndScmInMilliseconds() {
+        val apkg = apkgOf(samplePaper())
+        val (db, file) = openCollection(entries(apkg)["collection.anki2"]!!)
+        try {
+            db.rawQuery("select crt, mod, scm from col", null).use { c ->
+                assertTrue(c.moveToFirst())
+                val crt = c.getLong(0)
+                val mod = c.getLong(1)
+                val scm = c.getLong(2)
+                assertTrue("crt is seconds, not ms ($crt)", crt < 4_000_000_000L)
+                assertTrue("mod is seconds, not ms ($mod)", mod < 4_000_000_000L)
+                assertTrue("mod is roughly crt (±2s)", kotlin.math.abs(mod - crt) <= 2)
+                assertTrue(
+                    "scm is ms, roughly mod × 1000 ($scm vs $mod)",
+                    kotlin.math.abs(scm - mod * 1000) <= 3_000L
+                )
+            }
+        } finally {
+            file.delete()
+        }
     }
 }

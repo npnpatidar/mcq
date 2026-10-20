@@ -116,10 +116,19 @@ object AnkiSchema11 {
         db.execSQL("CREATE INDEX ix_notes_csum ON notes (csum)")
     }
 
+    /**
+     * [crt] and [mod] are SECONDS (the collection's creation and modification
+     * stamp in schema 11), while [scm] — the schema-mod stamp — is
+     * MILLISECONDS: Anki reads `col.mod` with `now/1000` logic and a
+     * millisecond `mod` sorted the exported collection into "the future"
+     * (and made Anki think every date comparison against it drifted).
+     * Everything else in the row is unit-free JSON.
+     */
     fun writeColRow(
         db: SQLiteDatabase,
         crt: Long,
         mod: Long,
+        scm: Long,
         conf: String,
         models: String,
         decks: String,
@@ -131,7 +140,7 @@ object AnkiSchema11 {
             arrayOf(
                 crt,
                 mod,
-                mod,
+                scm,
                 AnkiPackageWriter.SCHEMA_VERSION,
                 conf,
                 models,

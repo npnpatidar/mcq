@@ -103,6 +103,15 @@ data class ImportUiState(
     val paperDescription: String = "",
     val durationMinutes: Int = 0,
     val negativeMarking: Double = 0.0,
+    /**
+     * The numeric fields' TYPED text, owned here so the composables render
+     * it verbatim. The old value-clause (`if (x == 0) ""`) re-rendered every
+     * keystroke's parse, so typing "0" blanked the field and "0.5" was
+     * un-typeable; the raw text survives until the next parse produces a
+     * different zero-free value or a fresh file load.
+     */
+    val durationMinutesText: String = "",
+    val negativeMarkingText: String = "",
     val categoryName: String = "Uncategorized",
     /** Existing library paper titles, for the title field's suggestions. */
     val paperTitleSuggestions: List<String> = emptyList(),
@@ -361,6 +370,14 @@ internal fun buildImportFile(
     )
 }
 
+/**
+ * The display text for a numeric value the state learned from OUTSIDE the
+ * field (a file load): zero reads as the empty field it always did.
+ */
+internal fun numericTextFor(value: Double): String = if (value == 0.0) "" else value.toString()
+
+internal fun numericTextFor(value: Int): String = if (value == 0) "" else value.toString()
+
 class ImportViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -609,7 +626,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             paperTitle = header.title,
             paperDescription = header.description,
             durationMinutes = header.durationMinutes,
+            durationMinutesText = numericTextFor(header.durationMinutes),
             negativeMarking = header.negativeMarking,
+            negativeMarkingText = numericTextFor(header.negativeMarking),
             categoryName = preview.effectiveCategoryTitle,
             questions = sampleQuestions,
             parseWarnings = listOfNotNull(interruptedNotice) + preview.warnings + backupNotice,
@@ -742,7 +761,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             paperTitle = titleOverride ?: paper.title,
             paperDescription = paper.description,
             durationMinutes = paper.durationMinutes,
+            durationMinutesText = numericTextFor(paper.durationMinutes),
             negativeMarking = paper.negativeMarking,
+            negativeMarkingText = numericTextFor(paper.negativeMarking),
             categoryName = effectiveCategory,
             questions = allQuestions,
             parseWarnings = extraWarnings + backupNotice + file.warnings,
@@ -770,8 +791,23 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updatePaperTitle(value: String) = update { it.copy(paperTitle = value) }
     fun updatePaperDescription(value: String) = update { it.copy(paperDescription = value) }
-    fun updateDuration(value: Int) = update { it.copy(durationMinutes = value) }
-    fun updateNegativeMarking(value: Double) = update { it.copy(negativeMarking = value) }
+    fun updateDurationText(raw: String) = update {
+        // Integer MINUTES: keep the text digits-only too, so the displayed
+        // text and the stored value can never disagree ("5.0" used to display
+        // while storing 50 — a silent 10x on a minutes field).
+        val digits = raw.filter { it.isDigit() }
+        it.copy(durationMinutesText = digits, durationMinutes = digits.toIntOrNull() ?: 0)
+    }
+
+    fun updateNegativeMarkingText(raw: String) = update {
+        // Through the shared filter, so letters and other symbols cannot sit
+        // in the field while silently parsing as 0.
+        val kept = com.mcqapp.util.filterDecimalEntry(raw)
+        it.copy(
+            negativeMarkingText = kept,
+            negativeMarking = com.mcqapp.util.parseDecimalEntry(kept)
+        )
+    }
     fun updateCategoryName(value: String) = update { it.copy(categoryName = value) }
 
     fun deleteQuestion(questionId: String) = update {

@@ -3,6 +3,8 @@ package com.mcqapp
 import com.mcqapp.data.export.HtmlPaperWriter
 import com.mcqapp.data.export.ZipPaperWriter
 import com.mcqapp.data.export.parseDataUri
+import com.mcqapp.data.export.unreadableImageLabel
+import com.mcqapp.data.export.DocxPaperWriter
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
@@ -139,6 +141,32 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlPrintsAnImageOnlyExplanation() {
+        // explanationElements empty and explanation blank, only the image:
+        // the guard used to omit explanationImage, so the block vanished from
+        // both pages while PDF (answer key) and DOCX rendered it.
+        val src = "data:image/jpeg;base64,QUJDREVG"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Stem",
+            options = listOf(OptionDto(id = "a", text = "A"), OptionDto(id = "b", text = "B")),
+            correctOptionIds = listOf("a"),
+            explanation = "",
+            explanationImage = src
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "T",
+            categories = listOf(CategoryDto(id = "c1", title = "C", questions = listOf(q)))
+        )
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            assertTrue("answer-shown=$quiz body", html.contains("<p class=\"expl\">Explanation: "))
+            assertTrue("answer-shown=$quiz image", html.contains("<img src=\"$src\""))
+        }
+    }
+
+    @Test
     fun exportFileNamesAreDistinctPerFormat() {
         assertEquals(
             "My-Paper-quiz.html",
@@ -172,6 +200,42 @@ class ExportWritersTest {
         assertNotNull(img)
         assertEquals("image/png", img!!.mimeType)
         assertTrue(img.bytes.isNotEmpty())
+    }
+
+    @Test
+    fun aRejectedDataUriSrcLabelsItselfUnreadableNotMegabytes() {
+        // A `data:` src parseDataUri rejects (raw payload, no ;base64) printed
+        // as its entire literal self — a 2 MB failed image was hundreds of
+        // pages of base64 in the paper, with no hint it was an image. The
+        // regression is a LENGTH assertion, not an eyeball.
+        val blob = "data:image/png," + "A".repeat(16_384)
+        assertEquals("[unreadable image]", unreadableImageLabel(blob))
+        assertTrue("label must stay bounded, got ${unreadableImageLabel(blob).length}", unreadableImageLabel(blob).length < 40)
+        // Non-data srcs keep the provenance label they always had.
+        assertEquals("[image: photo.jpg]", unreadableImageLabel("photo.jpg"))
+        assertEquals("[image: http://host/img.png]", unreadableImageLabel("http://host/img.png"))
+    }
+
+    @Test
+    fun aMonsterPixelHeaderYieldsAPositiveClampedExtent() {
+        // 225,443 px × 9525 EMU/px = 2,148,463,375 — past Int.MAX when computed
+        // in Int, the wrapped negative slipped past the >MAX_CX rescale and
+        // went straight into <wp:extent cx="-…">: Word refused the whole file.
+        val (cx, cy) = DocxPaperWriter.emuExtent(225_443, 100)
+        assertTrue("cx must be positive, got $cx", cx > 0)
+        assertEquals(5486400, cx)
+        assertTrue("cy must be positive, got $cy", cy > 0)
+        // Aspect preserved through the clamp: 100 px wide × MAX_CX/2148463375.
+        assertEquals((100L * 9525 * 5486400 / (225_443L * 9525)).toInt(), cy)
+        // The import bound's extrema (1..1_000_000 accepted) clamp, not wrap.
+        val (w1, h1) = DocxPaperWriter.emuExtent(1_000_000, 1_000_000)
+        assertEquals(5486400 to 5486400, w1 to h1)
+        // A lone huge height on a narrow header overflows cy by itself.
+        val (w2, h2) = DocxPaperWriter.emuExtent(100, 900_000)
+        assertEquals(952500, w2)
+        assertEquals(5486400, h2)
+        // Ordinary sizes are byte-for-byte what the writer always produced.
+        assertEquals(3048000 to 2286000, DocxPaperWriter.emuExtent(320, 240))
     }
 
     @Test

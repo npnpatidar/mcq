@@ -54,6 +54,10 @@
     <string name="restore_backup_description">Replaces the whole library and all settings with the backup\'s contents. Anything added since the backup is gone.</string>
     <string name="restore_backup_confirm">This wipes the current library and every setting, then restores the backup. Continue?</string>
     <string name="restore_replace_everything">Replace everything</string>
+    <plurals name="export_bookmarked_questions">
+        <item quantity="one">Export %d bookmarked question</item>
+        <item quantity="other">Export %d bookmarked questions</item>
+    </plurals>
     <string name="export_bookmarks">Export bookmarks</string>
     <string name="export_category">Export category</string>
     <string name="export_failed">Export failed</string>

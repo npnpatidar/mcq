@@ -349,6 +349,21 @@ object AnkiPackageReader {
                     noteCount += counts.total
                     recallCount += counts.recall
                 }
+                // The paper's own deck, after the nodes: its notes are the
+                // paper's uncategorised questions. The whole-file reader
+                // keeps them in the paper's top-level question list, and the
+                // importer folds those into a synthesized "Uncategorized"
+                // category — so the stream has to offer the same category,
+                // or the paper's own questions never reach the library. The
+                // deck is offered only when it holds a question the reader
+                // would keep, the same condition the whole-file side uses.
+                if (rootDeck != null && (scan.counts[rootDeck.id] ?: 0) > 0) {
+                    val rootCategoryId = "$paperId-root"
+                    sink.onCategory(CategoryDto(id = rootCategoryId, title = "Uncategorized"))
+                    val counts = streamDeck(db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId, sink, batchSize, nowMillis)
+                    noteCount += counts.total
+                    recallCount += counts.recall
+                }
             }
         }
         Logger.i(
@@ -550,17 +565,24 @@ object AnkiPackageReader {
         return out
     }
 
+    /**
+     * The newest review's instant per card. In Anki's `revlog`, `id` is the
+     * review's epoch-millis timestamp and `time` is how long that review took
+     * in millis (Anki's stats divide it by 1000 for "seconds studied"), so the
+     * timestamp is `max(id)` and needs no scaling. Reading `max(time)` and
+     * multiplying by 1000 turned a ~30 s duration into a 1970 instant.
+     */
     private fun readLastReviewTimesFor(db: SQLiteDatabase, cardIds: List<Long>): Map<Long, Long> {
         if (cardIds.isEmpty()) return emptyMap()
         val out = HashMap<Long, Long>()
         for (chunk in cardIds.chunked(IN_CHUNK)) {
             val placeholders = chunk.joinToString(",") { "?" }
             db.rawQuery(
-                "select cid, max(time) from revlog where cid in ($placeholders) group by cid",
+                "select cid, max(id) from revlog where cid in ($placeholders) group by cid",
                 chunk.map { it.toString() }.toTypedArray()
             ).use { c ->
                 while (c.moveToNext()) {
-                    if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1) * 1000L
+                    if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1)
                 }
             }
         }
@@ -789,12 +811,16 @@ object AnkiPackageReader {
      * log is the only record of when a card was last seen; without it the
      * schedule falls back to the interval, which is close enough for a card
      * that has not been overdue. A package may legitimately not carry one.
+     *
+     * `id` is the review's epoch-millis timestamp and `time` is its duration in
+     * millis; see [readLastReviewTimesFor], which this whole-file oracle
+     * mirrors.
      */
     private fun readLastReviewTimes(db: SQLiteDatabase): Map<Long, Long> = try {
         val out = LinkedHashMap<Long, Long>()
-        db.rawQuery("select cid, max(time) from revlog group by cid", null).use { c ->
+        db.rawQuery("select cid, max(id) from revlog group by cid", null).use { c ->
             while (c.moveToNext()) {
-                if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1) * 1000L
+                if (!c.isNull(1)) out[c.getLong(0)] = c.getLong(1)
             }
         }
         out
@@ -807,6 +833,34 @@ object AnkiPackageReader {
 
     /** A question plus whether it had to be reduced to a single option. */
     private data class ParsedQuestion(val question: QuestionDto, val isRecall: Boolean)
+
+    /** Notes whose entire stem is empty (neither text nor image), for the log. */
+    private var droppedEmptyStems = 0
+
+    /**
+     * The stem-image fallback for a payload that omits `image` (older or
+     * hand-edited one). buildFront embeds the passage — with its picture —
+     * ABOVE the question in field 0, and splitFront's "question half" keeps
+     * the passage block, so a first-<img>-anywhere search attributed the
+     * PASSAGE's picture to the question: duplicated under
+     * `questions.image` at import, the stem rendered it twice, and any
+     * branching on `question.image != null` misdirected.
+     *
+     * The fix is positional ONLY: scan below the passage block when the front
+     * carries one (the writer separates the block from the stem with `<hr>`;
+     * a stem holding its own `<hr>` before a later image is out of this
+     * fallback's grammar — the writer's separator is). An elements-vs-image
+     * gate was tried here and deleted: the first pass is DOCUMENTED to hydrate
+     * `questions.image` from a picture authored as a content element (the
+     * SamplePaperApkgRoundTripTest invariant "the first pass only adds derived
+     * fields", which CI 39434947811 proved red when the gate disabled it), and
+     * an element-authored image sits in the stem, below the very `<hr>` the
+     * positional scan searches.
+     */
+    private fun stemImageFromFront(questionHtml: String): String? {
+        val belowPassage = if (questionHtml.contains("<hr")) questionHtml.substringAfterLast("<hr>") else questionHtml
+        return IMG_TAG.find(belowPassage)?.groupValues?.get(1)
+    }
 
     private fun toQuestion(
         note: AnkiNote,
@@ -825,7 +879,19 @@ object AnkiPackageReader {
 
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
         val front = fieldToText(frontHtml, media)
-        if (front.first.isBlank()) return null
+        if (front.first.isBlank() && front.second == null) {
+            droppedEmptyStems++
+            Logger.w(
+                "IMPORT",
+                "Dropped a note with a completely empty stem (no text, no image): " +
+                    "${note.guid.ifBlank { note.id }} — dropped #$droppedEmptyStems"
+            )
+            return null
+        }
+        // A blank stem that still has an <img> is a picture question: the
+        // paths below keep it — the image travels as question content (or,
+        // for our own cards, the payload's elements) — instead of vanishing
+        // the note from the deck.
 
         val backHtml = note.fields.getOrNull(1).orEmpty()
         if (payload != null) {
@@ -843,7 +909,7 @@ object AnkiPackageReader {
                     ))
                 },
                 image = media.rewrite(payload.image)
-                    ?: IMG_TAG.find(questionHtml)?.groupValues?.get(1),
+                    ?: stemImageFromFront(questionHtml),
                 options = payload.options.map {
                     OptionDto(
                         id = it.id,

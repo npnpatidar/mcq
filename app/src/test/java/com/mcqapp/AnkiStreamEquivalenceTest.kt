@@ -257,8 +257,29 @@ class AnkiStreamEquivalenceTest {
      */
     @Test
     fun aSchema14ForeignPackageStreamsToTheSameDatabase() {
-        assertSameDatabase(foreignPackage(ver = 14), "schema-14 foreign package")
+        val bytes = foreignPackage(ver = 14)
+        assertSameDatabase(bytes, "schema-14 foreign package")
+        // Equivalence alone cannot see a bug both sides share. The
+        // whole-file reader keeps the paper's own deck in the paper's
+        // top-level question list, and the importer used to drop those, so
+        // the streamed import dropping them too made the two databases
+        // equal. The root deck's questions must actually be in the library.
+        val texts = questionTexts(streamed(bytes))
+        for (rootDeckQuestion in listOf("2 + 2?", "Which organelle makes ATP?", "Picture?")) {
+            assertTrue(
+                "the paper's own deck's question ($rootDeckQuestion) must reach the library",
+                texts.any { it.contains(rootDeckQuestion) }
+            )
+        }
     }
+
+    /** Every question's stored text, as the library holds it. */
+    private fun questionTexts(db: AppDatabase): List<String> =
+        db.openHelper.writableDatabase.query("select text from questions").use { c ->
+            buildList {
+                while (c.moveToNext()) add(c.getString(0) ?: "")
+            }
+        }
 
     private fun foreignPackage(ver: Int = 11): ByteArray {
         val db = newCollection(ver, crtSeconds = 1_700_000_000L)
@@ -362,7 +383,9 @@ class AnkiStreamEquivalenceTest {
             "update cards set type = 2, queue = 2, due = 5, ivl = 5, factor = 2600, " +
                 "reps = 7, lapses = 1 where id = 1011"
         )
-        db.execSQL("insert into revlog values (1, 1011, -1, 3, 5, 1, 2600, 1699996400, 0)")
+        // A real revlog row: id is the review's epoch-millis timestamp, time is
+        // how long it took in millis.
+        db.execSQL("insert into revlog values (1699996400000, 1011, -1, 3, 5, 1, 2600, 32500, 0)")
 
         val collection = bytesOf(db)
         return zipOf(

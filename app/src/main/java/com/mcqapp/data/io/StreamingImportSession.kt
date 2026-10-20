@@ -107,6 +107,13 @@ internal class StreamingImportSession(
     /** Entries naming a question this import did not accept, for the summary. */
     private var skippedSchedules = 0
 
+    /**
+     * The file's schedule pages, held from [onSchedules] until [finish] applies
+     * them against the settled [acceptedSchedules]. Empty when the import did
+     * not ask to restore progress (those pages are dropped and logged there).
+     */
+    private val bufferedSchedules = mutableListOf<Pair<String, CardScheduleDto>>()
+
     /** Written passages, globally, in first-member order. */
     private val passagePaper = LinkedHashMap<String, String>()
     private val passageCategory = LinkedHashMap<String, String>()
@@ -172,11 +179,16 @@ internal class StreamingImportSession(
     }
 
     /**
-     * One page of the file's `scheduling`, applied as it streams past. The
-     * tail is read after every paper, so [acceptedSchedules] already knows
-     * where each accepted question landed; an entry naming a question that is
-     * not there was a skipped duplicate and is dropped, the rule
-     * [applyTailSchedules] documents.
+     * One page of the file's `scheduling`, buffered until the questions have
+     * settled. Applying at streaming time only worked when a page arrived
+     * after the questions it names — the order the app's own writer puts them
+     * in but not one the parser owns: a backup-style file whose member order
+     * puts `scheduling` before `papers` (or splits it around them) applied
+     * against [acceptedSchedules] while it was still filling, skipped every
+     * entry, and silently discarded the bank's review progress. The pages wait
+     * here and [finish] applies them once the last paper's questions are in
+     * the target map; the memory profile is the whole-file importer's, which
+     * already holds the `scheduling` map outright.
      */
     suspend fun onSchedules(entries: List<Pair<String, CardScheduleDto>>) {
         if (entries.isEmpty()) return
@@ -186,13 +198,13 @@ internal class StreamingImportSession(
                 warnedNoScheduleCapture = true
                 Logger.w(
                     "STREAMIMPORT",
-                    "Ignoring the file's schedule entries: this import did not ask " +
-                        "to restore review progress"
+                    "Ignoring the file's schedule entries: this import did not " +
+                        "ask to restore review progress"
                 )
             }
             return
         }
-        db.withTransaction { applySchedulePage(entries, targets) }
+        bufferedSchedules += entries
     }
 
     /** One page of the file's `attempts`, written as it streams past. */
@@ -416,12 +428,16 @@ internal class StreamingImportSession(
                     db.correctAnswerDao().upsertAll(
                         dto.correctOptionIds.map { CorrectAnswerEntity(sameContentId, it) }
                     )
+                    val tagsCsv = dto.tags.joinToString(",")
                     db.questionDao().updateNonHashedFields(
                         id = sameContentId,
                         explanation = scaledQuestion.storedExplanationJson(json),
                         marks = dto.marks,
                         difficulty = dto.difficulty,
-                        tags = dto.tags.joinToString(","),
+                        // One CSV folded in Kotlin for both binds: SQL lower()
+                        // is the A-Z fold this bug is.
+                        tags = tagsCsv,
+                        tagsFolded = tagsCsv.lowercase(),
                         image = scaledQuestion.image,
                         explanationImage = scaledQuestion.explanationImage
                     )
@@ -581,7 +597,7 @@ internal class StreamingImportSession(
         for (passageIds in byPaper.values) {
             for (passageId in passageIds) {
                 val passage = db.passageDao().getById(passageId) ?: continue
-                val strays = db.questionDao().getMembersByPassage(passageId)
+                val strays = db.questionDao().getMemberCategoriesByPassage(passageId)
                     .filter { it.categoryId != passage.categoryId }
                 if (strays.isEmpty()) continue
                 Logger.i("STREAMIMPORT", "Folding ${strays.size} passage member(s) of " +
@@ -655,15 +671,20 @@ internal class StreamingImportSession(
 
     /**
      * The file's `scheduling`, applied to the questions this import accepted —
-     * the same rule the whole-file importer uses for `file.scheduling`. The tail
-     * is read only after every paper, so the entries are applied here rather
-     * than while their batch was written: [acceptedSchedules] remembered where
-     * each accepted question landed. An entry naming a question that is not in
-     * that map was a skipped duplicate, so it is dropped and a schedule the
-     * user has since moved on with is not rolled back.
+     * the same rule the whole-file importer uses for `file.scheduling`. The
+     * tail is read only after every paper, so the entries are applied here
+     * rather than while their batch was written: [acceptedSchedules] remembered
+     * where each accepted question landed. An entry naming a question that is
+     * not in that map was a skipped duplicate, so it is dropped and a schedule
+     * the user has since moved on with is not rolled back. The streamed JSON
+     * pages wait in [bufferedSchedules] and join the tail here; the tail's own
+     * `scheduling` stays empty on that path (the streaming reader consumes it),
+     * so both member orders stream into the same apply.
      */
     private suspend fun applyTailSchedules(tail: LegacyParser.StreamedFile) {
-        if (tail.scheduling.isEmpty()) return
+        val pages = bufferedSchedules + tail.scheduling.map { it.key to it.value }
+        bufferedSchedules.clear()
+        if (pages.isEmpty()) return
         val targets = acceptedSchedules
         if (targets == null) {
             if (!warnedNoScheduleCapture) {
@@ -673,7 +694,7 @@ internal class StreamingImportSession(
             }
             return
         }
-        applySchedulePage(tail.scheduling.map { it.key to it.value }, targets)
+        db.withTransaction { applySchedulePage(pages, targets) }
     }
 
     /** One page of schedule entries for the questions [targets] remembers. */

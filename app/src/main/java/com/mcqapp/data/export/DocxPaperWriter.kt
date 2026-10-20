@@ -1,6 +1,7 @@
 package com.mcqapp.data.export
 
 import com.mcqapp.data.docx.decodeXmlEntities
+import com.mcqapp.data.docx.docxLineStartMarker
 import com.mcqapp.data.docx.escapeXmlText
 import com.mcqapp.data.docx.mathMlLinearText
 import com.mcqapp.data.docx.mathMlToOmml
@@ -529,11 +530,15 @@ object DocxPaperWriter {
                     current.addPicture(item)
                 }
                 is Tbl -> {
-                    // The marker paragraph must exist before the table even
-                    // when the field opens with the table.
-                    if (pendingPrefix != null) {
-                        out.add(ParaBuilder(pendingPrefix).build()!!)
-                    }
+                    // A field that opens with the table still gets its marker
+                    // paragraph: flush() emits the prefix-only builder (its
+                    // build() counts the prefix as content), so the marker
+                    // paragraph exists before the table even when the field
+                    // opens with the table. The dead `if (pendingPrefix !=
+                    // null)` this replaces was unreachable — newBuilder()
+                    // consumed the prefix before the loop and every flush
+                    // re-consumes it — and had it ever fired it would have
+                    // emitted the marker paragraph TWICE.
                     flush()
                     out.add(tableXml(item.rows))
                 }
@@ -663,17 +668,6 @@ object DocxPaperWriter {
         return out
     }
 
-    /**
-     * Lines that would be read as markers if they started a paragraph or
-     * followed a line break. A stem that continues "2.) …" on its own line
-     * would otherwise split into a phantom question; one leading space
-     * keeps it part of the field (the reader keeps authored leading space).
-     */
-    private val markerish = Regex(
-        "^(\\d{1,7}\\.\\)|\\([a-j]\\)|Ans\\.|Exp:|Passage:)",
-        RegexOption.IGNORE_CASE
-    )
-
     private class ParaBuilder(prefix: String? = null) {
         private val runs = StringBuilder()
         private var atStart = true
@@ -716,7 +710,10 @@ object DocxPaperWriter {
                         atStart = true
                     }
                     var text = line
-                    if (atStart && markerish.containsMatchIn(text)) {
+                    // A line the parser would take as a marker stays text
+                    // with one leading space; the grammar is the parser's own
+                    // (docxLineStartMarker), so it cannot drift from it.
+                    if (atStart && docxLineStartMarker.containsMatchIn(text)) {
                         text = " $text"
                     }
                     if (text.isEmpty()) continue
@@ -822,12 +819,7 @@ object DocxPaperWriter {
                 rid
             }
             val (w, h) = imageDimensions(image.bytes) ?: (320 to 240)
-            var cx = w * EMU_PER_PX
-            var cy = h * EMU_PER_PX
-            if (cx > MAX_CX) {
-                cy = (cy.toLong() * MAX_CX / cx).toInt()
-                cx = MAX_CX
-            }
+            val (cx, cy) = emuExtent(w, h)
             return Pic(rid, cx, cy, ++docPrCounter)
         }
 
@@ -859,6 +851,31 @@ object DocxPaperWriter {
 
     private const val EMU_PER_PX = 9525
     private const val MAX_CX = 5486400
+
+    /**
+     * Pixels → the drawing's EMU extent, computed in LONG: pixel headers the
+     * imageDimensions bound still accepts (1..1,000,000 px) overflow the Int
+     * multiply at 225,443 px (225,443 × 9525 = 2,148,463,375, Int.MAX is
+     * 2,147,483,647), the wrapped negative then slipped past the `> MAX_CX`
+     * rescale and was written straight into `<wp:extent cx="-…">`, which Word
+     * refuses the whole file for ("unreadable content"). Long math, clamped
+     * before the store back to Int, so every in-bounds header yields a
+     * positive extent and the writer's clamp is the whole fix — the import
+     * bound stays where it is: its job is rejecting corrupt headers, not an
+     * extra sizing knob.
+     */
+    internal fun emuExtent(w: Int, h: Int): Pair<Int, Int> {
+        var cx = w.toLong() * EMU_PER_PX
+        var cy = h.toLong() * EMU_PER_PX
+        if (cx > MAX_CX) {
+            cy = cy * MAX_CX / cx
+            cx = MAX_CX.toLong()
+        }
+        // A lone huge height (narrow but 900k px tall header) would overflow
+        // cy on its own after the unperturbed cx path; clamp it the same way.
+        if (cy > MAX_CX) cy = MAX_CX.toLong()
+        return cx.toInt() to cy.toInt()
+    }
 
     /** Option letters the marker grammar supports; (a)…(j). */
     private val OPTION_LETTERS = ('a'..'j').map { it.toString() }

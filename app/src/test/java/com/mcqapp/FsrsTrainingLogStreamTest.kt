@@ -69,7 +69,7 @@ class FsrsTrainingLogStreamTest {
      * row (dropped), and "a"'s rows arrive out of timestamp order.
      */
     private suspend fun seed() {
-        db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
         db.reviewLogDao().insertAll(
             listOf(
                 log(60, "a", rating = 4, reviewedAt = 2 * day),
@@ -111,7 +111,7 @@ class FsrsTrainingLogStreamTest {
 
     @Test
     fun anEmptyLogHasNoCards() = runBlocking {
-        db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
         assertTrue(FsrsTuner.buildTrainingCards(db.reviewLogDao()).isEmpty())
     }
 }

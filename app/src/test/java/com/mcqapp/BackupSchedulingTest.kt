@@ -206,4 +206,93 @@ class BackupSchedulingTest {
         val file = LegacyParser.parse(exportAllJson())
         assertEquals(setOf("q1", "q2"), file.bookmarks.toSet())
     }
+
+    /**
+     * A backup-style file whose member order puts `scheduling` BEFORE `papers`
+     * (the parser owns no member order elsewhere) applied its schedule pages
+     * at streaming time against the accepted-question map while it was still
+     * filling: every entry was skipped and the review progress silently
+     * discarded, while the same bytes through the whole-file importer restored
+     * fine. The pages are buffered until the questions have settled; both
+     * orders must restore identically, and the control pins that the
+     * papers-first order (the app's own writer's) did not regress.
+     *
+     * This opens SQLite, so it cannot run on this aarch64 host — CI is the
+     * authority. Mutant: apply the page at streaming time as before and the
+     * control stays 1 (its questions are already settled when their page
+     * arrives) while the REVERSED half reports restoredSchedules 0 with no
+     * card state — that is the red this finding needs.
+     *
+     * Each half imports into a FRESH database: setUp() already saved q1 into
+     * the shared one, and a duplicate is skipped on purpose —
+     * acceptedSchedules never records it, so its schedule entry is rightly
+     * dropped and the control's restoredSchedules would read 0 for a reason
+     * this finding does not touch.
+     */
+    @Test
+    fun schedulesPrecedingThePapersAreStillRestored() = runBlocking {
+        val papers = """
+            "papers": [
+              {
+                "id": "p1",
+                "title": "Paper",
+                "description": "",
+                "duration": 30,
+                "negative": 0.0,
+                "categories": [
+                  {"id": "c1", "title": "Cat", "questions": [
+                    {"id": "q1", "text": "2 + 2?", "options": ["3", "4"], "correctOptionIds": ["b"]}
+                  ]}
+                ]
+              }
+            ]
+        """.trimIndent()
+        val schedules = """
+            "scheduling": {
+              "q1": {
+                "ease": 2.5, "intervalDays": 3, "dueAt": 1700000000000,
+                "reps": 4, "lapses": 1, "leech": false, "lastReviewedAt": 1690000000000,
+                "difficulty": 6.1, "stability": 12.3, "cardState": "REVIEW", "reviewCount": 4
+              }
+            }
+        """.trimIndent()
+        val goodOrder = "{\n\"version\": 3,\n$papers,\n$schedules\n}"
+        val badOrder = "{\n\"version\": 3,\n$schedules,\n$papers\n}"
+
+        // Control: the writer's own order still restores exactly as it did.
+        // Into a fresh database — setUp() pre-saves q1, and a duplicate's
+        // schedule is skipped on purpose, which would make this 0.
+        rebuildFreshDb()
+        var report = StreamingImporter(db, captureSchedules = true)
+            .import({ java.io.ByteArrayInputStream(goodOrder.toByteArray()) })
+        assertEquals(1, report.restoredSchedules)
+        val good = repository.cardState("p1", "q1")!!
+
+        // Fresh database again, then the reversed member order.
+        rebuildFreshDb()
+        report = StreamingImporter(db, captureSchedules = true)
+            .import({ java.io.ByteArrayInputStream(badOrder.toByteArray()) })
+        assertEquals("every schedule entry is restored once", 1, report.restoredSchedules)
+        val bad = repository.cardState("p1", "q1")!!
+        assertEquals(good.reps, bad.reps)
+        assertEquals(good.ease, bad.ease, 1e-9)
+        assertEquals(good.intervalDays, bad.intervalDays)
+        assertEquals(good.dueAt, bad.dueAt)
+        assertEquals(good.lapses, bad.lapses)
+        assertEquals(good.lastReviewedAt, bad.lastReviewedAt)
+        assertEquals(good.difficulty, bad.difficulty, 1e-9)
+        assertEquals(good.stability, bad.stability, 1e-9)
+        assertEquals(good.state, bad.state)
+        assertEquals(good.reviewCount, bad.reviewCount)
+    }
+
+    /** The fresh-database trick aRestoredBackupKeepsTheSchedule already uses. */
+    private fun rebuildFreshDb() {
+        db.close()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        repository = McqRepository(db, context)
+    }
 }

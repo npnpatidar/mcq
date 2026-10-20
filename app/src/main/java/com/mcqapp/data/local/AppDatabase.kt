@@ -26,7 +26,7 @@ import com.mcqapp.domain.searchableText
         PassageEntity::class,
         TestProgressEntity::class
     ],
-    version = 17,
+    version = 18,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -427,6 +427,92 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Adds the folded search columns and fills them from the flattened
+         * `searchText` already stored. `LIKE` — and SQLite's own `lower()` —
+         * case-fold A–Z only, so a query typed `café` could never match a
+         * stored `CAFÉ`, even though the in-memory authority (and the UI
+         * contract "case-insensitive") folds with full Unicode
+         * [String.lowercase]: the prefilter vetoed the row before the
+         * authority ever saw it. The search/prefilter branches now match a
+         * Kotlin-lowercased query against these Kotlin-folded columns
+         * (questions' stem text + tags, options, passages), so the SQL pass
+         * agrees with the authority on every letter that matters.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (table in listOf("questions", "options", "passages")) {
+                    db.execSQL(
+                        "ALTER TABLE `$table` ADD COLUMN `searchTextFolded` " +
+                            "TEXT NOT NULL DEFAULT ''"
+                    )
+                }
+                db.execSQL(
+                    "ALTER TABLE `questions` ADD COLUMN `tagsFolded` " +
+                        "TEXT NOT NULL DEFAULT ''"
+                )
+                backfillFolded(db)
+            }
+        }
+
+        private const val FOLDED_BACKFILL_BATCH = 4000
+
+        /**
+         * Fills the folded columns from the flattened `searchText` already
+         * stored (and the tags column). Keyset-paged by rowid — stable because
+         * the update never changes the key — so peak memory is one batch, not
+         * a whole 250k-question table, for the same reason as
+         * [backfillSearchText]. Folded in Kotlin with [String.lowercase], not
+         * SQL `lower()`: the whole point is folding beyond A–Z, and the
+         * binders fold the query with the same call.
+         */
+        private fun backfillFolded(db: SupportSQLiteDatabase) {
+            // One compiled statement per column, rebound per row — the same
+            // shape the 14→15 backfill against ~5M rows proved out.
+            fun fold(
+                select: String,
+                update: String,
+                folded: (android.database.Cursor) -> List<String>
+            ) {
+                val statement = db.compileStatement(update)
+                try {
+                    var last = -1L
+                    while (true) {
+                        val batch = ArrayList<Pair<Long, List<String>>>(FOLDED_BACKFILL_BATCH)
+                        db.query(
+                            "$select WHERE rowid > ? ORDER BY rowid LIMIT $FOLDED_BACKFILL_BATCH",
+                            arrayOf(last)
+                        ).use { c ->
+                            while (c.moveToNext()) batch += c.getLong(0) to folded(c)
+                        }
+                        if (batch.isEmpty()) break
+                        for ((rowid, values) in batch) {
+                            statement.clearBindings()
+                            values.forEachIndexed { i, v -> statement.bindString(i + 1, v) }
+                            statement.bindLong(values.size + 1, rowid)
+                            statement.executeUpdateDelete()
+                            last = rowid
+                        }
+                    }
+                } finally {
+                    statement.close()
+                }
+            }
+
+            fold(
+                "SELECT rowid, searchText, tags FROM questions",
+                "UPDATE questions SET searchTextFolded = ?, tagsFolded = ? WHERE rowid = ?"
+            ) { c -> listOf(c.getString(1).lowercase(), c.getString(2).lowercase()) }
+            fold(
+                "SELECT rowid, searchText FROM options",
+                "UPDATE options SET searchTextFolded = ? WHERE rowid = ?"
+            ) { c -> listOf(c.getString(1).lowercase()) }
+            fold(
+                "SELECT rowid, searchText FROM passages",
+                "UPDATE passages SET searchTextFolded = ? WHERE rowid = ?"
+            ) { c -> listOf(c.getString(1).lowercase()) }
+        }
+
+        /**
          * Adds `test_progress`: the in-progress test session's answers, one row
          * per question reached, so answering costs one small upsert instead of
          * re-serialising every answer so far into the resume snapshot. New and
@@ -514,7 +600,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
-                    MIGRATION_15_16, MIGRATION_16_17
+                    MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

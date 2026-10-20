@@ -3,10 +3,12 @@ package com.mcqapp.util
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 object Logger {
 
@@ -15,15 +17,38 @@ object Logger {
 
     private var logFile: File? = null
     private val lock = Any()
-    private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    /**
+     * The timestamp format, thread-safe by construction. A shared
+     * `SimpleDateFormat` is not: it is used from the callers' threads and
+     * from the log thread, and a `DateTimeFormatter` is immutable.
+     */
+    private val timeFormat: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    /** The same stamp `SimpleDateFormat` produced: the default zone, to the millisecond. */
+    private fun timestamp(): String = timeFormat.format(LocalDateTime.now())
 
     /**
      * File IO runs on this single-thread executor so callers (including Main)
      * never block on disk; the daemon thread never keeps the process alive.
      * One thread keeps log lines in write order.
      */
-    private val io = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+    private val defaultIo: Executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mcq-log").apply { isDaemon = true }
+    }
+
+    /**
+     * The executor the file writes are queued on. A seam for the tests: an
+     * executor that drops every task must not be able to swallow a crash
+     * line — which is written synchronously anyway, and that is the point.
+     */
+    @Volatile
+    internal var io: Executor = defaultIo
+
+    /** Puts the file-write executor back to the shipped one. */
+    internal fun resetIoExecutor() {
+        io = defaultIo
     }
 
     var activePath: String = "not initialized"
@@ -49,7 +74,7 @@ object Logger {
                 if (!dir.canWrite()) continue
                 val file = File(dir, "app.log")
                 file.appendText(
-                    "=== Log session started ${timeFormat.format(Date())} " +
+                    "=== Log session started ${timestamp()} " +
                         "(pid=${android.os.Process.myPid()}) ===\n"
                 )
                 synchronized(lock) {
@@ -75,7 +100,27 @@ object Logger {
 
     fun e(tag: String, message: String, throwable: Throwable? = null) = write("E", tag, message, throwable)
 
-    fun crash(throwable: Throwable) = write("CRASH", "UNCAUGHT", throwable.javaClass.name + ": " + throwable.message, throwable)
+    fun crash(throwable: Throwable) {
+        val message = throwable.javaClass.name + ": " + throwable.message
+        val line = formatLine("CRASH", "UNCAUGHT", message, throwable)
+        publish("CRASH", "UNCAUGHT", message)
+        // The crash line is written to the file SYNCHRONOUSLY. The uncaught
+        // handler calls this and then hands off to the previous handler,
+        // which kills the process — a line queued on the log executor
+        // routinely never ran, so the one report that matters most was the
+        // one most likely to be lost.
+        try {
+            appendToFile(line)
+        } catch (e: Throwable) {
+            // A disk failure must never escape the handler: the crash
+            // itself is what is being reported.
+            try {
+                Log.w(TAG, "Failed to write the crash log: ${e.message}")
+            } catch (_: Throwable) {
+                // Nothing left to do.
+            }
+        }
+    }
 
     /**
      * A bounded ring of the most recent error/crash lines, for tests: a
@@ -90,6 +135,24 @@ object Logger {
     fun clearRecentErrors() = recentErrors.clear()
 
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
+        val line = formatLine(level, tag, message, throwable)
+        publish(level, tag, message)
+        // logcat stays synchronous (cheap); file IO moves off the caller.
+        try {
+            io.execute {
+                try {
+                    appendToFile(line)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to write log: ${e.message}")
+                }
+            }
+        } catch (_: Exception) {
+            // Executor rejected or shut down: drop the line, never crash.
+        }
+    }
+
+    /** One log line, as it is written to the file. */
+    private fun formatLine(level: String, tag: String, message: String, throwable: Throwable?): String {
         val trace = if (throwable != null) {
             try {
                 Log.getStackTraceString(throwable)
@@ -99,8 +162,8 @@ object Logger {
         } else {
             null
         }
-        val line = buildString {
-            append(timeFormat.format(Date()))
+        return buildString {
+            append(timestamp())
             append(' ').append(level).append('/').append(tag)
             append(" [${Thread.currentThread().name}]: ")
             append(message)
@@ -109,6 +172,10 @@ object Logger {
             }
             append('\n')
         }
+    }
+
+    /** logcat and the in-memory ring of recent errors. */
+    private fun publish(level: String, tag: String, message: String) {
         if (level == "E" || level == "CRASH") {
             recentErrors.addLast("$level/$tag: $message")
             while (recentErrors.size > 100) recentErrors.removeFirst()
@@ -128,21 +195,22 @@ object Logger {
         } catch (_: Exception) {
             println("$level/$tag: $message")
         }
-        // logcat stays synchronous (cheap); file IO moves off the caller.
-        try {
-            io.execute {
-                try {
-                    val file = synchronized(lock) { logFile } ?: return@execute
-                    if (file.length() > MAX_FILE_BYTES) {
-                        rotate(file)
-                    }
-                    file.appendText(line)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to write log: ${e.message}")
-                }
+    }
+
+    /**
+     * Appends one line to the log file, rotating it first if it has grown
+     * past the limit. The rotation check and the append share the lock, so
+     * two writers cannot both decide to rotate — and the crash line, which
+     * is written on the crashing thread, gets the same treatment as every
+     * other line.
+     */
+    private fun appendToFile(line: String) {
+        synchronized(lock) {
+            val file = logFile ?: return
+            if (file.length() > MAX_FILE_BYTES) {
+                rotate(file)
             }
-        } catch (_: Exception) {
-            // Executor rejected or shut down: drop the line, never crash.
+            file.appendText(line)
         }
     }
 
@@ -157,10 +225,10 @@ object Logger {
         // A stale target can make renameTo fail; clear it first.
         rotated.delete()
         if (file.renameTo(rotated)) {
-            file.appendText("=== Log rotated ${timeFormat.format(Date())} ===\n")
+            file.appendText("=== Log rotated ${timestamp()} ===\n")
         } else {
             Log.w(TAG, "Log rotation failed; truncating ${file.absolutePath}")
-            file.writeText("=== Log truncated ${timeFormat.format(Date())} ===\n")
+            file.writeText("=== Log truncated ${timestamp()} ===\n")
         }
     }
 }

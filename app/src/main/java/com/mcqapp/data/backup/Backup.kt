@@ -631,7 +631,7 @@ class BackupSource(private val db: AppDatabase) {
             exportedAt = System.currentTimeMillis(),
             papers = papers,
             questions = content.papers.sumOf { paper ->
-                paper.categories.sumOf { it.questions.size }
+                paper.categories.sumOf { it.questions.size } + paper.questions.size
             },
             attempts = attempts,
             reviews = reviews
@@ -729,8 +729,13 @@ class BackupRestorer(private val db: AppDatabase) {
         applyInProgress: suspend (String?) -> Unit = {}
     ): String {
         val content = backup.content
+        // A paper's standalone questions (the bank wire format keeps a
+        // paper-level `questions` list beside its categories; the importer
+        // folds them into the paper's Uncategorized category and restores
+        // them) are restored just the same, so both the log line and the
+        // report must count them.
         val questionCount = content.papers.sumOf { paper ->
-            paper.categories.sumOf { it.questions.size }
+            paper.categories.sumOf { it.questions.size } + paper.questions.size
         }
         Logger.i(
             "BACKUP",

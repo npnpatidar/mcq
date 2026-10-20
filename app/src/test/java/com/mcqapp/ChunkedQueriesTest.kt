@@ -107,7 +107,7 @@ class ChunkedQueriesTest {
         val passageIds = ids.map { "pg-$it" }
         passageIds.forEach { id ->
             db.passageDao().upsert(
-                PassageEntity(id = id, categoryId = "c1", title = "P $id", text = "T $id", searchText = "P $id")
+                PassageEntity(id = id, categoryId = "c1", title = "P $id", text = "T $id", searchText = "P $id", searchTextFolded = "P $id".lowercase())
             )
         }
         val found = db.passageDao().getByIdsChunked(passageIds)
@@ -118,7 +118,7 @@ class ChunkedQueriesTest {
     @Test
     fun `paper lookup survives several chunks`() = runBlocking {
         val paperIds = ids.map { "pp-$it" }
-        paperIds.forEach { db.paperDao().upsert(PaperEntity(id = it, title = "Paper $it")) }
+        paperIds.forEach { db.paperDao().insertIgnore(PaperEntity(id = it, title = "Paper $it")) }
         val found = db.paperDao().getByIdsChunked(paperIds)
         assertEquals(ids.size, found.size)
         assertEquals(paperIds.toSet(), found.map { it.id }.toSet())

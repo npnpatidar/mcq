@@ -1,7 +1,9 @@
 package com.mcqapp
 
 import android.content.Context
+import androidx.paging.PagingConfig
 import androidx.paging.PagingSource
+import androidx.paging.PagingState
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
@@ -18,6 +20,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -117,5 +120,75 @@ class BookmarksPagingTest {
         withTimeout(10_000) {
             while (signals.get() < n) delay(10)
         }
+    }
+
+    /**
+     * The list pages by cursor, not by OFFSET: deleting a bookmark that sorts
+     * AHEAD of an already-issued cursor (the window between page 1's end and
+     * page 2's cursor used the row count, so a removed row slid every later
+     * page one slot) must not shift the remaining pages. Page 2's cursor is
+     * the last row it carried (createdAt 2, "q2"); deleting q3 (createdAt 3,
+     * strictly newer) leaves page 3 = q1 under keyset, while the OFFSET
+     * implementation recomputed OFFSET 4 over the shortened list and delivered
+     * an empty page — q1 silently vanished from the scrolled list.
+     *
+     * Pages are a LOG of what the reader saw: q3 was already DELIVERED in
+     * page 2 before the toggle, so the aggregate keeps it — a delete after
+     * the reader has seen a row cannot un-show it.
+     *
+     * Room/SQLite — CI is the authority. Mutant: drop the keyset WHERE
+     * clause and key nothing — page 3 re-delivers pages 1's rows and this
+     * test goes red on the aggregate's distinctness and page-3 content.
+     */
+    @Test
+    fun deletingAheadOfTheCursorDoesNotShiftFollowingPages() = runBlocking {
+        saveQuestion("q1"); saveQuestion("q2"); saveQuestion("q3"); saveQuestion("q4"); saveQuestion("q5")
+        bookmark("q1", 1L); bookmark("q2", 2L); bookmark("q3", 3L); bookmark("q4", 4L); bookmark("q5", 5L)
+
+        val source = repository.bookmarkedPagingSource()
+        val page1 = source.load(PagingSource.LoadParams.Refresh(null, 2, false)) as PagingSource.LoadResult.Page
+        assertEquals(listOf("q5", "q4"), page1.data.map { it.question.id })
+        val page2 = source.load(PagingSource.LoadParams.Append(page1.nextKey!!, 2, false)) as PagingSource.LoadResult.Page
+        assertEquals(listOf("q3", "q2"), page2.data.map { it.question.id })
+
+        repository.toggleBookmark("q3")
+
+        val page3 = source.load(PagingSource.LoadParams.Append(page2.nextKey!!, 2, false)) as PagingSource.LoadResult.Page
+        assertEquals("the page AFTER the cursor continues, never re-delivers", listOf("q1"), page3.data.map { it.question.id })
+        assertFalse("page 3 must not contain the deleted q3", page3.data.any { it.question.id == "q3" })
+        val delivered = (page1 + page2 + page3).map { it.question.id }
+        assertEquals(
+            "the full delivered sequence keeps every scene the reader saw, once",
+            listOf("q5", "q4", "q3", "q2", "q1"),
+            delivered
+        )
+        assertEquals(
+            "no duplicate anywhere in the scroll (q3 was delivered before the delete)",
+            delivered.size, delivered.distinct().size
+        )
+    }
+
+    /**
+     * getRefreshKey is coherent: an invalidation while the reader stands at
+     * the second page re-loads from that page's own cursor instead of
+     * scrolling the list back to the newest bookmark. Previously it was null,
+     * meaning the screen restarted from the top on every refresh signal.
+     */
+    @Test
+    fun aRefreshBackedTheReachedPositionResumesFromItsCursor() = runBlocking {
+        saveQuestion("q1"); saveQuestion("q2"); saveQuestion("q3"); saveQuestion("q4")
+        bookmark("q1", 1L); bookmark("q2", 2L); bookmark("q3", 3L); bookmark("q4", 4L)
+
+        val source = repository.bookmarkedPagingSource()
+        val page1 = source.load(PagingSource.LoadParams.Refresh(null, 2, false)) as PagingSource.LoadResult.Page
+        val page2 = source.load(PagingSource.LoadParams.Append(page1.nextKey!!, 2, false)) as PagingSource.LoadResult.Page
+
+        val state = PagingState(
+            pages = listOf(page1, page2),
+            anchorPosition = 2, // the head of page 2: the reader has reached q3
+            config = PagingConfig(pageSize = 2),
+            leadingPlaceholderCount = 0
+        )
+        assertEquals(page1.nextKey, source.getRefreshKey(state))
     }
 }

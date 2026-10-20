@@ -49,7 +49,7 @@ class QuestionRefTextTest {
             .allowMainThreadQueries().build()
         repository = McqRepository(db, context)
         runBlocking {
-            db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper"))
+            db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper"))
             db.categoryDao().upsert(
                 CategoryEntity(id = "c1", paperId = "p1", title = "Alpha", sortOrder = 0)
             )
@@ -123,7 +123,9 @@ class QuestionRefTextTest {
             filter = BrowseListFilter.ALL,
             categoryFilterIds = null
         )
-        assertReadable(walkPaging(2, { repository.browseRefsSource(browse) }, paramsFor()))
+        assertReadable(walkPaging(2, {
+            repository.browseRefsSource(browse, repository.browseCategoryRowIdCsv(browse))
+        }, paramsFor()))
         assertReadable(walkPaging(2, { repository.passageMembersSource("pa") }, paramsFor()))
     }
 

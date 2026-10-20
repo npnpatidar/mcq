@@ -14,11 +14,15 @@ import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.util.Logger
 import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.OutputStream
 
 /**
  * The FSRS optimizer's progress on the settings screen: idle, mid-fit with a
@@ -268,9 +272,33 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun exportAll(uri: Uri, onError: (String) -> Unit) {
         viewModelScope.launch {
+            exportAllOn(uri, onError = onError)
+        }
+    }
+
+    /**
+     * The whole bank's serialization plus the file write runs here, so it
+     * happens off the calling dispatcher — the JSON export was the one sibling
+     * that did not hop: `backupAll` and `restoreBackup` both wrap in
+     * `Dispatchers.IO`, and this is what made "Export all data (JSON)" a
+     * jank/ANR paragraph-frame producer on a few-thousand-question bank.
+     *
+     * The dispatcher is a seam so a test can prove the body actually runs on
+     * it: the public [exportAll] passes `Dispatchers.IO` like its siblings
+     * (launch always arrives on `Main.immediate`), and the open hook is
+     * invoked inside [withContext] so the stream is opened on the same
+     * thread that writes it.
+     */
+    internal suspend fun exportAllOn(
+        uri: Uri,
+        onError: (String) -> Unit,
+        dispatcher: CoroutineDispatcher = Dispatchers.IO,
+        open: () -> OutputStream? = { getApplication<Application>().contentResolver.openOutputStream(uri) }
+    ) {
+        withContext(dispatcher) {
             try {
                 // Streamed: the whole bank never lives in memory as a String.
-                val outputStream = getApplication<Application>().contentResolver.openOutputStream(uri)
+                val outputStream = open()
                 if (outputStream == null) {
                     onError("Could not open file for writing")
                 } else {

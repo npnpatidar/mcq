@@ -43,7 +43,7 @@ class BrowsePagingTest {
             .allowMainThreadQueries().build()
         repository = McqRepository(db, context)
         runBlocking {
-            db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper"))
+            db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper"))
             db.categoryDao().upsert(CategoryEntity(id = "c1", paperId = "p1", title = "Alpha", sortOrder = 0))
             db.categoryDao().upsert(CategoryEntity(id = "c2", paperId = "p1", title = "Beta", sortOrder = 1))
         }
@@ -69,14 +69,15 @@ class BrowsePagingTest {
         query: String = "",
         filter: BrowseListFilter = BrowseListFilter.ALL,
         categoryFilterIds: Set<String>? = null
-    ): PagingSource<Int, QuestionRef> = repository.browseRefsSource(
-        McqRepository.BrowseScope.of(
+    ): PagingSource<Int, QuestionRef> {
+        val scope = McqRepository.BrowseScope.of(
             paperId = "p1",
             query = query,
             filter = filter,
             categoryFilterIds = categoryFilterIds
         )
-    )
+        return repository.browseRefsSource(scope, repository.browseCategoryRowIdCsv(scope))
+    }
 
     /** Walks every page at a small size, crossing window boundaries. */
     private suspend fun walk(factory: suspend () -> PagingSource<Int, QuestionRef>): List<String> =
@@ -145,6 +146,63 @@ class BrowsePagingTest {
         assertEquals(listOf("q-tag", "q-stem"), walk { source(query = "Plain stem") })
     }
 
+    /**
+     * SQL `LIKE` — and SQLite's own `lower()` — case-fold A–Z only, so a
+     * query whose case differed from the stored text on a non-ASCII letter
+     * rejected the row in every branch *before* the authoritative in-memory
+     * filter (which folds with full Unicode) ever saw it, in browse as well
+     * as in global search. Every branch now matches its Kotlin-folded column
+     * (`searchTextFolded` on the question, its tags, the option, the
+     * passage) against a Kotlin-lowercased query, so the SQL pass is as
+     * case-insensitive as the in-memory filter.
+     */
+    @Test
+    fun aNonAsciiCaseDifferenceStillFindsRowsInEveryBranch() = runBlocking {
+        repository.saveQuestion(
+            Question(
+                id = "q-cafe-text",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("CAFÉ central")),
+                options = listOf(QuestionOption("a", "Nothing")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        repository.saveQuestion(
+            Question(
+                id = "q-cafe-tag",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Plain stem")),
+                options = listOf(QuestionOption("a", "Nothing")),
+                correctOptionIds = setOf("a"),
+                tags = listOf("CAFÉ Tag")
+            )
+        )
+        repository.saveQuestion(
+            Question(
+                id = "q-cafe-option",
+                categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("Another stem")),
+                options = listOf(QuestionOption("a", "CAFÉ option")),
+                correctOptionIds = setOf("a")
+            )
+        )
+
+        val all = listOf("q-cafe-text", "q-cafe-tag", "q-cafe-option")
+        assertEquals(all, walk { source(query = "café") })
+        assertEquals(all, walk { source(query = "CAFÉ") })
+        // The tag and option branches individually.
+        assertEquals(listOf("q-cafe-tag"), walk { source(query = "café tag") })
+        assertEquals(listOf("q-cafe-option"), walk { source(query = "café opt") })
+        // And the count path agrees with the list path — the scope's size
+        // would otherwise host the same veto one query lower.
+        assertEquals(
+            3,
+            repository.browseFilteredCount(
+                McqRepository.BrowseScope.of("p1", "café", BrowseListFilter.ALL, null)
+            )
+        )
+    }
+
     @Test
     fun theNoExplanationChipMatchesTheShapesTheAppWrites() = runBlocking {
         // The editor stores `[]`; both importers store a blank text element.
@@ -155,6 +213,9 @@ class BrowsePagingTest {
             categoryId = "c1",
             text = """[{"type":"text","content":"Has stem"}]""",
             searchText = "Has stem",
+            searchTextFolded = "Has stem".lowercase(),
+            tags = "",
+            tagsFolded = "",
             explanation = "[]"
         )
         db.questionDao().upsertAll(
@@ -178,5 +239,56 @@ class BrowsePagingTest {
             categoryFilterIds = null
         )
         assertEquals(walked.size, repository.browseFilteredCount(scope))
+    }
+
+    /**
+     * The prefilter compares a Kotlin-folded value with the Kotlin-folded
+     * columns; an unfolded bind reintroduces SQLite's A-Z-only fold.
+     */
+    @Test
+    fun theBrowseScopeFoldsTheQueryTheSameWayAsTheColumns() {
+        assertEquals(
+            "hôtel",
+            McqRepository.BrowseScope.of("p1", "HÔTEL", BrowseListFilter.ALL, null).query
+        )
+    }
+
+    /**
+     * These hand-authored twins discriminate without any engine cooperation,
+     * so the identical mutant turns red however the engine folds.
+     * `q-folded` reads the way a fixed store
+     * writes its rows: raw case-preserved, folded twin the Kotlin lowercase.
+     * `q-raw` is the inverse: its RAW text matches `café` with no folding at
+     * all, but its folded twin says nothing — so a clause that reads the raw
+     * column fails the "not found" half, and one that reads the folded column
+     * fails the "found" half. No engine folding can flip either half.
+     */
+    @Test
+    fun theBrowsePrefilterReadsTheFoldedColumnNotTheRawOne() = runBlocking {
+        db.questionDao().upsertAll(
+            listOf(
+                QuestionEntity(
+                    id = "q-folded", categoryId = "c1",
+                    text = "x", searchText = "CAFÉ central",
+                    searchTextFolded = "café central",
+                    tags = "", tagsFolded = ""
+                ),
+                QuestionEntity(
+                    id = "q-raw", categoryId = "c1",
+                    text = "x", searchText = "café central",
+                    // Deliberately inconsistent: nothing any writer produces.
+                    searchTextFolded = "zzz",
+                    tags = "", tagsFolded = ""
+                )
+            )
+        )
+
+        assertEquals(listOf("q-folded"), walk { source(query = "café") })
+        assertEquals(
+            1,
+            repository.browseFilteredCount(
+                McqRepository.BrowseScope.of("p1", "café", BrowseListFilter.ALL, null)
+            )
+        )
     }
 }

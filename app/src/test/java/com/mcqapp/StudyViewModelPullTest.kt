@@ -295,4 +295,112 @@ class StudyViewModelPullTest {
         viewModel.setQuestionVisible(true)
         assertTrue(viewModel.state.value.clockRunning)
     }
+
+    /**
+     * "Study again" must re-pull the drill queue, not replay the list the
+     * drill loaded: the first pass graded its cards (so their schedules
+     * moved), a card that lapsed since has to join, and one whose schedule
+     * was since reset (the edit reset the store performs) has to leave.
+     * Replaying the load-time snapshots re-enters cards with the old state
+     * and walks a queue the scheduler no longer serves.
+     */
+    @Test
+    fun studyAgainRepullsTheDrillFromTheSchedulerNow() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            repository.saveQuestion(question("q2"))
+            repository.saveQuestion(question("q3"))
+            // One lapse is a leech for this test.
+            repository.setSchedulerConfig(
+                repository.schedulerConfigNow().copy(leechThreshold = 1)
+            )
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            // The drill serves leeches that are due. A card graded AGAIN
+            // from new stays LEARNING with no lapse, so it is not a leech
+            // at all — the seed is a review card that lapsed once and came
+            // due. The row is written by a real review (which stores the
+            // question's own content hash — a row with a stale hash would be
+            // reset to a fresh schedule) and then shaped into the leech the
+            // drill expects. q2 is a due review card that has not lapsed:
+            // the drill leaves it alone, and it becomes a leech later.
+            for ((id, lapses) in listOf("q1" to 1, "q3" to 1, "q2" to 0)) {
+                repository.recordStudyReview("p1", id, ReviewGrade.AGAIN, now = now - 2 * day)
+                repository.db().openHelper.writableDatabase.execSQL(
+                    "UPDATE card_state SET cardState = 'REVIEW', reps = 3, reviewCount = 3, " +
+                        "lapses = ?, leech = ?, dueAt = ?, lastReviewedAt = ?, stability = 10.0 " +
+                        "WHERE questionId = ?",
+                    arrayOf<Any>(lapses, if (lapses > 0) 1 else 0, now - day, now - day, id)
+                )
+            }
+        }
+        val viewModel = StudyViewModel(app, "p1", leechesOnly = true)
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+
+        // First pass: grade everything the drill loaded. GOOD graduates a
+        // relearning card, so neither a stale replay nor the fresh pull
+        // would keep these grades' own states.
+        val loadedIds = mutableSetOf<String>()
+        while (viewModel.state.value.current != null) {
+            val id = viewModel.state.value.current!!.questionId
+            loadedIds += id
+            viewModel.toggleOption("$id-a")
+            viewModel.check()
+            viewModel.next()
+            assertTrue(awaitCondition {
+                viewModel.state.value.finished || viewModel.state.value.current?.questionId != id
+            })
+        }
+        assertTrue(awaitCondition { viewModel.state.value.finished })
+        assertEquals(setOf("q1", "q3"), loadedIds)
+
+        // While the drill sits at "Study again", the scheduler moves under
+        // it: q1 lapses again (the load-time snapshots now describe a state
+        // three grades old), q2 lapsed for the first time (a new leech —
+        // never in the drill), q3's schedule was reset the way the store
+        // resets a studied question whose text changed (a leech that left).
+        runBlocking {
+            repository.recordStudyReview("p1", "q1", ReviewGrade.AGAIN)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.AGAIN)
+            repository.db().openHelper.writableDatabase.execSQL(
+                "UPDATE card_state SET dueAt = dueAt - 7200000 " +
+                    "WHERE questionId IN ('q1','q2')"
+            )
+            repository.db().openHelper.writableDatabase.execSQL(
+                "UPDATE card_state SET lapses = 0, leech = 0, cardState = 'NEW', " +
+                    "dueAt = 0, reps = 0, reviewCount = 0 WHERE questionId = 'q3'"
+            )
+        }
+        val fresh = runBlocking { repository.getStudyQueue("p1", leechesOnly = true) }
+        assertEquals(listOf("q1", "q2").sorted(), fresh.map { it.questionId }.sorted())
+
+        viewModel.restart()
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        // The card on screen is the scheduler's card NOW, state included.
+        assertEquals(fresh[0].questionId, viewModel.state.value.current!!.questionId)
+        assertEquals(fresh[0].state, viewModel.state.value.current!!.state)
+
+        // Walk the restarted drill: exactly the fresh queue, q3 never back.
+        // The card on screen is read at the top of the loop, not from the
+        // transition: next() pulls asynchronously, so the state right after
+        // it still holds the card that was graded.
+        val visited = mutableSetOf<String>()
+        while (viewModel.state.value.current != null) {
+            val id = viewModel.state.value.current!!.questionId
+            visited += id
+            viewModel.toggleOption("$id-a")
+            viewModel.check()
+            viewModel.next()
+            assertTrue(awaitCondition {
+                viewModel.state.value.finished || viewModel.state.value.current?.questionId != id
+            })
+        }
+        assertTrue(awaitCondition { viewModel.state.value.finished })
+        assertEquals(
+            "the restarted drill walks the scheduler's queue: $visited",
+            fresh.map { it.questionId }.toSet(),
+            visited
+        )
+    }
 }

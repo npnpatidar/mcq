@@ -381,9 +381,17 @@ private fun graftScalarImage(scalar: String?, visibleElements: List<ContentEleme
  * with a newline the payload does not have — and case folded. A freshness
  * key, not an identity: two stems that differ only in spacing are the same
  * question for this purpose.
+ *
+ * Markup breaks normalise before the entities decode, so `<br>`, `<br/>` and
+ * `<br />` are a break the same way the visible document's `\n` is one. Decoding
+ * after the replace is what keeps an *authored* `&lt;br&gt;` literal: it must
+ * not be read as a break merely because it looks like the markup.
  */
 private fun normalizeStem(text: String): String =
-    decodeXmlEntities(text).replace(Regex("\\s+"), "").lowercase()
+    text.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), " ")
+        .let(::decodeXmlEntities)
+        .replace(Regex("\\s+"), "")
+        .lowercase()
 
 internal data class DocxLine(val html: String, val heading: Int?)
 
@@ -632,7 +640,21 @@ internal data class RawPassage(
     val bodyHtml: String
 )
 
-private val questionSplit = Regex("(?m)^(\\d{1,7}\\.\\))")
+/**
+ * The line-start marker grammar, as fragments: the parser splits on these and
+ * the writer escapes a line that matches them, so both must come from here.
+ * Keeping one definition is what stops the writer's guard and the parser's
+ * grammar from drifting apart again.
+ */
+private const val QUESTION_MARKER = "\\d{1,7}\\.\\)"
+private const val OPTION_MARKER = "\\(([a-z])\\)"
+private const val ANSWER_MARKER = "Ans."
+private const val EXPLANATION_MARKER = "Exp:"
+
+/** `Passage:` is the one case-insensitive marker: authors need not match its casing. */
+private const val PASSAGE_MARKER = "(?i:Passage:)"
+
+private val questionSplit = Regex("(?m)^($QUESTION_MARKER)")
 
 /**
  * Line-start `Passage:` marker (D4). Fits the existing `(?m)^` marker style;
@@ -640,13 +662,23 @@ private val questionSplit = Regex("(?m)^(\\d{1,7}\\.\\))")
  * insensitive match spares authors remembering the exact casing, but a line
  * that merely *contains* "Passage:" mid-sentence is not a marker.
  */
-internal val passageSplit = Regex("(?im)^(Passage:)[ \\t]*(.*)$")
+internal val passageSplit = Regex("(?m)^($PASSAGE_MARKER)[ \\t]*(.*)$")
 
 /** Option labels, in order. Ten is plenty for a written paper and bounded on purpose. */
 private val OPTION_LABELS = ('a'..'j').map { it.toString() }
 
 /** `(a)` … at the start of a line. Any letter is matched so an out-of-range one is caught. */
-private val optionMarker = Regex("(?m)^\\(([a-z])\\)")
+private val optionMarker = Regex("(?m)^$OPTION_MARKER")
+
+/**
+ * A line the parser would read as a marker: `N.)`, `(x)` (any letter — an
+ * out-of-range one is refused, so it must not survive at a line start),
+ * `Ans.`, `Exp:` or `Passage:`. The DOCX writer prefixes such a line with one
+ * space so a marker-shaped line in a stem, option or explanation stays text.
+ */
+internal val docxLineStartMarker = Regex(
+    "^(?:$QUESTION_MARKER|$OPTION_MARKER|$ANSWER_MARKER|$EXPLANATION_MARKER|$PASSAGE_MARKER)"
+)
 
 /** Separators between several answers: a comma, an "and", an ampersand. */
 private val answerSeparator = Regex("\\s*(?:,|;|&|\\band\\b)\\s*", RegexOption.IGNORE_CASE)
@@ -766,10 +798,10 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
     fun fail(reason: String): Nothing =
         throw IllegalArgumentException("Malformed question $label: $reason")
 
-    val expParts = block.split("\nExp:", limit = 2)
+    val expParts = block.split("\n$EXPLANATION_MARKER", limit = 2)
     val explanation = if (expParts.size > 1) expParts[1].trim() else ""
     val preExp = expParts[0]
-    val ansParts = preExp.split("\nAns.", limit = 2)
+    val ansParts = preExp.split("\n$ANSWER_MARKER", limit = 2)
     val answer = if (ansParts.size > 1) ansParts[1].trim() else ""
     val optionText = ansParts[0]
 

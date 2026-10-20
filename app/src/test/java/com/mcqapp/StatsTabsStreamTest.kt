@@ -119,8 +119,8 @@ class StatsTabsStreamTest {
      * (unknown-kind) row — enough that every chart has something to disagree on.
      */
     private suspend fun seed() {
-        db.paperDao().upsert(PaperEntity(id = "p1", title = "Paper One"))
-        db.paperDao().upsert(PaperEntity(id = "p2", title = "Paper Two"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Paper Two"))
 
         card(
             "q1", intervalDays = 30, dueAt = now + 2 * hour,

@@ -225,6 +225,158 @@ class DocxRoundTripTest {
         }
     }
 
+    /**
+     * A stored line that happens to start with a marker must stay text on the
+     * way back. The writer escapes such a line with one leading space; the
+     * guard has to cover the parser's whole option grammar, not just the ten
+     * labels the app accepts, because the parser matches any letter and
+     * refuses an out-of-range one. An option that continued "(k) ..." on its
+     * own line was written bare, and the app's own export then could not be
+     * imported: "option (k) is not supported; use (a) to (j)."
+     *
+     * The in-range "(b)" and "(c)" lines are the control: they were guarded
+     * before and must still be, and must still come back with their text
+     * intact. The stem and explanation carry the same shapes to show the
+     * guard is applied wherever a field breaks into lines.
+     */
+    @Test
+    fun markerShapedLinesInEveryFieldSurviveTheRoundTrip() {
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-marker",
+            // The marker-shaped lines use the newline form the app's own DOCX
+            // import stores (the writer breaks a run on `\n` exactly as on a
+            // `<br>` tag, and the reader echoes `\n` back), so the hidden
+            // payload must come back fresh and the texts can be compared
+            // verbatim.
+            text = "Pick one:\n(k) the step after the last option\n(b) an in-range letter",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(
+                    "a",
+                    "first\n(k) a step inside an option\n(b) an in-range letter inside an option"
+                ),
+                com.mcqapp.data.io.OptionDto("b", "second")
+            ),
+            correctOptionIds = listOf("a"),
+            explanation = "because\n(z) the last step\n(c) an in-range letter"
+        )
+        val paper = PaperDto(
+            id = "p-markers",
+            title = "Markers",
+            categories = listOf(
+                com.mcqapp.data.io.CategoryDto(
+                    id = "c1",
+                    title = "Category",
+                    questions = listOf(question)
+                )
+            )
+        )
+
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue(
+            "our own export must import without warnings: ${parsed.warnings}",
+            parsed.warnings.isEmpty()
+        )
+        val after = allQuestions(LegacyParser.parse(parsed.json).papers.single()).single()
+
+        assertEquals("the stem must come back verbatim", question.text, after.text)
+        assertEquals(
+            "every option must come back verbatim",
+            question.options.map { it.text },
+            after.options.map { it.text }
+        )
+        assertEquals("the explanation must come back verbatim", question.explanation, after.explanation)
+    }
+
+    /**
+     * A stored line break is invisible to freshness. Stored markup carries
+     * breaks as literal `<br>` while the visible document carries `\\n`, and
+     * the freshness canon compares the *content* (`normalizeStem` deletes all
+     * whitespace), so a break must normalise the same way on both sides.
+     *
+     * Before the break normalisation, every question whose text carried
+     * `<br>` read as an edited document on the way back: the hidden payload
+     * was refused, the import fell back to the visible text, and the
+     * marks/difficulty/tags the markers cannot carry were silently lost.
+     */
+    @Test
+    fun lineBreaksInStoredTextDoNotMakeThePayloadStale() {
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-br",
+            text = "Pick<br>one",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto("a", "first<br>answer one"),
+                com.mcqapp.data.io.OptionDto("b", "second")
+            ),
+            correctOptionIds = listOf("a"),
+            explanation = "because<br>it is so",
+            // Exactly what the markers cannot carry, so the only way these
+            // survive is through a payload the canon accepts.
+            marks = 2.5,
+            difficulty = "hard",
+            tags = listOf("algebra")
+        )
+        val paper = PaperDto(
+            id = "p-br",
+            title = "Breaks",
+            categories = listOf(
+                com.mcqapp.data.io.CategoryDto(id = "c1", title = "Category", questions = listOf(question))
+            )
+        )
+
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue("import must not warn: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val after = allQuestions(LegacyParser.parse(parsed.json).papers.single()).single()
+
+        assertEquals("the stem must come back verbatim", question.text, after.text)
+        assertEquals(
+            "every option must come back verbatim",
+            question.options.map { it.text },
+            after.options.map { it.text }
+        )
+        assertEquals("the explanation must come back verbatim", question.explanation, after.explanation)
+        assertEquals("marks ride the payload", question.marks, after.marks, 0.0)
+        assertEquals("difficulty rides the payload", question.difficulty, after.difficulty)
+        assertEquals("tags ride the payload", question.tags, after.tags)
+    }
+
+    /**
+     * XML 1.0 cannot carry the C0 controls, so the writer drops them: the
+     * import must still succeed (it used to die with an XML parse error —
+     * one U+0007 made the whole package unreadable), and every legal
+     * character around them must survive untouched.
+     */
+    @Test
+    fun controlCharactersAreDroppedOnExportAndTheImportStillWorks() {
+        val question = com.mcqapp.data.io.QuestionDto(
+            id = "q-controls",
+            text = "Before\u0007after\u000Bform:\u000Cfeed\u001Fend",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto("a", "first"),
+                com.mcqapp.data.io.OptionDto("b", "second")
+            ),
+            correctOptionIds = listOf("a"),
+            explanation = "because\u001Bescape"
+        )
+        val paper = PaperDto(
+            id = "p-controls",
+            title = "Controls",
+            categories = listOf(
+                com.mcqapp.data.io.CategoryDto(id = "c1", title = "Category", questions = listOf(question))
+            )
+        )
+
+        val parsed = parseDocx(docxOf(paper))
+        val after = allQuestions(LegacyParser.parse(parsed.json).papers.single()).single()
+
+        assertEquals("the stem must come back with the controls dropped", "Beforeafterform:feedend", after.text)
+        assertEquals(
+            "the options must come back untouched",
+            question.options.map { it.text },
+            after.options.map { it.text }
+        )
+        assertEquals("the explanation must come back with the controls dropped", "becauseescape", after.explanation)
+    }
+
     @Test
     fun aSecondPassThroughTheFormatChangesNothing() {
         val bytes = export(samplePaper, sampleFile)

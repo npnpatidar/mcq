@@ -1,6 +1,8 @@
 package com.mcqapp
 
 import com.mcqapp.data.io.LegacyParser
+import com.mcqapp.data.io.toOptionEntities
+import com.mcqapp.data.io.toQuestionEntity
 import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -8,6 +10,124 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 
 class LegacyParserTest {
+
+    /**
+     * A deeply nested value under a key the walker does not read is skipped.
+     * The skip used to recurse one frame per level, so a *valid* file that
+     * was merely deep crashed the whole-file import with an uncaught
+     * StackOverflowError — the slice reader's own depth budget never came
+     * into play, because the value is never read. `skipValue` in
+     * [com.mcqapp.data.io.JsonPull] now walks the containers iteratively.
+     */
+    @Test
+    fun deeplyNestedSkippedValuesDoNotOverflowTheStack() {
+        // A root key nothing reads, holding 50_000 nested arrays: well past
+        // any stack, trivially legal JSON.
+        val depth = 50_000
+        val json = "{\"version\":1,\"papers\":[],\"junk\":" +
+            "[".repeat(depth) + "]".repeat(depth) + "}"
+        val file = LegacyParser.parse(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
+        assertEquals(0, file.papers.size)
+    }
+
+    /**
+     * A foreign file can repeat an option id. Up to now the second `a`
+     * REPLACE'd the first in the (questionId, optionId)-keyed store: one
+     * option silently gone and the answer key pointing at the survivor.
+     * Duplicate ids are now suffixed at the DTO boundary the way question
+     * ids are — the first occurrence keeps its id (so `correctOptionIds`
+     * still names the option it named), the text of every option is kept
+     * verbatim, and each rename lands in the import warnings.
+     */
+    @Test
+    fun duplicateOptionIdsKeepBothOptionsAndWarn() {
+        val json = """
+        {
+          "version": 1,
+          "papers": [{
+            "id": "p1",
+            "title": "P",
+            "categories": [{
+              "id": "c1",
+              "title": "C",
+              "questions": [{
+                "id": "q1",
+                "text": "Pick",
+                "options": [
+                  {"id": "a", "text": "X"},
+                  {"id": "a", "text": "Y"}
+                ],
+                "correctOptionIds": ["a"]
+              }]
+            }]
+          }]
+        }
+        """.trimIndent()
+        val file = LegacyParser.parse(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
+        val options = file.papers.single().categories.single().questions.single().options
+
+        assertEquals(listOf("a", "a-2"), options.map { it.id })
+        assertEquals(listOf("X", "Y"), options.map { it.text })
+        // The answer key still resolves to the option it named: the first one.
+        assertEquals(listOf("a"), file.papers.single().categories.single().questions.single().correctOptionIds)
+        assertTrue(
+            "the rename must be warned",
+            file.warnings.any { it.startsWith("Duplicate option id 'a' renamed to 'a-2'") }
+        )
+    }
+
+    /**
+     * Suffixing is also what makes re-import idempotent again: with unique
+     * ids the stored option rows match the file one-for-one, so
+     * [com.mcqapp.data.io.ContentHash.sameQuestionContent] sees a genuine
+     * duplicate instead of a phantom every-import rewrite. (Before the fix
+     * the store held one collapsed row against the file's two, and the
+     * count check read the *lie* as a change.)
+     */
+    @Test
+    fun aQuestionWithSuffixedOptionIdsReimportsAsADuplicate() {
+        val json = """
+        {
+          "version": 1,
+          "papers": [{
+            "id": "p1",
+            "title": "P",
+            "categories": [{
+              "id": "c1",
+              "title": "C",
+              "questions": [{
+                "id": "q1",
+                "text": "Pick",
+                "options": [
+                  {"id": "a", "text": "X"},
+                  {"id": "a", "text": "Y"}
+                ],
+                "correctOptionIds": ["a"]
+              }]
+            }]
+          }]
+        }
+        """.trimIndent()
+        val dto = LegacyParser.parse(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
+            .papers.single().categories.single().questions.single()
+        val jsonSer = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val row = dto.toQuestionEntity(
+            categoryId = "c1",
+            sortOrder = 0,
+            contentHash = "hash",
+            json = jsonSer
+        )
+        // What the store holds after the import: keyed by (questionId, id),
+        // REPLACE — with unique ids nothing collapses.
+        val optionRows = dto.toOptionEntities(jsonSer)
+            .groupBy { it.id }.values.map { it.last() }
+
+        assertEquals(2, optionRows.size)
+        assertTrue(
+            "the very same file must read as a duplicate, not as an edit",
+            com.mcqapp.data.io.ContentHash.sameQuestionContent(row, optionRows, dto)
+        )
+    }
 
     @Test
     fun parsesCanonicalSchema() {

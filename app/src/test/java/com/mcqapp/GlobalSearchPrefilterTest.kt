@@ -11,6 +11,7 @@ import com.mcqapp.domain.QuestionOption
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -54,6 +55,75 @@ class GlobalSearchPrefilterTest {
 
     private fun hits(query: String) = runBlocking {
         repository.searchGlobal(query).map { it.question.text }
+    }
+
+    /**
+     * SQL `LIKE` — and SQLite's own `lower()` — case-fold A–Z only, so a
+     * query whose case differed from the stored text on a non-ASCII letter
+     * (`CAFÉ` vs `café`, Cyrillic, Greek) rejected the row *before* the
+     * authoritative in-memory filter — which folds with full Unicode Kotlin
+     * — ever saw it. The prefilter now matches this query against the
+     * Kotlin-folded columns, so its case-folding is the authority's.
+     */
+    @Test
+    fun aNonAsciiCaseDifferenceIsNotAVeto() {
+        save(
+            Question(
+                id = "q-cafe", categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("CAFÉ central")),
+                options = listOf(QuestionOption("a", "A"), QuestionOption("b", "B")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        assertTrue(
+            "LIKE folded A-Z only, so 'café' vetoed the 'CAFÉ' row before the " +
+                "in-memory filter saw it; got ${hits("café")}",
+            hits("café").isNotEmpty()
+        )
+        assertTrue(
+            "folding must work in the other direction too; got ${hits("CAFÉ")}",
+            hits("CAFÉ").isNotEmpty()
+        )
+    }
+
+    /**
+     * The search twin below is the discriminating proof on this path: it is
+     * engine-independent, while `case_sensitive_like` proved unusable (CI run
+     * 39371651193: with the pragma on and the fixed code the row was NOT
+     * found, while the same question is found without the pragma in the same
+     * class). The bind fold on this path is not separately observable without
+     * SQLite; the column choice is what the twin pins.
+     */
+    @Test
+    fun theSearchPrefilterReadsTheFoldedColumnNotTheRawOne() = kotlinx.coroutines.runBlocking {
+        // The twins are inserted directly through the DAO, so the foreign key
+        // (Room runs PRAGMA foreign_keys = ON) needs its parents here: this
+        // class seeds nothing in setUp and every other test goes through
+        // save(), which is what ensures the paper and category.
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        com.mcqapp.data.local.QuestionEntity(
+            id = "q-folded", categoryId = "c1",
+            text = "x", searchText = "CAFÉ central",
+            searchTextFolded = "café central",
+            tags = "", tagsFolded = ""
+        ).let { db.questionDao().upsertAll(listOf(it)) }
+        com.mcqapp.data.local.QuestionEntity(
+            id = "q-raw", categoryId = "c1",
+            text = "x", searchText = "café central",
+            // Deliberately inconsistent: nothing any writer produces.
+            searchTextFolded = "zzz",
+            tags = "", tagsFolded = ""
+        ).let { db.questionDao().upsertAll(listOf(it)) }
+
+        val found = db.questionDao().search("café", "café", 10, 0).map { it.id }
+        assertTrue(
+            "the folded column must be read: got $found",
+            "q-folded" in found
+        )
+        assertFalse(
+            "the raw column must not be read (this is the mutant's tell): got $found",
+            "q-raw" in found
+        )
     }
 
     @Test

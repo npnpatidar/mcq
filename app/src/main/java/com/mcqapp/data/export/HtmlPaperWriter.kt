@@ -135,7 +135,14 @@ object HtmlPaperWriter {
                 .append(answer.joinToString(", "))
                 .append("</p>\n")
         }
-        if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
+        // The image-only explanation must pass: explanationElements empty and
+        // explanation blank while explanationImage carries the block was
+        // dropped entirely here, while PDF (answer key) and DOCX rendered it —
+        // HTML was the odd one out of the three writers.
+        if (question.explanationElements.isNotEmpty() ||
+            question.explanation.isNotBlank() ||
+            question.explanationImage != null
+        ) {
             out.append("<p class=\"expl\">Explanation: ")
                 .append(explanationHtml(question)).append("</p>\n")
         }
@@ -159,7 +166,12 @@ object HtmlPaperWriter {
                 .append(answer.joinToString(", "))
                 .append("</p>\n")
         }
-        if (question.explanationElements.isNotEmpty() || question.explanation.isNotBlank()) {
+        // Same guard as the answer-shown path above: the image-only
+        // explanation must not vanish from the quiz page.
+        if (question.explanationElements.isNotEmpty() ||
+            question.explanation.isNotBlank() ||
+            question.explanationImage != null
+        ) {
             out.append("<p class=\"expl\">Explanation: ")
                 .append(explanationHtml(question)).append("</p>\n")
         }

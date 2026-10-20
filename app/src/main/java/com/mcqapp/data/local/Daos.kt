@@ -29,8 +29,12 @@ interface PaperDao {
     @Query("SELECT * FROM papers WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
     suspend fun getByTitle(title: String): PaperEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(paper: PaperEntity)
+    // Papers have NO INSERT-OR-REPLACE upsert — REPLACE deletes the row and
+    // fires the foreign-key cascades over every category, question, schedule
+    // and attempt under it (renameCategory was rebuilt with targeted updates
+    // for exactly this reason). Writes go through IGNORE + updateFields
+    // (upsertPaperKeepingChildren); a paper row is deleted only by
+    // deletePaper, whose cascade is intended and transactional.
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(paper: PaperEntity)
@@ -63,11 +67,31 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<CategoryEntity>
 
+    /**
+     * The rowids of the given category ids, for the browse filter's bound
+     * numeric CSV: a categoryId is an arbitrary imported string, so the
+     * INSTR match runs on rowids — a number cannot contain the comma
+     * separator (see [QuestionDao.pagingRefsByCategories]).
+     */
+    @Query("SELECT rowid FROM categories WHERE id IN (:ids)")
+    suspend fun rowIdsByIds(ids: List<String>): List<Long>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(category: CategoryEntity)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(category: CategoryEntity)
+
+    /**
+     * The re-ensure update: IDENTITY columns only (paperId, title).
+     * parentId and sortOrder belong to the category's own editor calls —
+     * writing a category with REPLACE (or a full updateFields) from the
+     * ensure path used to zero sortOrder and clear parentId on an existing
+     * row, and REPLACE is worse: it DELETES the row, and the foreign-key
+     * cascade takes its questions, options, answers and schedules.
+     */
+    @Query("UPDATE categories SET paperId = :paperId, title = :title WHERE id = :id")
+    suspend fun updateIdentity(id: String, paperId: String, title: String)
 
     @Query("UPDATE categories SET paperId = :paperId, title = :title, parentId = :parentId, sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateFields(id: String, paperId: String, title: String, parentId: String?, sortOrder: Int)
@@ -261,18 +285,31 @@ interface QuestionDao {
     @Query("SELECT COUNT(*) FROM questions WHERE categoryId IN (:categoryIds)")
     suspend fun countInCategories(categoryIds: List<String>): Int
 
-    /** One page of bookmarked questions, newest bookmark first (the order the
-     * bookmarks screen has always shown). Only requested pages carry the full
-     * question content, so a "bookmark everything" bank no longer loads every
-     * bookmarked question at once.
+    /**
+     * One keyset page of bookmarked questions, newest bookmark first. The cursor
+     * is the last row's (bookmark.createdAt, questionId), exactly as
+     * [pageBookmarkedQuestionsForTitle] keys a title group: a bookmark toggled
+     * anywhere AHEAD of the cursor no longer shifts every following page, the way
+     * `LIMIT/OFFSET` did (a toggle removed one row ahead of the window and the
+     * next page either duplicated or silently skipped its first slot).
+     * [afterQuestionId] is null for the initial load. Only requested pages carry
+     * the full question content, so a "bookmark everything" bank no longer loads
+     * every bookmarked question at once.
      */
     @Query(
-        "SELECT questions.* FROM questions " +
+        "SELECT questions.*, bookmarks.createdAt AS bookmarkCreatedAt " +
+            "FROM questions " +
             "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
-            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC " +
-            "LIMIT :limit OFFSET :offset"
+            "WHERE :afterQuestionId IS NULL OR " +
+            "  bookmarks.createdAt < :afterCreatedAt OR " +
+            "  (bookmarks.createdAt = :afterCreatedAt AND bookmarks.questionId < :afterQuestionId) " +
+            "ORDER BY bookmarks.createdAt DESC, bookmarks.questionId DESC LIMIT :limit"
     )
-    suspend fun getBookmarkedQuestionsPage(offset: Int, limit: Int): List<QuestionEntity>
+    suspend fun pageBookmarkedQuestions(
+        afterCreatedAt: Long,
+        afterQuestionId: String?,
+        limit: Int
+    ): List<BookmarkedQuestionRow>
 
     /**
      * The distinct paper titles the bookmarked questions came from, sorted, for
@@ -296,6 +333,19 @@ interface QuestionDao {
             "INNER JOIN questions ON questions.id = bookmarks.questionId"
     )
     suspend fun countBookmarkedQuestions(): Int
+
+    /**
+     * Which passages the bookmarked questions are members of — the export
+     * walks bookmark pages but a passage-member question's text ("as per the
+     * passage above…") is unreadable without its passage, so the bookmark
+     * stream loads these the same way a paper export loads its categories'.
+     */
+    @Query(
+        "SELECT DISTINCT questions.passageId FROM questions " +
+            "INNER JOIN bookmarks ON bookmarks.questionId = questions.id " +
+            "WHERE questions.passageId IS NOT NULL"
+    )
+    suspend fun getPassageIdsOfBookmarkedQuestions(): List<String>
 
     /**
      * One keyset page of a title group's bookmarked questions, most recently
@@ -510,23 +560,33 @@ interface QuestionDao {
      *   variables, and SQLite (3.28 and older, i.e. Android 11 and below)
      *   allows 999 in one statement.
      * - `query` is pre-escaped for `LIKE ... ESCAPE '\'`; an empty string
-     *   disables the text search. It matches `questions.searchText` — the
-     *   flattened visible text — so the predicate never scans the elements
-     *   JSON and agrees with the in-memory `searchableText` filter. It also
-     *   matches `questions.tags` and each option's own `searchText`, the same
-     *   three fields the global search reads and the UI promises ("Search
-     *   text, tags, options"). A question is also found through its passage's
-     *   own flattened text (the same `passages.searchText` the search queries
-     *   match on), as a subquery rather than a list of matching passage ids.
+     *   disables the term clauses (`:query = ''`). It matches the
+     *   Kotlin-folded `questions.searchTextFolded` — the folded visible text
+     *   — so the predicate never scans the elements JSON, never rescans
+     *   markup, and folds every letter the way the in-memory
+     *   `searchableText` filter does (SQLite's `LIKE` folds A-Z only, which
+     *   vetoed a `CAFÉ` row against a `café` query). It also matches the
+     *   folded `questions.tags` (`tagsFolded`) and each option's own folded
+     *   `searchText`, the same three fields the global search reads and the
+     *   UI promises ("Search text, tags, options"). A question is also found
+     *   through its passage's own folded text (the same
+     *   `passages.searchTextFolded` the search queries match on), as a
+     *   subquery rather than a list of matching passage ids.
      * - `noExplanation` tests the *serialized* explanation against the shapes
      *   the app writes: the editor stores `[]` for an unanswered explanation
      *   and both importers store `[{"type":"text","content":""}]` when the
      *   file carried no explanation text, so the column is never `''`.
      *   Comparing the flattened text would mean decoding the elements JSON per
      *   row, which SQL cannot do here.
-     * - `categoryFilterCsv` is `,id,id,…` matched with `INSTR`, so a whole
+     * - `categoryFilterRowIdCsv` is the SELECTED CATEGORIES' rowids as
+     *   `,id,id,…` matched with `INSTR` against `categories.rowid`, so a whole
      *   subtree of categories costs one bind variable instead of one per
-     *   category. The `Int` filter flags are 0/1 for reuse of one statement.
+     *   category. Rowids, not the ids themselves: ids are arbitrary imported
+     *   strings, and a literal `a,b` in an id made the INSTR needle-or-CSV
+     *   splits a lie (a selection of {a, b} matched the row whose id was
+     *   `a,b`; selecting `a,b` alone leaked its neighbour `a`). A rowid is a
+     *   number, so it can never contain the separating comma. The `Int`
+     *   filter flags are 0/1 for reuse of one statement.
      */
     @Query(
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
@@ -535,12 +595,12 @@ interface QuestionDao {
             "AS answerKeyCount FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -549,7 +609,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )
@@ -560,7 +620,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): PagingSource<Int, QuestionRef>
 
     /**
@@ -671,12 +731,12 @@ interface QuestionDao {
         "SELECT COUNT(*) FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -685,7 +745,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0)"
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0)"
     )
     suspend fun countBrowseIds(
         paperId: String,
@@ -694,7 +754,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): Int
 
     /**
@@ -707,12 +767,12 @@ interface QuestionDao {
         "SELECT questions.id FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -721,7 +781,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid LIMIT 1 OFFSET :offset"
     )
@@ -733,7 +793,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): String?
 
     /**
@@ -747,12 +807,12 @@ interface QuestionDao {
             "INNER JOIN questions anchor ON anchor.id = :anchorId " +
             "INNER JOIN categories anchorCategory ON anchorCategory.id = anchor.categoryId " +
             "WHERE categories.paperId = :paperId " +
-            "AND (:query = '' OR questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
-            "AND o.searchText LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
-            "WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
             "AND (:noAnswer = 0 OR NOT EXISTS " +
             "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
@@ -761,7 +821,7 @@ interface QuestionDao {
             "AND (:uncategorized = 0 OR questions.categoryId = '' " +
             "OR categories.title = 'Uncategorized') " +
             "AND (:categoryFilter = 0 OR " +
-            "INSTR(:categoryFilterCsv, ',' || questions.categoryId || ',') > 0) " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
             "AND (categories.sortOrder, categories.title, questions.sortOrder, questions.rowid) " +
             "< (anchorCategory.sortOrder, anchorCategory.title, anchor.sortOrder, anchor.rowid)"
     )
@@ -773,7 +833,7 @@ interface QuestionDao {
         noExplanation: Int,
         uncategorized: Int,
         categoryFilter: Int,
-        categoryFilterCsv: String
+        categoryFilterRowIdCsv: String
     ): Int
 
     @Query(
@@ -909,7 +969,7 @@ interface QuestionDao {
     /** Everything the content hash deliberately ignores. */
     @Query(
         "UPDATE questions SET explanation = :explanation, marks = :marks, " +
-            "difficulty = :difficulty, tags = :tags, " +
+            "difficulty = :difficulty, tags = :tags, tagsFolded = :tagsFolded, " +
             "image = :image, explanationImage = :explanationImage WHERE id = :id"
     )
     suspend fun updateNonHashedFields(
@@ -918,6 +978,14 @@ interface QuestionDao {
         marks: Double,
         difficulty: String,
         tags: String,
+        /**
+         * [tags] Kotlin-folded by the caller, the same string that is bound to
+         * [tags]: the duplicate-refresh path rewrites `tags` without touching
+         * the folded twin, so a re-imported `CAFÉ` tag left `tagsFolded` at the
+         * previous value forever — `café` missed the row and `alpha` matched a
+         * dead tag. Never folded in SQL; `lower()` is the bug's A–Z fold.
+         */
+        tagsFolded: String,
         image: String?,
         explanationImage: String?
     )
@@ -958,6 +1026,20 @@ interface QuestionDao {
             "ORDER BY categoryId, sortOrder, rowid"
     )
     suspend fun getMembersByPassage(passageId: String): List<QuestionEntity>
+
+    /**
+     * What the import tail's stray fold actually reads: the members sorted
+     * in exactly [getMembersByPassage]'s order, reduced to id + category.
+     * The fold only compares each member's category and moves the strays'
+     * ids, so loading every member's full row (stem, options JSON,
+     * explanation) materialised a shared-context passage's whole membership
+     * for nothing — tens of thousands of full rows per passage on big banks.
+     */
+    @Query(
+        "SELECT id, categoryId FROM questions WHERE passageId = :passageId " +
+            "ORDER BY categoryId, sortOrder, rowid"
+    )
+    suspend fun getMemberCategoriesByPassage(passageId: String): List<QuestionCategoryRow>
 
     @Query("SELECT * FROM questions WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<QuestionEntity>
@@ -1008,17 +1090,24 @@ interface QuestionDao {
      * Bulk edits marks/difficulty/tags in one statement; a null bind keeps the
      * column's current value, matching the per-question coalescing the caller
      * used to do in Kotlin over a full delete-and-reinsert per question.
+     *
+     * `tags` and `tagsFolded` are one pair: a non-null [tagsFolded] is the
+     * Kotlin lowercase of [tags] (never SQL `lower()`), folded by the caller,
+     * and a null pair keeps both columns — so a bulk edit to `CAFÉ` cannot
+     * leave the folded twin at its previous value.
      */
     @Query(
         "UPDATE questions SET marks = COALESCE(:marks, marks), " +
             "difficulty = COALESCE(:difficulty, difficulty), " +
-            "tags = COALESCE(:tags, tags) WHERE id IN (:ids)"
+            "tags = COALESCE(:tags, tags), " +
+            "tagsFolded = COALESCE(:tagsFolded, tagsFolded) WHERE id IN (:ids)"
     )
     suspend fun updateBulkFields(
         ids: List<String>,
         marks: Double?,
         difficulty: String?,
-        tags: String?
+        tags: String?,
+        tagsFolded: String?
     ): Int
 
     @Query("SELECT MAX(sortOrder) FROM questions WHERE categoryId = :categoryId")
@@ -1031,8 +1120,11 @@ interface QuestionDao {
      * `:fragment` is the longest single word of the query; `:query` is the whole
      * thing. Either may match, so a phrase split by a table cell or a formula
      * still reaches the in-memory filter that understands it. Both LIKEs run
-     * against `searchText` — the flattened visible text — not the elements JSON,
-     * so the prefilter scans plain text instead of markup for every row. The
+     * against the Kotlin-folded columns — `questions.searchTextFolded`,
+     * `tagsFolded`, each option's folded `searchText` — against a
+     * Kotlin-lowercased bind, not the elements JSON, so the prefilter scans
+     * plain text instead of markup for every row *and* folds every letter
+     * the way the in-memory authority does. The
      * passage UNION keeps scope QUESTION consistent with [searchIncludingOptions]
      * and the in-memory filter: a question whose only match is in its passage's
      * text must not be dropped by the prefilter here while the filter accepts it
@@ -1040,13 +1132,13 @@ interface QuestionDao {
      */
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
-            "WHERE questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "WHERE questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
-            "(SELECT id FROM passages WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR searchText LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "(SELECT id FROM passages WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
             "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun search(
@@ -1058,13 +1150,13 @@ interface QuestionDao {
 
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions LEFT JOIN options " +
-            "ON options.questionId = questions.id WHERE questions.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :query || '%' ESCAPE '\\' OR options.searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR questions.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
-            "OR questions.tags LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.searchText LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "ON options.questionId = questions.id WHERE questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' OR options.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
-            "(SELECT id FROM passages WHERE searchText LIKE '%' || :query || '%' ESCAPE '\\' " +
-            "OR searchText LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
+            "(SELECT id FROM passages WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
             "ORDER BY q.qrowid DESC LIMIT :limit OFFSET :offset"
     )
     suspend fun searchIncludingOptions(
@@ -1758,6 +1850,44 @@ interface QuestionStatsDao {
             "LIMIT :limit"
     )
     suspend fun getWeakestCategories(limit: Int): List<CategoryMasteryRow>
+
+    /**
+     * Drops one question's lifetime aggregate. `question_stats` has no foreign
+     * key to questions (the PK is the question id alone), so this is what every
+     * delete site that sweeps `card_state` and `review_log` must call too — the
+     * orphan-sweep work stopped at those tables. Unswept, the aggregate row
+     * outlives its question: History's "Hardest questions" keeps listing it and
+     * every backup carries it.
+     */
+    @Query("DELETE FROM question_stats WHERE questionId = :questionId")
+    suspend fun deleteByQuestion(questionId: String): Int
+
+    /**
+     * One [getWeakestCategories] bucket per (paper, category): a deleted
+     * paper's buckets would otherwise keep counting forever, so the paper's
+     * question aggregates go with the paper. Resolves the paper's questions
+     * as a subquery and must run inside the deleting transaction, before the
+     * paper (and its cascade) is gone.
+     */
+    @Query(
+        "DELETE FROM question_stats WHERE questionId IN " +
+            "(SELECT id FROM questions WHERE categoryId IN " +
+            "(SELECT id FROM categories WHERE paperId = :paperId))"
+    )
+    suspend fun deleteAllForPaper(paperId: String): Int
+
+    /**
+     * Drops the aggregates of every question in one category, resolved as a
+     * subquery so the ids are never listed. Must run before the category (and
+     * its cascade) is deleted, for the same reason as
+     * [CardStateDao.deleteAllForCategory]: the row keys on the question id
+     * alone, so the question cascade cannot reach it.
+     */
+    @Query(
+        "DELETE FROM question_stats WHERE questionId IN " +
+            "(SELECT id FROM questions WHERE categoryId = :categoryId)"
+    )
+    suspend fun deleteAllForCategory(categoryId: String): Int
 }
 
 /**

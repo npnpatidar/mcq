@@ -108,6 +108,13 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                         config = config
                     ).retention(state, System.currentTimeMillis())
                 }
+                // The sheet has moved on while this continuation read: a
+                // second open re-labelled it (its placeholder carries the
+                // new question's id), and a dismissal closed it. Assigning
+                // anyway would swap the sheet back to a question the user no
+                // longer has open — or, worst case, reopen a sheet they
+                // dismissed — so this result is dropped unassigned.
+                if (_cardDetail.value?.questionId != questionId) return@launch
                 _cardDetail.value = CardDetail(
                     paperId = paperId,
                     questionId = questionId,
@@ -120,7 +127,11 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 throw e
             } catch (e: Exception) {
                 Logger.e("STATS", "Failed to load card detail", e)
-                _cardDetail.value = null
+                // Same interference rule as above: only clear the sheet when
+                // it still belongs to this open's question.
+                if (_cardDetail.value?.questionId == questionId) {
+                    _cardDetail.value = null
+                }
             }
         }
     }

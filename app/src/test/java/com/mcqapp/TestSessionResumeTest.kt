@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -259,6 +260,116 @@ class TestSessionResumeTest {
         assertTrue(
             "legacy answers were not adopted as rows",
             awaitCondition { answerRows().toSet() == setOf("q0", "q2") }
+        )
+    }
+
+    /**
+     * The fresh session's countdown must not run behind the resume dialog.
+     * The dialog demands an explicit choice, and the count used to go on
+     * behind it: reaching zero auto-submitted an empty attempt, and submit()
+     * clears the snapshot — destroying the answers the dialog was offering —
+     * while the choice was still open.
+     */
+    @Test
+    fun theFreshCountdownDoesNotRunBehindTheResumeDialog() {
+        seed(3)
+        // The first session runs untimed: only the relaunch's countdown is
+        // under test, and a second timer on the same looper would reach zero
+        // on its own once the virtual clock advances.
+        val first = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { first.state.value.current?.id == "q0" })
+        first.toggleOption("a")
+        first.next()
+        assertTrue(awaitCondition { first.state.value.current?.id == "q1" })
+        first.toggleOption("b")
+        assertTrue("the answers never reached the store", awaitCondition { answerRows().size == 2 })
+
+        // The same paper, timed from here on: the relaunch now builds a
+        // one-minute countdown that used to tick away behind the offer.
+        offMain {
+            // updateFields, not upsert: a REPLACE upsert deletes the p1 row
+            // and cascades its categories, questions and the test_progress
+            // answers away, leaving the relaunch a question-less paper whose
+            // load clears the slot — no offer, ever.
+            app.repository.db().paperDao().updateFields(
+                "p1", "Paper", "", 1, 0.0
+            )
+        }
+        val relaunched = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue("no resume offer was made", awaitCondition { relaunched.state.value.resumeOffer != null })
+        assertEquals("the fresh session must open with a full countdown", 60, relaunched.state.value.remainingSeconds)
+
+        // A whole timed sitting behind the dialog: virtual time, so free.
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(61))
+
+        assertTrue("the offer must still be up", relaunched.state.value.resumeOffer != null)
+        assertEquals(
+            "the countdown must not have ticked behind the dialog",
+            60, relaunched.state.value.remainingSeconds
+        )
+        assertFalse("no empty attempt may be submitted behind the dialog", relaunched.state.value.submitted)
+        assertEquals("the offered answers must not be cleared", 2, answerRows().size)
+
+        // Resolving the dialog is what starts the fresh countdown.
+        relaunched.discardResume()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2))
+        assertTrue(
+            "the fresh countdown must run once the offer resolves: "
+                + "remaining=${relaunched.state.value.remainingSeconds}s",
+            relaunched.state.value.remainingSeconds < 60
+        )
+    }
+
+    /**
+     * The screen stays interactive while the attempt saves: submit() sets
+     * `submitted`/`saving` synchronously and then writes rows for seconds on a
+     * big paper. toggleOption/toggleFlag/goTo used to keep working through
+     * that window - and after it, since the result stays on screen - changing
+     * what the user saw without changing either the scored map or the
+     * persisted rows (the progress saver bails on `submitted`), so the score
+     * silently disagreed with the last thing on screen. Every mutating
+     * entry point now refuses once the save started.
+     */
+    @Test
+    fun aSubmittedAttemptRefusesFurtherEdits() {
+        seed(3)
+        val vm = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(awaitCondition { vm.state.value.current?.id == "q0" })
+
+        vm.toggleOption("a")
+        assertEquals(setOf("a"), vm.state.value.selections["q0"])
+        vm.toggleFlag()
+        assertTrue("q0" in vm.state.value.flagged)
+
+        vm.submit()
+        // The save runs for real on the looper: wait for it to land, so the
+        // refusals under test cover the post-save window too, not just the
+        // in-flight one.
+        assertTrue(
+            "the save never landed",
+            awaitCondition { vm.state.value.attemptId != null && !vm.state.value.saving }
+        )
+        assertTrue("the attempt must stay submitted", vm.state.value.submitted)
+
+        val selections = vm.state.value.selections
+        val flagged = vm.state.value.flagged
+        val currentIndex = vm.state.value.currentIndex
+
+        vm.toggleOption("b")
+        vm.toggleFlag()
+        vm.goTo(2)
+
+        assertEquals(
+            "a post-submit answer edit changed the scored map",
+            selections, vm.state.value.selections
+        )
+        assertEquals(
+            "a post-submit flag flip was taken",
+            flagged, vm.state.value.flagged
+        )
+        assertEquals(
+            "a post-submit navigation was taken",
+            currentIndex, vm.state.value.currentIndex
         )
     }
 

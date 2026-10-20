@@ -86,6 +86,25 @@ class InlineHtmlTest {
         assertTrue(styles.any { it.first == 2 && it.second == 3 && it.third.fontStyle == FontStyle.Italic })
     }
 
+    /**
+     * A close that matches an opener UNDER the top of the stack is the
+     * mis-nest bank files actually carry (`<b>a<i>b</b>`): it ends the tags
+     * ABOVE it too, there, and neither the found span nor the ones closed
+     * over it may leak past the misplaced close. Before the bounded
+     * pop-until-found, a close that did not equal the top popped NOTHING, so
+     * bold and italic both ran to end-of-text.
+     */
+    @Test
+    fun aMisnestedCloseEndsItsSpansThere() {
+        val parsed = InlineHtml.parse("<b>ab<i>cd</b> ef")
+        assertEquals("abcd ef", parsed.text)
+        val styles = stylesOf(parsed)
+        // Bold covers "abcd" and italic "cd"; " ef" is untouched.
+        assertTrue(styles.any { it.first == 0 && it.second == 4 && it.third.fontWeight == FontWeight.Bold })
+        assertTrue(styles.any { it.first == 2 && it.second == 4 && it.third.fontStyle == FontStyle.Italic })
+        assertTrue("no style may cover the tail", styles.all { it.second <= 4 })
+    }
+
     @Test
     fun underlineAndStrikeAndMark() {
         val parsed = InlineHtml.parse("<u>u</u><del>d</del><mark>m</mark>")

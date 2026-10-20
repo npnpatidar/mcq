@@ -58,6 +58,24 @@ object AnkiPackageWriter {
      */
     private const val NOTE_BATCH = 500
 
+    /**
+     * Card ids never share a note id: notes take `idBase..idBase+n`, cards
+     * take the same sequence shifted a trillion up (the note id is only the
+     * order anchor). More headroom than any bank can occupy.
+     */
+    private const val CARD_ID_OFFSET = 1_000_000_000_000L
+
+    /**
+     * Note FIELDS are U+001F-separated, so a text run carrying the RAW
+     * separator would shift the reader's field split — the mcqapp payload
+     * would land past field 2 and be lost, and the visible front would be
+     * truncated at a random control character. Fields carry the separator's
+     * VISIBLE symbol (U+241F, "␟") in its place: readable, renderable, and
+     * unambiguous about what the bank meant. Only the written field is
+     * touched — storage keeps the raw string.
+     */
+    internal fun sanitizeField(text: String): String = text.replace('\u001F', '␟')
+
     /** Fixed ids keep the output deterministic and diffable across exports. */
     const val DECK_ID = 1L
     const val DECK_CONFIG_ID = 1L
@@ -135,7 +153,15 @@ object AnkiPackageWriter {
                             ?.let { AnkiScheduling.toAnki(it, nowSeconds, nowMillis) }
                             ?: AnkiScheduling.NEW_CARD
                         AnkiCardRow(
-                            id = row.noteId + 1,
+                            // Cards live in their own id domain: the old
+                            // `noteId + 1` put EVERY card id onto a note id
+                            // (note j's card took note j+1's id — the two
+                            // sets interleaved by construction). Offsetting
+                            // a trillion notes past this package's note ids
+                            // keeps the sets disjoint with more headroom
+                            // than any bank, and keeps cards in the same
+                            // order as their notes.
+                            id = row.noteId + CARD_ID_OFFSET,
                             noteId = row.noteId,
                             mod = nowSeconds,
                             // Anki numbers new cards from col.conf.nextPos; only the
@@ -176,9 +202,20 @@ object AnkiPackageWriter {
                         tags = formatTags(question),
                         // Front, Back, then the structured payload. Anki splits fields on
                         // the unit separator; the template only renders the first two.
-                        fields = "$front$FIELD_SEPARATOR$back$FIELD_SEPARATOR" +
-                            payloadOf(question, passage).toField(),
-                        sortField = question.text
+                        // The FIELD TEXTS are sanitised first: a bank whose text carries
+                        // the RAW separator would shift the reader's split and strand
+                        // the payload past field 2.
+                        fields = sanitizeField(front) + FIELD_SEPARATOR + sanitizeField(back) +
+                            FIELD_SEPARATOR + payloadOf(question, passage).toField(),
+                        // An image-only stem has no text: its sort field carries
+                        // the stem's <img>-included form (the same shape the
+                        // reader now restores), not an empty string whose blank
+                        // csum disagreed with the front it indexes.
+                        sortField = sanitizeField(
+                            question.text.ifBlank {
+                                media.elementsToHtml(question.elements, question.image).trim()
+                            }
+                        )
                     )
                     pending += PendingCard(
                         noteId = noteId,
@@ -205,7 +242,8 @@ object AnkiPackageWriter {
                 AnkiSchema11.writeColRow(
                     db = db,
                     crt = nowSeconds,
-                    mod = nowMillis,
+                    mod = nowSeconds,
+                    scm = nowMillis,
                     conf = AnkiSchema11.configJson(
                         modelId = MODEL_ID,
                         // One note per question, and Anki numbers new cards from

@@ -93,9 +93,40 @@ internal class PaperStore(
         return build(null, countMap)
     }
 
+    /**
+     * Papers (and the questions/categories under them) are written by
+     * `INSERT IGNORE` plus a targeted `updateFields`, never `INSERT OR
+     * REPLACE`: REPLACE is a DELETE + INSERT, and Room fires the declared
+     * FOREIGN-KEY cascades on its delete half — categories, questions,
+     * options, correct answers, card schedules — so replacing the row of a
+     * paper that already existed wiped it down to an empty-looking shell
+     * (renameCategory was rebuilt with targeted updateFields for exactly
+     * this reason, and the importer writes IGNORE the same way). Latent
+     * today: `paper-<millis>` ids are always fresh and there is no "edit
+     * paper" flow — but any future edit that routes through [savePaper] with
+     * an existing id, or a second device minting the same millisecond id,
+     * would arm it.
+     *
+     * Columns: the same four REPLACE changed (title, description, duration,
+     * negative marking). One deliberate difference in the SAFE direction:
+     * REPLACE stamped createdAt with the new entity's default on an existing
+     * row; this keeps the row's own createdAt (updateCreatedAt is the
+     * explicit restore hook).
+     */
+    suspend fun upsertPaperKeepingChildren(paper: PaperEntity) {
+        db.paperDao().insertIgnore(paper)
+        db.paperDao().updateFields(
+            id = paper.id,
+            title = paper.title,
+            description = paper.description,
+            durationMinutes = paper.durationMinutes,
+            negativeMarking = paper.negativeMarking
+        )
+    }
+
     suspend fun savePaper(paper: Paper) {
         Logger.d("REPO", "savePaper(${paper.id}, '${paper.title}')")
-        db.paperDao().upsert(
+        upsertPaperKeepingChildren(
             PaperEntity(
                 id = paper.id,
                 title = paper.title,
@@ -139,6 +170,10 @@ internal class PaperStore(
             // longer exists, and question_results still reference dead questions.
             db.attemptDao().deleteByPaper(paperId)
             db.cardStateDao().deleteByPaper(paperId)
+            // The stats aggregate keys on the question id alone, so this sweep
+            // must resolve the paper's questions while they still exist: after
+            // the cascade below the weakest-categories buckets would survive.
+            db.questionStatsDao().deleteAllForPaper(paperId)
             db.paperDao().deleteById(paperId)
         }
         // A snapshot is one global slot, so it has to be dropped by hand — and
@@ -155,6 +190,10 @@ internal class PaperStore(
         // collide with the first category and leave the order to the title
         // tiebreak.
         val next = (db.categoryDao().getByPaper(paperId).maxOfOrNull { it.sortOrder } ?: -1) + 1
+        // upsert(REPLACE) is safe HERE ONLY: the id is freshly minted, so it
+        // can never hit an existing row and never fires the cascade. Any
+        // caller writing an id that may already exist must go through
+        // insertIgnore + `updateIdentity` (see ensurePaperAndCategory).
         db.categoryDao().upsert(
             CategoryEntity(
                 id = id,
@@ -192,6 +231,10 @@ internal class PaperStore(
             // transaction, before the questions are gone.
             db.cardStateDao().deleteAllForCategory(categoryId)
             db.reviewLogDao().deleteAllForCategory(categoryId)
+            // The aggregate keys on the question id alone and has no FK here,
+            // so it must be swept while the questions still exist - otherwise
+            // History keeps ranking the deleted category's questions.
+            db.questionStatsDao().deleteAllForCategory(categoryId)
             db.categoryDao().deleteById(categoryId)
         }
     }

@@ -185,6 +185,31 @@ class StreamingImporterEquivalenceTest {
     }
 
     @Test
+    fun aSecondImportOnTheSameInstanceStillParses() = runBlocking {
+        wholeFileImport(wholeFileDb, richBank, times = 2)
+        // One instance, two runs: the importer's own source doc on [import]
+        // promises a retry may open the same bytes again on the same object,
+        // so the second run must parse again too. Everything already exists,
+        // so the second report is the all-duplicates one — and it must not
+        // be the all-zeros report of a parse whose every offer was already
+        // cancelled by a run-scoped flag that outlived its run.
+        val importer = StreamingImporter(streamingDb)
+        val first = importer.import(source = { ByteArrayInputStream(richBank.toByteArray()) })
+        // Four questions: the bank's three categorized ones and the
+        // paper-level one, which the importer folds into the paper's
+        // Uncategorized category.
+        assertEquals(4, first.newQuestions)
+        val second = importer.import(source = { ByteArrayInputStream(richBank.toByteArray()) })
+        assertEquals(
+            "the second run must parse again: $second",
+            first.newQuestions,
+            second.duplicateQuestions
+        )
+        assertEquals(0, second.newQuestions)
+        assertSameState()
+    }
+
+    @Test
     fun aChangedAnswerKeyRefreshesIdentically() = runBlocking {
         val corrected = richBank.replace(
             """{"id": "q1", "text": "One", "options": ["x", "y"], "correctOptionIds": ["x"], "passageId": "ps1"}""",
@@ -405,6 +430,84 @@ class StreamingImporterEquivalenceTest {
         assertSameState()
         assertEquals(99999L, wholeFileDb.cardStateDao().get("p1", "q1")!!.dueAt)
         assertEquals(99999L, streamingDb.cardStateDao().get("p1", "q1")!!.dueAt)
+    }
+
+    /**
+     * The import tail folds a passage's strays — members the file scattered
+     * across other categories — into the passage's own category, appended
+     * after it in member order. The fold only reads each member's id and
+     * category, so it went over to an (id, categoryId) projection instead of
+     * materialising every member's full row; this pins the fold's whole
+     * observable outcome — which strays folded, in what order, with what
+     * sortOrder — identically through both importers. What the projection
+     * saves (the heap of the full rows) is not observable in a unit test;
+     * the memory argument is structural, and the audit mutant is the
+     * projection's absence, under which this suite stays green.
+     */
+    @Test
+    fun passageStraysFoldInTheSameOrderThroughBothImporters() = runBlocking {
+        // The categories are in the file in an order their ids do not sort
+        // by (c, b, a), so the fold's own order — the members grouped by
+        // their category, then by their sortOrder — differs from the order
+        // the file's questions were written in (qc, qb2, qb1, qa). A fold
+        // that followed the write order would put qb2 first; the query's
+        // grouping puts qa first, and B's two keep their stored order
+        // (qb2 was written before qb1, so it is qb2's turn first).
+        val bank = """
+            {
+              "papers": [
+                {
+                  "id": "p1", "title": "Paper", "categories": [
+                    {"id": "c", "title": "C", "questions": [
+                      {"id": "qc", "text": "Member in the passage category",
+                       "options": ["x", "y"], "correctOptionIds": ["x"],
+                       "passageId": "ps"}
+                    ]},
+                    {"id": "b", "title": "B", "questions": [
+                      {"id": "qb2", "text": "Stray two",
+                       "options": ["x", "y"], "correctOptionIds": ["y"],
+                       "passageId": "ps"},
+                      {"id": "qb1", "text": "Stray one",
+                       "options": ["x", "y"], "correctOptionIds": ["x"],
+                       "passageId": "ps"}
+                    ]},
+                    {"id": "a", "title": "A", "questions": [
+                      {"id": "qa", "text": "Stray from another category",
+                       "options": ["x", "y"], "correctOptionIds": ["y"],
+                       "passageId": "ps"}
+                    ]}
+                  ]
+                }
+              ],
+              "passages": [
+                {"id": "ps", "title": "Passage", "text": "Shared context."}
+              ]
+            }
+        """.trimIndent()
+        wholeFileImport(wholeFileDb, bank)
+        streamingImport(streamingDb, bank)
+        assertSameState()
+        for (db in listOf(wholeFileDb, streamingDb)) {
+            val byId = db.query(
+                "SELECT id, sortOrder, categoryId FROM questions WHERE passageId = 'ps'",
+                null
+            ).use { c ->
+                buildMap {
+                    while (c.moveToNext()) put(c.getString(0), c.getInt(1) to c.getString(2))
+                }
+            }
+            assertEquals(
+                "every member folds into the passage category, strays appended " +
+                    "after it in member order",
+                mapOf(
+                    "qc" to (0 to "c"),
+                    "qa" to (1 to "c"),
+                    "qb2" to (2 to "c"),
+                    "qb1" to (3 to "c")
+                ),
+                byId
+            )
+        }
     }
 
     @Test

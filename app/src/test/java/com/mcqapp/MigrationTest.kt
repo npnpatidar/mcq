@@ -170,24 +170,33 @@ class MigrationTest {
             "(id INTEGER PRIMARY KEY,identity_hash TEXT)"
     )
 
+    /**
+     * One list for every Room version bump, used by BOTH builders that open a
+     * real file — a new migration added to only one of them used to leave the
+     * other opening a pre-migration file against a schema it could never
+     * reach ("a migration from 3 to 18 was required but not found").
+     */
+    private val ALL_MIGRATIONS = arrayOf(
+        AppDatabase.MIGRATION_3_4,
+        AppDatabase.MIGRATION_4_5,
+        AppDatabase.MIGRATION_5_6,
+        AppDatabase.MIGRATION_6_7,
+        AppDatabase.MIGRATION_7_8,
+        AppDatabase.MIGRATION_8_9,
+        AppDatabase.MIGRATION_9_10,
+        AppDatabase.MIGRATION_10_11,
+        AppDatabase.MIGRATION_11_12,
+        AppDatabase.MIGRATION_12_13,
+        AppDatabase.MIGRATION_13_14,
+        AppDatabase.MIGRATION_14_15,
+        AppDatabase.MIGRATION_15_16,
+        AppDatabase.MIGRATION_16_17,
+        AppDatabase.MIGRATION_17_18
+    )
+
     private fun openMigrated(): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "migration-test.db")
-            .addMigrations(
-                AppDatabase.MIGRATION_3_4,
-                AppDatabase.MIGRATION_4_5,
-                AppDatabase.MIGRATION_5_6,
-                AppDatabase.MIGRATION_6_7,
-                AppDatabase.MIGRATION_7_8,
-                AppDatabase.MIGRATION_8_9,
-                AppDatabase.MIGRATION_9_10,
-                AppDatabase.MIGRATION_10_11,
-                AppDatabase.MIGRATION_11_12,
-                AppDatabase.MIGRATION_12_13,
-                AppDatabase.MIGRATION_13_14,
-                AppDatabase.MIGRATION_14_15,
-                AppDatabase.MIGRATION_15_16,
-                AppDatabase.MIGRATION_16_17
-            )
+            .addMigrations(*ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
 
@@ -421,6 +430,7 @@ class MigrationTest {
             db.passageDao().upsert(
                 com.mcqapp.data.local.PassageEntity(
                     id = "p1", categoryId = "c1", title = "T", text = "[]", searchText = "T",
+                    searchTextFolded = "T".lowercase(),
                     image = null
                 )
             )
@@ -515,22 +525,7 @@ class MigrationTest {
             chainFile.close()
 
             val db = Room.databaseBuilder(context, AppDatabase::class.java, "chain-test.db")
-                .addMigrations(
-                    AppDatabase.MIGRATION_3_4,
-                    AppDatabase.MIGRATION_4_5,
-                    AppDatabase.MIGRATION_5_6,
-                    AppDatabase.MIGRATION_6_7,
-                    AppDatabase.MIGRATION_7_8,
-                    AppDatabase.MIGRATION_8_9,
-                    AppDatabase.MIGRATION_9_10,
-                    AppDatabase.MIGRATION_10_11,
-                    AppDatabase.MIGRATION_11_12,
-                    AppDatabase.MIGRATION_12_13,
-                    AppDatabase.MIGRATION_13_14,
-                    AppDatabase.MIGRATION_14_15,
-                    AppDatabase.MIGRATION_15_16,
-                    AppDatabase.MIGRATION_16_17
-                )
+                .addMigrations(*ALL_MIGRATIONS)
                 .allowMainThreadQueries()
                 .build()
             // One open exercises 3->4->...->17; Room validates the final schema.
@@ -714,9 +709,69 @@ class MigrationTest {
     }
 
     /**
+     * Builds a genuine v17 file: the v16 replay of 6->16, then the 16->17
+     * migration, then search text written the way a pre-18 app stored it —
+     * flattened but case-PRESERVING, with non-ASCII literals on hand — so a
+     * 17->18 test can prove the folded columns are derived with full
+     * Unicode, not SQL's A-Z `lower()`.
+     */
+    private fun createV17WithSeed() {
+        createV16WithSeed()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(17) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_16_17.migrate(raw)
+            raw.execSQL(
+                "UPDATE questions SET searchText = 'CAFÉ central', tags = 'CAFÉ Tag' WHERE id = 'q1'"
+            )
+            // A real option row: createV16WithSeed seeds none, and the folded
+            // assertion below reads it back through optionDao().getByQuestion
+            // — an UPDATE against an empty set proved nothing.
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,image,searchText,sortOrder) " +
+                    "VALUES ('q1','o1','CAFÉ option',NULL,'CAFÉ option',0)"
+            )
+            raw.version = 17
+        }
+    }
+
+    /**
      * 16->17 adds `test_progress`: the in-progress session's answers, one row per
      * question, so writing an answer no longer re-serialises every answer so far.
      */
+    /**
+     * 17->18 folds the search columns. SQL `LIKE` — and SQLite's own
+     * `lower()` — case-fold A–Z only, so the prefilter vetoed a `café`
+     * query against stored `CAFÉ` text before the in-memory authority (which
+     * folds with full Unicode Kotlin) ever saw the row. The migration must
+     * fold with Kotlin for the same reason the 14->15 flattening had to be
+     * derived in code: SQL cannot express it.
+     */
+    @Test
+    fun `migration 17 to 18 backfolds the search columns in full unicode`() {
+        runBlocking {
+            createV17WithSeed()
+            val db = openMigrated()
+            try {
+                val question = db.questionDao().getById("q1")!!
+                assertEquals("café central", question.searchTextFolded)
+                assertEquals("café tag", question.tagsFolded)
+                assertEquals(
+                    "café option",
+                    db.optionDao().getByQuestion("q1").single().searchTextFolded
+                )
+            } finally {
+                db.close()
+            }
+        }
+    }
+
     @Test
     fun `migration 16 to 17 adds the session answers table`() {
         runBlocking {

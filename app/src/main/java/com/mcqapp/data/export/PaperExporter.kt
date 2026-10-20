@@ -4,6 +4,7 @@ import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.io.PaperDto
+import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.toCardScheduleDto
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getForQuestionsChunked
@@ -30,6 +31,14 @@ data class ExportFile(val fileName: String, val mimeType: String)
  * main thread — a million-question export is minutes of I/O and encoding.
  */
 class PaperExporter(private val db: AppDatabase) {
+
+    /**
+     * The passages with the given ids, for exports assembled outside a
+     * paper walk — the selection export resolves its member questions'
+     * passages here. Delegates to [Exporter], which owns that decoding.
+     */
+    suspend fun passagesOfIds(ids: List<String>): List<PassageDto> =
+        Exporter(db).passagesOfIds(ids)
 
     suspend fun exportPaper(
         paperId: String,

@@ -239,4 +239,70 @@ class BrowsePagingTest {
         )
         assertEquals(walked.size, repository.browseFilteredCount(scope))
     }
+
+    /**
+     * The mutant that reverts the folded prefilter (raw columns, unfolded
+     * bind) passes the engine-tolerant tests above whenever Robolectric's own
+     * SQLite folds Unicode in LIKE. `case_sensitive_like = ON` takes the
+     * engine's folding out of the picture: a raw-column clause cannot match a
+     * stored `CAFÉ central` against the user-typed `café` (or `hôtel novel`
+     * against `HÔTEL`), no matter how the engine folds — only the folded
+     * column read through a Kotlin-lowercased bind can pass.
+     */
+    @Test
+    fun withCaseSensitiveLikeOnlyTheFoldedColumnAndBindMatch() = runBlocking {
+        db.openHelper.writableDatabase
+            .execSQL("PRAGMA case_sensitive_like = ON")
+        save("q-cafe", "c1", "CAFÉ central")
+        save("q-hotel", "c1", "hôtel novel")
+
+        assertEquals(listOf("q-cafe", "q-hotel"), walk { source(query = "café") })
+        assertEquals(listOf("q-cafe", "q-hotel"), walk { source(query = "HÔTEL") })
+        assertEquals(
+            2,
+            repository.browseFilteredCount(
+                McqRepository.BrowseScope.of("p1", "café", BrowseListFilter.ALL, null)
+            )
+        )
+    }
+
+    /**
+     * The pragma above needs it to stick to the connection the suspend DAOs
+     * run on; these hand-authored twins discriminate without any engine
+     * cooperation, so the identical mutant turns red even if the pragma does
+     * not follow Room's connection. `q-folded` reads the way a fixed store
+     * writes its rows: raw case-preserved, folded twin the Kotlin lowercase.
+     * `q-raw` is the inverse: its RAW text matches `café` with no folding at
+     * all, but its folded twin says nothing — so a clause that reads the raw
+     * column fails the "not found" half, and one that reads the folded column
+     * fails the "found" half. No pragma can flip either half.
+     */
+    @Test
+    fun theBrowsePrefilterReadsTheFoldedColumnNotTheRawOne() = runBlocking {
+        db.questionDao().upsertAll(
+            listOf(
+                QuestionEntity(
+                    id = "q-folded", categoryId = "c1",
+                    text = "x", searchText = "CAFÉ central",
+                    searchTextFolded = "café central",
+                    tags = "", tagsFolded = ""
+                ),
+                QuestionEntity(
+                    id = "q-raw", categoryId = "c1",
+                    text = "x", searchText = "café central",
+                    // Deliberately inconsistent: nothing any writer produces.
+                    searchTextFolded = "zzz",
+                    tags = "", tagsFolded = ""
+                )
+            )
+        )
+
+        assertEquals(listOf("q-folded"), walk { source(query = "café") })
+        assertEquals(
+            1,
+            repository.browseFilteredCount(
+                McqRepository.BrowseScope.of("p1", "café", BrowseListFilter.ALL, null)
+            )
+        )
+    }
 }

@@ -11,6 +11,7 @@ import com.mcqapp.domain.QuestionOption
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -82,6 +83,83 @@ class GlobalSearchPrefilterTest {
         assertTrue(
             "folding must work in the other direction too; got ${hits("CAFÉ")}",
             hits("CAFÉ").isNotEmpty()
+        )
+    }
+
+    /**
+     * The mutant that reverts the folded prefilter (raw columns, unfolded
+     * bind) passes the engine-tolerant tests whenever Robolectric's own SQLite
+     * folds Unicode in LIKE. `case_sensitive_like = ON` takes the engine out
+     * of the picture: a raw-column clause cannot match a stored `CAFÉ
+     * central` against the user-typed `café`, and the unfolded `HÔTEL` bind
+     * cannot match the folded `hôtel novel` — only the folded column read
+     * through a Kotlin-lowercased bind can pass, whatever the engine folds.
+     */
+    @Test
+    fun withCaseSensitiveLikeOnlyTheFoldedColumnAndBindMatch() = kotlinx.coroutines.runBlocking {
+        db.openHelper.writableDatabase
+            .execSQL("PRAGMA case_sensitive_like = ON")
+        save(
+            Question(
+                id = "q-cafe", categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("CAFÉ central")),
+                options = listOf(QuestionOption("a", "A"), QuestionOption("b", "B")),
+                correctOptionIds = setOf("a")
+            )
+        )
+        save(
+            Question(
+                id = "q-hotel", categoryId = "c1",
+                elements = listOf(ContentElement.TextElement("hôtel novel")),
+                options = listOf(QuestionOption("a", "A"), QuestionOption("b", "B")),
+                correctOptionIds = setOf("a")
+            )
+        )
+
+        assertTrue(
+            "café must find 'CAFÉ central' through the folded column; got ${hits("café")}",
+            hits("café").isNotEmpty()
+        )
+        assertTrue(
+            "the unfolded HÔTEL bind must not stand in for the folded one; got ${hits("HÔTEL")}",
+            hits("HÔTEL").isNotEmpty()
+        )
+    }
+
+    /**
+     * The pragma above needs it to stick to the connection the suspend DAOs
+     * run on; these hand-authored twins discriminate without any engine
+     * cooperation, so the identical mutant turns red even if the pragma does
+     * not follow Room's connection. `q-folded` is a row exactly as the fixed
+     * writers produce them; `q-raw` is the inverse: raw text that matches
+     * `café` with no folding at all, but a folded twin that says nothing — a
+     * clause reading the raw column finds it (mutant), a clause reading the
+     * folded column does not (fix). No pragma can flip either half.
+     */
+    @Test
+    fun theSearchPrefilterReadsTheFoldedColumnNotTheRawOne() = kotlinx.coroutines.runBlocking {
+        com.mcqapp.data.local.QuestionEntity(
+            id = "q-folded", categoryId = "c1",
+            text = "x", searchText = "CAFÉ central",
+            searchTextFolded = "café central",
+            tags = "", tagsFolded = ""
+        ).let { db.questionDao().upsertAll(listOf(it)) }
+        com.mcqapp.data.local.QuestionEntity(
+            id = "q-raw", categoryId = "c1",
+            text = "x", searchText = "café central",
+            // Deliberately inconsistent: nothing any writer produces.
+            searchTextFolded = "zzz",
+            tags = "", tagsFolded = ""
+        ).let { db.questionDao().upsertAll(listOf(it)) }
+
+        val found = db.questionDao().search("café", "café", 10, 0).map { it.id }
+        assertTrue(
+            "the folded column must be read: got $found",
+            "q-folded" in found
+        )
+        assertFalse(
+            "the raw column must not be read (this is the mutant's tell): got $found",
+            "q-raw" in found
         )
     }
 

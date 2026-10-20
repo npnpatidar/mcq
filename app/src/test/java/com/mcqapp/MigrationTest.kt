@@ -170,25 +170,33 @@ class MigrationTest {
             "(id INTEGER PRIMARY KEY,identity_hash TEXT)"
     )
 
+    /**
+     * One list for every Room version bump, used by BOTH builders that open a
+     * real file — a new migration added to only one of them used to leave the
+     * other opening a pre-migration file against a schema it could never
+     * reach ("a migration from 3 to 18 was required but not found").
+     */
+    private val ALL_MIGRATIONS = arrayOf(
+        AppDatabase.MIGRATION_3_4,
+        AppDatabase.MIGRATION_4_5,
+        AppDatabase.MIGRATION_5_6,
+        AppDatabase.MIGRATION_6_7,
+        AppDatabase.MIGRATION_7_8,
+        AppDatabase.MIGRATION_8_9,
+        AppDatabase.MIGRATION_9_10,
+        AppDatabase.MIGRATION_10_11,
+        AppDatabase.MIGRATION_11_12,
+        AppDatabase.MIGRATION_12_13,
+        AppDatabase.MIGRATION_13_14,
+        AppDatabase.MIGRATION_14_15,
+        AppDatabase.MIGRATION_15_16,
+        AppDatabase.MIGRATION_16_17,
+        AppDatabase.MIGRATION_17_18
+    )
+
     private fun openMigrated(): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "migration-test.db")
-            .addMigrations(
-                AppDatabase.MIGRATION_3_4,
-                AppDatabase.MIGRATION_4_5,
-                AppDatabase.MIGRATION_5_6,
-                AppDatabase.MIGRATION_6_7,
-                AppDatabase.MIGRATION_7_8,
-                AppDatabase.MIGRATION_8_9,
-                AppDatabase.MIGRATION_9_10,
-                AppDatabase.MIGRATION_10_11,
-                AppDatabase.MIGRATION_11_12,
-                AppDatabase.MIGRATION_12_13,
-                AppDatabase.MIGRATION_13_14,
-                AppDatabase.MIGRATION_14_15,
-                AppDatabase.MIGRATION_15_16,
-                AppDatabase.MIGRATION_16_17,
-                AppDatabase.MIGRATION_17_18
-            )
+            .addMigrations(*ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
 
@@ -517,22 +525,7 @@ class MigrationTest {
             chainFile.close()
 
             val db = Room.databaseBuilder(context, AppDatabase::class.java, "chain-test.db")
-                .addMigrations(
-                    AppDatabase.MIGRATION_3_4,
-                    AppDatabase.MIGRATION_4_5,
-                    AppDatabase.MIGRATION_5_6,
-                    AppDatabase.MIGRATION_6_7,
-                    AppDatabase.MIGRATION_7_8,
-                    AppDatabase.MIGRATION_8_9,
-                    AppDatabase.MIGRATION_9_10,
-                    AppDatabase.MIGRATION_10_11,
-                    AppDatabase.MIGRATION_11_12,
-                    AppDatabase.MIGRATION_12_13,
-                    AppDatabase.MIGRATION_13_14,
-                    AppDatabase.MIGRATION_14_15,
-                    AppDatabase.MIGRATION_15_16,
-                    AppDatabase.MIGRATION_16_17
-                )
+                .addMigrations(*ALL_MIGRATIONS)
                 .allowMainThreadQueries()
                 .build()
             // One open exercises 3->4->...->17; Room validates the final schema.
@@ -737,8 +730,12 @@ class MigrationTest {
             raw.execSQL(
                 "UPDATE questions SET searchText = 'CAFÉ central', tags = 'CAFÉ Tag' WHERE id = 'q1'"
             )
+            // A real option row: createV16WithSeed seeds none, and the folded
+            // assertion below reads it back through optionDao().getByQuestion
+            // — an UPDATE against an empty set proved nothing.
             raw.execSQL(
-                "UPDATE options SET searchText = 'CAFÉ option' WHERE questionId = 'q1'"
+                "INSERT INTO options (questionId,id,text,image,searchText,sortOrder) " +
+                    "VALUES ('q1','o1','CAFÉ option',NULL,'CAFÉ option',0)"
             )
             raw.version = 17
         }

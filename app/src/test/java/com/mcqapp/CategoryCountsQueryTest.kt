@@ -114,11 +114,15 @@ class CategoryCountsQueryTest {
     }
 
     @Test
-    fun aCategoryWithoutSchedulesReadsAsZero() = runBlocking {
+    fun aCategoryWithoutSchedulesIsEntirelyFresh() = runBlocking {
         category("C", "Gamma", 2)
         question("q-c1", "C")
         val own = repository.categoryCounts("p1", now = now)
-        assertEquals(CategoryCounts(), own["C"])
+        // A category with questions but no schedule rows is absent from the
+        // populations GROUP BY, is zero-filled here, and every one of its
+        // questions reads as new — which is why the caller must zero-fill
+        // rather than skip it (research note R3, plan §6.3).
+        assertEquals(CategoryCounts(fresh = 1), own["C"])
     }
 
     // --- parity (D9) ---
@@ -154,9 +158,10 @@ class CategoryCountsQueryTest {
         )
         // The parent carries its child: B rolls B1's due learning card in.
         assertEquals(CategoryCounts(due = 1, fresh = 1, leeches = 1), rolled["B"])
-        // B1 alone is its own values; B's own questions stay out.
+        // B1 alone is its own values — one due learning card, nothing new —
+        // and B's own questions stay out.
         assertEquals(CategoryCounts(due = 1), rolled["B1"])
-        assertEquals(CategoryCounts(due = 1, fresh = 1), totalCategoryCounts(rolled, listOf("B1")))
+        assertEquals(CategoryCounts(due = 1), totalCategoryCounts(rolled, listOf("B1")))
     }
 
     // --- the fresh gate ---

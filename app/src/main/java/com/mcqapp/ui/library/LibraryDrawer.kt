@@ -2,6 +2,7 @@ package com.mcqapp.ui.library
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,12 +25,13 @@ import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,13 +39,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.CategoryCheckState
 import com.mcqapp.domain.CategoryNode
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
-import com.mcqapp.util.Logger
 
 /** The navigation drawer: destinations, per-paper category picker, import. */
 @Composable
@@ -57,10 +62,26 @@ internal fun DrawerContent(
     onOpenPassages: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    /**
+     * Starts a whole session over the ticked categories. Last in the list
+     * because it is the newest callback; every call site passes it by name.
+     */
+    onStartStudy: (paperId: String, categoryIds: List<String>) -> Unit
 ) {
     var expandedPaperId by remember { mutableStateOf<String?>(null) }
-    val checkedCategories = remember { mutableStateOf(setOf<String>()) }
+    // The selection is per paper, declared once here rather than inside the
+    // per-paper item: a drawer-wide set let paper A's ids reach paper B's
+    // button, and that route served A's questions under B's paper id.
+    // Collapsing a paper deliberately keeps its ticks.
+    var onByPaper by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
+
+    fun onFor(paperId: String): Set<String> = onByPaper[paperId].orEmpty()
+
+    fun toggle(paper: Paper, id: String) {
+        val next = CategorySelection.toggle(paper.categories, onFor(paper.id), id)
+        onByPaper = onByPaper + (paper.id to next)
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -168,6 +189,15 @@ internal fun DrawerContent(
             }
             item(contentType = "divider") { Divider() }
             items(papers, key = { it.id }, contentType = { "paper" }) { paper ->
+                val on = onFor(paper.id)
+                // Once per (paper, selection), not per node: state() walks the
+                // subtree, so a per-node call is O(n^2) on a large tree.
+                val states = remember(paper.categories, on) {
+                    CategorySelection.states(paper.categories, on)
+                }
+                val ticked = remember(paper.categories, on) {
+                    CategorySelection.tickedIds(paper.categories, on)
+                }
                 Column {
                     Row(
                         modifier = Modifier
@@ -176,6 +206,7 @@ internal fun DrawerContent(
                                 expandedPaperId =
                                     if (expandedPaperId == paper.id) null else paper.id
                             }
+                            .testTag("drawer-paper-${paper.id}")
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -197,28 +228,40 @@ internal fun DrawerContent(
                         Column(modifier = Modifier.padding(start = 24.dp)) {
                             CategoryTree(
                                 nodes = paper.categories,
-                                checked = checkedCategories.value,
-                                onToggle = { id ->
-                                    checkedCategories.value = checkedCategories.value.toMutableSet().apply {
-                                        if (!add(id)) remove(id)
-                                    }
-                                },
+                                states = states,
+                                onToggle = { id -> toggle(paper, id) }
                             )
-                            val selected = checkedCategories.value
-                            if (selected.isNotEmpty()) {
-                                Button(
-                                    onClick = {
-                                        Logger.i("LIB", "Drawer start test: paperId=${paper.id}, " +
-                                            "categories=${selected.size} selected")
-                                        onStartTest(paper.id, selected.toList())
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(8.dp)
+                            if (ticked.isNotEmpty()) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(8.dp)
                                 ) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Start test (${selected.size} categories)")
+                                    Button(
+                                        onClick = { onStartStudy(paper.id, ticked) },
+                                        modifier = Modifier.testTag("drawer-study")
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                        Spacer(Modifier.width(4.dp))
+                                        // Ticked branches, not the expanded
+                                        // scope: the label counts boxes.
+                                        Text(
+                                            stringResource(
+                                                R.string.study_n_categories,
+                                                ticked.size
+                                            )
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onStartTest(paper.id, ticked) },
+                                        modifier = Modifier.testTag("drawer-test")
+                                    ) {
+                                        Text(
+                                            stringResource(
+                                                R.string.test_n_categories,
+                                                ticked.size
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -248,7 +291,7 @@ internal fun DrawerContent(
 @Composable
 private fun CategoryTree(
     nodes: List<CategoryNode>,
-    checked: Set<String>,
+    states: Map<String, CategoryCheckState>,
     onToggle: (String) -> Unit
 ) {
     for (node in nodes) {
@@ -258,9 +301,15 @@ private fun CategoryTree(
                 .padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(
-                checked = node.id in checked,
-                onCheckedChange = { onToggle(node.id) }
+            TriStateCheckbox(
+                state = when (states[node.id]) {
+                    CategoryCheckState.CHECKED -> ToggleableState.On
+                    CategoryCheckState.UNCHECKED -> ToggleableState.Off
+                    CategoryCheckState.INDETERMINATE -> ToggleableState.Indeterminate
+                    null -> ToggleableState.Off
+                },
+                onClick = { onToggle(node.id) },
+                modifier = Modifier.testTag("drawer-cat-${node.id}")
             )
             Text(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
@@ -268,7 +317,7 @@ private fun CategoryTree(
             )
         }
         Column(modifier = Modifier.padding(start = 24.dp)) {
-            CategoryTree(nodes = node.children, checked = checked, onToggle = onToggle)
+            CategoryTree(nodes = node.children, states = states, onToggle = onToggle)
         }
     }
 }

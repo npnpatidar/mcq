@@ -452,9 +452,17 @@ private fun StudyStickyHeader(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("study-paper-title")
                     )
-                    if (state.scopeLabel.isNotEmpty()) {
+                    // Copy lives here, not in the ViewModel: a unit test runs
+                    // without app resources (C19).
+                    val scopeText = when (val label = state.scopeLabel) {
+                        ScopeLabel.WholePaper -> ""
+                        is ScopeLabel.One -> label.title
+                        is ScopeLabel.Many ->
+                            stringResource(R.string.study_scope_many, label.count)
+                    }
+                    if (scopeText.isNotEmpty()) {
                         Text(
-                            state.scopeLabel,
+                            scopeText,
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -777,6 +785,14 @@ private fun StudySummary(
     onEnableNewCards: () -> Unit,
     onDone: () -> Unit
 ) {
+    // The ViewModel says why it is empty; the copy is resolved here (C19).
+    val emptyText = when (state.emptyReason) {
+        EmptyReason.None -> ""
+        EmptyReason.NothingDue -> stringResource(R.string.nothing_due)
+        EmptyReason.NothingDueInScope -> stringResource(R.string.nothing_due_in_scope)
+        EmptyReason.NothingTricky -> stringResource(R.string.nothing_tricky)
+        EmptyReason.NothingTrickyInScope -> stringResource(R.string.nothing_tricky_in_scope)
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -784,9 +800,9 @@ private fun StudySummary(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (state.emptyReason.isNotBlank()) {
+        if (emptyText.isNotEmpty()) {
             Text(
-                state.emptyReason,
+                emptyText,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(bottom = 16.dp)
             )

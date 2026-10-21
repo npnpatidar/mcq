@@ -25,6 +25,14 @@ import org.robolectric.annotation.Config
  * no question sits directly in a parent, so without the expansion a parent
  * selection serves zero questions and counts none of them.
  *
+ * The tree is `cP` => `cA` (q1, with an answer key) and `cB` (q2, no key), so
+ * the ungraded count must be exactly 1 for either selection. That is the only
+ * version of this test that proves the count follows the scope: 0 is also what
+ * a scope that lost the filter reports, so a graded-only seed could not tell
+ * "correct" from "silently lost the filter". `saveQuestion` accepts an empty
+ * key set — imported questions land the same way — so q2 is a real ungraded
+ * question, not a stub.
+ *
  * This has to construct the ViewModel: the defect is the wiring between the
  * route and the repository, and a repository-level test calls below it.
  *
@@ -55,7 +63,11 @@ class TestCategoryScopeTest {
         return condition()
     }
 
-    private fun question(id: String, categoryId: String) = Question(
+    private fun question(
+        id: String,
+        categoryId: String,
+        correct: Set<String> = setOf("$id-a")
+    ) = Question(
         id = id,
         categoryId = categoryId,
         text = "Q $id?",
@@ -63,48 +75,75 @@ class TestCategoryScopeTest {
             QuestionOption("$id-a", "A"),
             QuestionOption("$id-b", "B")
         ),
-        correctOptionIds = setOf("$id-a")
+        correctOptionIds = correct
     )
 
     /**
-     * `p1` nested: `cP` with child `cA`, and q1 in `cA`. Ticking only `cP`
-     * must serve q1 and count it ungraded.
+     * `p1` nested: `cP` with children `cA` (q1, graded) and `cB` (q2, no
+     * answer key). Ticking only `cP` must serve both and count exactly one of
+     * them ungraded.
      */
     private fun seedParentWithChild() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "cP", "Parent")
-        repository.db().categoryDao().upsert(
-            CategoryEntity(
-                id = "cA",
-                paperId = "p1",
-                title = "Child",
-                parentId = "cP",
-                sortOrder = 0
+        listOf("cA" to 0, "cB" to 1).forEach { (id, order) ->
+            repository.db().categoryDao().upsert(
+                CategoryEntity(
+                    id = id,
+                    paperId = "p1",
+                    title = "Child $id",
+                    parentId = "cP",
+                    sortOrder = order
+                )
             )
-        )
+        }
         repository.saveQuestion(question("q1", "cA"))
+        repository.saveQuestion(question("q2", "cB", correct = emptySet()))
     }
 
     @Test
     fun aTickedParentServesItsChildQuestions() {
         seedParentWithChild()
         val viewModel = TestViewModel(app, "p1", listOf("cP"))
-        assertTrue(awaitCondition { !viewModel.state.value.loading })
+        assertTrue(
+            "the session never loaded: state=${viewModel.state.value}",
+            awaitCondition { !viewModel.state.value.loading }
+        )
 
         val ids = viewModel.state.value.order.idsInOrder()
-        assertEquals("a parent selection must expand to its children", 1, ids.size)
-        assertEquals("q1", ids.single())
-        // The same expanded scope drives the ungraded counter (:264).
-        assertEquals(1, viewModel.state.value.ungradedTotal)
+        assertEquals(
+            "a parent selection must expand to its children: state=${viewModel.state.value}",
+            setOf("q1", "q2"),
+            ids.toSet()
+        )
+        // The same expanded scope drives the ungraded counter (:276). Exactly
+        // q2 has no key: counting every served question would say 2, and a
+        // scope that lost the filter would say 0.
+        assertEquals(
+            "exactly one served question has no key: state=${viewModel.state.value}",
+            1,
+            viewModel.state.value.ungradedTotal
+        )
     }
 
     @Test
     fun aTickedChildStillServesItsOwnQuestions() {
         // The expansion must not change what a leaf selection already did.
         seedParentWithChild()
-        val viewModel = TestViewModel(app, "p1", listOf("cA"))
-        assertTrue(awaitCondition { !viewModel.state.value.loading })
+        val viewModel = TestViewModel(app, "p1", listOf("cB"))
+        assertTrue(
+            "the session never loaded: state=${viewModel.state.value}",
+            awaitCondition { !viewModel.state.value.loading }
+        )
 
-        assertEquals(listOf("q1"), viewModel.state.value.order.idsInOrder())
-        assertEquals(1, viewModel.state.value.ungradedTotal)
+        assertEquals(
+            "state=${viewModel.state.value}",
+            listOf("q2"),
+            viewModel.state.value.order.idsInOrder()
+        )
+        assertEquals(
+            "the leaf's ungraded question must be counted: state=${viewModel.state.value}",
+            1,
+            viewModel.state.value.ungradedTotal
+        )
     }
 }

@@ -75,6 +75,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.ContentElements
@@ -231,7 +232,7 @@ fun BrowseScreen(
         }
 
         val flatCategories = remember(state.paper) {
-            flattenCategories(state.paper?.categories ?: emptyList())
+            CategorySelection.flatten(state.paper?.categories ?: emptyList())
         }
         // The category each row belongs to (label on the card).
         val categoryTitles = remember(flatCategories) {
@@ -709,7 +710,7 @@ fun BrowseScreen(
                 allPapers.find { it.id == movePaperId }
             }
             val targets = remember(movePaper) {
-                flattenCategories(movePaper?.categories ?: emptyList())
+                CategorySelection.flatten(movePaper?.categories ?: emptyList())
             }
             AlertDialog(
                 onDismissRequest = { showMoveDialog = false },
@@ -1026,16 +1027,6 @@ private fun PassageHeaderCard(
     }
 }
 
-private fun flattenCategories(
-    nodes: List<com.mcqapp.domain.CategoryNode>,
-    depth: Int = 0
-): List<Pair<com.mcqapp.domain.CategoryNode, Int>> = buildList {
-    for (node in nodes) {
-        add(node to depth)
-        addAll(flattenCategories(node.children, depth + 1))
-    }
-}
-
 /**
  * The browse screen's single-category filter: with a set of category ids, only
  * those categories' questions remain; null (or empty) keeps the list whole.
@@ -1065,19 +1056,11 @@ internal fun <T> applyCategoryFilter(
  * until the next node of depth <= its own. A null [rootId] means "no filter"
  * (null); a non-null but unknown id filters to nothing (empty set) rather than
  * showing everything.
+ *
+ * The contract and the scan live in [CategorySelection.subtreeIds]; this keeps
+ * the name its callers and tests already use.
  */
 internal fun subtreeIdsOf(
     flatCategories: List<Pair<com.mcqapp.domain.CategoryNode, Int>>,
     rootId: String?
-): Set<String>? {
-    if (rootId == null) return null
-    val rootIndex = flatCategories.indexOfFirst { it.first.id == rootId }
-    if (rootIndex < 0) return emptySet()
-    val rootDepth = flatCategories[rootIndex].second
-    val out = mutableSetOf(rootId)
-    for ((node, depth) in flatCategories.subList(rootIndex + 1, flatCategories.size)) {
-        if (depth <= rootDepth) break
-        out.add(node.id)
-    }
-    return out
-}
+): Set<String>? = CategorySelection.subtreeIds(flatCategories, rootId)

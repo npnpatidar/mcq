@@ -1,13 +1,15 @@
 # Category-scoped Study — implementation plan
 
-**Status:** revision 3 — **Phases 1-3 (`1c36973`), the Phase 4 fix (`1831058`) and Phase 5
-(`97402c6`) are committed**; Phase 4's CI run is red on two points, both now explained. The
-scoped label and empty-reason copy went through `getString`, which a Robolectric unit test
-cannot resolve (C19), so the copy moves to the screen. `TestCategoryScopeTest`'s ungraded
-count asserted 0 on a **graded** question; it now proves the count with a no-key question.
-Phase 3's green is CI-authoritative for `StudyCategoryScopeTest` and the two
-`SessionOrderLoadTest` cases, which are Robolectric. Facts re-verified against `c4a8f07`;
-the 20 audit rulings, C1-C5, C6-C8, C9-C13, C14-C18 and C19 are applied. See
+**Status:** revision 3 — **every phase is committed on `feature/category-study`** (PR #29):
+plan `7c11ec5`, domain `07f6652`, data `9b014f9`, store and pull `1c36973`, findings `8f83076`,
+Phase 4 `1831058`, Phase 5 `97402c6`, the C19 fix `40821b0`, docs plus the runner selector
+`5b5b744` and `57f8907`, the device-test scroll fix `790c124`, and C20 `c48a872`. Phase 4 went
+to CI red because the scoped label and empty reason went through `getString`, which a
+Robolectric unit test in this project cannot resolve (C19); the copy moved to the screen and
+the suite went green. `TestCategoryScopeTest`'s ungraded count asserted 0 on a **graded**
+question; it now proves the count with a no-key question. The scoped pull's ceiling is
+measured, not asserted by hand: **7 selects** for 501 categories (C13, C20). Facts
+re-verified against `c4a8f07`; the audit rulings C1-C20 are applied. See
 "Revisions — what changed and why" below.
 **Scope:** let a learner start a Study session over **one or more categories** of a paper,
 including **all descendants of any selected parent**, without touching Test mode's data or
@@ -59,13 +61,14 @@ revision 3 adds the runner and tooling facts (C6-C8).
 | **C10** | `bestDueReviewForCategoriesChunked` takes the scheduler the pull already read instead of re-reading settings, so one pull ranks with one config snapshot. | §5.5 |
 | **C11** | The H1 filter is on the category rows (`filter { it.paperId == paperId }`), not on refs, which carry no paper field; `loadOrder` pages per category, so the two are equivalent. | §7.1.2 |
 | **C12** | §9.8 records the two cross-paper regression cases and the `p2` fixture, with CI-authoritative green wording. | §9.8 |
-| **C13** | The scoped pull's cost is stated as a bound (`1 + 3 * ceil(scope/500)`, at most 7 for 501 categories) rather than "extend the test"; the observed value is recorded on CI in Phase 6. | §9.3, §11 |
+| **C13** | The scoped pull's cost is stated as a bound (`1 + 3 * ceil(scope/500)`, at most 7 for 501 categories) rather than "extend the test"; `StudyPullQueryCountTest` measures it, and CI observed **7** (`PULL-COUNT scoped501=7`). | §9.3, §11 |
 | **C14** | Both drill call sites pass `scopeIds` — `load()` and `restart()`; missing `restart()` would widen a scoped tricky drill on "Study again". | §7.3 |
 | **C15** | `RoutesTest` is Robolectric (it calls `Uri.encode`), so no Robolectric class is locally green on this host; Phase 4's green is compile-locally, CI-authoritative, with the SIGABRT evidence recorded. | §9.5, §11 |
 | **C16** | §9.10 separates the two facts: the selector picks the only subset this host can run, and the real defect is that prose can hide a pure-JVM class. | §9.10 |
 | **C17** | Test mode's expansion is a named Phase 4 step, with ticked ids kept for `matches`/the header, and the zero-cards consequence stated. | §6.4, §11 |
 | **C18** | A `TestViewModel`-level regression test (`TestCategoryScopeTest`) pins the expansion; named in §9.8 and in Phase 4's test list. | §9.8, §11 |
 | **C19** | `getApplication<Application>().getString(...)` is untestable in this project: `app/build.gradle.kts:151-153` sets `testOptions { unitTests.all { maxHeapSize } }` with no `includeAndroidResources = true`, and no `test_config.properties` is generated anywhere under `app/build`, so Robolectric runs with framework resources only and every app-string lookup throws `Resources$NotFoundException`. In `load()` that exception is caught and becomes `loadError`, so `current` is never set; in `finishEmpty()` it is thrown before `_state.update`, so `finished` is never set — exactly the two Phase 4 CI failures. Copy moves to `StudyScreen.kt`; the ViewModel keeps typed `EmptyReason`/`ScopeLabel`. Not fixed by enabling `includeAndroidResources`: that changes the environment of all 113 unit-test classes for one feature and still leaves copy in the ViewModel. | §7.3, §7.4, §9.4, §11 |
+| **C20** | Phase 4 step 16's third test addition was never made: `StudyPullQueryCountTest` had no scoped case, so C13's ceiling went unmeasured through Phases 5 and 6. `aScopedPullStaysWithinOneChunkBound` seeds 501 categories with one fresh question each, asserts at most 7 selects and no answer-key read, and prints the observed value; CI measured **7**. | §9.3, §11 |
 
 ---
 
@@ -1244,13 +1247,16 @@ produces 116 TEST xml files, because two of those files declare no `@Test` and a
 code (`ExportTestSupport.kt`, `PagingWalk.kt`). That two-file gap is expected, not a silently
 skipped test.
 
-**Query-count bound (extend `StudyPullQueryCountTest.kt`).** A scoped pull costs at most
+**Query-count bound (`StudyPullQueryCountTest.aScopedPullStaysWithinOneChunkBound`).** A scoped
+pull costs at most
 `1 + 3 * ceil(scopeCategories / 500)` Room queries — the paper-wide `staleForPaper` read plus
 one learning plus `ceil` review-head plus `ceil` new-card queries, the last two short-circuiting
 at the first chunk that answers. It must not grow with the question count, nor with categories
-beyond that ceiling; a 501-category scope is therefore at most 7, and the recorded value is
-expected in 4..7 depending on which chunk holds the served rows. The same test proves the pull
-never reads the answer key. The test is Robolectric, so CI is where the count is observed.
+beyond that ceiling; a 501-category scope is therefore at most 7. **Observed on CI: 7**
+(`PULL-COUNT scoped501=7 (bound 7, chunks=2)`, run `39626043698`) — at the ceiling, not below
+it, because with nothing due all three pools consult both chunks and the served new card comes
+from the first. The same test proves the pull never reads the answer key. The test is
+Robolectric, so CI is where the count is observed.
 
 ### 9.4 Extend `StudyViewModelPullTest.kt` (Robolectric)
 
@@ -1516,9 +1522,10 @@ Each phase compiles and is independently reviewable. Every phase ends green.
 22. README updates (§10).
 23. `sh /sdcard/repo/apk-build/build-apk.sh` and `sh /sdcard/repo/apk-build/run-jvm-tests.sh`.
 24. Push; CI runs lint, the full suite and the Robolectric DB tests, and records the observed
-    scoped-pull query count for the 501-category scope (§9.3).
-25. Green: the local build and JVM suite passed in step 23; the five classes §9.10 shows the
-    runner skips were invoked by name; CI is the authority for every Robolectric class.
+    scoped-pull query count for the 501-category scope (§9.3): **7**, the ceiling.
+25. Green: the local build and JVM suite passed in step 23; `run-jvm-tests.sh` selects on
+    `^import org.robolectric`, so the local pass covers 118 classes / 932 tests including the
+    five §9.10 records as formerly skipped; CI is the authority for every Robolectric class.
 
 ---
 

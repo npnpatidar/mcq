@@ -58,6 +58,9 @@ class CategoryCountsQueryTest {
             .allowMainThreadQueries()
             .build()
         repository = McqRepository(db, context)
+        // The DataStore is shared across Robolectric tests in one Gradle JVM,
+        // so the defaults this fixture assumes are re-asserted, not assumed.
+        repository.resetSchedulerConfig()
 
         db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Counts"))
         category("A", "Alpha", 0)
@@ -90,7 +93,10 @@ class CategoryCountsQueryTest {
     }
 
     @After
-    fun tearDown() {
+    fun tearDown() = runBlocking {
+        // Reset before closing: the DataStore is shared across Robolectric
+        // tests in one Gradle JVM, so the off toggle must not leak onward.
+        repository.resetSchedulerConfig()
         db.close()
     }
 

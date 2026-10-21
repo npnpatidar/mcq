@@ -1,12 +1,11 @@
 # Category-scoped Study — implementation plan
 
-**Status:** revision 3 — **Phases 1-3 implemented and verified** (15 pure-JVM selection tests,
-3 chunk-shape tests, 8 DAO methods, 7 chunk helpers, APK builds, 897 tests green; Phase 3's
-green is CI-authoritative for `StudyCategoryScopeTest` and the two new
-`SessionOrderLoadTest` cases, which are Robolectric); **Phase 4 in progress**; everything after
-Phase 4 not started. Facts re-verified against `c4a8f07`; the 20 audit rulings, the five Coder
-red-flag corrections (C1-C5), the three runner/tooling facts (C6-C8) and the five Phase 3
-corrections (C9-C13) are applied. See "Revisions — what changed and why" below.
+**Status:** revision 3 — **Phases 1-3 committed and pushed (`1c36973`)**; **Phase 4 implemented
+but not accepted** — one blocker is being fixed: Test mode does not expand ticked ids (C17).
+Phase 5 has not started. Phase 3's green is CI-authoritative for `StudyCategoryScopeTest` and
+the two `SessionOrderLoadTest` cases, which are Robolectric. Facts re-verified against
+`c4a8f07`; the 20 audit rulings, C1-C5, C6-C8, C9-C13 and the five Phase 3b/4 corrections
+(C14-C18) are applied. See "Revisions — what changed and why" below.
 **Scope:** let a learner start a Study session over **one or more categories** of a paper,
 including **all descendants of any selected parent**, without touching Test mode's data or
 any existing schedule.
@@ -58,6 +57,11 @@ revision 3 adds the runner and tooling facts (C6-C8).
 | **C11** | The H1 filter is on the category rows (`filter { it.paperId == paperId }`), not on refs, which carry no paper field; `loadOrder` pages per category, so the two are equivalent. | §7.1.2 |
 | **C12** | §9.8 records the two cross-paper regression cases and the `p2` fixture, with CI-authoritative green wording. | §9.8 |
 | **C13** | The scoped pull's cost is stated as a bound (`1 + 3 * ceil(scope/500)`, at most 7 for 501 categories) rather than "extend the test"; the observed value is recorded on CI in Phase 6. | §9.3, §11 |
+| **C14** | Both drill call sites pass `scopeIds` — `load()` and `restart()`; missing `restart()` would widen a scoped tricky drill on "Study again". | §7.3 |
+| **C15** | `RoutesTest` is Robolectric (it calls `Uri.encode`), so no Robolectric class is locally green on this host; Phase 4's green is compile-locally, CI-authoritative, with the SIGABRT evidence recorded. | §9.5, §11 |
+| **C16** | §9.10 separates the two facts: the selector picks the only subset this host can run, and the real defect is that prose can hide a pure-JVM class. | §9.10 |
+| **C17** | Test mode's expansion is a named Phase 4 step, with ticked ids kept for `matches`/the header, and the zero-cards consequence stated. | §6.4, §11 |
+| **C18** | A `TestViewModel`-level regression test (`TestSessionScopeTest`) pins the expansion; named in §9.8 and in Phase 4's test list. | §9.8, §11 |
 
 ---
 
@@ -745,7 +749,14 @@ val scopeIds = if (categoryIds.isEmpty()) emptyList()
 `getStudyQueue`, `getSessionOrderForCategories(paperId, scopeIds)`, and
 `countUngradedForCategories(scopeIds)` (`TestViewModel.kt:264`, already chunked at the
 repository). The snapshot keeps the **route** `categoryIds` (ticked), because that is what
-`matches` compares.
+`matches` compares — `document.matches(paperId, categoryIds)` (`:733`) and the saved header
+(`:838`) must **not** be switched to `scopeIds`, or every resume compares an expanded set
+against a ticked route and never matches.
+
+**This step is load-bearing, not tidiness.** The store has no category tree: it filters
+`questions.categoryId IN (:categoryIds)`. A ticked parent id matches no question, because no
+question sits directly in a parent, so passing raw route ids to Test mode serves **zero
+cards** for a parent selection. Study mode already expands in `load()`; Test mode must too.
 
 ---
 
@@ -964,10 +975,14 @@ Changes:
    ```
 2. `nextCard()` (`:209`): `repository.getNextStudyCard(paperId, reviewsSinceNew, categoryIds = scopeIds)`.
 3. `finishEmpty()` (`:261`): `getStudyEligibility(paperId, introduceNewCards = true, categoryIds = scopeIds)`.
-4. The drill branch (`:167-169`) passes `scopeIds` so the tricky drill is scoped too (D4).
+4. The drill branch passes `scopeIds` so the tricky drill is scoped too (D4) — at **both**
+   call sites, `load()` (`StudyViewModel.kt:200-204`) and `restart()` (`:711-716`). Missing
+   `restart()` is the subtle one: it re-pulls the drill from the scheduler now, which is
+   exactly what `studyAgainRepullsTheDrillFromTheSchedulerNow` pins, so a scoped tricky drill
+   would stay scoped for the first pass and widen to the whole paper on "Study again".
    `NoDeadCodeTest` (`:60-82`) scans every production call of `getStudyQueue(` and fails
-   unless `leechesOnly = true` appears within 200 characters, so the call must stay on the
-   drill branch and keep that named argument in the same window:
+   unless `leechesOnly = true` appears within 200 characters, so each call keeps the named
+   argument in the same window:
    ```kotlin
    if (leechesOnly) {
        drillCards = repository.getStudyQueue(paperId, leechesOnly = true, categoryIds = scopeIds)
@@ -1229,6 +1244,12 @@ strings keep `"Nothing due right now."` byte-for-byte (§7.4).
 @Test fun aScopedStudyRouteEncodesThePaperSegment()
 ```
 
+`RoutesTest` is `@RunWith(RobolectricTestRunner)` because it calls `android.net.Uri.encode`,
+so it is **not** pure JVM: it compiles locally and runs on CI. On this aarch64 host every
+Robolectric class aborts — `RoutesTest` exits 134 (SIGABRT) and writes an xml reading
+`tests="1" skipped="1" failures="0"`, which is an abort, not a pass. Expected count on CI:
+11 tests (7 existing + the 4 above).
+
 ### 9.6 Structural test: extend `StudyActionStructureTest.kt`
 
 `StudyActionStructureTest` is plain JUnit that reads source text (`StudyActionStructureTest.kt:13`,
@@ -1260,11 +1281,12 @@ version of the per-paper rule lives in §9.7 instead.
 | `SessionOrderLoadTest.aCategoryIdFromAnotherPaperIsDropped` | a `p2` category id under `p1`'s order yields empty. Without the filter, `cA` resolves and `loadOrder` serves `q-a1`/`q-a2` under `p2` — this is the H1 regression pin. |
 | `SessionOrderLoadTest.aMixedSelectionKeepsOnlyThisPapersIds` | `p1` with one `p2` id keeps exactly `q-c1, q-a1, q-a2`. |
 | fixture | `paper p2`, category `cZ`, question `q-z1` added to the seeded fixture the two cases above use. |
+| `TestSessionScopeTest.aTickedParentServesItsChildrensQuestions` (**new**, Robolectric) | constructs a `TestViewModel` with a **ticked parent id** and loads; the session contains the child's question, and `countUngradedForCategories` for that scope counts it. A repository-level test cannot see the wiring, so this must construct the ViewModel — that is exactly why the missing Test-mode expansion survived the first Phase 4 verification (C17, C18). |
 | `RoutesTest.kt:52`, `:60` | pass byte-for-byte; the scoped cases are added (§9.5) |
 | `StudyViewModelPullTest.kt` | scoped cases added (§9.4); `:167` keeps its text |
 
-`SessionOrderLoadTest` is Robolectric, so both new cases **compile locally and execute on CI
-x86_64**; no local green claims them.
+`SessionOrderLoadTest` and `TestSessionScopeTest` are Robolectric, so every case in this table
+**compiles locally and executes on CI x86_64**; no local green claims them.
 
 ### 9.9 Tests that must keep passing untouched
 
@@ -1306,9 +1328,17 @@ all five passed (6, 4 and 5 tests in the three behavioural classes, plus the two
 classes). **`NoDeadCodeTest` is the guard this plan leans on for orphaned helpers (§7.3), and
 it has not been running in the local suite at all.**
 
-Therefore: **"green on `run-jvm-tests.sh`" means "green on the subset that script selects",
-which is not the same as "the pure-JVM subset".** Phase greens must not claim the five skipped
-classes ran; when a phase touches one (`NoDeadCodeTest` in Phases 4 and 5), invoke it by name:
+Therefore: **"green on `run-jvm-tests.sh`" means "green on the pure-JVM subset, which is the
+only subset this host can run"** — with the caveat that the script selects by the word, not by
+the import, so what it selects is not exactly the pure-JVM set.
+
+The selector is not wrong in its broad effect: it selects exactly the files that never
+mention the runtime, which is coincidentally the only subset that can run here. Every file
+that mentions Robolectric aborts on this aarch64 host — `RoutesTest` exits 134 (SIGABRT) and
+writes `tests="1" skipped="1" failures="0"`, which is an abort, not a pass (§9.5, C15). The
+defect is narrower and real: **prose can hide a pure-JVM class**, and it did, five times.
+Phase greens must not claim the five skipped classes ran; when a phase touches one
+(`NoDeadCodeTest` in Phases 4 and 5), invoke it by name:
 
 ```sh
 sh gradlew :app:testDebugUnitTest --tests 'com.mcqapp.NoDeadCodeTest' --no-daemon
@@ -1404,35 +1434,43 @@ Each phase compiles and is independently reviewable. Every phase ends green.
     it, not the local run.
 
 **Phase 4 — navigation + ViewModel**
-13. `Routes.kt` (ticked ids), `McqNavHost.kt`, and the destination expansion in both
-    ViewModels (§6).
-14. `StudyViewModel`, `StudyViewModelFactory`, `StudyScreen`, and the five strings they use
-    (§7.3-§7.6).
-15. Extend `RoutesTest`, `StudyViewModelPullTest` (§9.4, §9.5), and assert the scoped-pull
-    ceiling of `1 + 3 * ceil(scope/500)` for a 501-category scope (at most 7) in
-    `StudyPullQueryCountTest`; CI records the observed value in Phase 6 — it cannot be measured
-    on this host.
-16. Green: compiles locally and the pure-JVM `RoutesTest` cases pass. `StudyViewModelPullTest`
-    is Robolectric (`:31`), so it **compiles here and executes on CI x86_64**; CI, not the
-    local run, is what proves the `:167` empty-state assertion still passes. Invoke
-    `NoDeadCodeTest` by name here (§9.10): it is the guard for the drill call, and the runner
-    skips it.
+13. `Routes.kt` (ticked ids) and `McqNavHost.kt` (§6.1-§6.3).
+14. **Test mode expansion — load-bearing.** In `TestViewModel.load`, after the paper is loaded,
+    expand `categoryIds` with `CategorySelection.orderedIds` into `scopeIds`; pass `scopeIds`
+    to `getSessionOrderForCategories` (`TestViewModel.kt:209`) and
+    `countUngradedForCategories` (`:264`); leave `document.matches(paperId, categoryIds)`
+    (`:733`) and the saved header (`:838`) on the **ticked** ids, because the snapshot
+    compares routes (§6.4). Without this step a ticked parent matches no question and the
+    session serves zero cards.
+15. `StudyViewModel` (both drill call sites, §7.3), `StudyViewModelFactory`, `StudyScreen`,
+    and the five strings they use (§7.3-§7.6).
+16. Extend `RoutesTest` (§9.5), `StudyViewModelPullTest` (§9.4), add the TestViewModel-level
+    scope case (§9.8), and assert the scoped-pull ceiling of `1 + 3 * ceil(scope/500)` for a
+    501-category scope (at most 7) in `StudyPullQueryCountTest`; CI records the observed value
+    in Phase 6 — it cannot be measured on this host.
+17. Green: compiles locally. `RoutesTest` (expected 11 tests: 7 old + 4 new),
+    `StudyViewModelPullTest` and the new TestViewModel case are Robolectric, so they are
+    **CI-authoritative**: no Robolectric class can be locally green on this host — `RoutesTest`
+    aborts with SIGABRT (exit 134) and writes `tests="1" skipped="1" failures="0"`, which is an
+    abort, not a pass. Invoke `NoDeadCodeTest` by name here (§9.10): it is the guard for the
+    drill call, and the runner skips it.
 
 **Phase 5 — drawer UI**
-17. `LibraryDrawer.kt`: per-paper tri-state selection, `TriStateCheckbox`, two buttons, the
+18. `LibraryDrawer.kt`: per-paper tri-state selection, `TriStateCheckbox`, two buttons, the
     two button-label strings (§7.1, §7.6).
-18. `LibraryScreen.kt` `onStartStudy` (§7.2).
-19. Extend `StudyActionStructureTest`, `StudyAndSelectionUiTest` (§9.6, §9.7).
-20. Green: compiles locally and the pure-JVM structural tests pass; the androidTest additions
+19. `LibraryScreen.kt` `onStartStudy` (§7.2).
+20. Extend `StudyActionStructureTest`, `StudyAndSelectionUiTest` (§9.6, §9.7).
+21. Green: compiles locally and the pure-JVM structural tests pass; the androidTest additions
     execute on a device/emulator, not in this run. `NoDeadCodeTest` is in the §9.10 skip list,
     so invoke it by name before calling this phase green.
 
 **Phase 6 — docs + full verification**
-21. README updates (§10).
-22. `sh /sdcard/repo/apk-build/build-apk.sh` and `sh /sdcard/repo/apk-build/run-jvm-tests.sh`.
-23. Push; CI runs lint, the full suite and the Robolectric DB tests.
-24. Green: the local build and JVM suite passed in step 22; the five classes §9.10 shows the
-    runner skips were invoked by name; CI is the authority for the Robolectric subset.
+22. README updates (§10).
+23. `sh /sdcard/repo/apk-build/build-apk.sh` and `sh /sdcard/repo/apk-build/run-jvm-tests.sh`.
+24. Push; CI runs lint, the full suite and the Robolectric DB tests, and records the observed
+    scoped-pull query count for the 501-category scope (§9.3).
+25. Green: the local build and JVM suite passed in step 23; the five classes §9.10 shows the
+    runner skips were invoked by name; CI is the authority for every Robolectric class.
 
 ---
 

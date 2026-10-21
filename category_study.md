@@ -1,11 +1,14 @@
 # Category-scoped Study — implementation plan
 
-**Status:** revision 3 — **Phases 1-3 committed and pushed (`1c36973`)**; **Phase 4 implemented
-but not accepted** — one blocker is being fixed: Test mode does not expand ticked ids (C17).
-Phase 5 has not started. Phase 3's green is CI-authoritative for `StudyCategoryScopeTest` and
-the two `SessionOrderLoadTest` cases, which are Robolectric. Facts re-verified against
-`c4a8f07`; the 20 audit rulings, C1-C5, C6-C8, C9-C13 and the five Phase 3b/4 corrections
-(C14-C18) are applied. See "Revisions — what changed and why" below.
+**Status:** revision 3 — **Phases 1-3 (`1c36973`), the Phase 4 fix (`1831058`) and Phase 5
+(`97402c6`) are committed**; Phase 4's CI run is red on two points, both now explained. The
+scoped label and empty-reason copy went through `getString`, which a Robolectric unit test
+cannot resolve (C19), so the copy moves to the screen. `TestCategoryScopeTest`'s ungraded
+count asserted 0 on a **graded** question; it now proves the count with a no-key question.
+Phase 3's green is CI-authoritative for `StudyCategoryScopeTest` and the two
+`SessionOrderLoadTest` cases, which are Robolectric. Facts re-verified against `c4a8f07`;
+the 20 audit rulings, C1-C5, C6-C8, C9-C13, C14-C18 and C19 are applied. See
+"Revisions — what changed and why" below.
 **Scope:** let a learner start a Study session over **one or more categories** of a paper,
 including **all descendants of any selected parent**, without touching Test mode's data or
 any existing schedule.
@@ -23,7 +26,7 @@ revision 3 adds the runner and tooling facts (C6-C8).
 | **H1** | `getOrderForCategories` uses `getByIdsChunked` **and** takes `paperId`, closing N3 in the same edit. | §7.1.2, §12 |
 | **H2** | `countForCategoriesChunked` added to the helper list and to the dispatch table. | §5.4, §5.5 |
 | **M1** | The extra chunk constant is deleted. The existing 500-variable primitive is reused; the "one slot for `:now`" arithmetic is corrected to `ids + 3`. | §5.4 |
-| **M2** | Both ViewModel snippets use `getApplication<Application>().getString(...)`. There is no `ctx`, and the constructor parameter is not a `val`. | §7.3, §7.4 |
+| **M2** | Both ViewModel snippets used `getApplication<Application>().getString(...)`. **Reversed by C19**: the accessor is untestable here, so the ViewModel carries typed state and `StudyScreen` resolves the copy. | §7.3, §7.4 |
 | **M3** | Copy rule is now "insert into the `WHERE`, before any `ORDER BY`/`LIMIT`", with a worked `LIMIT 1` example; the five `WHERE` line numbers are corrected. | §5.2 |
 | **M4** | New D9: the route carries **ticked** ids, the destination expands. The snapshot-size and resume-matching reasons are recorded. | §3 (D9), §6, §8.1 |
 | **M5** | Every target in the deleted scale-notes document is dropped; the file was removed in `c4a8f07`, so the plan states its budgets inline. | §10, §12 |
@@ -61,7 +64,8 @@ revision 3 adds the runner and tooling facts (C6-C8).
 | **C15** | `RoutesTest` is Robolectric (it calls `Uri.encode`), so no Robolectric class is locally green on this host; Phase 4's green is compile-locally, CI-authoritative, with the SIGABRT evidence recorded. | §9.5, §11 |
 | **C16** | §9.10 separates the two facts: the selector picks the only subset this host can run, and the real defect is that prose can hide a pure-JVM class. | §9.10 |
 | **C17** | Test mode's expansion is a named Phase 4 step, with ticked ids kept for `matches`/the header, and the zero-cards consequence stated. | §6.4, §11 |
-| **C18** | A `TestViewModel`-level regression test (`TestSessionScopeTest`) pins the expansion; named in §9.8 and in Phase 4's test list. | §9.8, §11 |
+| **C18** | A `TestViewModel`-level regression test (`TestCategoryScopeTest`) pins the expansion; named in §9.8 and in Phase 4's test list. | §9.8, §11 |
+| **C19** | `getApplication<Application>().getString(...)` is untestable in this project: `app/build.gradle.kts:151-153` sets `testOptions { unitTests.all { maxHeapSize } }` with no `includeAndroidResources = true`, and no `test_config.properties` is generated anywhere under `app/build`, so Robolectric runs with framework resources only and every app-string lookup throws `Resources$NotFoundException`. In `load()` that exception is caught and becomes `loadError`, so `current` is never set; in `finishEmpty()` it is thrown before `_state.update`, so `finished` is never set — exactly the two Phase 4 CI failures. Copy moves to `StudyScreen.kt`; the ViewModel keeps typed `EmptyReason`/`ScopeLabel`. Not fixed by enabling `includeAndroidResources`: that changes the environment of all 113 unit-test classes for one feature and still leaves copy in the ViewModel. | §7.3, §7.4, §9.4, §11 |
 
 ---
 
@@ -771,8 +775,8 @@ tri-state.
 internal fun DrawerContent(
     …
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
-    onStartStudy: (paperId: String, categoryIds: List<String>) -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    onStartStudy: (paperId: String, categoryIds: List<String>) -> Unit
 )
 ```
 
@@ -954,8 +958,9 @@ class StudyViewModel(
 Changes:
 
 1. `load()` (`:162`, paper at `:165`): resolve the paper once, expand the route into
-   `scopeIds`, and resolve the label. `application` is a constructor parameter without `val`,
-   so it is in scope only in initialisers; use the accessor:
+   `scopeIds`, and record the scope as **typed state**. No Context and no copy here: a
+   Robolectric unit test runs without app resources (C19), so the label is a value the screen
+   renders:
    ```kotlin
    private var scopeIds: List<String> = emptyList()
 
@@ -963,12 +968,12 @@ Changes:
    scopeIds = if (categoryIds.isEmpty()) emptyList()
        else CategorySelection.orderedIds(paper?.categories.orEmpty(), categoryIds)
 
-   val app = getApplication<Application>()
    val label = when {
-       categoryIds.isEmpty() -> ""
-       categoryIds.size == 1 ->
+       categoryIds.isEmpty() -> ScopeLabel.WholePaper
+       categoryIds.size == 1 -> ScopeLabel.One(
            CategorySelection.titleOf(paper?.categories.orEmpty(), categoryIds.first()).orEmpty()
-       else -> app.getString(R.string.study_scope_many, categoryIds.size)
+       )
+       else -> ScopeLabel.Many(categoryIds.size)
    }
    // then, in the existing `_state.update { it.copy(...) }` call that follows:
    _state.update { it.copy(scopeLabel = label, …) }
@@ -988,21 +993,42 @@ Changes:
        drillCards = repository.getStudyQueue(paperId, leechesOnly = true, categoryIds = scopeIds)
    }
    ```
-5. Add `scopeLabel: String = ""` at the **end** of `StudyUiState` (`StudyViewModel.kt:46-95`),
-   after `breakDismissedAt`, not next to `paperTitle`. Two adjacent `String` fields invite a
-   later positional `copy(...)` to rebind the wrong one; putting it last makes every existing
-   positional construction unaffected.
+5. Add `scopeLabel: ScopeLabel = ScopeLabel.WholePaper` at the **end** of `StudyUiState`
+   (`StudyViewModel.kt:46-95`), after `breakDismissedAt`, not next to `paperTitle`. Two
+   adjacent `String` fields invite a later positional `copy(...)` to rebind the wrong one;
+   putting it last makes every existing positional construction unaffected. Declare
+   `EmptyReason` and `ScopeLabel` at top level in the same file, next to `StudyUiState`:
+
+   ```kotlin
+   enum class EmptyReason { None, NothingDue, NothingDueInScope, NothingTricky, NothingTrickyInScope }
+
+   sealed interface ScopeLabel {
+       data object WholePaper : ScopeLabel
+       data class One(val title: String) : ScopeLabel
+       data class Many(val count: Int) : ScopeLabel
+   }
+   ```
+
+   `emptyReason` changes type in place, same position:
+   `val emptyReason: EmptyReason = EmptyReason.None`. Every reset site that wrote `""`
+   (`stop()`, `restart()`) writes `EmptyReason.None`.
 
 ### 7.4 `StudyScreen.kt`
 
-Header (`:445`): under the paper title, render the scope when non-empty.
+Header (`:445`): under the paper title, render the scope. The copy is resolved **here**, not
+in the ViewModel (C19):
 
 ```kotlin
 Column(Modifier.weight(1f)) {
     Text(state.paperTitle, … testTag("study-paper-title"))
-    if (state.scopeLabel.isNotEmpty()) {
+    val scopeText = when (val label = state.scopeLabel) {
+        ScopeLabel.WholePaper -> ""
+        is ScopeLabel.One -> label.title
+        is ScopeLabel.Many -> stringResource(R.string.study_scope_many, label.count)
+    }
+    if (scopeText.isNotEmpty()) {
         Text(
-            state.scopeLabel,
+            scopeText,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1013,23 +1039,27 @@ Column(Modifier.weight(1f)) {
 ```
 
 Empty state: add a scoped reason so "Nothing due right now." is not a lie about the whole
-paper. `finishEmpty` runs inside the ViewModel, so it uses the accessor, not `ctx`:
+paper, again resolved in the screen. `finishEmpty()` only says **why**:
 
 ```kotlin
-val res = getApplication<Application>()
-emptyReason = when {
-    it.reviewed > 0 -> ""
-    leechesOnly && scopeIds.isNotEmpty() -> res.getString(R.string.nothing_tricky_in_scope)
-    leechesOnly -> res.getString(R.string.nothing_tricky)
-    scopeIds.isNotEmpty() -> res.getString(R.string.nothing_due_in_scope)
-    else -> res.getString(R.string.nothing_due)
+val emptyText = when (state.emptyReason) {
+    EmptyReason.None -> ""
+    EmptyReason.NothingDue -> stringResource(R.string.nothing_due)
+    EmptyReason.NothingDueInScope -> stringResource(R.string.nothing_due_in_scope)
+    EmptyReason.NothingTricky -> stringResource(R.string.nothing_tricky)
+    EmptyReason.NothingTrickyInScope -> stringResource(R.string.nothing_tricky_in_scope)
 }
 ```
 
+with `emptyReason = when { it.reviewed > 0 -> EmptyReason.None; … }` and the same conditions
+in the same order as before. The `!introduceNewCards && freshAvailable` offer keeps keying
+off its own fields, not off the reason.
+
 The two existing literals (`StudyViewModel.kt:290-294`) keep their exact text in
-`strings.xml`, so `StudyViewModelPullTest.kt:167` (`"Nothing due right now."`) keeps passing
-without an edit. **Phase 4 owns that assertion**: if the copy is ever changed, the test moves
-in the same phase.
+`strings.xml`. `anEmptySessionOffersToTurnNewCardsOnAndHonoursTheFlip` **is edited in this
+phase** (C19): it asserted the resolved string, which the ViewModel can no longer produce, so
+it now asserts `EmptyReason.NothingDue`. The copy lives on in `strings.xml` and is pinned by
+the screen, not by that assertion.
 
 Also pass `categoryIds` through the factory and the ViewModel key:
 
@@ -1228,12 +1258,14 @@ never reads the answer key. The test is Robolectric, so CI is where the count is
 |---|---|
 | `aCategorySessionStopsWhenItsScopeIsDry` | empty state reached while another category still has cards |
 | `aCategorySessionLeavesOtherCategoriesSchedulesAlone` | other cards' `dueAt` unchanged |
-| `theScopeLabelNamesASingleCategory` | `state.scopeLabel` |
-| `theScopeLabelCountsSeveralCategories` | `state.scopeLabel == "2 categories"` |
+| `theScopeLabelNamesASingleCategory` | `state.scopeLabel == ScopeLabel.One("Cat")` |
+| `theScopeLabelCountsSeveralCategories` | `state.scopeLabel == ScopeLabel.Many(2)` |
 | `resumingWithAScopeStillPullsOnlyThatScope` | new ViewModel instance, same ids |
 
-`anEmptySessionOffersToTurnNewCardsOnAndHonoursTheFlip` (`:167`) is not edited: the extracted
-strings keep `"Nothing due right now."` byte-for-byte (§7.4).
+`anEmptySessionOffersToTurnNewCardsOnAndHonoursTheFlip` (`:167`) asserts
+`EmptyReason.NothingDue`, not the resolved copy: the ViewModel can no longer resolve strings
+(C19), and the string itself is unchanged in `strings.xml`. The label cases assert typed
+values for the same reason — the screen owns `stringResource`.
 
 ### 9.5 Extend `RoutesTest.kt`
 
@@ -1281,11 +1313,12 @@ version of the per-paper rule lives in §9.7 instead.
 | `SessionOrderLoadTest.aCategoryIdFromAnotherPaperIsDropped` | a `p2` category id under `p1`'s order yields empty. Without the filter, `cA` resolves and `loadOrder` serves `q-a1`/`q-a2` under `p2` — this is the H1 regression pin. |
 | `SessionOrderLoadTest.aMixedSelectionKeepsOnlyThisPapersIds` | `p1` with one `p2` id keeps exactly `q-c1, q-a1, q-a2`. |
 | fixture | `paper p2`, category `cZ`, question `q-z1` added to the seeded fixture the two cases above use. |
-| `TestSessionScopeTest.aTickedParentServesItsChildrensQuestions` (**new**, Robolectric) | constructs a `TestViewModel` with a **ticked parent id** and loads; the session contains the child's question, and `countUngradedForCategories` for that scope counts it. A repository-level test cannot see the wiring, so this must construct the ViewModel — that is exactly why the missing Test-mode expansion survived the first Phase 4 verification (C17, C18). |
+| `TestCategoryScopeTest.aTickedParentServesItsChildQuestions` (Robolectric) | constructs a `TestViewModel` with a **ticked parent id** and loads; the session contains both children's questions, and `countUngradedForCategories` for that scope counts exactly 1. A repository-level test cannot see the wiring, so this must construct the ViewModel — that is exactly why the missing Test-mode expansion survived the first Phase 4 verification (C17, C18). |
+| `TestCategoryScopeTest.aTickedChildStillServesItsOwnQuestions` | ticking `cB` serves `q2` and counts its 1 ungraded question. The fixture's `cB` question has **no answer key** (`saveQuestion` accepts an empty key set; imports land the same way), because a graded question makes "ungraded in scope" and "scope lost the filter" both read 0 |
 | `RoutesTest.kt:52`, `:60` | pass byte-for-byte; the scoped cases are added (§9.5) |
-| `StudyViewModelPullTest.kt` | scoped cases added (§9.4); `:167` keeps its text |
+| `StudyViewModelPullTest.kt` | scoped cases added (§9.4); `:167` now asserts `EmptyReason.NothingDue` (C19) |
 
-`SessionOrderLoadTest` and `TestSessionScopeTest` are Robolectric, so every case in this table
+`SessionOrderLoadTest` and `TestCategoryScopeTest` are Robolectric, so every case in this table
 **compiles locally and executes on CI x86_64**; no local green claims them.
 
 ### 9.9 Tests that must keep passing untouched

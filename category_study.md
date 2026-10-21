@@ -53,7 +53,7 @@ revision 3 adds the runner and tooling facts (C6-C8).
 | **C4** | `theDrawerKeepsASelectionPerPaper` is stated as a source-shape assertion; the behavioural version moves to androidTest. | §9.6, §9.7 |
 | **C5** | Phase 3/4 green lines say "compiles locally, executes on CI x86_64" for Robolectric classes. | §11 |
 | **C6** | The local runner skips five real test classes because it greps the word `Robolectric` anywhere, comments included; the definition of a local green is corrected and the phase lines stop claiming those classes ran. | §9.10, §11 |
-| **C7** | `AGENTS.md`'s fenced build command — not only the bullet — points at the dead `/tmp/ncal-aapt2/aapt2`; §10 drafts a replacement block plus both bullets (the runner-skip instruction included) for owner approval. Not edited here. | §10 |
+| **C7** | `AGENTS.md`'s fenced build command — not only the bullet — points at the dead `/tmp/ncal-aapt2/aapt2`; §10 drafts a replacement block plus both bullets (the runner-skip instruction included) for owner approval. **Applied after approval**; §10 records the shipped text and the patched runner selector. | §10 |
 | **C8** | The durable runner fix (select on `^import org.robolectric`) is a recommended follow-up in §12, not a change made here, because the script lives outside the repo. | §12 |
 | **C9** | §9.3's descendant row is corrected: the store is flat, so the test expands `[cP]` first and also asserts the parent id alone yields 0 — the expansion is proved load-bearing. | §9.3 |
 | **C10** | `bestDueReviewForCategoriesChunked` takes the scheduler the pull already read instead of re-reading settings, so one pull ranks with one config snapshot. | §5.5 |
@@ -1239,8 +1239,8 @@ a green Phase 2 that skipped the shape proof would be a false green. Keep the ex
 A 901-id Robolectric test would not prove the limit either: Robolectric SDK 34's SQLite allows
 32766 variables, so an unchunked 901-id query passes there (N4).
 
-Counting the local run: `run-jvm-tests.sh` prints 113 class files without Robolectric but
-produces 111 TEST xml files, because two of those files declare no `@Test` and are support
+Counting the local run: `run-jvm-tests.sh` prints 118 class files without Robolectric but
+produces 116 TEST xml files, because two of those files declare no `@Test` and are support
 code (`ExportTestSupport.kt`, `PagingWalk.kt`). That two-file gap is expected, not a silently
 skipped test.
 
@@ -1328,7 +1328,7 @@ version of the per-paper rule lives in §9.7 instead.
 `getOrderForCategories`. They stay compiling because the **store** methods (`getStudyQueue`,
 `getNextStudyCard`, `getStudyEligibility`) keep a defaulted `categoryIds`, and because the
 drill call keeps `leechesOnly = true` inside the 200-character window. `NoDeadCodeTest` is
-untouched but **skipped by the local runner** — invoke it by name (§9.10).
+untouched and runs in the local pass now that the runner selects on the import (C8, §9.10).
 
 That is the distinction the previous wording blurred: a defaulted *store* parameter is
 backwards compatible, but a **new required** parameter on `getOrderForCategories` is not, so
@@ -1336,7 +1336,12 @@ its four call sites are owned by Phase 3 (§7.1.2) rather than left to defaults.
 
 ### 9.10 The local runner is not the pure-JVM subset
 
-`run-jvm-tests.sh:24-27` selects classes like this (verbatim):
+> **Updated (C8 applied):** the script now selects on `^import org.robolectric`, so the five
+> classes below run in a normal local pass — verified at `classes=118 tests=932 failures=0`.
+> The analysis below records why the old selector was wrong; it is history, not the current
+> behaviour.
+
+`run-jvm-tests.sh:24-27` used to select classes like this (verbatim):
 
 ```sh
 find "$TEST_SRC" -name '*.kt' | sed "s|^$TEST_SRC/||" | while read -r f; do
@@ -1345,8 +1350,8 @@ find "$TEST_SRC" -name '*.kt' | sed "s|^$TEST_SRC/||" | while read -r f; do
 done | sort > "$LIST"
 ```
 
-The pattern matches the word **anywhere in the file, comments included**. Five real test
-classes mention it only in prose, so the local run never executes them:
+The pattern matched the word **anywhere in the file, comments included**. Five real test
+classes mention it only in prose, so the old local run never executed them:
 
 | Class | Where the word appears |
 |---|---|
@@ -1359,7 +1364,7 @@ classes mention it only in prose, so the local run never executes them:
 All five are pure JVM and pass when invoked directly: the audit invoked all five by name and
 all five passed (6, 4 and 5 tests in the three behavioural classes, plus the two guard
 classes). **`NoDeadCodeTest` is the guard this plan leans on for orphaned helpers (§7.3), and
-it has not been running in the local suite at all.**
+it was not running in the local suite at all until the selector was fixed.**
 
 Therefore: **"green on `run-jvm-tests.sh`" means "green on the pure-JVM subset, which is the
 only subset this host can run"** — with the caveat that the script selects by the word, not by
@@ -1396,14 +1401,18 @@ follow-up in §12 and not made here (C8).
   category mid-session ends the sitting, and that a scope is not resumable by design.
 - `README.md` §Known limitations (or the drawer paragraph) — record that category selection
   is now per paper (previously ticks leaked across papers, §7.1.1).
-- `AGENTS.md` §Build and test — **drafted here, pending owner approval; this plan does not
-  edit the file (C7).** Fixing only the `aapt2FromMavenOverride` bullet would leave the
-  broken part in place: the fenced command block above it (`AGENTS.md:7-11`) still hard-codes
-  `/tmp/ncal-aapt2/aapt2`, and that block is what a reader copies. The draft below replaces
-  **both** the block and the aapt2 bullet (`:13-14`), and adds a runner bullet; the
-  Robolectric and no-new-dependency bullets (`:15-19`) stay as they are. Working path:
-  `/opt/android-aapt2/aapt2`, exported by `/sdcard/repo/apk-build/env.sh:12` as `MCQ_AAPT2`
-  and turned into `MCQ_AAPT2_OVERRIDE` at `:24`. Proposed replacement, verbatim:
+- `AGENTS.md` §Build and test — **applied.** The fenced command block (`AGENTS.md:7-11`) and
+  the `aapt2FromMavenOverride` bullet (`:13-14`) were the two that hard-coded the dead
+  `/tmp/ncal-aapt2/aapt2`, and both were replaced: the block sources
+  `/sdcard/repo/apk-build/env.sh` and passes `$MCQ_AAPT2_OVERRIDE`; the aapt2 bullet names
+  the working `/opt/android-aapt2/aapt2` (exported as `MCQ_AAPT2` at `env.sh:12`, turned into
+  `MCQ_AAPT2_OVERRIDE` at `:24`). A runner bullet was added; the Robolectric and
+  no-new-dependency bullets (`:15-19`) are unchanged. `run-jvm-tests.sh` was patched to
+  select classes on `^import org.robolectric` instead of the word, so the five it used to
+  hide (`NoDeadCodeTest`, `MistakesTest`, `BackupStreamingReadTest`, `ScaledRowStorageTest`,
+  `DownscaledImagesTraversalTest`) are covered by a normal local pass — verified at
+  `classes=118 tests=932 failures=0`. A reintroduced word-match would show as a lower class
+  count. Shipped text:
 
   ````markdown
   ## Build and test
@@ -1416,8 +1425,14 @@ follow-up in §12 and not made here (C8).
     $MCQ_AAPT2_OVERRIDE --no-daemon
   ```
 
-  - The aapt2FromMavenOverride is only needed on this ARM64 host; env.sh exports it (MCQ_AAPT2, default /opt/android-aapt2/aapt2). GitHub Actions uses the bundled aapt2 and passes no override. The old /tmp/ncal-aapt2/aapt2 path no longer exists.
-  - run-jvm-tests.sh selects classes by grepping the source for the word Robolectric, so a comment can hide a class: NoDeadCodeTest, MistakesTest, BackupStreamingReadTest, ScaledRowStorageTest and DownscaledImagesTraversalTest are skipped. Invoke them by name (--tests com.mcqapp.NoDeadCodeTest).
+  - The `aapt2FromMavenOverride` is only needed on this ARM64 host; `env.sh` exports it
+    (`MCQ_AAPT2`, default `/opt/android-aapt2/aapt2`). GitHub Actions uses the bundled `aapt2`
+    and passes no override. The old `/tmp/ncal-aapt2/aapt2` path no longer exists.
+  - `run-jvm-tests.sh` used to select classes by grepping the source for the **word**
+    Robolectric, so a comment could hide a class: `NoDeadCodeTest`, `MistakesTest`,
+    `BackupStreamingReadTest`, `ScaledRowStorageTest` and `DownscaledImagesTraversalTest` were
+    silently skipped. It now selects on `^import org.robolectric`, so a full local pass covers
+    them. If a future edit reintroduces a word-match, the symptom is a lower class count.
   ````
 
 There is no deleted scale-notes document to update: `c4a8f07` removed it along with its
@@ -1523,7 +1538,7 @@ Each phase compiles and is independently reviewable. Every phase ends green.
 | Deeply nested categories overflow the recursive flatten | Low (pre-existing) | The scale test is wide, not deep; the recursive walk matches what composition already does. Do not build a 10k-deep fixture. |
 | ViewModel key collision across scopes | Low | Include the joined ticked ids in `key` (§7.4). |
 | Empty `categories=` deep link | Low | Parses to empty list → whole paper. |
-| **The local runner silently omits five test classes** | **High (misleading green)** | `run-jvm-tests.sh:25` greps the word `Robolectric` anywhere in the file, so comments hide `NoDeadCodeTest`, `MistakesTest`, `BackupStreamingReadTest`, `ScaledRowStorageTest` and `DownscaledImagesTraversalTest` (§9.10). Invoke them by name until the script changes. **Recommended follow-up, not made here (C8):** the owner of `/sdcard/repo/apk-build` should select on the import — `grep -q '^import org.robolectric'` — because a comment can no longer defeat it, and the current selector makes every local green weaker than it reads. That script is outside this repo, which is why the plan records it instead of editing it. |
+| **The local runner silently omitted five test classes** | **High (misleading green)** | `run-jvm-tests.sh:25` used to grep the word `Robolectric` anywhere in the file, so comments hid `NoDeadCodeTest`, `MistakesTest`, `BackupStreamingReadTest`, `ScaledRowStorageTest` and `DownscaledImagesTraversalTest` (§9.10). **Fixed (C8):** the script now selects on `grep -q '^import org.robolectric'`, a comment can no longer defeat it, and the five run in a normal local pass — `classes=118 tests=932 failures=0`. A reintroduced word-match would show as a lower class count. |
 
 ---
 

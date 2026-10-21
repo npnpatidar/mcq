@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
@@ -107,10 +108,14 @@ class StudyAndSelectionUiTest {
         }
     }
 
-    /** Opens the drawer and waits for [paperId]'s row to be on screen. */
+    /** Scrolls the drawer's list until [tag] is on screen, and returns it. */
+    private fun drawerNode(tag: String) = compose.onNodeWithTag(tag).performScrollTo()
+
+    /** Opens the drawer and scrolls [paperId]'s row into view. */
     private fun openDrawer(paperId: String) {
         compose.onNodeWithContentDescription("Open menu").performClick()
         waitForTag("drawer-paper-$paperId")
+        drawerNode("drawer-paper-$paperId")
     }
 
     /**
@@ -596,12 +601,12 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         openDrawer("ui-scope")
-        compose.onNodeWithTag("drawer-paper-ui-scope").performClick()
+        drawerNode("drawer-paper-ui-scope").performClick()
         waitForTag("drawer-cat-ui-scope-p")
 
-        compose.onNodeWithTag("drawer-cat-ui-scope-p").performClick()
-        compose.onNodeWithTag("drawer-cat-ui-scope-ca").assertIsOn()
-        compose.onNodeWithTag("drawer-cat-ui-scope-cb").assertIsOn()
+        drawerNode("drawer-cat-ui-scope-p").performClick()
+        drawerNode("drawer-cat-ui-scope-ca").assertIsOn()
+        drawerNode("drawer-cat-ui-scope-cb").assertIsOn()
     }
 
     @Test
@@ -610,20 +615,20 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         openDrawer("ui-scope-tri")
-        compose.onNodeWithTag("drawer-paper-ui-scope-tri").performClick()
+        drawerNode("drawer-paper-ui-scope-tri").performClick()
         waitForTag("drawer-cat-ui-scope-tri-p")
-        compose.onNodeWithTag("drawer-cat-ui-scope-tri-p").performClick()
+        drawerNode("drawer-cat-ui-scope-tri-p").performClick()
 
         // One of two children off: the parent is partial, not off.
-        compose.onNodeWithTag("drawer-cat-ui-scope-tri-ca").performClick()
-        compose.onNodeWithTag("drawer-cat-ui-scope-tri-p").assert(
+        drawerNode("drawer-cat-ui-scope-tri-ca").performClick()
+        drawerNode("drawer-cat-ui-scope-tri-p").assert(
             SemanticsMatcher.expectValue(
                 SemanticsProperties.ToggleableState,
                 ToggleableState.Indeterminate
             )
         )
-        compose.onNodeWithTag("drawer-cat-ui-scope-tri-ca").assertIsOff()
-        compose.onNodeWithTag("drawer-cat-ui-scope-tri-cb").assertIsOn()
+        drawerNode("drawer-cat-ui-scope-tri-ca").assertIsOff()
+        drawerNode("drawer-cat-ui-scope-tri-cb").assertIsOn()
     }
 
     /**
@@ -638,18 +643,21 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         openDrawer("ui-iso-a")
-        compose.onNodeWithTag("drawer-paper-ui-iso-a").performClick()
+        drawerNode("drawer-paper-ui-iso-a").performClick()
         waitForTag("drawer-cat-ui-iso-a-cat")
-        compose.onNodeWithTag("drawer-cat-ui-iso-a-cat").performClick()
+        drawerNode("drawer-cat-ui-iso-a-cat").performClick()
 
         // Collapse A (its tick is kept) and tick only B.
-        compose.onNodeWithTag("drawer-paper-ui-iso-a").performClick()
-        compose.onNodeWithTag("drawer-paper-ui-iso-b").performClick()
+        drawerNode("drawer-paper-ui-iso-a").performClick()
+        drawerNode("drawer-paper-ui-iso-b").performClick()
         waitForTag("drawer-cat-ui-iso-b-cat")
-        compose.onNodeWithTag("drawer-cat-ui-iso-b-cat").performClick()
+        drawerNode("drawer-cat-ui-iso-b-cat").performClick()
 
-        compose.onNodeWithText("Test (1 categories)", substring = false).assertIsDisplayed()
-        compose.onNodeWithTag("drawer-test").performClick()
+        // The action row appears only once something is ticked, so it may be
+        // below the fold: scroll to it, then read its own label.
+        drawerNode("drawer-test").assertIsDisplayed()
+        compose.onNodeWithTag("drawer-test").assert(hasText("Test (1 categories)"))
+        drawerNode("drawer-test").performClick()
         waitFor("Question 1 of")
         waitFor("UITest ui-iso-b-q?")
         assertTrue(
@@ -672,13 +680,16 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         openDrawer("ui-drawer")
-        compose.onNodeWithTag("drawer-paper-ui-drawer").performClick()
+        drawerNode("drawer-paper-ui-drawer").performClick()
         waitForTag("drawer-cat-$second")
-        compose.onNodeWithTag("drawer-cat-$second").performClick()
+        drawerNode("drawer-cat-$second").performClick()
 
-        // One ticked branch, whatever its subtree contains.
-        compose.onNodeWithText("Study (1 categories)", substring = false).assertIsDisplayed()
-        compose.onNodeWithTag("drawer-study").performClick()
+        // One ticked branch, whatever its subtree contains. The row is the
+        // last child of the item and appears only now, so it can be below the
+        // fold: scroll to it and read the tagged node's own label.
+        drawerNode("drawer-study").assertIsDisplayed()
+        compose.onNodeWithTag("drawer-study").assert(hasText("Study (1 categories)"))
+        drawerNode("drawer-study").performClick()
 
         waitFor("UITest ui-drawer-q2?")
         assertTrue(

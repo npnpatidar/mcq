@@ -9,10 +9,18 @@ package com.mcqapp.data.local
  *
  * These wrappers chunk the id list and concatenate the results. The DAO methods
  * stay as they are; callers use these instead so no query can grow unbounded.
+ *
+ * [MAX_BIND_VARS] and [chunks] are `internal` because `StudyStore` chunks a
+ * scope it built itself; there is deliberately one budget, not a second copy.
  */
-private const val MAX_BIND_VARS = 500
+internal const val MAX_BIND_VARS = 500
 
-private fun <T> List<T>.chunks(): List<List<T>> =
+/**
+ * Splits an id list into bind-safe chunks in order; an empty list makes no
+ * chunk at all. A chunk of 500 ids plus the query's three scalars binds 503,
+ * well under the 999-variable ceiling.
+ */
+internal fun <T> List<T>.chunks(): List<List<T>> =
     if (isEmpty()) emptyList() else chunked(MAX_BIND_VARS)
 
 suspend fun OptionDao.getForQuestionsChunked(questionIds: List<String>): List<OptionEntity> =
@@ -108,6 +116,80 @@ suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String
 suspend fun ReviewLogDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { deleteByQuestions(it) }
 }
+
+/**
+ * Sums all five [StudyPopulation] fields across the chunks of a category scope.
+ * The chunks are disjoint categories, so the sums are the paper-wide counts
+ * restricted to the scope; `fresh` is still derived by the caller from
+ * `questions - (storedRows - newish)`.
+ */
+internal suspend fun CardStateDao.countsForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    now: Long
+): StudyPopulation =
+    categoryIds.chunks().fold(StudyPopulation(0, 0, 0, 0, 0)) { total, chunk ->
+        val part = countsForCategories(paperId, chunk, now)
+        StudyPopulation(
+            learning = total.learning + part.learning,
+            due = total.due + part.due,
+            leeches = total.leeches + part.leeches,
+            newish = total.newish + part.newish,
+            storedRows = total.storedRows + part.storedRows
+        )
+    }
+
+/** Every stale schedule in the scope; chunks are disjoint, so this is a union. */
+internal suspend fun CardStateDao.staleForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>
+): List<QuestionIdHash> =
+    categoryIds.chunks().flatMap { staleForCategories(paperId, it) }
+
+/**
+ * The scope's due schedules, concatenated in chunk order. One chunk is the
+ * paper-wide authored order restricted to the scope; a larger scope is that
+ * order split at chunk boundaries, which differs only where a boundary splits
+ * categories that interleave by `(sortOrder, title)`.
+ */
+internal suspend fun CardStateDao.dueForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    now: Long
+): List<CardStateEntity> =
+    categoryIds.chunks().flatMap { dueForCategories(paperId, it, now) }
+
+/**
+ * The first due learning card in serving order: the first row of the first
+ * non-empty chunk. Exact by definition of that order, not an approximation.
+ */
+internal suspend fun CardStateDao.firstDueLearningForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    now: Long
+): CardStateEntity? =
+    categoryIds.chunks().firstNotNullOfOrNull { firstDueLearningForCategories(paperId, it, now) }
+
+/** The scope's question count, summed over disjoint chunks. */
+internal suspend fun QuestionDao.countForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>
+): Int =
+    categoryIds.chunks().sumOf { countForCategories(paperId, it) }
+
+/** The first new question in serving order: the first found chunk's first row. */
+internal suspend fun QuestionDao.firstNewQuestionForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>
+): String? =
+    categoryIds.chunks().firstNotNullOfOrNull { firstNewQuestionForCategories(paperId, it) }
+
+/** The scope's new questions, concatenated in chunk order (same caveat as [dueForCategoriesChunked]). */
+internal suspend fun QuestionDao.newQuestionsForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>
+): List<String> =
+    categoryIds.chunks().flatMap { newQuestionsForCategories(paperId, it) }
 
 /**
  * Escapes [prefix] for a `LIKE :pattern ESCAPE '\\'` query so `%`, `_` and the

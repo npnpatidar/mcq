@@ -286,6 +286,11 @@
     <string name="session_accuracy">Recalled %1$d%% of them</string>
     <string name="new_cards_are_switched_off">New cards are switched off, so nothing new is being introduced.</string>
     <string name="introduce_new_cards">Introduce new cards</string>
+    <string name="study_scope_many">%1$d categories</string>
+    <string name="nothing_due">Nothing due right now.</string>
+    <string name="nothing_due_in_scope">Nothing due in the selected categories.</string>
+    <string name="nothing_tricky">No tricky questions right now.</string>
+    <string name="nothing_tricky_in_scope">No tricky questions in the selected categories.</string>
 
     <!-- Statistics page -->
     <string name="stats">Statistics</string>

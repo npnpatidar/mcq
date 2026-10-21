@@ -149,18 +149,25 @@ fun McqNavHost(repository: McqRepository) {
             )
         }
         composable(
-            route = "study/{paperId}?leechesOnly={leechesOnly}",
+            route = "study/{paperId}?categories={categories}&leechesOnly={leechesOnly}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
+                navArgument("categories") { type = NavType.StringType; defaultValue = "" },
                 navArgument("leechesOnly") { type = NavType.BoolType; defaultValue = false }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
+            val categories = entry.arguments?.getString("categories").orEmpty()
+                .split(",").filter { it.isNotBlank() }
             val leechesOnly = entry.arguments?.getBoolean("leechesOnly") ?: false
-            Logger.i("NAV", "study screen: paperId=$paperId, leechesOnly=$leechesOnly")
+            Logger.i(
+                "NAV",
+                "study screen: paperId=$paperId, categories=$categories, leechesOnly=$leechesOnly"
+            )
             StudyScreen(
                 repository = repository,
                 paperId = paperId,
+                categoryIds = categories,
                 leechesOnly = leechesOnly,
                 navController = navController
             )

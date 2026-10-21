@@ -12,6 +12,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.AnswerReview
 import com.mcqapp.domain.AutoAdvance
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
@@ -197,7 +198,21 @@ class TestViewModel(
             try {
                 Logger.d("TESTVM", "Loading paper $paperId")
                 val paper = repository.getPaper(paperId)
-                Logger.d("TESTVM", "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}")
+                // The route carries the ticked ids; the served scope is their
+                // expansion over the paper's tree. A parent id alone matches no
+                // question (the queries filter questions.categoryId), so
+                // everything below this line takes the expanded list — only the
+                // resume snapshot keeps the ticked ids it was saved with.
+                val scopeIds = if (categoryIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    CategorySelection.orderedIds(paper?.categories.orEmpty(), categoryIds)
+                }
+                Logger.d(
+                    "TESTVM",
+                    "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}, " +
+                        "scope=${scopeIds.size}"
+                )
                 // Session order only: the load streams the ids and passage
                 // membership out of the database, so a million-question paper
                 // never materialises its refs, let alone its content.
@@ -206,7 +221,7 @@ class TestViewModel(
                 } else if (categoryIds.isEmpty()) {
                     repository.getSessionOrderForPaper(paperId)
                 } else {
-                    repository.getSessionOrderForCategories(paperId, categoryIds)
+                    repository.getSessionOrderForCategories(paperId, scopeIds)
                 }
                 Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesOnly) " (mistakes only)" else "")
@@ -261,7 +276,7 @@ class TestViewModel(
                 val ungradedTotal = when {
                     isDrill || mistakesOnly -> repository.countUngraded(drilled.idsInOrder())
                     categoryIds.isEmpty() -> repository.countUngradedForPaper(paperId)
-                    else -> repository.countUngradedForCategories(categoryIds)
+                    else -> repository.countUngradedForCategories(scopeIds)
                 }
                 _state.update {
                     it.copy(

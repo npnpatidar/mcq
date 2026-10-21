@@ -55,9 +55,9 @@ class StudyViewModelPullTest {
         return condition()
     }
 
-    private fun question(id: String) = com.mcqapp.domain.Question(
+    private fun question(id: String, categoryId: String = "c1") = com.mcqapp.domain.Question(
         id = id,
-        categoryId = "c1",
+        categoryId = categoryId,
         text = "Q $id?",
         options = listOf(
             com.mcqapp.domain.QuestionOption("$id-a", "A"),
@@ -402,5 +402,127 @@ class StudyViewModelPullTest {
             fresh.map { it.questionId }.toSet(),
             visited
         )
+    }
+
+    /**
+     * The pull runs only over the selected categories (§9.4): a scoped session
+     * must stop on its own scope and never touch another category's schedule.
+     * A route carries the ticked ids; the ViewModel expands them from the
+     * paper, exactly like the destination does in the app.
+     */
+    @Test
+    fun aCategorySessionStopsWhenItsScopeIsDry() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            repository.setSchedulerConfig(
+                repository.schedulerConfigNow().copy(introduceNewCards = false)
+            )
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = now - 30 * day)
+            c2
+        }
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf(other))
+        assertTrue(awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+
+        viewModel.toggleOption("q2-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue(awaitCondition { viewModel.state.value.finished })
+        // Work was done, so this is not the "empty paper" copy.
+        assertEquals("", viewModel.state.value.emptyReason)
+        // The scope ran dry while the paper still had a due card in c1.
+        assertTrue(
+            runBlocking { repository.getStudyQueue("p1").any { it.questionId == "q1" } }
+        )
+    }
+
+    @Test
+    fun aCategorySessionLeavesOtherCategoriesSchedulesAlone() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = now - 30 * day)
+            c2
+        }
+        val before = runBlocking { repository.cardState("p1", "q1")!! }
+        val gradedBefore = runBlocking { repository.cardState("p1", "q2")!! }
+
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf(other))
+        assertTrue(awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+        viewModel.toggleOption("q2-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue(
+            awaitCondition {
+                viewModel.state.value.current?.questionId != "q2" || viewModel.state.value.finished
+            }
+        )
+
+        // Grading inside c2 must not touch c1, and did move its own card.
+        assertEquals(before, runBlocking { repository.cardState("p1", "q1")!! })
+        assertTrue(
+            "the graded card must actually schedule",
+            runBlocking { repository.cardState("p1", "q2")!!.dueAt } != gradedBefore.dueAt
+        )
+    }
+
+    @Test
+    fun theScopeLabelNamesASingleCategory() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+        }
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf("c1"))
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertEquals("Cat", viewModel.state.value.scopeLabel)
+    }
+
+    @Test
+    fun theScopeLabelCountsSeveralCategories() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            c2
+        }
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf("c1", other))
+        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertEquals("2 categories", viewModel.state.value.scopeLabel)
+    }
+
+    @Test
+    fun resumingWithAScopeStillPullsOnlyThatScope() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = now - 30 * day)
+            c2
+        }
+        val routeIds = listOf(other)
+        val first = StudyViewModel(app, "p1", categoryIds = routeIds)
+        assertTrue(awaitCondition { first.state.value.current != null })
+        assertEquals("q2", first.state.value.current!!.questionId)
+
+        // Resuming builds a fresh instance from the same route ids; the scope
+        // is recomputed from the route, not carried as expanded state.
+        val resumed = StudyViewModel(app, "p1", categoryIds = routeIds)
+        assertTrue(awaitCondition { resumed.state.value.current != null })
+        assertEquals("q2", resumed.state.value.current!!.questionId)
     }
 }

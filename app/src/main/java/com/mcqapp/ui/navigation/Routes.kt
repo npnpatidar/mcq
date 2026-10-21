@@ -25,9 +25,23 @@ fun browseRoute(paperId: String, focusQuestionId: String? = null): String =
     if (focusQuestionId == null) "browse/${encode(paperId)}"
     else "browse/${encode(paperId)}?focus=${encode(focusQuestionId)}"
 
-fun studyRoute(paperId: String, leechesOnly: Boolean = false): String =
-    if (leechesOnly) "study/${encode(paperId)}?leechesOnly=true"
-    else "study/${encode(paperId)}"
+/**
+ * [categoryIds] are the **ticked** ids, not the expanded scope: the header
+ * JSON is rewritten on every answer, and an expanded scope would cost a write
+ * per category per tap. The destination re-expands them from the paper it
+ * already loads (§6.4).
+ */
+fun studyRoute(
+    paperId: String,
+    categoryIds: List<String> = emptyList(),
+    leechesOnly: Boolean = false
+): String {
+    val query = buildList {
+        if (categoryIds.isNotEmpty()) add("categories=${encode(categoryIds.joinToString(","))}")
+        if (leechesOnly) add("leechesOnly=true")
+    }
+    return "study/${encode(paperId)}" + if (query.isEmpty()) "" else "?" + query.joinToString("&")
+}
 
 fun resultsRoute(attemptId: Long): String = "results/$attemptId"
 

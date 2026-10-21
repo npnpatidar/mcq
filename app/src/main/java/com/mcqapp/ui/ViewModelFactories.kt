@@ -58,10 +58,11 @@ class BrowseViewModelFactory(
 class StudyViewModelFactory(
     private val application: Application,
     private val paperId: String,
+    private val categoryIds: List<String> = emptyList(),
     private val leechesOnly: Boolean = false
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return StudyViewModel(application, paperId, leechesOnly) as T
+        return StudyViewModel(application, paperId, categoryIds, leechesOnly) as T
     }
 }

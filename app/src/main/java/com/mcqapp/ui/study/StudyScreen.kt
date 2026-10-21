@@ -90,14 +90,16 @@ fun StudyScreen(
     repository: McqRepository,
     paperId: String,
     navController: NavController,
+    categoryIds: List<String> = emptyList(),
     leechesOnly: Boolean = false
 ) {
     val context = LocalContext.current
     val viewModel: StudyViewModel = viewModel(
-        key = "study-$paperId-$leechesOnly",
+        key = "study-$paperId-${categoryIds.joinToString(",")}-$leechesOnly",
         factory = StudyViewModelFactory(
             context.applicationContext as Application,
             paperId,
+            categoryIds,
             leechesOnly
         )
     )
@@ -441,16 +443,25 @@ private fun StudyStickyHeader(
                         contentDescription = stringResource(R.string.back)
                     )
                 }
-                Text(
-                    state.paperTitle,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("study-paper-title")
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        state.paperTitle,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("study-paper-title")
+                    )
+                    if (state.scopeLabel.isNotEmpty()) {
+                        Text(
+                            state.scopeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("study-scope-label")
+                        )
+                    }
+                }
                 TextButton(
                     onClick = onStop,
                     modifier = Modifier.testTag("study-done")

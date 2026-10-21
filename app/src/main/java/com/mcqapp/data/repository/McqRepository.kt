@@ -463,8 +463,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionStore.getOrderForPaper(paperId)
 
     /** [getSessionOrderForPaper] over an explicit category selection. */
-    suspend fun getSessionOrderForCategories(categoryIds: List<String>): SessionOrder =
-        questionStore.getOrderForCategories(categoryIds)
+    suspend fun getSessionOrderForCategories(
+        paperId: String,
+        categoryIds: List<String>
+    ): SessionOrder =
+        questionStore.getOrderForCategories(paperId, categoryIds)
 
     /** Observed refs for browse: the list re-emits on any write. */
     fun observeQuestionRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<QuestionRef>> =
@@ -653,24 +656,31 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getStudyQueue(
         paperId: String,
         now: Long = System.currentTimeMillis(),
-        leechesOnly: Boolean = false
+        leechesOnly: Boolean = false,
+        categoryIds: List<String> = emptyList()
     ): List<com.mcqapp.domain.StudyCard> =
-        studyStore.getStudyQueue(paperId, now, leechesOnly)
-    /** The card a pull-based session serves next, or null when nothing is due. */
+        studyStore.getStudyQueue(paperId, now, leechesOnly, categoryIds)
+    /**
+     * The card a pull-based session serves next, or null when nothing is due.
+     * [categoryIds] empty means the whole paper; a non-empty list scopes both
+     * the learning and the review head to it.
+     */
     suspend fun getNextStudyCard(
         paperId: String,
         reviewsSinceNew: Int = 0,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        categoryIds: List<String> = emptyList()
     ): com.mcqapp.domain.StudyCard? =
-        studyStore.getNextStudyCard(paperId, reviewsSinceNew, now)
+        studyStore.getNextStudyCard(paperId, reviewsSinceNew, now, categoryIds)
     /** Per-pool eligibility: what a session would serve right now, and why. */
     suspend fun getStudyEligibility(
         paperId: String,
         now: Long = System.currentTimeMillis(),
         /** Overrides the stored introduce-new-cards toggle; see [StudyStore]. */
-        introduceNewCards: Boolean? = null
+        introduceNewCards: Boolean? = null,
+        categoryIds: List<String> = emptyList()
     ): com.mcqapp.domain.StudyEligibility =
-        studyStore.getStudyEligibility(paperId, now, introduceNewCards)
+        studyStore.getStudyEligibility(paperId, now, introduceNewCards, categoryIds)
     suspend fun getStudyCounts(
         paperId: String,
         now: Long = System.currentTimeMillis()

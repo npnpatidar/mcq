@@ -56,6 +56,13 @@ class SessionOrderLoadTest {
             question("q-c1", "cC", hasKey = false)
             question("q-a1", "cA")
             question("q-a2", "cA")
+
+            // A second paper, for the cross-paper id the scoped order must drop.
+            db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Other"))
+            db.categoryDao().upsert(
+                CategoryEntity(id = "cZ", paperId = "p2", title = "Zeta", sortOrder = 0)
+            )
+            question("q-z1", "cZ")
         }
     }
 
@@ -90,14 +97,29 @@ class SessionOrderLoadTest {
     fun aCategorySelectionIsOrderedBySortOrderThenTitle() = runBlocking {
         assertEquals(
             listOf("q-c1", "q-a1", "q-a2"),
-            repository.getSessionOrderForCategories(listOf("cA", "cC")).idsInOrder()
+            repository.getSessionOrderForCategories("p1", listOf("cA", "cC")).idsInOrder()
         )
     }
 
     @Test
     fun aMissingCategorySelectionIsAnEmptyOrder() = runBlocking {
-        assertTrue(repository.getSessionOrderForCategories(listOf("nope")).isEmpty)
+        assertTrue(repository.getSessionOrderForCategories("p1", listOf("nope")).isEmpty)
         assertTrue(repository.getSessionOrderForPaper("nope").isEmpty)
+    }
+
+    @Test
+    fun aCategoryIdFromAnotherPaperIsDropped() = runBlocking {
+        // cA belongs to p1; asking p2 for it must not resolve, or the order
+        // would serve p1's questions under p2 (the live cross-paper vector).
+        assertTrue(repository.getSessionOrderForCategories("p2", listOf("cA")).isEmpty)
+    }
+
+    @Test
+    fun aMixedSelectionKeepsOnlyThisPapersIds() = runBlocking {
+        assertEquals(
+            listOf("q-c1", "q-a1", "q-a2"),
+            repository.getSessionOrderForCategories("p1", listOf("cA", "cC", "cZ")).idsInOrder()
+        )
     }
 
     @Test

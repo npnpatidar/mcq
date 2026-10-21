@@ -113,9 +113,15 @@ internal class QuestionStore(
      * [getOrderForPaper] over an explicit category selection, ordered the way
      * the old paper-wide join ordered it: by `(categories.sortOrder,
      * categories.title)`, then `(questions.sortOrder, rowid)` inside each.
+     *
+     * [paperId] is required, not defaulted: it is what stops a stale id from
+     * another paper entering the selection, and a default would let the next
+     * caller forget it. Ids are looked up in chunks (a scope can exceed
+     * SQLite's bind limit) and ids belonging to a different paper are dropped.
      */
-    suspend fun getOrderForCategories(categoryIds: List<String>): SessionOrder {
-        val ordered = db.categoryDao().getByIds(categoryIds)
+    suspend fun getOrderForCategories(paperId: String, categoryIds: List<String>): SessionOrder {
+        val ordered = db.categoryDao().getByIdsChunked(categoryIds)
+            .filter { it.paperId == paperId }
             .sortedWith(compareBy({ it.sortOrder }, { it.title }))
             .map { it.id }
         return loadOrder(ordered)

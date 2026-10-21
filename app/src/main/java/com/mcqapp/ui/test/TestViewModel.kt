@@ -206,7 +206,7 @@ class TestViewModel(
                 } else if (categoryIds.isEmpty()) {
                     repository.getSessionOrderForPaper(paperId)
                 } else {
-                    repository.getSessionOrderForCategories(categoryIds)
+                    repository.getSessionOrderForCategories(paperId, categoryIds)
                 }
                 Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesOnly) " (mistakes only)" else "")

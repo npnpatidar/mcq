@@ -698,4 +698,71 @@ class StudyAndSelectionUiTest {
                 .fetchSemanticsNodes().isEmpty()
         )
     }
+
+    // --- the card's selection tree (§9.4) ---
+
+    @Test
+    fun theEyeOpensASelectionTreeOnTheCard() {
+        seedNestedPaper("ui-eye", "UIEye Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-eye").performScrollTo().performClick()
+        waitForTag("card-cat-ui-eye-p")
+        compose.onNodeWithTag("card-cat-ui-eye-p").performScrollTo().performClick()
+        waitForTag("paper-study-selection-ui-eye")
+        // Both children are fresh, the parent rolls them up: 0 due, 2 new.
+        compose.onNodeWithTag("paper-study-selection-ui-eye")
+            .assert(hasText("Study selection (2 new)"))
+    }
+
+    @Test
+    fun theCardAndTheDrawerShareOneSelection() {
+        seedNestedPaper("ui-share", "UIShare Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-share").performScrollTo().performClick()
+        waitForTag("card-cat-ui-share-p")
+        compose.onNodeWithTag("card-cat-ui-share-p").performScrollTo().performClick()
+        waitForTag("paper-study-selection-ui-share")
+
+        // The drawer reads the same ViewModel-owned selection.
+        openDrawer("ui-share")
+        drawerNode("drawer-cat-ui-share-p").assertIsOn()
+
+        // Unticking there clears the card's scope too: one owner, two readers.
+        drawerNode("drawer-cat-ui-share-p").performClick()
+        drawerNode("drawer-cat-ui-share-p").assertIsOff()
+        compose.onNodeWithTag("paper-study-selection-ui-share").assertDoesNotExist()
+        compose.onNodeWithTag("card-cat-ui-share-p").assertIsOff()
+    }
+
+    @Test
+    fun theScopedCardButtonStartsAScopedSession() {
+        seedNestedPaper("ui-cardscope", "UICardScope Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cardscope").performScrollTo().performClick()
+        waitForTag("card-cat-ui-cardscope-p")
+        compose.onNodeWithTag("card-cat-ui-cardscope-p").performScrollTo().performClick()
+        waitForTag("paper-study-selection-ui-cardscope")
+        compose.onNodeWithTag("paper-study-selection-ui-cardscope")
+            .performScrollTo()
+            .performClick()
+
+        // The parent's tick expands to both children; the first served card is
+        // the first child's, and the header names the scope.
+        waitFor("Question 1 of")
+        waitFor("UITest ui-cardscope-qa?")
+        compose.onNodeWithTag("study-scope-label").assert(hasText("Parent"))
+        assertTrue(
+            "the second child's question appeared before it was served",
+            compose.onAllNodesWithText("UITest ui-cardscope-qb?", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+        // Grading through reaches the second child: the expansion is real.
+        compose.onNodeWithText("Alpha", substring = false).performClick()
+        compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
+        waitFor("UITest ui-cardscope-qb?")
+    }
 }

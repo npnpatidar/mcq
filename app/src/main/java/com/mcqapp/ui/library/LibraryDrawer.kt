@@ -46,9 +46,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.CategoryCheckState
+import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.rollUpCategoryCounts
 
 /** The navigation drawer: destinations, per-paper category picker, import. */
 @Composable
@@ -62,6 +64,14 @@ internal fun DrawerContent(
     onOpenPassages: () -> Unit,
     onOpenSettings: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
+    /**
+     * The selection lives in [LibraryViewModel] (D2) — one owner for the
+     * drawer and the card. `countsByPaper` feeds the per-row counts.
+     */
+    selectedByPaper: Map<String, Set<String>> = emptyMap(),
+    onToggleCategory: (paperId: String, categoryId: String) -> Unit = { _, _ -> },
+    onExpandCategories: (paperId: String) -> Unit = {},
+    countsByPaper: Map<String, Map<String, CategoryCounts>> = emptyMap(),
     onImport: () -> Unit,
     /**
      * Starts a whole session over the ticked categories. Last in the list
@@ -70,18 +80,6 @@ internal fun DrawerContent(
     onStartStudy: (paperId: String, categoryIds: List<String>) -> Unit
 ) {
     var expandedPaperId by remember { mutableStateOf<String?>(null) }
-    // The selection is per paper, declared once here rather than inside the
-    // per-paper item: a drawer-wide set let paper A's ids reach paper B's
-    // button, and that route served A's questions under B's paper id.
-    // Collapsing a paper deliberately keeps its ticks.
-    var onByPaper by remember { mutableStateOf<Map<String, Set<String>>>(emptyMap()) }
-
-    fun onFor(paperId: String): Set<String> = onByPaper[paperId].orEmpty()
-
-    fun toggle(paper: Paper, id: String) {
-        val next = CategorySelection.toggle(paper.categories, onFor(paper.id), id)
-        onByPaper = onByPaper + (paper.id to next)
-    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -189,7 +187,9 @@ internal fun DrawerContent(
             }
             item(contentType = "divider") { Divider() }
             items(papers, key = { it.id }, contentType = { "paper" }) { paper ->
-                val on = onFor(paper.id)
+                // The selection is read, not owned, here: it lives in the
+                // ViewModel, so the card and the drawer cannot disagree (D2).
+                val on = selectedByPaper[paper.id].orEmpty()
                 // Once per (paper, selection), not per node: state() walks the
                 // subtree, so a per-node call is O(n^2) on a large tree.
                 val states = remember(paper.categories, on) {
@@ -198,6 +198,9 @@ internal fun DrawerContent(
                 val ticked = remember(paper.categories, on) {
                     CategorySelection.tickedIds(paper.categories, on)
                 }
+                val rolled = remember(paper.categories, countsByPaper[paper.id]) {
+                    rollUpCategoryCounts(paper.categories, countsByPaper[paper.id].orEmpty())
+                }
                 Column {
                     Row(
                         modifier = Modifier
@@ -205,6 +208,7 @@ internal fun DrawerContent(
                             .clickable {
                                 expandedPaperId =
                                     if (expandedPaperId == paper.id) null else paper.id
+                                if (expandedPaperId == paper.id) onExpandCategories(paper.id)
                             }
                             .testTag("drawer-paper-${paper.id}")
                             .padding(16.dp),
@@ -229,7 +233,8 @@ internal fun DrawerContent(
                             CategoryTree(
                                 nodes = paper.categories,
                                 states = states,
-                                onToggle = { id -> toggle(paper, id) }
+                                counts = rolled,
+                                onToggle = { id -> onToggleCategory(paper.id, id) }
                             )
                             if (ticked.isNotEmpty()) {
                                 Row(
@@ -292,6 +297,7 @@ internal fun DrawerContent(
 private fun CategoryTree(
     nodes: List<CategoryNode>,
     states: Map<String, CategoryCheckState>,
+    counts: Map<String, CategoryCounts>,
     onToggle: (String) -> Unit
 ) {
     for (node in nodes) {
@@ -311,13 +317,33 @@ private fun CategoryTree(
                 onClick = { onToggle(node.id) },
                 modifier = Modifier.testTag("drawer-cat-${node.id}")
             )
-            Text(
-                node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
-                modifier = Modifier.weight(1f)
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                // Scheduling counts, not sizes: a row with nothing eligible
+                // stays a plain title. totalQuestionCount above is a different
+                // number — every question, eligible or not.
+                val own = counts[node.id] ?: CategoryCounts()
+                if (!own.isEmpty) {
+                    Text(
+                        categoryCountsLine(own),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("drawer-counts-${node.id}")
+                    )
+                }
+            }
         }
         Column(modifier = Modifier.padding(start = 24.dp)) {
-            CategoryTree(nodes = node.children, states = states, onToggle = onToggle)
+            CategoryTree(
+                nodes = node.children,
+                states = states,
+                counts = counts,
+                onToggle = onToggle
+            )
         }
     }
 }

@@ -85,4 +85,76 @@ class LibraryViewModelStudyCountsTest {
         assertTrue("study counts never arrived", vm.studyCounts.value.isNotEmpty())
         assertEquals(emptyList<String>(), Logger.recentErrors())
     }
+
+    /** Pumps the main looper until [condition] holds, for stateIn emissions. */
+    private fun pumpUntil(condition: () -> Boolean) {
+        val looper = android.os.Looper.getMainLooper()
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            org.robolectric.Shadows.shadowOf(looper).runToEndOfTasks()
+            Thread.sleep(20)
+        }
+    }
+
+    @Test
+    fun toggleCategoryFollowsTheSelectionModel() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val repository = (app as McqApplication).repository
+        repository.ensurePaperAndCategory("p1", "Paper", "cP", "Parent")
+        listOf("cA" to 0, "cB" to 1).forEach { (id, order) ->
+            repository.db().categoryDao().upsert(
+                com.mcqapp.data.local.CategoryEntity(
+                    id = id,
+                    paperId = "p1",
+                    title = "Child $id",
+                    parentId = "cP",
+                    sortOrder = order
+                )
+            )
+        }
+        val vm = com.mcqapp.ui.library.LibraryViewModel(app)
+        pumpUntil { vm.papers.value.any { it.id == "p1" } }
+
+        // Ticking the parent writes the whole subtree on (CategorySelection).
+        vm.toggleCategory("p1", "cP")
+        assertEquals(setOf("cP", "cA", "cB"), vm.selectedFor("p1"))
+        // Unticking one child: the concrete child goes off, the parent is not
+        // re-asserted from above, and the sibling stays on.
+        vm.toggleCategory("p1", "cA")
+        assertEquals(setOf("cB"), vm.selectedFor("p1"))
+    }
+
+    @Test
+    fun ensureCategoryCountsLoadsAndCachesPerPaper() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val repository = (app as McqApplication).repository
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "q1",
+                categoryId = "c1",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Q?")),
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("a", "A"),
+                    com.mcqapp.domain.QuestionOption("b", "B")
+                ),
+                correctOptionIds = setOf("a")
+            )
+        )
+        val vm = com.mcqapp.ui.library.LibraryViewModel(app)
+        pumpUntil { vm.papers.value.any { it.id == "p1" } }
+
+        vm.ensureCategoryCounts("p1")
+        pumpUntil { vm.categoryCounts.value.containsKey("p1") }
+        val first = vm.categoryCounts.value["p1"]
+        // One never-scheduled question: the category is entirely fresh.
+        assertEquals(
+            com.mcqapp.domain.CategoryCounts(fresh = 1),
+            first?.get("c1")
+        )
+        // A second expand must be free: the guard returns before any query, so
+        // the cached map is unchanged.
+        vm.ensureCategoryCounts("p1")
+        assertEquals(first, vm.categoryCounts.value["p1"])
+    }
 }

@@ -12,6 +12,8 @@ import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.CategoryCounts
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
 import java.io.InputStream
@@ -45,6 +47,41 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val studyCounts: StateFlow<Map<String, com.mcqapp.data.repository.StudyCounts>> =
         _studyCounts.asStateFlow()
 
+    // One selection per paper, owned here (D2): the drawer's own remember map
+    // died on rotation and could not be shared with the card, and two owners
+    // for one paper is the bug class category_study.md §7.1.1 fixed.
+    private val _selection = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val selection: StateFlow<Map<String, Set<String>>> = _selection.asStateFlow()
+
+    // Per-category counts, loaded lazily per expanded paper (D4): the library
+    // must not pay two grouped queries per paper on every startup, only when
+    // a card or drawer tree is actually opened.
+    private val _categoryCounts =
+        MutableStateFlow<Map<String, Map<String, CategoryCounts>>>(emptyMap())
+    val categoryCounts: StateFlow<Map<String, Map<String, CategoryCounts>>> =
+        _categoryCounts.asStateFlow()
+
+    fun selectedFor(paperId: String): Set<String> = _selection.value[paperId].orEmpty()
+
+    fun toggleCategory(paperId: String, categoryId: String) {
+        val paper = papers.value.firstOrNull { it.id == paperId } ?: return
+        val next = CategorySelection.toggle(paper.categories, selectedFor(paperId), categoryId)
+        _selection.value = _selection.value + (paperId to next)
+    }
+
+    /** Loads a paper's per-category counts once; a second expand is free. */
+    fun ensureCategoryCounts(paperId: String) {
+        if (_categoryCounts.value.containsKey(paperId)) return
+        viewModelScope.launch {
+            try {
+                _categoryCounts.value =
+                    _categoryCounts.value + (paperId to repository.categoryCounts(paperId))
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "categoryCounts failed", e)
+            }
+        }
+    }
+
     init {
         viewModelScope.launch {
             repository.observeAttempts().collect {
@@ -77,6 +114,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             try {
                 _studyCounts.value = papers.value.associate { paper ->
                     paper.id to repository.getStudyCounts(paper.id)
+                }
+                // The papers whose trees are open show per-category counts too:
+                // re-read only those, so an unexpanded library pays nothing.
+                val cached = _categoryCounts.value.keys
+                if (cached.isNotEmpty()) {
+                    _categoryCounts.value = _categoryCounts.value + cached.associate { paperId ->
+                        paperId to repository.categoryCounts(paperId)
+                    }
                 }
             } catch (e: Exception) {
                 Logger.e("LIBVM", "refreshStudyCounts failed", e)
@@ -206,6 +251,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 repository.deletePaper(paperId)
+                // A deleted paper's selection and counts are dead weight, and a
+                // stale count map would resurrect them on the next expansion.
+                _selection.value = _selection.value - paperId
+                _categoryCounts.value = _categoryCounts.value - paperId
             } catch (e: Exception) {
                 // Unguarded, a database error here escaped viewModelScope and
                 // took the app down on an ordinary tap.

@@ -73,24 +73,36 @@ class StudyActionStructureTest {
     @Test
     fun theCategoryTreeUsesATriStateCheckbox() {
         val drawer = source("src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt")
-        assertTrue("the tree must render a tri-state box", drawer.contains("TriStateCheckbox("))
-        // Each of the three states is mapped explicitly, so a partial branch
-        // cannot silently render as fully on or fully off.
-        listOf(
-            "CategoryCheckState.CHECKED -> ToggleableState.On",
-            "CategoryCheckState.UNCHECKED -> ToggleableState.Off",
-            "CategoryCheckState.INDETERMINATE -> ToggleableState.Indeterminate"
-        ).forEach { mapping ->
-            assertTrue("missing mapping: $mapping", drawer.contains(mapping))
+        val card = source("src/main/java/com/mcqapp/ui/library/LibraryPaperCard.kt")
+        // Both surfaces render the same tri-state box with every state mapped
+        // explicitly, so a partial branch cannot silently read as on or off.
+        listOf(drawer to "the drawer", card to "the card").forEach { (file, name) ->
+            assertTrue("$name must render a tri-state box", file.contains("TriStateCheckbox("))
+            listOf(
+                "CategoryCheckState.CHECKED -> ToggleableState.On",
+                "CategoryCheckState.UNCHECKED -> ToggleableState.Off",
+                "CategoryCheckState.INDETERMINATE -> ToggleableState.Indeterminate"
+            ).forEach { mapping ->
+                assertTrue("$name missing mapping: $mapping", file.contains(mapping))
+            }
         }
-        // Computing states once per tree is what keeps a 1000-node paper O(n).
+        // Each surface computes states once per (tree, selection): state()
+        // walks the subtree, so a per-node call is O(n^2) on a 1000-node paper.
         assertTrue(
-            "states must be built once for the tree",
+            "the drawer must build states once for the tree",
             drawer.contains("CategorySelection.states(paper.categories, on)")
         )
+        assertTrue(
+            "the card must build states once for the tree",
+            card.contains("CategorySelection.states(paper.categories, selected)")
+        )
         assertFalse(
-            "state() per node would be O(n^2)",
+            "state() per node would be O(n^2) in the drawer",
             drawer.contains("CategorySelection.state(")
+        )
+        assertFalse(
+            "state() per node would be O(n^2) in the card",
+            card.contains("CategorySelection.state(")
         )
     }
 
@@ -110,19 +122,64 @@ class StudyActionStructureTest {
     }
 
     @Test
-    fun theDrawerKeepsASelectionPerPaper() {
+    fun theSelectionHasOneOwner() {
+        val viewModel = source("src/main/java/com/mcqapp/ui/library/LibraryViewModel.kt")
         val drawer = source("src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt")
-        // Declared once at DrawerContent scope...
-        val declaration = drawer.indexOf("var onByPaper")
-        val itemsLoop = drawer.indexOf("items(papers")
-        assertTrue("the per-paper map is missing", declaration >= 0)
-        assertTrue("the map must be declared before the paper list", declaration < itemsLoop)
-        // ...and read per paper, keyed by its id.
-        assertTrue(drawer.contains("onByPaper[paperId].orEmpty()"))
-        assertTrue(drawer.contains("onByPaper = onByPaper + (paper.id to next)"))
-        // A drawer-wide set is exactly the bug this replaced.
-        assertFalse(drawer.contains("val checkedCategories = remember"))
-        assertFalse(drawer.contains("mutableStateOf(setOf<String>())"))
+        val screen = source("src/main/java/com/mcqapp/ui/library/LibraryScreen.kt")
+        // The ViewModel owns the selection; the drawer and the card read it.
+        // Two owners for one paper is the category_study.md §7.1.1 bug class:
+        // a drawer-wide set let paper A's ids ride along with paper B's.
+        assertTrue(
+            "the selection must be declared in the ViewModel",
+            viewModel.contains("_selection = MutableStateFlow<Map<String, Set<String>>>")
+        )
+        assertFalse(
+            "the drawer must not own a per-paper selection any more",
+            drawer.contains("var onByPaper")
+        )
+        assertFalse(
+            "the drawer must not write the selection",
+            drawer.contains("onByPaper =")
+        )
+        assertFalse(
+            "the drawer must not declare its own selection state",
+            drawer.contains("mutableStateOf<Map<String, Set<String>>")
+        )
+        assertTrue(
+            "the screen must hand the ViewModel's selection to the drawer",
+            screen.contains("selectedByPaper = selection")
+        )
+    }
+
+    @Test
+    fun theCardShowsTheSelectionTree() {
+        val card = source("src/main/java/com/mcqapp/ui/library/LibraryPaperCard.kt")
+        // The eye opens the read-only picker; the scoped button starts a
+        // session over the ticked branches.
+        assertTrue("the card's eye button is missing", card.contains("paper-show-"))
+        assertTrue(
+            "the card's scoped study button is missing",
+            card.contains("paper-study-selection-")
+        )
+        assertTrue(
+            "the ticked branches must come from the shared model",
+            card.contains("CategorySelection.tickedIds(")
+        )
+        // Ordering (D5): below the whole-paper Study button, above the FlowRow,
+        // full width so its count-bearing label cannot resize neighbours.
+        val study = card.indexOf("onClick = onStudy")
+        val scoped = card.indexOf("paper-study-selection-")
+        val flowRow = card.indexOf("FlowRow(")
+        assertTrue("the whole-paper Study button is missing", study >= 0)
+        assertTrue("the scoped button is missing", scoped >= 0)
+        assertTrue(
+            "the scoped button must sit between Study and the FlowRow",
+            study < scoped && scoped < flowRow
+        )
+        assertTrue(
+            "the scoped button must fill the width",
+            Regex("""fillMaxWidth\(\)\s*\.testTag\("paper-study-selection-""").find(card) != null
+        )
     }
 
     @Test

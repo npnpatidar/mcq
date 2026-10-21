@@ -1007,6 +1007,19 @@ interface QuestionDao {
     )
     suspend fun getCategoryCountsFor(categoryIds: List<String>): List<CategoryCountEntity>
 
+    /**
+     * Per-category question counts for one whole paper: the same row type
+     * [getCategoryCountsFor] returns, but keyed on `categories.paperId`, so a
+     * big paper is one index key instead of a bind-variable list. Categories
+     * with no questions are absent; the caller zero-fills.
+     */
+    @Query(
+        "SELECT questions.categoryId AS categoryId, COUNT(*) AS cnt FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId GROUP BY questions.categoryId"
+    )
+    suspend fun categoryCountsForPaper(paperId: String): List<CategoryCountEntity>
+
     /** The stored question with this content, if any: a same-content match. */
     @Query("SELECT id FROM questions WHERE contentHash = :contentHash LIMIT 1")
     suspend fun getIdByContentHash(contentHash: String): String?
@@ -1288,6 +1301,16 @@ data class StudyPopulation(
     val storedRows: Int
 )
 
+/** One category's own scheduling sums, as returned by [CardStateDao.categoryPopulations]. */
+data class CategoryPopulation(
+    val categoryId: String,
+    val learning: Int,
+    val due: Int,
+    val leeches: Int,
+    val newish: Int,
+    val storedRows: Int
+)
+
 @Dao
 interface CardStateDao {
     @Query("SELECT * FROM card_state WHERE paperId = :paperId")
@@ -1431,6 +1454,41 @@ interface CardStateDao {
         categoryIds: List<String>,
         now: Long
     ): StudyPopulation
+
+    /**
+     * [countsForPaper] grouped by category: the same five expressions, with
+     * `q.categoryId` as the first column and a `GROUP BY` for it. There is no
+     * category-id list — the paper terms scope the read, so a paper is one
+     * index key and there is no bind-limit question and no chunking. A
+     * category with no schedule rows is **absent**, not zero; the caller
+     * defaults it, the way [QuestionDao.getCategoryCountsFor] behaves.
+     */
+    @Query(
+        "SELECT q.categoryId AS categoryId, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash " +
+            "  AND cs.cardState IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
+            "  THEN 1 ELSE 0 END), 0) AS learning, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash " +
+            "  AND cs.cardState NOT IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
+            "  THEN 1 ELSE 0 END), 0) AS due, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash AND cs.leech = 1 " +
+            "  THEN 1 ELSE 0 END), 0) AS leeches, " +
+            "COALESCE(SUM(CASE WHEN (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  OR cs.contentHash != q.contentHash THEN 1 ELSE 0 END), 0) AS newish, " +
+            "COUNT(*) AS storedRows " +
+            "FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "GROUP BY q.categoryId"
+    )
+    suspend fun categoryPopulations(paperId: String, now: Long): List<CategoryPopulation>
 
     /**
      * The paper's schedules whose stored hash no longer matches their

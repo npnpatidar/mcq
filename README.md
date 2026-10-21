@@ -23,7 +23,7 @@ format (papers, categories, bookmarks, history) and is documented in
 
 | Screen | What it does |
 |---|---|
-| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), test-by-category, JSON import |
+| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), **test- and study-by-category**, JSON import |
 | Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); passage groups render with their shared context above the first member; edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
 | Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume; passage members always carry their passage above the stem and move as one block |
 | Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. FSRS-6 schedules the next review (see below); a passage member shows its passage above the question |
@@ -131,6 +131,11 @@ writes an attempt: it only schedules *when you should see a question again*.
   under FSRS. Importing a JSON backup or an Anki package is the warm-start path — both
   carry the FSRS memory model, and an Anki card's interval and ease are converted to an
   initial stability and difficulty.
+
+**Scoped study.** Pick categories in the drawer; a selected parent includes its
+subcategories. Badges stay paper-wide; the scope only decides what the session serves.
+Schedules are still per question, so studying a subtree never changes another category's
+dates.
 
 **Where the schedule lives.** A `card_state` row per question (schema v10, with
 `review_log` recording every review beside it). Migration is automatic and preserves
@@ -864,6 +869,18 @@ be deleted along with the paper, and be rebuilt from attempt history. See
   is studied from scratch even if you had it scheduled for next month.
 - **Ungraded questions (no answer key) still appear in Study.** There is no correct answer
   to reveal, but you can still grade yourself on recall of the options.
+
+**Category selection (drawer)**
+
+- **The selection is per paper.** Ticking categories in one paper's tree never affects
+  another's. Before this it was one drawer-wide set: a tick in paper A rode along with paper
+  B's id and served A's questions under B.
+- **Ending a scope resets nothing.** The selection decides what a session serves and nothing
+  else; schedules, attempts and bookmarks are untouched.
+- **Deleting a category mid-session removes its questions from the pull.** If the scope has
+  nothing left, the sitting closes rather than widening to the paper.
+- **A scope is not resumable by design.** Nothing about the selection is stored: leaving and
+  reopening Study serves the whole paper again until you tick categories.
 
 ## Logs & debugging
 

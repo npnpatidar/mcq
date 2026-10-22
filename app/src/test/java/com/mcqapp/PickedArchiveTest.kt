@@ -158,6 +158,25 @@ class PickedArchiveTest {
         assertFalse(McqBackupFormat.isBackupArchive(docx))
     }
 
+    /**
+     * The scan cap is a budget on files, not zip entries: directories cost
+     * nothing. A re-zip can pack folders in freely, and under the old
+     * count-every-entry budget fourteen directory entries alone ended the scan
+     * before the document entry was ever named — mis-filing a real Word bank
+     * as OTHER, the Anki reader's shape. Here the document entry is the
+     * twenty-sixth entry but only the twelfth file, exactly on the budget's
+     * last slot.
+     */
+    @Test
+    fun directoriesDoNotSpendTheDocxScanBudget() {
+        val entries = mutableListOf<Pair<String, ByteArray>>()
+        (1..14).forEach { entries += "chunky-dir-$it/" to ByteArray(0) }
+        (1..11).forEach { entries += "docProps/file-$it.xml" to "<x/>".toByteArray() }
+        entries += "word/document.xml" to "<w:document/>".toByteArray()
+        val docx = zipOf(*entries.toTypedArray())
+        assertEquals(PickedArchive.DOCX, classifyPickedArchive(docx))
+    }
+
     @Test
     fun anAnkiPackageIsLeftToTheAnkiReader() {
         val apkg = zipOf(

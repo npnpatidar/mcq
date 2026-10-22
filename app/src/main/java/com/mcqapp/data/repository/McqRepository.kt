@@ -124,7 +124,14 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      */
     internal suspend fun statsLibrary(): StatsStore.Library = statsStore.loadLibrary()
 
-    /** The replayed review log, for the tabs that still slice it in memory. */
+    /**
+     * The replayed review log, all of it in memory. No production path may call
+     * this: every tab streams (`statsRetention`, `statsOverview`, `statsMemory`,
+     * `statsCards`, `statsWorkload`), and NoDeadCodeTest holds the line. It is
+     * kept as the stats tests' oracle — the full-log build the streamed
+     * aggregates are asserted equal to, the same shape as
+     * `getStudyQueue(leechesOnly = false)` for the study tests.
+     */
     internal suspend fun statsReviews(): List<ReplayReview> = statsStore.loadReviews()
 
     /**
@@ -468,6 +475,22 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         categoryIds: List<String>
     ): SessionOrder =
         questionStore.getOrderForCategories(paperId, categoryIds)
+
+    /**
+     * The scope's category ids in the flat `(sortOrder, title)` order the
+     * session order and every SQL list surface serve. A scoped study screen
+     * calls this once on the `orderedIds` expansion it just built (the
+     * expansion decides the scope's *membership* only), then chunks its pool
+     * queries on the result — inside a chunk the pool SQL re-sorts by this
+     * order regardless of the passed order, so an unordered chunk boundary is
+     * the one place a scoped study session could walk categories in a
+     * different relative order than the scoped test session next door.
+     *
+     * One read per scope construction, not per pull: the per-card pull's
+     * query budget (StudyPullQueryCountTest) must not grow for alignment.
+     */
+    suspend fun categoryFlatOrder(paperId: String, categoryIds: List<String>): List<String> =
+        questionStore.flatCategoryOrder(paperId, categoryIds)
 
     /** Observed refs for browse: the list re-emits on any write. */
     fun observeQuestionRefsForPaper(paperId: String): kotlinx.coroutines.flow.Flow<List<QuestionRef>> =

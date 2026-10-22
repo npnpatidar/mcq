@@ -54,6 +54,18 @@
     <string name="restore_backup_description">Replaces the whole library and all settings with the backup\'s contents. Anything added since the backup is gone.</string>
     <string name="restore_backup_confirm">This wipes the current library and every setting, then restores the backup. Continue?</string>
     <string name="restore_replace_everything">Replace everything</string>
+    <plurals name="counts_due">
+        <item quantity="one">%d due</item>
+        <item quantity="other">%d due</item>
+    </plurals>
+    <plurals name="counts_new">
+        <item quantity="one">%d new</item>
+        <item quantity="other">%d new</item>
+    </plurals>
+    <plurals name="counts_tricky">
+        <item quantity="one">%d tricky</item>
+        <item quantity="other">%d tricky</item>
+    </plurals>
     <plurals name="export_bookmarked_questions">
         <item quantity="one">Export %d bookmarked question</item>
         <item quantity="other">Export %d bookmarked questions</item>
@@ -117,6 +129,11 @@
     <string name="passage_image">Passage image</string>
     <string name="passages">Passages</string>
     <string name="new_passage">New passage</string>
+    <string name="paper_mistakes_button">Mistakes (%1$d)</string>
+    <string name="paper_study_selection">Study selection</string>
+    <string name="paper_study_selection_due">Study selection (%1$d due)</string>
+    <string name="paper_study_selection_due_new">Study selection (%1$d due, %2$d new)</string>
+    <string name="paper_study_selection_new">Study selection (%1$d new)</string>
     <string name="edit_passage">Edit passage</string>
     <string name="assign_to_passage">Assign to passage</string>
     <string name="remove_from_passage">Remove from passage</string>

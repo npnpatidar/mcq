@@ -9,32 +9,55 @@ Every claim below was re-read against the current source in this pass; two candi
 findings drafted along the way were **dropped after checking the code** (noted at the end).
 Severity/Certainty as in the previous docs.
 
+**Verification pass (2026-10-22):** every finding and every 'clean' claim was re-checked
+against the source independently and this doc was updated to match what was found:
+finding #1 was rewritten (its central premise was contradicted by the code), #5's
+mechanism note was corrected, #7 was sharpened, and several stale line references were
+fixed. The 'clean' sections all held.
+
 ---
 
 ## Findings
 
-### 1 · Medium · Study and Test present the same scoped selection in different orders
+### 1 · Low · Study and Test card order can disagree — but only past the chunk wall
 
-`StudyViewModel.kt:201-205` expands the ticked ids with
+*(Rewritten by the verification pass. The original draft claimed Study serves the
+selection in tree pre-order and scored this Medium. That premise is wrong; the code
+facts it cited are all real, so the residual issue is kept at Low.)*
+
+`StudyViewModel.kt:201-205` and `TestViewModel.kt:209-213` both expand the ticked ids with
 `CategorySelection.orderedIds(...)` (`CategorySelection.kt:73-89`), which walks the tree in
-**pre-order** — each ticked subtree appears as its in-order run, and the selection's
-categories are served in tree shape.
+**pre-order**. But the expansion only decides *which* categories are in scope, not the
+order the cards come out in:
 
-`QuestionStore.getOrderForCategories` (`QuestionStore.kt:122-128`), which backs the scoped
-**test** session (`TestViewModel` → `repository.getSessionOrderForCategories`), reads the
-ticked ids as a flat list and sorts by `(sortOrder, title)` in Kotlin, then loads each
-category in that order.
+- **Study** (`StudyStore.getStudyQueue`, `StudyStore.kt:93-135`) feeds `dueCards` and
+  `newQuestions` (`StudyStore.kt:204-230`), whose SQL orders rows by
+  `(c.sortOrder, c.title, q.sortOrder, q.rowid)` inside each chunk
+  (`Daos.kt:588-590` new, `Daos.kt:1552-1553` due), chunked at 500 ids
+  (`ChunkedQueries.kt:15`).
+- **Test** — `QuestionStore.getOrderForCategories` (`QuestionStore.kt:122-128`), backing
+  `TestViewModel` → `repository.getSessionOrderForCategories` — re-sorts the passed list
+  flat by `(sortOrder, title)` in Kotlin, then loads each category in that order: the
+  same flat sort, end to end.
 
-Neither is wrong on its own, but the two orders can disagree for the same scope: a category
-whose authored `sortOrder` places it after one of its own descendants (possible for imported
-files that carry an arbitrary parent/sortOrder matrix, or after cross-nesting edits the app
-allows with `reparentCategory` — where the pre-order walk and the flat sort order a ladder
-differently). The user ticks two branches, studies them, then runs the drill for the same
-selection, and sees the categories in a different relative order between the two screens.
+So for any scope of **≤ 500 in-scope categories both screens present the same relative
+category order**, whatever the orderedIds expansion is. The expansion never reaches the
+user as an order on Study's side except across chunk boundaries.
 
-Pick one and use it in both: simplest is to expand with `orderedIds` in
-`getOrderForCategories` as well, or replace the Kotlin `(sortOrder, title)` pre-sort with the
-paper-order walk.
+Divergence therefore needs a scope **over 500 categories** crossing a chunk wall where
+cross-chunk pre-order differs from the flat sort — and the app cannot shape such a tree:
+every tree-shaping edit (`moveCategory`, `nestCategory`, `promoteCategoryOutOfParent`,
+`reparentCategory`) ends in `renumberPaperPreorder` (`PaperStore.kt:304-317`, called at
+`:249`, `:333`, `:354`, `:394`), which rewrites `sortOrder` as the pre-order position, so
+after any in-app edit the flat sort *equals* the tree order. Only an imported paper that
+carries an arbitrary `(parent, sortOrder)` matrix and more than 500 in-scope categories
+can diverge.
+
+Implication for the fix: "expand with `orderedIds` in `getOrderForCategories`" alone is
+**not** enough — Study would still re-sort each chunk by `(sortOrder, title)`, so the two
+orders would only match at ≤ 500 categories. Unifying means one order contract for both:
+chunked pre-order for both, or flat `(sortOrder, title)` for both with Study's chunk
+boundaries aligned to the same sort.
 
 ### 2 · Medium · Editor-attached images silently recompressed to opaque JPEG
 
@@ -67,44 +90,51 @@ into resources, or the next localisation pass will miss it.
 
 ### 4 · Low · `BrowseViewModel.filterState` initial-state duplication
 
-`BrowseViewModel.kt:97-103`: `filters`' initial value and `filterState`'s
+`BrowseViewModel.kt:136-145` (the earlier draft's `97-103` is the `BrowseFilterState` data
+class): `filters`' initial value and `filterState`'s
 `SharingStarted.Eagerly` initial value both carry
 `BrowseFilterState(categoryFilterIds = initialCategoryFilterIds.toSet())`. They must stay in
 sync; today they are written adjoined within 6 lines, so it is a drift trap, not a bug. One
 shared `val initialFilterState = …` would close it.
 
-### 5 · Low · `BrowseViewModel.loadContent`'s prune drops rows that the window has not covered yet
+### 5 · Low · `BrowseViewModel.loadContent`'s prune — no bug; the earlier mechanism note was wrong
 
-`BrowseViewModel.kt:247-253` keeps cards for `it in windowIds` — the CURRENT window —
-but the map update writes `current.contentById.filterKeys { it in windowIds } + loaded…`,
-so a card whose row is in `onVisibleRows`'s window but was pruned by **this very coroutine's**
-`windowIds` snapshot taken at entry: reads that started before a scroll advance and finish
-afterwards stay correct because `windowIds` is re-read on every `_state.update` —
-**only the right-hand `loaded.filterKeys` is taken from the lambda's window and the
-left-hand filter uses the LIVE `windowIds`**, a good design. The `contentHashes.keys.retainAll(windowIds)`
-returns `false` (nothing to report when nothing was dropped) but is
-never checked; that is fine. **No bug confirmed here** — leaving the mechanism's note for a
-future reader because the inline justification ("Pruned with the cards they describe…")
-was the one paragraph this pass could not improve on.
+`BrowseViewModel.kt:344-385`. **No bug confirmed here.** Correction from the verification
+pass: the earlier note claimed an asymmetry — "only the right-hand `loaded.filterKeys` is
+taken from the lambda's window and the left-hand filter uses the LIVE `windowIds`". That
+is inaccurate: both `filterKeys { it in windowIds }` lambdas (left, pruning held cards;
+right, filtering the rows this read loaded) read the live `windowIds` member each time the
+`_state.update` lambda runs, so there is no stale snapshot on either side. There is no
+"this very coroutine's windowIds" pitfall for a reader to fear. The source's own inline
+comment ("only what the current window covers is kept…", "Pruned with the cards they
+describe") remains the best description of the mechanism and the out-of-order-read
+justification.
 
 ### 6 · Low · `BrowseViewModel.pagingConfig` constant `jumpThreshold = BROWSE_PAGE * 3` evaluates to `180`
 
-Cosmetic only: the compose diamond is intentionally the same as the docstring's "three
-pages", but a future reader tuning `BROWSE_PAGE` from 60 changes the jump threshold
-implicitly. Could be a named constant pair if touched again.
+Cosmetic only (verified: `BROWSE_PAGE = 60` at `BrowseViewModel.kt:680`, the
+`jumpThreshold = BROWSE_PAGE * 3` expression at `:714`): the compose diamond is
+intentionally the same as the docstring's "three pages", but a future reader tuning
+`BROWSE_PAGE` from 60 changes the jump threshold implicitly. Could be a named constant
+pair if touched again.
 
-### 7 · Low · `statsReviews()` remains a dead whole-log materialiser for callers that never call it
+### 7 · Low · `statsReviews()` is a whole-log materialiser with no production caller
 
-Unchanged from the carry-over: `McqRepository.kt:74-77` still exposes `statsReviews()`
-loading the whole replay log for the tabs that "still slice it in memory" — the per-tab
-streamed variants (`statsRetention`, `statsOverview`, `statsMemory`, `statsCards`,
-`statsWorkload`) are wired in the same object; any tab that still calls the old accessor
-forces the full log into memory once per tab visit. Grep at HEAD confirms `statsReviews`
-is a live accessor, and it is the path worth pruning next.
+Unchanged from the carry-over, sharpened by the verification pass: `McqRepository.kt:128`
+exposes `statsReviews()`, which loads the whole replay log via `StatsStore.loadReviews()`
+(`StatsStore.kt:56`). **Nothing in production calls it** — its only callers anywhere are
+three test files (`StatsTabsStreamTest`, `StatsRetentionStreamTest`,
+`StatsOverviewStreamTest`), so the earlier draft's "any tab that still calls the old
+accessor forces the full log into memory once per tab visit" was hypothetical: no such
+tab exists at HEAD. The per-tab streamed variants (`statsRetention`, `statsOverview`,
+`statsMemory`, `statsCards`, `statsWorkload`) are wired in the same object and cover every
+tab. It is a dead production accessor kept alive by tests: prune it, or move those tests
+onto a streamed variant if they still need the raw log.
 
 ### 8 · Low · `PickedArchive.classifyPickedArchive(input)`'s count check `checked < DOCX_SCAN_ENTRIES` counts entries, not files
 
-`PickedArchive.kt:19-100` — `DOCX_SCAN_ENTRIES = 12` is a cap on archive entries examined,
+`PickedArchive.kt:44-104` (the earlier draft said `19-100`) — `DOCX_SCAN_ENTRIES = 12` is a
+cap on archive entries examined,
 and directories count toward it (`checked++` increments on every entry regardless of
 `isDirectory`). A docx with a chunky `[Content_Types].xml`… `_rels/…`… docProps cluster
 can push `word/document.xml` past entry 12 in a pathological-but-real re-zip, in which case

@@ -63,10 +63,15 @@ internal fun classifyPickedArchive(input: java.io.InputStream): PickedArchive {
                         }
                         !McqBackupFormat.isBackupMemberName(entry.name) -> foreignSeen = true
                     }
+                    // Files are counted, not entries: the cap is a budget on
+                    // files the docx check examines, and directories are free
+                    // padding every re-zip peaks at thousands of. Counting a
+                    // directory here pushed word/document.xml past the cap and
+                    // mis-filed a real Word bank as OTHER (Anki reader).
+                    checked++
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
-                checked++
             }
         }
     } catch (e: Exception) {

@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,13 +61,17 @@ private enum class CardExpansion { Collapsed, Show, Manage }
 
 /**
  * The compact per-row count line the card and the drawer share: non-zero
- * terms only, the leeches word matching the card's "N tricky".
+ * terms only, the leeches word matching the card's "N tricky". Both callers
+ * are composable, so the terms resolve from plurals at call time.
  */
+@Composable
 internal fun categoryCountsLine(counts: CategoryCounts): String =
     listOfNotNull(
-        if (counts.due > 0) "${counts.due} due" else null,
-        if (counts.fresh > 0) "${counts.fresh} new" else null,
-        if (counts.leeches > 0) "${counts.leeches} tricky" else null
+        if (counts.due > 0) pluralStringResource(R.plurals.counts_due, counts.due, counts.due) else null,
+        if (counts.fresh > 0) pluralStringResource(R.plurals.counts_new, counts.fresh, counts.fresh) else null,
+        if (counts.leeches > 0) {
+            pluralStringResource(R.plurals.counts_tricky, counts.leeches, counts.leeches)
+        } else null
     ).joinToString(" · ")
 
 /** One library card: a paper's actions, drill dialog and category management. */
@@ -240,10 +245,15 @@ internal fun PaperCard(
                     Text(
                         when {
                             scopeTotal.due > 0 && scopeTotal.fresh > 0 ->
-                                "Study selection (${scopeTotal.due} due, ${scopeTotal.fresh} new)"
-                            scopeTotal.due > 0 -> "Study selection (${scopeTotal.due} due)"
-                            scopeTotal.fresh > 0 -> "Study selection (${scopeTotal.fresh} new)"
-                            else -> "Study selection"
+                                stringResource(
+                                    R.string.paper_study_selection_due_new,
+                                    scopeTotal.due, scopeTotal.fresh
+                                )
+                            scopeTotal.due > 0 ->
+                                stringResource(R.string.paper_study_selection_due, scopeTotal.due)
+                            scopeTotal.fresh > 0 ->
+                                stringResource(R.string.paper_study_selection_new, scopeTotal.fresh)
+                            else -> stringResource(R.string.paper_study_selection)
                         }
                     )
                 }
@@ -264,7 +274,7 @@ internal fun PaperCard(
                     // label promised the tricky questions and delivered the
                     // ordinary due+new queue.
                     TextButton(onClick = onStudyLeeches) {
-                        Text("${leechCount} tricky")
+                        Text(pluralStringResource(R.plurals.counts_tricky, leechCount, leechCount))
                     }
                 }
                 OutlinedButton(onClick = { onExport(ticked) }) {
@@ -296,7 +306,7 @@ internal fun PaperCard(
                         Logger.i("LIB", "Start paper: paperId=${paper.id}")
                         onPracticeMistakes()
                     }) {
-                        Text("Mistakes ($mistakeCount)")
+                        Text(stringResource(R.string.paper_mistakes_button, mistakeCount))
                     }
                 }
             }

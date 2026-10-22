@@ -562,3 +562,71 @@ Fix: a `wroteCategory` flag in `Envelope` emits `,` before each category after t
 `ExportWritersTest.aPaperWithSeveralCategoriesStaysOneValidJsonEnvelope` parses a
 two-category paper with `kotlinx.serialization` in a **pure-JVM** test, so it runs on the
 aarch64 host as well as CI.
+
+---
+
+## 15. Revision 3 — scope-aware Browse and Drill
+
+Owner: *"should we make test, browse and drill also context aware similar to export and
+study"* — Test already is (§14.4), so this revision covers the other two. Same rule as §14:
+the ticked branches are the scope, nothing ticked means the whole paper.
+
+### 15.1 Drill (E9)
+
+Drill is a `TestViewModel` flavour (`drillCount`, `drillMinutes`) and the route already
+carries `categoryIds`, so the session side needs no change: `TestViewModel` expands the
+ticked ids and then cuts the order to the drill count.
+
+- `PaperCard.onDrill` becomes `(count, minutes, tickedIds)`; the dialog passes the ticked
+  branches as they are when Start is pressed.
+- The dialog's bound must move with the scope. Today `available = paper.totalQuestions` and
+  `Drill.checkCount` refuses "10" on a 2-question paper; a scoped drill must refuse against
+  the *selection's* question count, or it lies both ways. Add
+  `CategorySelection.questionCount(nodes, tickedIds)` — the sum of the ticked roots'
+  `totalQuestionCount`, skipping a ticked node's children so the maximal-branch contract is
+  kept — and use `if (ticked.isEmpty()) paper.totalQuestions else questionCount(...)`.
+- The dialog states the scope when ticked (`study_scope_many`, "%d categories"), and its
+  shortfall sentence says "This selection has only N questions" instead of "This paper…"
+  (one new string).
+- `LibraryScreen`: `testRoute(paper.id, categoryIds = ticked, drillCount = count,
+  drillMinutes = minutes)`.
+
+### 15.2 Browse (E10)
+
+Browse is read-only, so a scope here is a **pre-filter**, never a hidden scope: the route
+seeds the screen's existing category filter, the filter field shows what is applied, and
+"All categories" clears it.
+
+- `browseRoute(paperId, focusQuestionId = null, categoryIds: List<String> = emptyList())`,
+  appending `&categories=` only when non-empty, so every existing caller keeps its URL shape.
+- `BrowseFilterState.categoryFilterId: String?` becomes `categoryFilterIds: Set<String>`
+  (empty = all). `updateCategoryFilter(id)` stays as `setOf(id)`/empty for the dropdown;
+  `scopeFor` expands every id through `subtreeIdsOf` into the paging predicate.
+- The field shows one title when a single category is applied, `study_scope_many` when
+  several are, `all_categories` when none. The unfiltered contracts (empty-state message,
+  whole-category section moves) check `isEmpty()` instead of `== null`.
+- No whole-paper flash: opening Browse from a ticked card must not render an unfiltered page
+  before the paper's categories arrive. The expansion needs the tree, so the first page waits
+  for it.
+
+### 15.3 Work items
+
+1. `CategorySelection.questionCount` + a pure-JVM test beside the existing selection tests.
+2. Drill: card signature/dialog (availability, scope line, shortfall copy), `LibraryScreen`
+   wiring, the new string.
+3. Browse: `browseRoute`, `McqNavHost` argument + `BrowseScreen`/factory/`BrowseViewModel`
+   initial filter, the set-based filter state and field text; no other Browse behaviour moves.
+4. Tests: `RoutesTest` for the browse scope round-trip; device
+   `cardDrillFollowsTheSelection` (tick the second root, drill it, only its question appears)
+   and `cardBrowseFollowsTheSelection` (tick the second root, Browse shows only it and names
+   it in the filter field, "All categories" restores both); structural guard that the drill
+   route carries the ticked ids.
+5. README: extend the §14 sentence to Browse and Drill; plan doc update this section.
+
+### 15.4 Out of scope (deliberate)
+
+- **Mistakes stays paper-wide.** `TestViewModel` ignores `categoryIds` when `mistakesOnly`
+  and calls `getMistakenQuestionOrder(paperId)`; scoping the button without changing that
+  query would promise a scope and serve the whole paper — the mislabeled-button bug class.
+  A scoped refs query is its own change.
+- Edit, Add category, Delete, Manage and the paper badges stay paper-level.

@@ -213,21 +213,7 @@ class BrowseViewModel(
             // SQL matches on (see browseCategoryRowIdCsv — ids contain commas).
             val scope = scopeFor(request.state)
             val rowIdCsv = repository.browseCategoryRowIdCsv(scope)
-            Pager(
-                PagingConfig(
-                    pageSize = BROWSE_PAGE,
-                    initialLoadSize = BROWSE_PAGE * 2,
-                    prefetchDistance = BROWSE_PAGE / 2,
-                    // On, so the list knows the paper's whole length: a
-                    // deep link has to be able to jump to a question that
-                    // no scroll has reached yet, and without placeholders
-                    // the list holds only the pages it has loaded, so that
-                    // index does not exist to jump to. It also lets a fling
-                    // reach the end of a long paper instead of stopping at
-                    // whatever page the scroll has pulled so far.
-                    enablePlaceholders = true
-                )
-            ) {
+            Pager(pagingConfig()) {
                 repository.browseRefsSource(scope, rowIdCsv)
             }.flow
         }
@@ -692,6 +678,41 @@ class BrowseViewModel(
     companion object {
         /** Window size: ~a screenful and a half, so flings stay ahead of IO. */
         const val BROWSE_PAGE = 60
+
+        /**
+         * The browse list's paging window.
+         *
+         * [PagingConfig.jumpThreshold] defaults to `COUNT_UNDEFINED`
+         * (`Int.MIN_VALUE`), and Paging only starts its jump coroutine when the
+         * value is something else — so by default jumps are **disabled**.
+         * Placeholders are on, so a deep link scrolls to a far index at once,
+         * and with jumps off the source was then walked page by page from row
+         * 0: every page is a `LIMIT/OFFSET` query over the browse JOIN and
+         * ORDER BY, which makes reaching row N quadratic in the paper's length
+         * (a 250k-question paper issued thousands of queries).
+         *
+         * A positive threshold lets Paging invalidate and reload the page
+         * around the target instead. Room's positional source supports jumps
+         * (its `jumpingSupported` is true) and refreshes at `anchorPosition`,
+         * so a deep link costs one page, not a walk. Three pages is well above
+         * the distance an ordinary scroll has to travel before a hint is sent,
+         * so normal scrolling still appends pages rather than invalidating.
+         */
+        internal fun pagingConfig(): PagingConfig = PagingConfig(
+            pageSize = BROWSE_PAGE,
+            initialLoadSize = BROWSE_PAGE * 2,
+            prefetchDistance = BROWSE_PAGE / 2,
+            // On, so the list knows the paper's whole length: a deep link has
+            // to be able to jump to a question that no scroll has reached yet,
+            // and without placeholders the list holds only the pages it has
+            // loaded, so that index does not exist to jump to. It also lets a
+            // fling reach the end of a long paper instead of stopping at
+            // whatever page the scroll has pulled so far.
+            enablePlaceholders = true,
+            // Jumps on: see the KDoc. Anything further than three pages is
+            // cheaper to reload around than to walk to.
+            jumpThreshold = BROWSE_PAGE * 3
+        )
 
         private fun flattenCategories(
             nodes: List<CategoryNode>,

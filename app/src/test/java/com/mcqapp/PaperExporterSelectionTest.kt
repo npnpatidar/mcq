@@ -53,6 +53,8 @@ class PaperExporterSelectionTest {
         category("c1", "First", 0)
         category("c2", "Second", 1)
         category("c3", "Third", 2)
+        // A real, existing branch that holds no questions at all.
+        category("c4", "Empty", 3)
         question("q1", "c1")
         question("q2", "c2")
         // The unticked branch: its question must never ride along.
@@ -125,6 +127,28 @@ class PaperExporterSelectionTest {
             PaperExporter(db).exportSelection(
                 paperId = "p1",
                 rootCategoryIds = listOf("ghost"),
+                format = ExportFormat.JSON_INLINE,
+                sink = ByteArrayOutputStream()
+            )
+            null
+        } catch (e: IllegalStateException) {
+            e
+        }
+        assertEquals(
+            "The selected categories have no questions to export.",
+            thrown?.message
+        )
+    }
+
+    @Test
+    fun anExistingCategoryWithoutQuestionsIsAlsoAnError() = runBlocking {
+        // The category resolves and its stream has a category row, but zero
+        // questions: writing that would be an empty file behind a message
+        // that says the opposite. The guard reads totalQuestions for this.
+        val thrown = try {
+            PaperExporter(db).exportSelection(
+                paperId = "p1",
+                rootCategoryIds = listOf("c4"),
                 format = ExportFormat.JSON_INLINE,
                 sink = ByteArrayOutputStream()
             )

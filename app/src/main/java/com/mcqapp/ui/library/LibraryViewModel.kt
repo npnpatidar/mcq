@@ -224,27 +224,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun exportCategoryAs(
-        uri: Uri,
-        paperId: String,
-        categoryId: String,
-        format: com.mcqapp.data.export.ExportFormat
-    ) {
-        viewModelScope.launch {
-            try {
-                val file = writeExport(uri) { sink ->
-                    com.mcqapp.data.export.PaperExporter(repository.db())
-                        .exportCategory(paperId, categoryId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
-                }
-                Logger.i("LIBVM", "Exported ${file.fileName}")
-                _exportError.value = null
-            } catch (e: Exception) {
-                Logger.e("LIBVM", "Export failed", e)
-                _exportError.value = "Export failed: ${e.message}"
-            }
-        }
-    }
-
     /**
      * Streams one export straight into [uri]: the exporter renders into the
      * resolver's stream, so the finished file is never held in memory here.

@@ -84,6 +84,10 @@ class PaperExporter(private val db: AppDatabase) {
      * The union of the given root categories (subtrees included), in every
      * format. The ticked branches on a card are exactly this shape, so the
      * Export button needs no new writer.
+     *
+     * A category with no questions resolves to a stream with no cards, so the
+     * guard tests the walk's size too: an empty document would otherwise be
+     * written while the error message promised otherwise.
      */
     suspend fun exportSelection(
         paperId: String,
@@ -93,26 +97,10 @@ class PaperExporter(private val db: AppDatabase) {
         twoColumnPdf: Boolean = false
     ): ExportFile {
         val stream = Exporter(db).categoryStream(paperId, rootCategoryIds.toSet())
-            ?.takeIf { it.categories.isNotEmpty() }
+            ?.takeIf { it.categories.isNotEmpty() && it.totalQuestions > 0 }
             ?: throw IllegalStateException("The selected categories have no questions to export.")
         Logger.i("EXPORT", "Exporting selection of ${rootCategoryIds.size} branch(es) as ${format.name}")
         return render(stream, stream.title, format, sink, ::loadScheduling, twoColumnPdf)
-    }
-
-    /** Single category (with descendants) through the same format writers. */
-    suspend fun exportCategory(
-        paperId: String,
-        categoryId: String,
-        format: ExportFormat,
-        sink: OutputStream,
-        twoColumnPdf: Boolean = false
-    ): ExportFile {
-        val stream = Exporter(db).categoryStream(paperId, setOf(categoryId))
-            ?.takeIf { it.categories.isNotEmpty() }
-            ?: throw IllegalStateException("Category not found or empty")
-        val title = stream.categories.firstOrNull()?.title ?: stream.title
-        Logger.i("EXPORT", "Exporting category '$title' as ${format.name}")
-        return render(stream, title, format, sink, ::loadScheduling, twoColumnPdf)
     }
 
     /**

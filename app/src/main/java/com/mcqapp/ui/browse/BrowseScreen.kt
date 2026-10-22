@@ -298,7 +298,8 @@ fun BrowseScreen(
         // that did not exist yet and was never asked again, which is why a
         // search hit landed at the top. Read the count here, in composition, so
         // the effect runs again once the list has one — paging then jumps to
-        // the row and loads the page around it.
+        // the row only because PagingConfig.jumpThreshold is set (jumps are off
+        // by default), and reloads the page around it instead of walking there.
         val listHasRows = items.itemCount > 0
         LaunchedEffect(focusQuestionId, listHasRows) {
             if (focusQuestionId.isBlank() || !listHasRows) return@LaunchedEffect

@@ -11,6 +11,7 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.browse.BrowseScreen
+import com.mcqapp.ui.browse.BrowseViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -48,12 +49,17 @@ class BrowseDeepLinkUiTest {
         for (i in 1..SMALL_COUNT) {
             repository.saveQuestion(question("$SMALL_PAPER-q$i", SMALL_CAT, "S$i"))
         }
+        repository.ensurePaperAndCategory(HUGE_PAPER, "UITest Deep Link Huge", HUGE_CAT, "Only Cat")
+        for (i in 1..HUGE_COUNT) {
+            repository.saveQuestion(question("$HUGE_PAPER-q$i", HUGE_CAT, "H$i"))
+        }
     }
 
     @After
     fun cleanup() = runBlocking {
         repository.deletePaper(BIG_PAPER)
         repository.deletePaper(SMALL_PAPER)
+        repository.deletePaper(HUGE_PAPER)
     }
 
     private fun question(id: String, categoryId: String, text: String) = Question(
@@ -112,6 +118,27 @@ class BrowseDeepLinkUiTest {
         compose.onNodeWithText("$NEAR.").assertIsDisplayed()
     }
 
+    /**
+     * A jump well past both the initial window and the jump threshold.
+     *
+     * Pins the jump path end to end: with `jumpThreshold` set, Paging requires
+     * the source to support jumps (`jumpingSupported`) and then invalidates and
+     * reloads the page around the target instead of appending pages from row 0.
+     * This fails loudly if the browse source ever stops supporting jumps, or if
+     * the threshold is lost again — either way the row is never reached.
+     */
+    @Test
+    fun aDeepLinkBeyondTheJumpThresholdLandsOnTheRow() {
+        openFocused(HUGE_PAPER, "$HUGE_PAPER-q$HUGE_JUMP")
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithText("H$HUGE_JUMP", substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("H$HUGE_JUMP", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("$HUGE_JUMP.").assertIsDisplayed()
+    }
+
     private companion object {
         const val BIG_PAPER = "uitest-deeplink-paper"
         const val BIG_CAT = "uitest-deeplink-c"
@@ -126,5 +153,15 @@ class BrowseDeepLinkUiTest {
 
         /** On the first page, but below the viewport of an un-scrolled list. */
         const val NEAR = 20
+
+        const val HUGE_PAPER = "uitest-deeplink-huge"
+        const val HUGE_CAT = "uitest-deeplink-huge-c"
+        const val HUGE_COUNT = 400
+
+        /**
+         * Six pages in: past initialLoadSize (120) and past the three-page jump
+         * threshold (180), so reaching it requires a jump, not an append.
+         */
+        const val HUGE_JUMP = BrowseViewModel.BROWSE_PAGE * 6
     }
 }

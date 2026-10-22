@@ -392,6 +392,32 @@ object Study {
     }
 
     /**
+     * The first card of the pools' review pool, for a caller that could only
+     * read one candidate per chunk: the same ranking as that pool (lowest
+     * predicted retention, then oldest due date), so the app still has one
+     * comparator rather than a second copy of it.
+     *
+     * [candidates] are expected to be due review cards. A learning card is not
+     * returned (pools puts it in the learning pool), so a caller holding a mix
+     * must filter to reviews first — as the scoped pull does, one winner per
+     * chunk. Candidates arrive in the caller's order and a tie on
+     * (retention, dueAt) keeps that order; the SQL tie-break instead falls
+     * through to the authored order, so an exact tie across a chunk boundary
+     * may serve the other card.
+     */
+    fun bestReview(
+        scheduler: Scheduler,
+        candidates: List<StudyCard>,
+        now: Long
+    ): StudyCard? =
+        pools(
+            scheduler,
+            candidates.map { it.questionId },
+            candidates.associate { it.questionId to it.state },
+            now
+        ).reviews.firstOrNull()
+
+    /**
      * The card a pull-based session should serve next, or null when nothing is
      * eligible: the badge, the empty state and the session itself all read the
      * same eligibility, so the UI can never promise a card the pull refuses.

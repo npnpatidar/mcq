@@ -5,6 +5,8 @@ import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.StudyReason
+import com.mcqapp.ui.study.EmptyReason
+import com.mcqapp.ui.study.ScopeLabel
 import com.mcqapp.ui.study.StudyViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -55,9 +57,9 @@ class StudyViewModelPullTest {
         return condition()
     }
 
-    private fun question(id: String) = com.mcqapp.domain.Question(
+    private fun question(id: String, categoryId: String = "c1") = com.mcqapp.domain.Question(
         id = id,
-        categoryId = "c1",
+        categoryId = categoryId,
         text = "Q $id?",
         options = listOf(
             com.mcqapp.domain.QuestionOption("$id-a", "A"),
@@ -84,7 +86,7 @@ class StudyViewModelPullTest {
     fun gradingPersistsTheReviewAndPullsTheNextRankedCard() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         // The overdue relearning step wins the pull before any new card.
         val first = viewModel.state.value.current!!
@@ -100,8 +102,8 @@ class StudyViewModelPullTest {
 
         // The next card arrives by pull, not by queue position: the backlog is
         // empty after that Good, so the fresh card is served.
-        assertTrue(awaitCondition { viewModel.state.value.reviewed == 1 })
-        assertTrue(awaitCondition {
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 1 })
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
             viewModel.state.value.current?.questionId == "q2"
         })
         assertEquals(StudyReason.NEW, viewModel.state.value.current!!.reason)
@@ -122,12 +124,12 @@ class StudyViewModelPullTest {
     fun stopEndsTheSessionWithItsTallyAndLeavesSchedulesIntact() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         viewModel.stop()
-        assertTrue(awaitCondition { viewModel.state.value.finished })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
         // A voluntary stop, not an empty session: no "nothing due" claim.
-        assertEquals("", viewModel.state.value.emptyReason)
+        assertEquals(EmptyReason.None, viewModel.state.value.emptyReason)
         assertEquals(0, viewModel.state.value.reviewed)
         runBlocking {
             assertEquals(2, repository.cardState("p1", "q1")!!.reviewCount)
@@ -138,14 +140,14 @@ class StudyViewModelPullTest {
     fun restartResetsTheTallyAndRepullsFromTheScheduler() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
         viewModel.toggleOption("q1-a")
         viewModel.check()
         viewModel.next()
-        assertTrue(awaitCondition { viewModel.state.value.reviewed == 1 })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 1 })
 
         viewModel.restart()
-        assertTrue(awaitCondition {
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
             viewModel.state.value.reviewed == 0 && viewModel.state.value.current != null
         })
         // q1 was graduated out of this sitting by its Good, so the fresh card
@@ -161,16 +163,23 @@ class StudyViewModelPullTest {
             repository.setSchedulerConfig(
                 repository.schedulerConfigNow().copy(introduceNewCards = false)
             )
+            // Diagnostic: the ViewModel decides "empty" from this config, so
+            // prove the write landed before it is built.
+            assertFalse(
+                "introduceNewCards=false did not persist: " +
+                    repository.schedulerConfigNow(),
+                repository.schedulerConfigNow().introduceNewCards
+            )
         }
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.finished })
-        assertEquals("Nothing due right now.", viewModel.state.value.emptyReason)
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
+        assertEquals(EmptyReason.NothingDue, viewModel.state.value.emptyReason)
         // New cards exist behind the off toggle, so the empty state can offer
         // exactly that flip — counting under the off flag would always say no.
         assertTrue(viewModel.state.value.freshAvailable)
 
         viewModel.enableNewCards()
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
         assertEquals("q1", viewModel.state.value.current!!.questionId)
         assertTrue(viewModel.state.value.introduceNewCards)
         runBlocking {
@@ -182,7 +191,7 @@ class StudyViewModelPullTest {
     fun aGuessedCardIsProposedAgainAndChangeGradeEditsTheProposalBeforeItPersists() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         // A declared guess that turns out right is Again: FSRS records the
         // absence of recall, not the lucky match. The proposal is not yet a
@@ -194,7 +203,7 @@ class StudyViewModelPullTest {
         assertEquals(true, viewModel.state.value.lastResult?.wasGuess)
 
         viewModel.next()
-        assertTrue(awaitCondition {
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
             viewModel.state.value.current?.questionId == "q2"
         })
         runBlocking {
@@ -213,7 +222,7 @@ class StudyViewModelPullTest {
         assertEquals(false, viewModel.state.value.lastResult?.wasGuess)
 
         viewModel.next()
-        assertTrue(awaitCondition { viewModel.state.value.reviewed == 2 })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 2 })
         runBlocking {
             assertEquals(4, repository.db().reviewLogDao()
                 .historyForQuestion("q2").last().rating)
@@ -224,7 +233,7 @@ class StudyViewModelPullTest {
     fun revealingAQuestionFreezesItsClockAndTheNextCardRestartsIt() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
         assertTrue(viewModel.state.value.clockRunning)
 
         viewModel.toggleOption("q1-a")
@@ -233,7 +242,7 @@ class StudyViewModelPullTest {
         assertFalse(viewModel.state.value.clockRunning)
 
         viewModel.next()
-        assertTrue(awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current?.questionId == "q2" })
         assertTrue(viewModel.state.value.clockRunning)
         assertEquals(0L, viewModel.state.value.questionElapsedSeconds)
     }
@@ -242,7 +251,7 @@ class StudyViewModelPullTest {
     fun tappingTheQuestionClockPausesAndResumesIt() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         viewModel.toggleQuestionClock()
         assertFalse(viewModel.state.value.clockRunning)
@@ -255,7 +264,7 @@ class StudyViewModelPullTest {
     fun aHiddenCardDoesNotResumeItsClockWhenTheAppReturns() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition {
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
             viewModel.state.value.current != null && !viewModel.state.value.loading
         })
 
@@ -283,13 +292,13 @@ class StudyViewModelPullTest {
         // not start charging until the screen reports it back in view.
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         viewModel.setQuestionVisible(false)
         viewModel.toggleOption("q1-a")
         viewModel.check()
         viewModel.next()
-        assertTrue(awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current?.questionId == "q2" })
         assertFalse("a fresh card must not be clocked while out of view", viewModel.state.value.clockRunning)
 
         viewModel.setQuestionVisible(true)
@@ -336,7 +345,7 @@ class StudyViewModelPullTest {
             }
         }
         val viewModel = StudyViewModel(app, "p1", leechesOnly = true)
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         // First pass: grade everything the drill loaded. GOOD graduates a
         // relearning card, so neither a stale replay nor the fresh pull
@@ -348,11 +357,11 @@ class StudyViewModelPullTest {
             viewModel.toggleOption("$id-a")
             viewModel.check()
             viewModel.next()
-            assertTrue(awaitCondition {
+            assertTrue("state=${viewModel.state.value}", awaitCondition {
                 viewModel.state.value.finished || viewModel.state.value.current?.questionId != id
             })
         }
-        assertTrue(awaitCondition { viewModel.state.value.finished })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
         assertEquals(setOf("q1", "q3"), loadedIds)
 
         // While the drill sits at "Study again", the scheduler moves under
@@ -376,7 +385,7 @@ class StudyViewModelPullTest {
         assertEquals(listOf("q1", "q2").sorted(), fresh.map { it.questionId }.sorted())
 
         viewModel.restart()
-        assertTrue(awaitCondition { viewModel.state.value.current != null })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
         // The card on screen is the scheduler's card NOW, state included.
         assertEquals(fresh[0].questionId, viewModel.state.value.current!!.questionId)
         assertEquals(fresh[0].state, viewModel.state.value.current!!.state)
@@ -392,15 +401,137 @@ class StudyViewModelPullTest {
             viewModel.toggleOption("$id-a")
             viewModel.check()
             viewModel.next()
-            assertTrue(awaitCondition {
+            assertTrue("state=${viewModel.state.value}", awaitCondition {
                 viewModel.state.value.finished || viewModel.state.value.current?.questionId != id
             })
         }
-        assertTrue(awaitCondition { viewModel.state.value.finished })
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
         assertEquals(
             "the restarted drill walks the scheduler's queue: $visited",
             fresh.map { it.questionId }.toSet(),
             visited
         )
+    }
+
+    /**
+     * The pull runs only over the selected categories (§9.4): a scoped session
+     * must stop on its own scope and never touch another category's schedule.
+     * A route carries the ticked ids; the ViewModel expands them from the
+     * paper, exactly like the destination does in the app.
+     */
+    @Test
+    fun aCategorySessionStopsWhenItsScopeIsDry() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            repository.setSchedulerConfig(
+                repository.schedulerConfigNow().copy(introduceNewCards = false)
+            )
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = now - 30 * day)
+            c2
+        }
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf(other))
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+
+        viewModel.toggleOption("q2-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
+        // Work was done, so this is not the "empty paper" copy.
+        assertEquals(EmptyReason.None, viewModel.state.value.emptyReason)
+        // The scope ran dry while the paper still had a due card in c1.
+        assertTrue(
+            runBlocking { repository.getStudyQueue("p1").any { it.questionId == "q1" } }
+        )
+    }
+
+    @Test
+    fun aCategorySessionLeavesOtherCategoriesSchedulesAlone() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = now - 30 * day)
+            c2
+        }
+        val before = runBlocking { repository.cardState("p1", "q1")!! }
+        val gradedBefore = runBlocking { repository.cardState("p1", "q2")!! }
+
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf(other))
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current?.questionId == "q2" })
+        viewModel.toggleOption("q2-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue(
+            awaitCondition {
+                viewModel.state.value.current?.questionId != "q2" || viewModel.state.value.finished
+            }
+        )
+
+        // Grading inside c2 must not touch c1, and did move its own card.
+        assertEquals(before, runBlocking { repository.cardState("p1", "q1")!! })
+        assertTrue(
+            "the graded card must actually schedule",
+            runBlocking { repository.cardState("p1", "q2")!!.dueAt } != gradedBefore.dueAt
+        )
+    }
+
+    @Test
+    fun theScopeLabelNamesASingleCategory() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+        }
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf("c1"))
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+        assertEquals(ScopeLabel.One("Cat"), viewModel.state.value.scopeLabel)
+    }
+
+    @Test
+    fun theScopeLabelCountsSeveralCategories() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            c2
+        }
+        val viewModel = StudyViewModel(app, "p1", categoryIds = listOf("c1", other))
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+        assertEquals(ScopeLabel.Many(2), viewModel.state.value.scopeLabel)
+    }
+
+    @Test
+    fun resumingWithAScopeStillPullsOnlyThatScope() {
+        val other = runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            val c2 = repository.addCategory("p1", "Other", null)
+            repository.saveQuestion(question("q2", c2))
+            val day = 86_400_000L
+            val now = System.currentTimeMillis()
+            repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+            repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = now - 30 * day)
+            c2
+        }
+        val routeIds = listOf(other)
+        val first = StudyViewModel(app, "p1", categoryIds = routeIds)
+        assertTrue("state=${first.state.value}", awaitCondition { first.state.value.current != null })
+        assertEquals("q2", first.state.value.current!!.questionId)
+
+        // Resuming builds a fresh instance from the same route ids; the scope
+        // is recomputed from the route, not carried as expanded state.
+        val resumed = StudyViewModel(app, "p1", categoryIds = routeIds)
+        assertTrue("state=${resumed.state.value}", awaitCondition { resumed.state.value.current != null })
+        assertEquals("q2", resumed.state.value.current!!.questionId)
     }
 }

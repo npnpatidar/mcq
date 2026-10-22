@@ -7,6 +7,7 @@ import com.mcqapp.ui.navigation.resultsRoute
 import com.mcqapp.ui.navigation.studyRoute
 import com.mcqapp.ui.navigation.testRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -82,5 +83,42 @@ class RoutesTest {
         val route = testRoute("p1", drillCount = 10, drillMinutes = 5)
         assertEquals("10", route.substringAfter("drillCount=").substringBefore("&"))
         assertEquals("5", route.substringAfter("drillMinutes="))
+    }
+
+    // --- scoped study routes (§9.5) ---
+
+    @Test
+    fun aWholePaperStudyRouteIsUnchanged() {
+        // No query at all: the old route must stay byte-for-byte.
+        assertEquals("study/paper-1", studyRoute("paper-1"))
+        assertEquals("study/paper-1?leechesOnly=true", studyRoute("paper-1", leechesOnly = true))
+    }
+
+    @Test
+    fun studyCarriesCategories() {
+        val route = studyRoute("p1", listOf("c1", "c2"))
+        assertEquals("study/p1?categories=c1%2Cc2", route)
+        // Commas are encoded, so the CSV is unambiguous in the URL.
+        assertEquals("c1,c2", Uri.decode(route.substringAfter("categories=")))
+    }
+
+    @Test
+    fun studyCarriesLeeches() {
+        val route = studyRoute("p1", leechesOnly = true)
+        assertEquals("study/p1?leechesOnly=true", route)
+        assertFalse(route.contains("categories="))
+        // Both, in the declared order.
+        assertEquals(
+            "study/p1?categories=c1&leechesOnly=true",
+            studyRoute("p1", listOf("c1"), leechesOnly = true)
+        )
+    }
+
+    @Test
+    fun aScopedStudyRouteEncodesThePaperSegment() {
+        val route = studyRoute(slashy, listOf("c1"))
+        assertEquals("study/a%2Fb%3Fc%23d?categories=c1", route)
+        // The scope must not reshape the paper segment into a query parameter.
+        assertEquals(1, route.removePrefix("study/").substringBefore("?").count { it == '/' } + 1)
     }
 }

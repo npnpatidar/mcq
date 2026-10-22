@@ -45,9 +45,9 @@ class StudyPullQueryCountTest {
         appContext = ApplicationProvider.getApplicationContext<Context>()
     }
 
-    private fun question(id: String) = Question(
+    private fun question(id: String, categoryId: String = "c1") = Question(
         id = id,
-        categoryId = "c1",
+        categoryId = categoryId,
         text = "Q $id",
         options = listOf(
             QuestionOption("a", "right"),
@@ -115,6 +115,66 @@ class StudyPullQueryCountTest {
             0,
             statsFor(100).answerKeySelects
         )
+    }
+
+    /**
+     * The scoped pull has an analytic ceiling: one `staleForPaper` read, then a
+     * learning read, a review-head read and a new-card read per chunk of 500
+     * ids — `1 + 3 * ceil(scope / 500)`, so 7 for 501 categories. The count is
+     * measured, not derived: the print below is the observed value, and CI is
+     * where this executes (Robolectric needs x86_64).
+     */
+    @Test
+    fun aScopedPullStaysWithinOneChunkBound() = runBlocking {
+        val selects = AtomicInteger()
+        val answerKeySelects = AtomicInteger()
+        val db = Room.inMemoryDatabaseBuilder(appContext, AppDatabase::class.java)
+            .setQueryCallback(
+                RoomDatabase.QueryCallback { sql, _ ->
+                    if (sql.trimStart().startsWith("SELECT")) selects.incrementAndGet()
+                    if (sql.contains("correct_answers")) answerKeySelects.incrementAndGet()
+                },
+                { it.run() }
+            )
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val repository = McqRepository(db, appContext)
+            repository.ensurePaperAndCategory("p1", "Paper 1", "c1", "Cat 1")
+            // 501 categories, one fresh question each: the scope spans two
+            // chunks, and every chunk has to be consulted for all three pools.
+            val ids = (1..501).map { "c$it" }
+            ids.forEach { id ->
+                repository.ensurePaperAndCategory("p1", "Paper 1", id, "Cat $id")
+                repository.saveQuestion(question("q-$id", id))
+            }
+            selects.set(0)
+            answerKeySelects.set(0)
+            val card = repository.getNextStudyCard(
+                "p1",
+                reviewsSinceNew = 0,
+                // Past every interval, so nothing is due and the pull walks the
+                // whole scope to the first new card.
+                now = 90L * 86_400_000L,
+                categoryIds = ids
+            )
+            val scopedSelects = selects.get()
+            val scopedKeySelects = answerKeySelects.get()
+            println("PULL-COUNT scoped501=$scopedSelects (bound 7, chunks=2)")
+            assertNotNull("a fresh card from the 501-category scope is served", card)
+            assertTrue(
+                "a 501-category scope cost $scopedSelects selects, " +
+                    "ceiling is 1 + 3*ceil(501/500) = 7",
+                scopedSelects <= 7
+            )
+            assertEquals(
+                "the scoped pull must not read the key table",
+                0,
+                scopedKeySelects
+            )
+        } finally {
+            db.close()
+        }
     }
 
     @Test

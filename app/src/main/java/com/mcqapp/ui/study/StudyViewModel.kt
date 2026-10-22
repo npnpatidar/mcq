@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
@@ -35,6 +36,20 @@ data class StudyResult(
     val dwellSeconds: Long,
     val nextIn: String
 )
+
+/** Why an empty session is empty. The copy is in strings.xml, resolved by StudyScreen. */
+enum class EmptyReason { None, NothingDue, NothingDueInScope, NothingTricky, NothingTrickyInScope }
+
+/**
+ * What the session is scoped to. The split keeps user-facing copy out of the
+ * ViewModel: a Robolectric unit test runs without app resources (C19), so any
+ * getString here dies in every scope test.
+ */
+sealed interface ScopeLabel {
+    data object WholePaper : ScopeLabel
+    data class One(val title: String) : ScopeLabel
+    data class Many(val count: Int) : ScopeLabel
+}
 
 /**
  * A pull-based study session: there is no prebuilt queue and no target. The
@@ -87,13 +102,20 @@ data class StudyUiState(
     /** True once the pull has run dry — nothing eligible left right now. */
     val finished: Boolean = false,
     /** Why the session is empty; only set when nothing was ever studied. */
-    val emptyReason: String = "",
+    val emptyReason: EmptyReason = EmptyReason.None,
     /** Whether new cards can be introduced at all (drives the empty-state hint). */
     val introduceNewCards: Boolean = true,
     /** New cards exist but are switched off, so the empty state can offer them. */
     val freshAvailable: Boolean = false,
     /** The reviewed-count the break strip was dismissed at, so it can return at the next milestone. */
-    val breakDismissedAt: Int = 0
+    val breakDismissedAt: Int = 0,
+    /**
+     * What the header shows above the card: the whole paper, one category's
+     * title, or a count. [ScopeLabel.WholePaper] renders as nothing.
+     * Last, not next to [paperTitle]: two adjacent String fields invite a later
+     * positional `copy(...)` to rebind the wrong one.
+     */
+    val scopeLabel: ScopeLabel = ScopeLabel.WholePaper
 ) {
     val currentSelection: Set<String> get() = selection
     val isCurrentRevealed: Boolean get() = revealed
@@ -121,6 +143,8 @@ data class StudyUiState(
 class StudyViewModel(
     application: Application,
     private val paperId: String,
+    /** The ticked category ids from the route; empty means the whole paper. */
+    private val categoryIds: List<String> = emptyList(),
     private val leechesOnly: Boolean = false
 ) : AndroidViewModel(application) {
 
@@ -152,6 +176,13 @@ class StudyViewModel(
     private var config: SchedulerConfig? = null
 
     /**
+     * The route's ticked ids expanded to the served scope (§6.4). The route
+     * keeps the ticked ids because that is what the progress snapshot compares;
+     * every query takes this expanded list, and empty still means whole paper.
+     */
+    private var scopeIds: List<String> = emptyList()
+
+    /**
      * The tricky drill serves a fixed list of the paper's leeches; the main
      * session pulls card by card from the scheduler. Non-null switches the
      * pull source to this list.
@@ -164,22 +195,43 @@ class StudyViewModel(
             try {
                 val paper = repository.getPaper(paperId)
                 config = repository.schedulerConfigNow()
+                // Expand once, from the paper already loaded: the route carries
+                // the ticked ids (so the snapshot keeps matching when a
+                // category is added later), and every query gets the scope.
+                scopeIds = if (categoryIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    CategorySelection.orderedIds(paper?.categories.orEmpty(), categoryIds)
+                }
+                val label = when {
+                    categoryIds.isEmpty() -> ScopeLabel.WholePaper
+                    categoryIds.size == 1 -> ScopeLabel.One(
+                        CategorySelection.titleOf(paper?.categories.orEmpty(), categoryIds.first())
+                            .orEmpty()
+                    )
+                    else -> ScopeLabel.Many(categoryIds.size)
+                }
                 if (leechesOnly) {
-                    drillCards = repository.getStudyQueue(paperId, leechesOnly = true)
+                    drillCards = repository.getStudyQueue(
+                        paperId,
+                        leechesOnly = true,
+                        categoryIds = scopeIds
+                    )
                 }
                 // The card on screen is fetched when it is pulled, not the
                 // whole paper up front: a 169k-question paper never fits.
                 Logger.i(
                     "STUDY",
                     "Study session: paper=$paperId, drill=$leechesOnly, " +
-                        "cards=${drillCards?.size ?: "pull"}"
+                        "scope=${scopeIds.size}, cards=${drillCards?.size ?: "pull"}"
                 )
                 _state.update {
                     it.copy(
                         loading = false,
                         paperTitle = paper?.title ?: "Study",
                         simplified = repository.simplifiedStudy().first(),
-                        introduceNewCards = config?.introduceNewCards ?: true
+                        introduceNewCards = config?.introduceNewCards ?: true,
+                        scopeLabel = label
                     )
                 }
                 pullCard()
@@ -206,7 +258,11 @@ class StudyViewModel(
 
     /** The next card: the drill's fixed list, or whatever the scheduler pulls. */
     private suspend fun nextCard(): StudyCard? {
-        val list = drillCards ?: return repository.getNextStudyCard(paperId, _state.value.reviewsSinceNew)
+        val list = drillCards ?: return repository.getNextStudyCard(
+            paperId,
+            _state.value.reviewsSinceNew,
+            categoryIds = scopeIds
+        )
         val card = list.getOrNull(drillIndex)
         if (card != null) drillIndex++
         return card
@@ -266,7 +322,8 @@ class StudyViewModel(
                 // that flip, and the toggle being off is what emptied the
                 // session — counting under the off flag would always say no.
                 freshAvailable = repository
-                    .getStudyEligibility(paperId, introduceNewCards = true).fresh > 0
+                    .getStudyEligibility(paperId, introduceNewCards = true, categoryIds = scopeIds)
+                    .fresh > 0
             } catch (e: Exception) {
                 Logger.e("STUDY", "getStudyEligibility failed", e)
             }
@@ -286,12 +343,12 @@ class StudyViewModel(
                 questionElapsedSeconds = 0L,
                 clockRunning = false,
                 finished = true,
-                emptyReason = if (it.reviewed > 0) {
-                    ""
-                } else if (leechesOnly) {
-                    "No tricky questions right now."
-                } else {
-                    "Nothing due right now."
+                emptyReason = when {
+                    it.reviewed > 0 -> EmptyReason.None
+                    leechesOnly && scopeIds.isNotEmpty() -> EmptyReason.NothingTrickyInScope
+                    leechesOnly -> EmptyReason.NothingTricky
+                    scopeIds.isNotEmpty() -> EmptyReason.NothingDueInScope
+                    else -> EmptyReason.NothingDue
                 },
                 freshAvailable = freshAvailable
             )
@@ -596,7 +653,7 @@ class StudyViewModel(
      */
     fun stop() {
         pauseQuestionClock()
-        _state.update { it.copy(finished = true, emptyReason = "") }
+        _state.update { it.copy(finished = true, emptyReason = EmptyReason.None) }
     }
 
     fun dismissBreak() {
@@ -664,7 +721,11 @@ class StudyViewModel(
                 // drill, and one since cured or reset by a question edit has
                 // left it. The main session pulls live and needs no re-pull.
                 if (leechesOnly) {
-                    drillCards = repository.getStudyQueue(paperId, leechesOnly = true)
+                    drillCards = repository.getStudyQueue(
+                        paperId,
+                        leechesOnly = true,
+                        categoryIds = scopeIds
+                    )
                 }
                 drillIndex = 0
                 _state.update {
@@ -674,7 +735,7 @@ class StudyViewModel(
                         goodCount = 0,
                         reviewsSinceNew = 0,
                         finished = false,
-                        emptyReason = "",
+                        emptyReason = EmptyReason.None,
                         freshAvailable = false,
                         selection = emptySet(),
                         revealed = false,

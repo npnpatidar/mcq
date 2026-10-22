@@ -469,6 +469,20 @@ interface QuestionDao {
     suspend fun countForPaper(paperId: String): Int
 
     /**
+     * [countForPaper] restricted to an explicit category selection. The
+     * predicate rides on the existing `WHERE`, before any `ORDER BY`/`LIMIT`;
+     * nothing else in the annotation changed. The paper is still pinned by id
+     * so a stale id from another paper cannot inflate the count.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.categoryId IN (:categoryIds)"
+    )
+    suspend fun countForCategories(paperId: String, categoryIds: List<String>): Int
+
+    /**
      * How many of the paper's questions have no answer key — excluded from
      * scoring entirely. One aggregate query, so the submit summary of a
      * million-question paper does not count a million ids in Kotlin.
@@ -518,6 +532,30 @@ interface QuestionDao {
     suspend fun firstNewQuestionForPaper(paperId: String): String?
 
     /**
+     * [firstNewQuestionForPaper] restricted to an explicit category selection.
+     * The scope is one extra predicate on the `WHERE`, before the `ORDER BY`;
+     * the `LEFT JOIN` stays paper-scoped, so an edit in another paper still
+     * cannot be mistaken for a reset here.
+     */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "LEFT JOIN card_state ON card_state.questionId = questions.id " +
+            "  AND card_state.paperId = categories.paperId " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.categoryId IN (:categoryIds) " +
+            "AND (card_state.questionId IS NULL " +
+            "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
+            "  OR card_state.contentHash != questions.contentHash) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid LIMIT 1"
+    )
+    suspend fun firstNewQuestionForCategories(
+        paperId: String,
+        categoryIds: List<String>
+    ): String?
+
+    /**
      * Every question of the paper a session would serve as new, in authored
      * order — the full study queue's fresh pool. Linear in the paper by
      * definition; the pull uses [firstNewQuestionForPaper] instead.
@@ -535,6 +573,29 @@ interface QuestionDao {
             "questions.sortOrder, questions.rowid"
     )
     suspend fun newQuestionsForPaper(paperId: String): List<String>
+
+    /**
+     * [newQuestionsForPaper] restricted to an explicit category selection: the
+     * same authored order, with the scope as one predicate on the `WHERE` line
+     * before the `ORDER BY`. Chunked by the caller when the scope is large.
+     */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "LEFT JOIN card_state ON card_state.questionId = questions.id " +
+            "  AND card_state.paperId = categories.paperId " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.categoryId IN (:categoryIds) " +
+            "AND (card_state.questionId IS NULL " +
+            "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
+            "  OR card_state.contentHash != questions.contentHash) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun newQuestionsForCategories(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<String>
 
     /** Observation variant of [getRefsByCategories]: list surfaces re-emit. */
     @Query(
@@ -1335,6 +1396,43 @@ interface CardStateDao {
     suspend fun countsForPaper(paperId: String, now: Long): StudyPopulation
 
     /**
+     * [countsForPaper] restricted to an explicit category selection: the same
+     * five [StudyPopulation] fields, with the scope as one predicate inserted
+     * on the `WHERE` line. Nothing else in the annotation changed. Chunks are
+     * disjoint, so the caller sums the fields.
+     */
+    @Query(
+        "SELECT " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash " +
+            "  AND cs.cardState IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
+            "  THEN 1 ELSE 0 END), 0) AS learning, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash " +
+            "  AND cs.cardState NOT IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
+            "  THEN 1 ELSE 0 END), 0) AS due, " +
+            "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
+            "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.contentHash = q.contentHash AND cs.leech = 1 " +
+            "  THEN 1 ELSE 0 END), 0) AS leeches, " +
+            "COALESCE(SUM(CASE WHEN (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  OR cs.contentHash != q.contentHash THEN 1 ELSE 0 END), 0) AS newish, " +
+            "COUNT(*) AS storedRows " +
+            "FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND q.categoryId IN (:categoryIds)"
+    )
+    suspend fun countsForCategories(
+        paperId: String,
+        categoryIds: List<String>,
+        now: Long
+    ): StudyPopulation
+
+    /**
      * The paper's schedules whose stored hash no longer matches their
      * question, with the hash it should hold. Bounded by how many questions
      * were edited, which is why persisting the reset is affordable — it is the
@@ -1349,6 +1447,24 @@ interface CardStateDao {
             "AND cs.contentHash != q.contentHash"
     )
     suspend fun staleForPaper(paperId: String): List<QuestionIdHash>
+
+    /**
+     * [staleForPaper] restricted to an explicit category selection: the scope
+     * is one predicate inserted after the paper term on the `WHERE`, with no
+     * `ORDER BY`/`LIMIT` to trap it.
+     */
+    @Query(
+        "SELECT q.id AS id, q.contentHash AS contentHash FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND q.categoryId IN (:categoryIds) " +
+            "AND cs.contentHash != q.contentHash"
+    )
+    suspend fun staleForCategories(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<QuestionIdHash>
 
     /**
      * The paper's schedules that are due now and still describe their
@@ -1369,6 +1485,27 @@ interface CardStateDao {
     suspend fun dueForPaper(paperId: String, now: Long): List<CardStateEntity>
 
     /**
+     * [dueForPaper] restricted to an explicit category selection. The scope is
+     * one predicate inserted on the `WHERE` line; the `ORDER BY` below it is
+     * byte-identical to the paper-wide query.
+     */
+    @Query(
+        "SELECT cs.* FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND q.categoryId IN (:categoryIds) " +
+            "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.contentHash = q.contentHash " +
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
+    )
+    suspend fun dueForCategories(
+        paperId: String,
+        categoryIds: List<String>,
+        now: Long
+    ): List<CardStateEntity>
+
+    /**
      * The first due learning card in authored order — the head of `Study.pools`'
      * learning pool. `Study.pickNext` only ever reads the first learning card,
      * so the pull reads it with `LIMIT 1` rather than resolving every due
@@ -1386,6 +1523,28 @@ interface CardStateDao {
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
     )
     suspend fun firstDueLearningForPaper(paperId: String, now: Long): CardStateEntity?
+
+    /**
+     * [firstDueLearningForPaper] restricted to an explicit category selection.
+     * The scope predicate sits on the `WHERE` line; the `LIMIT 1` therefore
+     * limits the scoped rows, never part of the predicate's expression.
+     */
+    @Query(
+        "SELECT cs.* FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND q.categoryId IN (:categoryIds) " +
+            "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.contentHash = q.contentHash " +
+            "AND cs.cardState IN ('LEARNING','RELEARNING') " +
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
+    )
+    suspend fun firstDueLearningForCategories(
+        paperId: String,
+        categoryIds: List<String>,
+        now: Long
+    ): CardStateEntity?
 
     /**
      * The due review card `Study.pools` would rank first: the one whose
@@ -1419,6 +1578,38 @@ interface CardStateDao {
     )
     suspend fun bestDueReviewForPaper(
         paperId: String,
+        now: Long,
+        dayMs: Double
+    ): CardStateEntity?
+
+    /**
+     * [bestDueReviewForPaper] restricted to an explicit category selection: the
+     * scope is one predicate on the `WHERE` line, while the retention
+     * expression and the `cs.dueAt ASC, c.sortOrder, c.title, q.sortOrder,
+     * q.rowid` tie-break stay byte-identical. The caller picks the global
+     * winner across chunks with the same comparator.
+     */
+    @Query(
+        "SELECT cs.* FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND q.categoryId IN (:categoryIds) " +
+            "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.contentHash = q.contentHash " +
+            "AND cs.cardState NOT IN ('LEARNING','RELEARNING') " +
+            "ORDER BY " +
+            "CASE WHEN cs.stability <= 0.0 THEN 0 ELSE 1 END ASC, " +
+            "CASE WHEN cs.stability <= 0.0 THEN 0.0 " +
+            "WHEN cs.lastReviewedAt = 0 " +
+            "THEN MAX(cs.intervalDays, 1) * 1.0 / cs.stability " +
+            "ELSE (:now - cs.lastReviewedAt) * 1.0 / (:dayMs * cs.stability) END DESC, " +
+            "cs.dueAt ASC, " +
+            "c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
+    )
+    suspend fun bestDueReviewForCategories(
+        paperId: String,
+        categoryIds: List<String>,
         now: Long,
         dayMs: Double
     ): CardStateEntity?

@@ -325,11 +325,19 @@ fun LibraryScreen(
                     },
                     onStartTest = { paperId, categoryIds ->
                         scope.launch { drawerState.close() }
+                        Logger.i("LIB", "Drawer test: paperId=$paperId, categories=${categoryIds.size}")
                         navController.navigate(
                             com.mcqapp.ui.navigation.testRoute(paperId, categoryIds)
                         )
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
+                    onStartStudy = { paperId, categoryIds ->
+                        scope.launch { drawerState.close() }
+                        Logger.i("LIB", "Drawer study: paperId=$paperId, categories=${categoryIds.size}")
+                        navController.navigate(
+                            com.mcqapp.ui.navigation.studyRoute(paperId, categoryIds)
+                        )
+                    },
                 )
             }
         }

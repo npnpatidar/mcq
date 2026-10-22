@@ -1,19 +1,28 @@
 package com.mcqapp
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
@@ -91,6 +100,44 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun waitForTag(tag: String) {
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Scrolls the drawer's list until [tag] is on screen, and returns it. */
+    private fun drawerNode(tag: String) = compose.onNodeWithTag(tag).performScrollTo()
+
+    /** Opens the drawer and scrolls [paperId]'s row into view. */
+    private fun openDrawer(paperId: String) {
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        waitForTag("drawer-paper-$paperId")
+        drawerNode("drawer-paper-$paperId")
+    }
+
+    /**
+     * A paper whose tree is `parent`, with children `a` and `b`, one question
+     * in each child. Ticking the parent alone must reach both.
+     */
+    private fun seedNestedPaper(paperId: String, title: String) = runBlocking {
+        repository.ensurePaperAndCategory(paperId, title, "$paperId-p", "Parent")
+        for ((index, child) in listOf("a", "b").withIndex()) {
+            val childId = "$paperId-c$child"
+            repository.db().categoryDao().upsert(
+                CategoryEntity(
+                    id = childId,
+                    paperId = paperId,
+                    title = "Child ${child.uppercase()}",
+                    parentId = "$paperId-p",
+                    sortOrder = index
+                )
+            )
+            repository.saveQuestion(single("$paperId-q$child", childId))
+        }
+        seeded += paperId
     }
 
     @Test
@@ -544,5 +591,111 @@ class StudyAndSelectionUiTest {
         waitFor("UITest ui-empty-q1?")
         // The offer is not a one-screen gesture: the toggle behind it persists.
         assertTrue(runBlocking { repository.schedulerConfigNow().introduceNewCards })
+    }
+
+    // --- the drawer's category scope (§9.7) ---
+
+    @Test
+    fun tickingAParentCategoryTicksItsChildren() {
+        seedNestedPaper("ui-scope", "UIScope Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        openDrawer("ui-scope")
+        drawerNode("drawer-paper-ui-scope").performClick()
+        waitForTag("drawer-cat-ui-scope-p")
+
+        drawerNode("drawer-cat-ui-scope-p").performClick()
+        drawerNode("drawer-cat-ui-scope-ca").assertIsOn()
+        drawerNode("drawer-cat-ui-scope-cb").assertIsOn()
+    }
+
+    @Test
+    fun untickingOneChildShowsTheParentIndeterminate() {
+        seedNestedPaper("ui-scope-tri", "UIScope Tri")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        openDrawer("ui-scope-tri")
+        drawerNode("drawer-paper-ui-scope-tri").performClick()
+        waitForTag("drawer-cat-ui-scope-tri-p")
+        drawerNode("drawer-cat-ui-scope-tri-p").performClick()
+
+        // One of two children off: the parent is partial, not off.
+        drawerNode("drawer-cat-ui-scope-tri-ca").performClick()
+        drawerNode("drawer-cat-ui-scope-tri-p").assert(
+            SemanticsMatcher.expectValue(
+                SemanticsProperties.ToggleableState,
+                ToggleableState.Indeterminate
+            )
+        )
+        drawerNode("drawer-cat-ui-scope-tri-ca").assertIsOff()
+        drawerNode("drawer-cat-ui-scope-tri-cb").assertIsOn()
+    }
+
+    /**
+     * The bug §7.1.1 fixes: a drawer-wide selection let paper A's ids ride
+     * along with paper B's id, and the order then served A's questions under
+     * B. One selection per paper, and B's Test must not see A's question.
+     */
+    @Test
+    fun tickingInTwoPapersKeepsTheirSelectionsApart() {
+        seedPaper("ui-iso-a", "UIIso A", "ui-iso-a-cat", single("ui-iso-a-q", "ui-iso-a-cat"))
+        seedPaper("ui-iso-b", "UIIso B", "ui-iso-b-cat", single("ui-iso-b-q", "ui-iso-b-cat"))
+        compose.setContent { McqNavHost(repository = repository) }
+
+        openDrawer("ui-iso-a")
+        drawerNode("drawer-paper-ui-iso-a").performClick()
+        waitForTag("drawer-cat-ui-iso-a-cat")
+        drawerNode("drawer-cat-ui-iso-a-cat").performClick()
+
+        // Collapse A (its tick is kept) and tick only B.
+        drawerNode("drawer-paper-ui-iso-a").performClick()
+        drawerNode("drawer-paper-ui-iso-b").performClick()
+        waitForTag("drawer-cat-ui-iso-b-cat")
+        drawerNode("drawer-cat-ui-iso-b-cat").performClick()
+
+        // The action row appears only once something is ticked, so it may be
+        // below the fold: scroll to it, then read its own label.
+        drawerNode("drawer-test").assertIsDisplayed()
+        compose.onNodeWithTag("drawer-test").assert(hasText("Test (1 categories)"))
+        drawerNode("drawer-test").performClick()
+        waitFor("Question 1 of")
+        waitFor("UITest ui-iso-b-q?")
+        assertTrue(
+            "paper A's question leaked into paper B's test",
+            compose.onAllNodesWithText("UITest ui-iso-a-q?", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    @Test
+    fun studyFromTheDrawerServesOnlyTheSelectedCategory() {
+        val second = runBlocking {
+            repository.ensurePaperAndCategory("ui-drawer", "UIDrawer Paper", "ui-drawer-c1", "First")
+            repository.saveQuestion(single("ui-drawer-q1", "ui-drawer-c1"))
+            val c2 = repository.addCategory("ui-drawer", "Second", null)
+            repository.saveQuestion(single("ui-drawer-q2", c2))
+            seeded += "ui-drawer"
+            c2
+        }
+        compose.setContent { McqNavHost(repository = repository) }
+
+        openDrawer("ui-drawer")
+        drawerNode("drawer-paper-ui-drawer").performClick()
+        waitForTag("drawer-cat-$second")
+        drawerNode("drawer-cat-$second").performClick()
+
+        // One ticked branch, whatever its subtree contains. The row is the
+        // last child of the item and appears only now, so it can be below the
+        // fold: scroll to it and read the tagged node's own label.
+        drawerNode("drawer-study").assertIsDisplayed()
+        compose.onNodeWithTag("drawer-study").assert(hasText("Study (1 categories)"))
+        drawerNode("drawer-study").performClick()
+
+        waitFor("UITest ui-drawer-q2?")
+        assertTrue(
+            "the other category's question leaked into the scoped session",
+            compose.onAllNodesWithText("UITest ui-drawer-q1?", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
     }
 }

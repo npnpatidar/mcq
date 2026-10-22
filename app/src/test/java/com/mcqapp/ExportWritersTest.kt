@@ -5,12 +5,19 @@ import com.mcqapp.data.export.ZipPaperWriter
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.export.unreadableImageLabel
 import com.mcqapp.data.export.DocxPaperWriter
+import com.mcqapp.data.export.PaperJsonWriter
+import com.mcqapp.data.export.PaperStream
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -626,6 +633,44 @@ class ExportWritersTest {
         assertTrue(json.contains("\"passages\""))
         assertTrue(json.contains("The water cycle"))
         assertTrue(json.contains("\"passageId\":\"passage-1\"") || json.contains("\"passageId\": \"passage-1\""))
+    }
+
+    @Test
+    fun aPaperWithSeveralCategoriesStaysOneValidJsonEnvelope() = runBlocking {
+        // Regression: open() used to append the next category straight after
+        // the previous one's ']}' with no comma, so two categories invalidated
+        // the whole document — JSON_INLINE, and the paper.json inside ZIP and
+        // DOCX (both go through this writer).
+        val q1 = QuestionDto(
+            id = "q1",
+            text = "First question",
+            options = listOf(
+                OptionDto(id = "a", text = "Alpha"),
+                OptionDto(id = "b", text = "Beta")
+            ),
+            correctOptionIds = listOf("a")
+        )
+        val q2 = q1.copy(id = "q2", text = "Second question")
+        val dto = PaperDto(
+            id = "p1",
+            title = "Two branches",
+            categories = listOf(
+                CategoryDto(id = "c1", title = "First", questions = listOf(q1)),
+                CategoryDto(id = "c2", title = "Second", questions = listOf(q2))
+            )
+        )
+        val out = StringBuilder()
+        PaperJsonWriter.writePaperJson(out, PaperStream.of(dto))
+
+        // Parse it for real: an unterminated array is what the old shape threw.
+        val root = Json.parseToJsonElement(out.toString()).jsonObject
+        val categories = root.getValue("papers").jsonArray[0].jsonObject
+            .getValue("categories").jsonArray
+        assertEquals(2, categories.size)
+        assertEquals(
+            listOf("First", "Second"),
+            categories.map { it.jsonObject.getValue("title").jsonPrimitive.content }
+        )
     }
 
     @Ignore(

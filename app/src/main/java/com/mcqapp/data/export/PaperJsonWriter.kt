@@ -106,8 +106,16 @@ object PaperJsonWriter {
             }
         }
 
+        /** Whether a category object has already been written (needs a separator). */
+        private var wroteCategory = false
+
         private fun open(category: CategoryDto) {
             closeCategory()
+            // The walk emits one object per category, each closed by
+            // closeCategory(); without this comma two categories produced
+            // `]}{` and every consumer of paper.json rejected the document.
+            if (wroteCategory) out.append(',')
+            wroteCategory = true
             out.append("{\"id\":").append(text(category.id))
             out.append(",\"title\":").append(text(category.title))
             if (category.parentId != null) {

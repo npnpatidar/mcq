@@ -727,6 +727,8 @@ class StudyAndSelectionUiTest {
 
         // The drawer reads the same ViewModel-owned selection.
         openDrawer("ui-share")
+        drawerNode("drawer-paper-ui-share").performClick()
+        waitForTag("drawer-cat-ui-share-p")
         drawerNode("drawer-cat-ui-share-p").assertIsOn()
 
         // Unticking there clears the card's scope too: one owner, two readers.
@@ -750,8 +752,8 @@ class StudyAndSelectionUiTest {
             .performClick()
 
         // The parent's tick expands to both children; the first served card is
-        // the first child's, and the header names the scope.
-        waitFor("Question 1 of")
+        // the first child's, and the header names the scope. The served stem
+        // is the arrival signal — the Study screen has no session counter.
         waitFor("UITest ui-cardscope-qa?")
         compose.onNodeWithTag("study-scope-label").assert(hasText("Parent"))
         assertTrue(

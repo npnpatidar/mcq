@@ -2,6 +2,15 @@
 
 Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar/mcq.git`, branch `main`.
 
+## Branching (owner rule)
+
+- Implement everything on a feature branch cut from `main` (`feature/<topic>`). `main`
+  receives merged PRs only — never commit to it directly, not even docs.
+- Open a PR for every branch (draft until the owner says go); the owner decides when it
+  merges and when a release is cut.
+- Releases tag the merge commit on `main` as `0.0.N`, in the existing shape: asset
+  `mcq-<tag>-signed.apk` plus its `.sha256`, notes auto-generated with the PR links.
+
 ## Build and test
 
 ```bash
@@ -28,14 +37,17 @@ cd "$MCQ_REPO" && sh gradlew :app:assembleDebug :app:testDebugUnitTest \
 
 ## After every push
 
-CI uploads the debug APK as the `app-debug` artifact (`if: always()`). When a GitHub Actions
-build runs, download the APK to `/sdcard/Download`:
+CI uploads the APKs as artifacts (`if: always()`). When a GitHub Actions build runs, download
+both to `/sdcard/Download` and keep them under these exact names:
 
 ```bash
-gh run download <run-id> --name app-debug -D /sdcard/Download
+gh run download <run-id> --name app-debug   -D /sdcard/Download   # -> app-debug.apk
+gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-release.apk
 ```
 
-Keep it as `/sdcard/Download/app-debug.apk`.
+- `/sdcard/Download/app-debug.apk` and `/sdcard/Download/app-release.apk` are always the
+  latest build; the release APK is signed with CI's throwaway key, so installing it over a
+  debug build (or vice versa) needs an uninstall first.
 
 ## Anki interoperability
 

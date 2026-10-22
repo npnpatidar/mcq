@@ -198,10 +198,21 @@ class StudyViewModel(
                 // Expand once, from the paper already loaded: the route carries
                 // the ticked ids (so the snapshot keeps matching when a
                 // category is added later), and every query gets the scope.
+                // The expansion decides the scope's membership only. The
+                // category order the scope is served in is the flat
+                // `(sortOrder, title)` order the session order and every SQL
+                // surface use — recomputed here once per open, because a
+                // >500-category scope's chunk boundaries must line up with
+                // that order for the scoped study session to walk categories
+                // in the same relative order the scoped test session next
+                // door delivers (in-chunk the pool SQL re-sorts regardless).
                 scopeIds = if (categoryIds.isEmpty()) {
                     emptyList()
                 } else {
-                    CategorySelection.orderedIds(paper?.categories.orEmpty(), categoryIds)
+                    repository.categoryFlatOrder(
+                        paperId,
+                        CategorySelection.orderedIds(paper?.categories.orEmpty(), categoryIds)
+                    )
                 }
                 val label = when {
                     categoryIds.isEmpty() -> ScopeLabel.WholePaper

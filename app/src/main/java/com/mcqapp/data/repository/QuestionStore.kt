@@ -119,12 +119,30 @@ internal class QuestionStore(
      * caller forget it. Ids are looked up in chunks (a scope can exceed
      * SQLite's bind limit) and ids belonging to a different paper are dropped.
      */
-    suspend fun getOrderForCategories(paperId: String, categoryIds: List<String>): SessionOrder {
-        val ordered = db.categoryDao().getByIdsChunked(categoryIds)
+    suspend fun getOrderForCategories(paperId: String, categoryIds: List<String>): SessionOrder =
+        loadOrder(flatCategoryOrder(paperId, categoryIds))
+
+    /**
+     * The ids that belong to [paperId], in the flat `(categories.sortOrder,
+     * categories.title)` order **every** SQL list surface orders by — the
+     * paper-wide session order (`getByPaper`), the scoped pool queries' own
+     * `ORDER BY` inside each chunk (`dueForCategories`, `newQuestionsForCategories`),
+     * browse's paging cursor and the old join order this store served before it
+     * went streaming. A caller that chunks its scope into pool queries must cut
+     * the chunk sequence on this order too: within a chunk the SQL re-sorts by
+     * it regardless of the passed order, so an unordered chunk boundary is the
+     * one place a hand-built scope's relative category order would not match
+     * what every other screen shows.
+     *
+     * Ids are looked up in chunks (a scope can exceed SQLite's bind limit) and
+     * ids belonging to a different paper are dropped.
+     */
+    suspend fun flatCategoryOrder(paperId: String, categoryIds: List<String>): List<String> {
+        if (categoryIds.isEmpty()) return emptyList()
+        return db.categoryDao().getByIdsChunked(categoryIds)
             .filter { it.paperId == paperId }
             .sortedWith(compareBy({ it.sortOrder }, { it.title }))
             .map { it.id }
-        return loadOrder(ordered)
     }
 
     /**

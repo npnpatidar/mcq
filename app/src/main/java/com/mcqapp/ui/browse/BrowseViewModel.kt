@@ -132,16 +132,19 @@ class BrowseViewModel(
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
-    private val filters = MutableStateFlow(
-        BrowseFilterRequest(
-            state = BrowseFilterState(categoryFilterIds = initialCategoryFilterIds.toSet())
-        )
-    )
+    // One shared seed, not two adjoined copies: the MutableStateFlow's
+    // request state and the eagerly started StateFlow's initial value must
+    // agree at construction. A future change to the seed shape now edits this
+    // one place, not two lines that had to stay in sync by vigilance alone.
+    private val initialFilterState =
+        BrowseFilterState(categoryFilterIds = initialCategoryFilterIds.toSet())
+
+    private val filters = MutableStateFlow(BrowseFilterRequest(state = initialFilterState))
     val filterState: StateFlow<BrowseFilterState> =
         filters.map { it.state }.stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
-            BrowseFilterState(categoryFilterIds = initialCategoryFilterIds.toSet())
+            initialFilterState
         )
 
     /** In-flight loads, guarding against a window update re-reading the same row. */
@@ -679,6 +682,9 @@ class BrowseViewModel(
         /** Window size: ~a screenful and a half, so flings stay ahead of IO. */
         const val BROWSE_PAGE = 60
 
+        /** A jump further than this many pages invalidates and reloads instead of walking. */
+        private const val JUMP_PAGES = 3
+
         /**
          * The browse list's paging window.
          *
@@ -711,7 +717,9 @@ class BrowseViewModel(
             enablePlaceholders = true,
             // Jumps on: see the KDoc. Anything further than three pages is
             // cheaper to reload around than to walk to.
-            jumpThreshold = BROWSE_PAGE * 3
+            // The three-page jump is named so tuning BROWSE_PAGE alone does
+            // not silently retune the jump distance with it.
+            jumpThreshold = JUMP_PAGES * BROWSE_PAGE
         )
 
         private fun flattenCategories(

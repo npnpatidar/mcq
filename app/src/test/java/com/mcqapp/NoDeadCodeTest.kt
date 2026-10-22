@@ -82,6 +82,29 @@ class NoDeadCodeTest {
     }
 
     /**
+     * `statsReviews()` materialises the whole replay log in memory; every stats
+     * tab streams instead (`statsRetention`, `statsOverview`, `statsMemory`,
+     * `statsCards`, `statsWorkload`). It stays as the stats tests' oracle — the
+     * full-log build the streamed aggregates are asserted equal to — and no
+     * production file may call it: a tab wired to the whole-log accessor would
+     * hold the log in memory once per tab visit, the perf regression the
+     * streamed variants exist to avoid.
+     */
+    @Test
+    fun theWholeLogStatsAccessorHasNoProductionCaller() {
+        val offenders = mutableListOf<String>()
+        sources()
+            .filter { it.name != "McqRepository.kt" && !it.path.contains("src/test") }
+            .forEach { file ->
+                val text = file.readText()
+                for (needle in listOf("statsReviews()", "statsReviews(scope")) {
+                    if (text.contains(needle)) offenders += "${file.name}:$needle"
+                }
+            }
+        assertTrue("these read the whole review log: $offenders", offenders.isEmpty())
+    }
+
+    /**
      * Two readers materialise a whole table: every result row of an attempt and
      * every bookmarked question. Both screens page instead
      * (`resultPagingSource`, `bookmarkedPagingSource`), so they stay as the

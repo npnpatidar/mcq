@@ -13,6 +13,14 @@ object ImageUtils {
 
     private const val MAX_DIMENSION = 1024
     private const val JPEG_QUALITY = 80
+    private const val PNG_QUALITY = 100
+
+    /** The PNG signature (`\x89PNG\r\n\x1a\n`). */
+    private fun isPng(bytes: ByteArray): Boolean = bytes.size >= 8 &&
+        bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && // P of PNG
+        bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() &&
+        bytes[4] == 0x0D.toByte() && bytes[5] == 0x0A.toByte() &&
+        bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte()
 
     fun encodeImageUri(context: Context, uri: Uri): String? {
         return try {
@@ -24,14 +32,28 @@ object ImageUtils {
                 // that inlines its images anyway.
                 readBounded(it)
             } ?: return null
-            // Decode straight to the target size instead of materialising a
-            // full-resolution photo only to scale it down afterwards.
-            val bitmap = uprightedBitmap(bytes, MAX_DIMENSION) ?: return null
-            val scaled = scaleBitmap(bitmap)
-            val out = ByteArrayOutputStream()
+        // Decode straight to the target size instead of materialising a
+        // full-resolution photo only to scale it down afterwards.
+        val bitmap = uprightedBitmap(bytes, MAX_DIMENSION) ?: return null
+        val scaled = scaleBitmap(bitmap)
+        val out = ByteArrayOutputStream()
+        // The pick's own format is kept when the pick format survives the
+        // re-encode losslessly: a picked PNG is a diagram, chart or screenshot
+        // — exactly what a question author attaches — and re-encoding it to
+        // opaque JPEG 80 threw away its transparency (a JPEG has no alpha, so
+        // transparent regions exported black) and re-compressed a lossless
+        // format lossily. The import paths store original bytes verbatim, so
+        // the editor pick is now no worse than the same image imported with a
+        // paper. Cameras and downloads hand over JPEG (the EXIF-upright path
+        // above exists for it), which keeps its JPEG encode.
+        val png = isPng(bytes)
+        if (png) {
+            scaled.compress(Bitmap.CompressFormat.PNG, PNG_QUALITY, out)
+        } else {
             scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-            val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-            "data:image/jpeg;base64,$base64"
+        }
+        val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        if (png) "data:image/png;base64,$base64" else "data:image/jpeg;base64,$base64"
         } catch (e: Throwable) {
             Logger.e("IMAGE", "Failed to encode image", e)
             null

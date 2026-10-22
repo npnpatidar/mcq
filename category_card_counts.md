@@ -546,3 +546,19 @@ subtrees. Export and Test therefore act on exactly the scope the scoped Study bu
    `exportSelection` over two branches: category set, question count, and the empty-selection
    error); `CriticalPathTest` untouched (tag/label unchanged).
 6. README: one line under the scoped-study feature — card Export/Test follow the selection.
+
+### 14.3 Defect found by the new test (fixed on this branch)
+
+The first CI run of the selection test parsed the export and failed with
+`Unterminated array` — **not** a test bug. `PaperJsonWriter.open()` closed the previous
+category (`]}`) and appended the next object with no separator, so every paper with two or
+more categories wrote `…]}{"id":"c2"…`. All three consumers of `writePaperJson` were hit:
+`JSON_INLINE` exports and the `paper.json` inside **ZIP** and **DOCX**. It survived because
+every `ExportWritersTest` fixture has exactly one category — the two-root selection was the
+first document that could expose it.
+
+Fix: a `wroteCategory` flag in `Envelope` emits `,` before each category after the first
+(`PaperJsonWriter.kt`). Regression test
+`ExportWritersTest.aPaperWithSeveralCategoriesStaysOneValidJsonEnvelope` parses a
+two-category paper with `kotlinx.serialization` in a **pure-JVM** test, so it runs on the
+aarch64 host as well as CI.

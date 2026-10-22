@@ -21,9 +21,23 @@ fun editorRoute(questionId: String, paperId: String, categoryId: String): String
         "&paperId=${encode(paperId)}" +
         "&categoryId=${encode(categoryId)}"
 
-fun browseRoute(paperId: String, focusQuestionId: String? = null): String =
-    if (focusQuestionId == null) "browse/${encode(paperId)}"
-    else "browse/${encode(paperId)}?focus=${encode(focusQuestionId)}"
+/**
+ * Browse's route. [categoryIds] seed the screen's category filter (the ticked
+ * branches, not the expanded scope: the destination re-expands them from the
+ * paper it already loads), and are appended only when there are any, so every
+ * pre-scope caller keeps its URL shape.
+ */
+fun browseRoute(
+    paperId: String,
+    focusQuestionId: String? = null,
+    categoryIds: List<String> = emptyList()
+): String {
+    val params = buildList {
+        if (focusQuestionId != null) add("focus=${encode(focusQuestionId)}")
+        if (categoryIds.isNotEmpty()) add("categories=${encode(categoryIds.joinToString(","))}")
+    }
+    return "browse/${encode(paperId)}" + if (params.isEmpty()) "" else "?" + params.joinToString("&")
+}
 
 /**
  * [categoryIds] are the **ticked** ids, not the expanded scope: the header

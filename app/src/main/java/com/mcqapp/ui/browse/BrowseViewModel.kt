@@ -95,7 +95,11 @@ data class BrowseUiState(
 data class BrowseFilterState(
     val query: String = "",
     val filter: BrowseListFilter = BrowseListFilter.ALL,
-    val categoryFilterId: String? = null
+    /**
+     * The category filter as chosen: the root ids, not their expanded subtrees
+     * (one id from the dropdown, several from a ticked card). Empty = all.
+     */
+    val categoryFilterIds: Set<String> = emptySet()
 )
 
 private data class BrowseFilterRequest(
@@ -113,7 +117,12 @@ private data class BrowseFilterRequest(
 @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class BrowseViewModel(
     application: Application,
-    private val paperId: String
+    private val paperId: String,
+    /**
+     * The ticked branches a card's Browse was opened with. They seed the filter
+     * (E10 / §15.2) and are shown in the field, so the user can clear them.
+     */
+    initialCategoryFilterIds: List<String> = emptyList()
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -123,9 +132,17 @@ class BrowseViewModel(
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
-    private val filters = MutableStateFlow(BrowseFilterRequest())
+    private val filters = MutableStateFlow(
+        BrowseFilterRequest(
+            state = BrowseFilterState(categoryFilterIds = initialCategoryFilterIds.toSet())
+        )
+    )
     val filterState: StateFlow<BrowseFilterState> =
-        filters.map { it.state }.stateIn(viewModelScope, SharingStarted.Eagerly, BrowseFilterState())
+        filters.map { it.state }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            BrowseFilterState(categoryFilterIds = initialCategoryFilterIds.toSet())
+        )
 
     /** In-flight loads, guarding against a window update re-reading the same row. */
     private val contextsLoading = mutableSetOf<String>()
@@ -177,6 +194,19 @@ class BrowseViewModel(
 
     val pagingData: Flow<PagingData<QuestionRef>> = filters
         .flatMapLatest { request ->
+            // No whole-paper flash (§15.2): a ticked card's ids cannot be
+            // expanded before the paper's category tree arrives, so a scoped
+            // first request waits for it instead of paging unfiltered and then
+            // narrowing. The arrival also bumps the filter version, whose
+            // request replaces this one.
+            if (request.state.categoryFilterIds.isNotEmpty() && _state.value.paper == null) {
+                // A paper that no longer exists (a dead route) never lands in
+                // `state`, so do not wait on it forever: read the ids as
+                // unfiltered, exactly as a stale id does below.
+                if (repository.observePapers().first().any { it.id == paperId }) {
+                    _state.first { it.paper != null }
+                }
+            }
             // The selected categories resolve to ROWIDS once per filter
             // change, here in a suspend window: Pager's factory is not one,
             // and the filter's csv is one unambiguous bound value the shared
@@ -208,7 +238,7 @@ class BrowseViewModel(
             paperId = paperId,
             query = state.query,
             filter = state.filter,
-            categoryFilterIds = subtreeIds(state.categoryFilterId)
+            categoryFilterIds = subtreeIds(state.categoryFilterIds)
         )
 
     private fun currentScope(): McqRepository.BrowseScope = scopeFor(filters.value.state)
@@ -221,14 +251,28 @@ class BrowseViewModel(
         filters.update { it.copy(state = it.state.copy(filter = filter)) }
     }
 
+    /** The dropdown's one-at-a-time choice; null clears the filter. */
     fun updateCategoryFilter(categoryId: String?) {
-        filters.update { it.copy(state = it.state.copy(categoryFilterId = categoryId)) }
+        updateCategoryFilters(categoryId?.let { setOf(it) }.orEmpty())
     }
 
-    private fun subtreeIds(rootId: String?): Set<String>? {
-        if (rootId == null) return null
+    /** Several branches at once, as a ticked card's Browse opens. */
+    fun updateCategoryFilters(categoryIds: Set<String>) {
+        filters.update { it.copy(state = it.state.copy(categoryFilterIds = categoryIds)) }
+    }
+
+    /**
+     * The filter as subtrees: null when nothing is filtered, and null as well
+     * when the ids resolve to no category (a stale route), so a dead link reads
+     * as "all" instead of an empty list.
+     */
+    private fun subtreeIds(rootIds: Set<String>): Set<String>? {
+        if (rootIds.isEmpty()) return null
         val flat = flattenCategories(_state.value.paper?.categories.orEmpty())
-        return com.mcqapp.ui.browse.subtreeIdsOf(flat, rootId)
+        val expanded = rootIds.flatMapTo(mutableSetOf()) { rootId ->
+            com.mcqapp.ui.browse.subtreeIdsOf(flat, rootId).orEmpty()
+        }
+        return expanded.ifEmpty { null }
     }
 
     /**

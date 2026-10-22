@@ -47,11 +47,12 @@ class EditorViewModelFactory(
 
 class BrowseViewModelFactory(
     private val application: Application,
-    private val paperId: String
+    private val paperId: String,
+    private val initialCategoryFilterIds: List<String> = emptyList()
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return BrowseViewModel(application, paperId) as T
+        return BrowseViewModel(application, paperId, initialCategoryFilterIds) as T
     }
 }
 

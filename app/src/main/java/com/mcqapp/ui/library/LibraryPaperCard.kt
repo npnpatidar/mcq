@@ -75,7 +75,7 @@ internal fun categoryCountsLine(counts: CategoryCounts): String =
 internal fun PaperCard(
     paper: Paper,
     onStart: () -> Unit,
-    onBrowse: () -> Unit,
+    onBrowse: (tickedIds: List<String>) -> Unit,
     onExport: (tickedIds: List<String>) -> Unit,
     onDelete: () -> Unit,
     onAddCategory: () -> Unit,
@@ -271,7 +271,7 @@ internal fun PaperCard(
                     Text(stringResource(R.string.export))
                 }
                 OutlinedButton(
-                    onClick = onBrowse,
+                    onClick = { onBrowse(ticked) },
                     modifier = Modifier.testTag("paper-browse-${paper.id}")
                 ) {
                     Text(stringResource(R.string.browse))

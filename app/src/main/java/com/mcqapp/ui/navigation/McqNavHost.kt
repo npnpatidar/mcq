@@ -104,19 +104,24 @@ fun McqNavHost(repository: McqRepository) {
             com.mcqapp.ui.stats.StatsScreen(repository = repository, navController = navController)
         }
         composable(
-            route = "browse/{paperId}?focus={focus}",
+            route = "browse/{paperId}?focus={focus}&categories={categories}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
-                navArgument("focus") { type = NavType.StringType; defaultValue = "" }
+                navArgument("focus") { type = NavType.StringType; defaultValue = "" },
+                navArgument("categories") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
             val focus = entry.arguments?.getString("focus").orEmpty()
-            Logger.i("NAV", "browse screen: paperId=$paperId, focus='$focus'")
+            val categories = entry.arguments?.getString("categories").orEmpty()
+                .split(',')
+                .filter { it.isNotBlank() }
+            Logger.i("NAV", "browse screen: paperId=$paperId, focus='$focus', categories=${categories.size}")
             BrowseScreen(
                 repository = repository,
                 paperId = paperId,
                 focusQuestionId = focus,
+                initialCategoryIds = categories,
                 navController = navController
             )
         }

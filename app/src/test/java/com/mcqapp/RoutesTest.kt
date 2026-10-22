@@ -79,6 +79,24 @@ class RoutesTest {
     }
 
     @Test
+    fun theBrowseRouteCarriesAScopedFilterWithoutChangingTheOldShapes() {
+        // Pre-scope callers keep their URL byte-for-byte.
+        assertEquals("browse/paper-1", browseRoute("paper-1"))
+        assertEquals("browse/paper-1?focus=q1", browseRoute("paper-1", "q1"))
+
+        val route = browseRoute("paper-1", categoryIds = listOf("c1", "c2"))
+        assertEquals("browse/paper-1?categories=c1%2Cc2", route)
+        assertEquals(
+            listOf("c1", "c2"),
+            Uri.decode(route.substringAfter("categories=")).split(',')
+        )
+        assertEquals(
+            "browse/paper-1?focus=q1&categories=c1",
+            browseRoute("paper-1", focusQuestionId = "q1", categoryIds = listOf("c1"))
+        )
+    }
+
+    @Test
     fun drillParametersAreCarried() {
         val route = testRoute("p1", drillCount = 10, drillMinutes = 5)
         assertEquals("10", route.substringAfter("drillCount=").substringBefore("&"))

@@ -226,6 +226,21 @@ class StudyActionStructureTest {
     }
 
     @Test
+    fun theCardBrowseAndTheRouteCarryTheTickedBranches() {
+        val card = source("src/main/java/com/mcqapp/ui/library/LibraryPaperCard.kt")
+        val screen = source("src/main/java/com/mcqapp/ui/library/LibraryScreen.kt")
+        assertTrue(
+            "the Browse button must pass the ticked branches",
+            card.contains("onClick = { onBrowse(ticked) }")
+        )
+        val browse = screen.substringAfter("onBrowse = {").substringBefore("onExport")
+        assertTrue(
+            "the Browse route must carry the ticked ids as its category filter",
+            browse.contains("categoryIds = ids")
+        )
+    }
+
+    @Test
     fun theDrawerLabelsTheTickedBranchCount() {
         val drawer = source("src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt")
         // ticked.size, not the expanded scope's size: one parent with twenty

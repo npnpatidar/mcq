@@ -849,4 +849,33 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()
         compose.onNodeWithText("Cancel", substring = false).performClick()
     }
+
+    @Test
+    fun cardBrowseFollowsTheSelection() {
+        // The second root is the only thing a scoped Browse can exclude, so a
+        // whole-paper list would show its sibling too.
+        val second = seedTwoRoots("ui-cbrowse", "UICBrowse Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cbrowse").performScrollTo().performClick()
+        waitForTag("card-cat-$second")
+        compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
+        compose.onNodeWithTag("paper-browse-ui-cbrowse").performScrollTo().performClick()
+
+        // Pre-filtered, and the field names the applied category.
+        waitFor("UITest ui-cbrowse-q2?")
+        assertTrue(
+            "the unticked root's question leaked into the list",
+            compose.onAllNodesWithText("UITest ui-cbrowse-q1?", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+        compose.onNodeWithText("Second", substring = false).assertIsDisplayed()
+
+        // "All categories" clears the pre-filter: both questions are listed.
+        compose.onNodeWithText("Second", substring = false).performClick()
+        waitFor("All categories")
+        compose.onNodeWithText("All categories", substring = false).performClick()
+        waitFor("UITest ui-cbrowse-q1?")
+        waitFor("UITest ui-cbrowse-q2?")
+    }
 }

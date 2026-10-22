@@ -104,7 +104,9 @@ fun LibraryScreen(
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
     var editingCategory by remember { mutableStateOf<com.mcqapp.domain.CategoryNode?>(null) }
     var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
-    var pendingExportCategory by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    // (paperId, ticked branches, branch count): Export follows the selection
+    // when something is ticked, and the count is for the dialog's title only.
+    var pendingExportSelection by remember { mutableStateOf<Triple<String, List<String>, Int>?>(null) }
     var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
     var showExportFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
@@ -113,17 +115,17 @@ fun LibraryScreen(
     // dialog, so anything baked into the callback itself goes stale.
     fun onExportDocument(uri: Uri?) {
         val paperId = pendingExportPaperId
-        val category = pendingExportCategory
+        val selection = pendingExportSelection
         val format = pendingExportFormat
         pendingExportPaperId = null
-        pendingExportCategory = null
+        pendingExportSelection = null
         pendingExportFormat = null
         uri?.let {
-            if (category != null && format != null) {
-                viewModel.exportCategoryAs(it, category.first, category.second, format)
+            if (selection != null && format != null) {
+                viewModel.exportSelectionAs(it, selection.first, selection.second, format)
             } else if (paperId != null && format != null) {
                 viewModel.exportPaperAs(it, paperId, format)
-            } else if (paperId == null && category == null) {
+            } else if (paperId == null && selection == null) {
                 viewModel.exportAll(it)
             }
         }
@@ -447,8 +449,21 @@ fun LibraryScreen(
                                 onBrowse = {
                                     navController.navigate(com.mcqapp.ui.navigation.browseRoute(paper.id))
                                 },
-                                onExport = {
-                                    pendingExportPaperId = paper.id
+                                onScopedTest = { ids ->
+                                    Logger.i("LIB", "Card test: paperId=${paper.id}, categories=${ids.size}")
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.testRoute(paper.id, ids)
+                                    )
+                                },
+                                onExport = { tickedIds ->
+                                    // Nothing ticked → the whole paper; a
+                                    // selection → exactly its branches (E1).
+                                    if (tickedIds.isEmpty()) {
+                                        pendingExportPaperId = paper.id
+                                    } else {
+                                        pendingExportSelection =
+                                            Triple(paper.id, tickedIds, tickedIds.size)
+                                    }
                                     exportFormat = ExportFormat.JSON_INLINE
                                     showExportFormatDialog = true
                                 },
@@ -469,12 +484,6 @@ fun LibraryScreen(
                                     navController.navigate(
                                         com.mcqapp.ui.navigation.editorRoute("", paper.id, categoryId)
                                     )
-                                },
-                                onExportCategory = { categoryId, title ->
-                                    pendingExportPaperId = null
-                                    pendingExportCategory = Triple(paper.id, categoryId, title)
-                                    exportFormat = ExportFormat.JSON_INLINE
-                                    showExportFormatDialog = true
                                 },
                                 onMoveCategory = { categoryId, delta ->
                                     viewModel.moveCategory(categoryId, delta)
@@ -638,13 +647,13 @@ fun LibraryScreen(
             onDismissRequest = {
                 showExportFormatDialog = false
                 pendingExportPaperId = null
-                pendingExportCategory = null
+                pendingExportSelection = null
                 pendingExportFormat = null
             },
             title = {
                 Text(
-                    if (pendingExportCategory != null) {
-                        "Export ${pendingExportCategory!!.third}"
+                    if (pendingExportSelection != null) {
+                        "Export selection (${pendingExportSelection!!.third} categories)"
                     } else {
                         "Export format"
                     }
@@ -679,20 +688,25 @@ fun LibraryScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val category = pendingExportCategory
+                    val selection = pendingExportSelection
                     val paper = papers.firstOrNull { it.id == pendingExportPaperId }
+                    val selectionPaper = papers.firstOrNull { it.id == selection?.first }
                     showExportFormatDialog = false
-                    if (category != null) {
+                    if (selection != null) {
                         pendingExportFormat = exportFormat
-                        exportSaver(exportFormat)
-                            .launch(PaperExporter.fileNameFor(category.third, exportFormat))
+                        exportSaver(exportFormat).launch(
+                            PaperExporter.fileNameFor(
+                                "${selectionPaper?.title.orEmpty()} (selection)",
+                                exportFormat
+                            )
+                        )
                     } else if (paper != null) {
                         pendingExportFormat = exportFormat
                         exportSaver(exportFormat)
                             .launch(PaperExporter.fileNameFor(paper.title, exportFormat))
                     } else {
                         pendingExportPaperId = null
-                        pendingExportCategory = null
+                        pendingExportSelection = null
                         pendingExportFormat = null
                     }
                 }) { Text(stringResource(R.string.export)) }
@@ -701,7 +715,7 @@ fun LibraryScreen(
                 TextButton(onClick = {
                     showExportFormatDialog = false
                     pendingExportPaperId = null
-                    pendingExportCategory = null
+                    pendingExportSelection = null
                     pendingExportFormat = null
                 }) { Text(stringResource(R.string.cancel)) }
             }

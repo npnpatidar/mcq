@@ -203,17 +203,17 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun exportCategoryAs(
+    fun exportSelectionAs(
         uri: Uri,
         paperId: String,
-        categoryId: String,
+        categoryIds: List<String>,
         format: com.mcqapp.data.export.ExportFormat
     ) {
         viewModelScope.launch {
             try {
                 val file = writeExport(uri) { sink ->
                     com.mcqapp.data.export.PaperExporter(repository.db())
-                        .exportCategory(paperId, categoryId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                        .exportSelection(paperId, categoryIds, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
                 }
                 Logger.i("LIBVM", "Exported ${file.fileName}")
                 _exportError.value = null

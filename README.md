@@ -135,7 +135,8 @@ writes an attempt: it only schedules *when you should see a question again*.
 **Scoped study.** Pick categories in the drawer; a selected parent includes its
 subcategories. Badges stay paper-wide; the scope only decides what the session serves.
 Schedules are still per question, so studying a subtree never changes another category's
-dates.
+dates. On a paper card, Export and Test follow the ticked categories when one is selected —
+with nothing ticked they act on the whole paper.
 
 **Where the schedule lives.** A `card_state` row per question (schema v10, with
 `review_log` recording every review beside it). Migration is automatic and preserves

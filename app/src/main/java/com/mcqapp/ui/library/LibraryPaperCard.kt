@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -77,12 +76,12 @@ internal fun PaperCard(
     paper: Paper,
     onStart: () -> Unit,
     onBrowse: () -> Unit,
-    onExport: () -> Unit,
+    onExport: (tickedIds: List<String>) -> Unit,
     onDelete: () -> Unit,
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
-    onExportCategory: (String, String) -> Unit,
+    onScopedTest: (List<String>) -> Unit = {},
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onNestCategory: (String) -> Unit = {},
     onPromoteCategory: (String) -> Unit = {},
@@ -250,7 +249,7 @@ internal fun PaperCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = onStart,
+                    onClick = { if (ticked.isEmpty()) onStart() else onScopedTest(ticked) },
                     modifier = Modifier.testTag("paper-test-${paper.id}")
                 ) {
                     Text(stringResource(R.string.test_action))
@@ -263,7 +262,7 @@ internal fun PaperCard(
                         Text("${leechCount} tricky")
                     }
                 }
-                OutlinedButton(onClick = onExport) {
+                OutlinedButton(onClick = { onExport(ticked) }) {
                     Text(stringResource(R.string.export))
                 }
                 OutlinedButton(
@@ -391,7 +390,6 @@ internal fun PaperCard(
                                 onDeleteCategory = onDeleteCategory,
                                 onEditQuestion = onEditQuestion,
                                 onAddQuestion = onAddQuestion,
-                                onExportCategory = onExportCategory,
                                 onAddCategory = onAddCategory,
                                 onDelete = onDelete
                             )
@@ -463,7 +461,6 @@ private fun ManageCategoryBlock(
     onDeleteCategory: (String) -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
-    onExportCategory: (String, String) -> Unit,
     onAddCategory: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -480,8 +477,7 @@ private fun ManageCategoryBlock(
                 onEditCategory = onEditCategory,
                 onDeleteCategory = onDeleteCategory,
                 onEditQuestion = onEditQuestion,
-                onAddQuestion = onAddQuestion,
-                onExportCategory = onExportCategory
+                onAddQuestion = onAddQuestion
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -514,8 +510,7 @@ private fun CategoryRow(
     onEditCategory: (CategoryNode) -> Unit = {},
     onDeleteCategory: (String) -> Unit = {},
     onEditQuestion: (String, String) -> Unit,
-    onAddQuestion: (String) -> Unit,
-    onExportCategory: (String, String) -> Unit
+    onAddQuestion: (String) -> Unit
 ) {
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
         // Eight 48dp actions do not fit one line on a phone, so the row
@@ -551,9 +546,6 @@ private fun CategoryRow(
             IconButton(onClick = { onEditCategory(node) }) {
                 Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_category))
             }
-            IconButton(onClick = { onExportCategory(node.id, node.title) }) {
-                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_category))
-            }
             IconButton(onClick = { onAddQuestion(node.id) }) {
                 Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_question))
             }
@@ -573,8 +565,7 @@ private fun CategoryRow(
                 onEditCategory = onEditCategory,
                 onDeleteCategory = onDeleteCategory,
                 onEditQuestion = onEditQuestion,
-                onAddQuestion = onAddQuestion,
-                onExportCategory = onExportCategory
+                onAddQuestion = onAddQuestion
             )
         }
     }

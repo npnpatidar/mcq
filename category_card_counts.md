@@ -485,3 +485,80 @@ Green line: compile locally, device tests on CI.
 - Persisting the selection across app restarts (it survives rotation/navigation via the
   ViewModel; a restart starts clean).
 - Changing `getStudyCounts` to take a scope (L1 in `category_study.md`).
+
+---
+
+## 14. Revision 2 — scope-aware Export and Test (shipped on this revision's branches)
+
+Shipped: Phases A + B merged to `main` (PRs #29, #30, release `0.0.29`). This section plans
+the follow-up that makes the card's remaining actions selection-aware. User ruling: *"existing
+export button is used — if category is selected, share category; if no category is selected,
+share whole paper. And do the same thing with Test, so a user can test some categories."*
+
+### 14.1 Design
+
+**E1 — The existing `Export` button becomes scope-aware.** No ticks → whole paper (today's
+behaviour). Ticks → the union of the ticked branches. Zero new buttons; the per-row Share in
+Manage is **removed** (its job is now "tick it in Show, tap Export"), taking `CategoryRow`
+from eight icon buttons to seven and losing its only non-edit action.
+
+**E2 — No new exporter code.** `Exporter.categoryStream(paperId, rootCategoryIds: Set<String>)`
+already takes a set, expands every id's subtree (`CategoryFilter.subtreeIds`), and walks the
+union; `PaperExporter.exportStream` renders any such walk in every format. A new thin
+`exportSelection(paperId, categoryIds, format, sink, twoColumnPdf)` wraps:
+`categoryStream` → `takeIf { it.categories.isNotEmpty() }` → `render(..., ::loadScheduling, ...)`,
+throwing "The selected categories have no questions to export." when empty — the ViewModel's
+catch surfaces it in the existing error dialog.
+
+**E3 — The label stays `Export`; the dialog states the scope.** A count-bearing label in the
+FlowRow resizes and reshuffles its neighbours — the documented reason Study left that row
+(`LibraryPaperCard.kt:127-130`). The format dialog's title already switches per target; it
+becomes `"Export selection (N categories)"` (N = ticked branches, the drawer's wording) vs
+`"Export <paper title>"`. File name: `fileNameFor("${paper.title} (selection)", format)`.
+`pendingExportCategory` (Triple) is replaced by `pendingExportSelection: Triple<paperId,
+tickedIds, count>`; the single-category path through `exportCategoryAs` and the dialog's
+"Export <category>" branch are retired with the per-row Share.
+
+**E4 — The existing `Test` button becomes scope-aware the same way.** Ticks →
+`testRoute(paperId, tickedIds)` (the drawer's exact path, `LibraryScreen.kt:330`); none →
+whole paper. Label stays `Test`, tag `paper-test-<id>` unchanged (device tests keep passing);
+the test session is the existing scoped one, so no confirmation surface is added on the card —
+parity with the drawer, which already starts scoped tests from a `Test (N categories)` button.
+
+**E5 — Parity statement.** `tickedIds` are maximal branches; `categoryStream` expands
+subtrees. Export and Test therefore act on exactly the scope the scoped Study button serves.
+
+### 14.2 Work items
+
+1. `PaperExporter.exportSelection` (E2); `exportCategory` stays (bookmarks/other callers).
+2. `LibraryViewModel.exportSelectionAs(uri, paperId, categoryIds, format)` beside
+   `exportCategoryAs`; `twoColumnPdf` from the same setting.
+3. `LibraryScreen`: `pendingExportSelection` replaces `pendingExportCategory`; dialog title
+   and file name per E3; confirm routes to the new VM method.
+4. `PaperCard`: `onExport: (List<String>) -> Unit` (ticked ids) and a new
+   `onScopedTest: (List<String>) -> Unit`; Test `onClick` branches on `ticked`; delete the
+   per-row Share button and `onExportCategory`'s threading through `CategoryRow`.
+5. Tests: structural (`exportAndTestFollowTheSelection`: both handlers branch on `ticked`;
+   `Icons.Default.Share` absent from the card; the ordering test's `onClick = onStart` literal
+   is rewritten for the branching form); device (tick → Export → dialog title names the
+   selection → cancel; tick → Test → only the scope's questions appear, modelled on
+   `studyFromTheDrawerServesOnlyTheSelectedCategory`); exporter (a Robolectric DB test of
+   `exportSelection` over two branches: category set, question count, and the empty-selection
+   error); `CriticalPathTest` untouched (tag/label unchanged).
+6. README: one line under the scoped-study feature — card Export/Test follow the selection.
+
+### 14.3 Defect found by the new test (fixed on this branch)
+
+The first CI run of the selection test parsed the export and failed with
+`Unterminated array` — **not** a test bug. `PaperJsonWriter.open()` closed the previous
+category (`]}`) and appended the next object with no separator, so every paper with two or
+more categories wrote `…]}{"id":"c2"…`. All three consumers of `writePaperJson` were hit:
+`JSON_INLINE` exports and the `paper.json` inside **ZIP** and **DOCX**. It survived because
+every `ExportWritersTest` fixture has exactly one category — the two-root selection was the
+first document that could expose it.
+
+Fix: a `wroteCategory` flag in `Envelope` emits `,` before each category after the first
+(`PaperJsonWriter.kt`). Regression test
+`ExportWritersTest.aPaperWithSeveralCategoriesStaysOneValidJsonEnvelope` parses a
+two-category paper with `kotlinx.serialization` in a **pure-JVM** test, so it runs on the
+aarch64 host as well as CI.

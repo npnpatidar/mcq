@@ -126,6 +126,8 @@ class CategoryFlatOrderTest {
         // And the scoped test session streams the same relative category order.
         val sessionOrderIds = repository.getSessionOrderForCategories("p1", flatScope)
             .idsInOrder()
-        assertEquals(expectedFlat, sessionOrderIds)
+        // One question per category, id "q-<categoryId>": map back to the
+        // category id the expected list is written in.
+        assertEquals(expectedFlat, sessionOrderIds.map { it.removePrefix("q-") })
     }
 }

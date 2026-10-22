@@ -821,4 +821,32 @@ class StudyAndSelectionUiTest {
                 .fetchSemanticsNodes().isEmpty()
         )
     }
+
+    @Test
+    fun cardDrillFollowsTheSelection() {
+        // Tick the SECOND root: its single question becomes the drill's bound,
+        // where the whole paper would have supplied two.
+        val second = seedTwoRoots("ui-cdrill", "UICDrill Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cdrill").performScrollTo().performClick()
+        waitForTag("card-cat-$second")
+        compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
+        compose.onNodeWithTag("paper-drill-ui-cdrill").performScrollTo().performClick()
+        waitFor("Quick drill")
+
+        // The dialog names the scope and opens on what the selection holds.
+        compose.onNodeWithText("1 categories", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("1 random question", substring = true).assertIsDisplayed()
+
+        // Asking for more than the selection holds refuses about the selection,
+        // not about the paper (which would have allowed 2).
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("9")
+        compose.onNodeWithText(
+            "This selection has only 1 question(s). Enter 1 or fewer.",
+            substring = false
+        ).assertIsDisplayed()
+        compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+    }
 }

@@ -89,6 +89,33 @@ object CategorySelection {
     }
 
     /**
+     * Questions in the scope: the sum of the ticked roots' subtrees. Ticked ids
+     * are maximal branches, so a ticked node's children are not walked again.
+     * Unknown ids contribute 0.
+     *
+     * Same pre-order walk as [orderedIds], adding each in-scope node's own
+     * count: a non-maximal input (a parent and one of its children both ticked)
+     * therefore still counts every question once.
+     */
+    fun questionCount(nodes: List<CategoryNode>, tickedIds: Collection<String>): Int {
+        val ticked = tickedIds.toHashSet()
+        var total = 0
+        var openDepth = -1
+        for ((node, depth) in flatten(nodes)) {
+            if (openDepth >= 0 && depth > openDepth) {
+                total += node.questionCount
+                continue
+            }
+            openDepth = -1
+            if (node.id in ticked) {
+                openDepth = depth
+                total += node.questionCount
+            }
+        }
+        return total
+    }
+
+    /**
      * Tick or untick [id]: write [id] and its whole subtree on or off, then
      * recompute every ancestor bottom-up (all children on -> on, none -> off,
      * otherwise the ancestor is not on). Unknown id -> [on] unchanged.

@@ -415,10 +415,17 @@ fun LibraryScreen(
                                         com.mcqapp.ui.navigation.testRoute(paper.id, mistakes = true)
                                     )
                                 },
-                                onDrill = { count, minutes ->
+                                onDrill = { count, minutes, ticked ->
+                                    // Scoped like Study/Test/Export (§15.1): the
+                                    // ticked branches ride on the existing
+                                    // categoryIds argument of the drill route.
+                                    Logger.i("LIB", "Drill: paperId=${paper.id}, categories=${ticked.size}")
                                     navController.navigate(
                                         com.mcqapp.ui.navigation.testRoute(
-                                            paper.id, drillCount = count, drillMinutes = minutes
+                                            paper.id,
+                                            categoryIds = ticked,
+                                            drillCount = count,
+                                            drillMinutes = minutes
                                         )
                                     )
                                 },

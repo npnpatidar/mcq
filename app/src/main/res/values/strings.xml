@@ -78,6 +78,8 @@
     <string name="loading">Loading…</string>
     <string name="manage">Manage</string>
     <string name="show_categories">Show categories</string>
+    <string name="drill_scope_shortfall">This selection has only %1$d question(s). Enter %1$d or fewer.</string>
+    <string name="drill_scope_empty">This selection has no questions to drill.</string>
     <string name="marks_blank_keep">Marks (blank = keep)</string>
     <string name="marks_default_1">Marks (default 1)</string>
     <string name="mcq_app">MCQ App</string>

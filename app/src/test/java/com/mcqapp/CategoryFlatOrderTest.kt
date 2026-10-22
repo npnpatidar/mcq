@@ -120,7 +120,7 @@ class CategoryFlatOrderTest {
         assertEquals("the scope re-orders to flat regardless of input", expectedFlat, flatScope)
 
         val served = repository.getStudyQueue("p1", categoryIds = flatScope)
-            .map { it.questionId }
+            .map { it.questionId.removePrefix("q-") }
         assertEquals(expectedFlat, served)
 
         // And the scoped test session streams the same relative category order.

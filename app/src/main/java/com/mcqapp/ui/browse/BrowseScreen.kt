@@ -66,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -387,6 +388,10 @@ fun BrowseScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            // Tagged: the field shows a category title, and a
+                            // scoped list renders that same title as a row
+                            // label, so text alone is not unique.
+                            .testTag("browse-category-filter")
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
                     ExposedDropdownMenu(

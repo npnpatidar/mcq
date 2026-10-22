@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -862,17 +863,19 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
         compose.onNodeWithTag("paper-browse-ui-cbrowse").performScrollTo().performClick()
 
-        // Pre-filtered, and the field names the applied category.
+        // Pre-filtered, and the field names the applied category. The field is
+        // addressed by tag: a scoped list also renders that title as a row
+        // label, so the text would match two nodes.
         waitFor("UITest ui-cbrowse-q2?")
         assertTrue(
             "the unticked root's question leaked into the list",
             compose.onAllNodesWithText("UITest ui-cbrowse-q1?", substring = true)
                 .fetchSemanticsNodes().isEmpty()
         )
-        compose.onNodeWithText("Second", substring = false).assertIsDisplayed()
+        compose.onNodeWithTag("browse-category-filter").assertTextContains("Second")
 
         // "All categories" clears the pre-filter: both questions are listed.
-        compose.onNodeWithText("Second", substring = false).performClick()
+        compose.onNodeWithTag("browse-category-filter").performClick()
         waitFor("All categories")
         compose.onNodeWithText("All categories", substring = false).performClick()
         waitFor("UITest ui-cbrowse-q1?")

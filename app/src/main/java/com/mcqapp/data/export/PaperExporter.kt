@@ -80,6 +80,25 @@ class PaperExporter(private val db: AppDatabase) {
         return render(stream, title, format, sink, twoColumnPdf = twoColumnPdf)
     }
 
+    /**
+     * The union of the given root categories (subtrees included), in every
+     * format. The ticked branches on a card are exactly this shape, so the
+     * Export button needs no new writer.
+     */
+    suspend fun exportSelection(
+        paperId: String,
+        rootCategoryIds: List<String>,
+        format: ExportFormat,
+        sink: OutputStream,
+        twoColumnPdf: Boolean = false
+    ): ExportFile {
+        val stream = Exporter(db).categoryStream(paperId, rootCategoryIds.toSet())
+            ?.takeIf { it.categories.isNotEmpty() }
+            ?: throw IllegalStateException("The selected categories have no questions to export.")
+        Logger.i("EXPORT", "Exporting selection of ${rootCategoryIds.size} branch(es) as ${format.name}")
+        return render(stream, stream.title, format, sink, ::loadScheduling, twoColumnPdf)
+    }
+
     /** Single category (with descendants) through the same format writers. */
     suspend fun exportCategory(
         paperId: String,

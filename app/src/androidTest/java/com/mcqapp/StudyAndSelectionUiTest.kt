@@ -767,4 +767,58 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("study-next").performClick()
         waitFor("UITest ui-cardscope-qb?")
     }
+
+    /**
+     * A paper with two ROOT categories, one question each: enough to tell a
+     * scoped action from a whole-paper one, because the second root is the
+     * only thing that can be excluded.
+     */
+    private fun seedTwoRoots(paperId: String, title: String): String = runBlocking {
+        repository.ensurePaperAndCategory(paperId, title, "$paperId-c1", "First")
+        repository.saveQuestion(single("$paperId-q1", "$paperId-c1"))
+        val second = repository.addCategory(paperId, "Second", null)
+        repository.saveQuestion(single("$paperId-q2", second))
+        seeded += paperId
+        second
+    }
+
+    @Test
+    fun cardExportFollowsTheSelection() {
+        seedTwoRoots("ui-cexp", "UICExport Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cexp").performScrollTo().performClick()
+        waitForTag("card-cat-ui-cexp-c1")
+        compose.onNodeWithTag("card-cat-ui-cexp-c1").performScrollTo().performClick()
+
+        // One ticked branch: the dialog says so, instead of "Export format".
+        compose.onNodeWithText("Export", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Export selection (1 categories)", substring = false)
+            .assertIsDisplayed()
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Export selection (1 categories)", substring = false)
+                .fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test
+    fun cardTestFollowsTheSelection() {
+        // Tick the SECOND root: a whole-paper Test would serve the first one,
+        // so serving the second is the proof the scope was honoured.
+        val second = seedTwoRoots("ui-ctest", "UICTest Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-ctest").performScrollTo().performClick()
+        waitForTag("card-cat-$second")
+        compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
+        compose.onNodeWithTag("paper-test-ui-ctest").performScrollTo().performClick()
+
+        waitFor("UITest ui-ctest-q2?")
+        assertTrue(
+            "the unticked root's question leaked into the scoped test",
+            compose.onAllNodesWithText("UITest ui-ctest-q1?", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+    }
 }

@@ -21,7 +21,9 @@ class StudyActionStructureTest {
         // the due/new counts, so sharing a row shuffled its neighbours.
         val study = card.indexOf("onClick = onStudy")
         val flowRow = card.indexOf("FlowRow(")
-        val start = card.indexOf("onClick = onStart")
+        // Test branches inside the FlowRow now: a ticked card scopes it, an
+        // untouched one starts the whole paper (E1).
+        val start = card.indexOf("if (ticked.isEmpty()) onStart()")
         assertTrue("study action missing", study >= 0)
         assertTrue("test action missing", start >= 0)
         assertTrue("Study must lead, above the other actions", study < flowRow && flowRow < start)
@@ -179,6 +181,29 @@ class StudyActionStructureTest {
         assertTrue(
             "the scoped button must fill the width",
             Regex("""fillMaxWidth\(\)\s*\.testTag\("paper-study-selection-""").find(card) != null
+        )
+    }
+
+    @Test
+    fun exportAndTestFollowTheSelection() {
+        val card = source("src/main/java/com/mcqapp/ui/library/LibraryPaperCard.kt")
+        val screen = source("src/main/java/com/mcqapp/ui/library/LibraryScreen.kt")
+        // Both scope-aware actions receive the ticked ids from the one shared
+        // model; with nothing ticked they keep acting on the whole paper.
+        assertTrue("Export must receive the ticked branches", card.contains("onExport(ticked)"))
+        assertTrue("Test must accept a scoped list", card.contains("onScopedTest("))
+        assertTrue(
+            "Test must fall back to the whole paper when nothing is ticked",
+            card.contains("if (ticked.isEmpty()) onStart() else onScopedTest(ticked)")
+        )
+        // The per-row Share is gone: its job is now "tick it in Show, Export".
+        assertFalse(
+            "the Manage row must not keep its own Share action",
+            card.contains("Icons.Default.Share")
+        )
+        assertTrue(
+            "the export dialog must name the selection",
+            screen.contains("\"Export selection (")
         )
     }
 

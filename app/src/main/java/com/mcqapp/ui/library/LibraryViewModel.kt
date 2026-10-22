@@ -203,6 +203,27 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun exportSelectionAs(
+        uri: Uri,
+        paperId: String,
+        categoryIds: List<String>,
+        format: com.mcqapp.data.export.ExportFormat
+    ) {
+        viewModelScope.launch {
+            try {
+                val file = writeExport(uri) { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportSelection(paperId, categoryIds, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Exported ${file.fileName}")
+                _exportError.value = null
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Export failed", e)
+                _exportError.value = "Export failed: ${e.message}"
+            }
+        }
+    }
+
     fun exportCategoryAs(
         uri: Uri,
         paperId: String,

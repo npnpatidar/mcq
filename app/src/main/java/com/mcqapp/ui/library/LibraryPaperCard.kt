@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,12 +43,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.CategoryCheckState
+import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.CategoryNode
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.rollUpCategoryCounts
+import com.mcqapp.domain.totalCategoryCounts
 import com.mcqapp.util.Logger
+
+/** How a paper card's category area is presented (D1): one state, not two booleans. */
+private enum class CardExpansion { Collapsed, Show, Manage }
+
+/**
+ * The compact per-row count line the card and the drawer share: non-zero
+ * terms only, the leeches word matching the card's "N tricky".
+ */
+internal fun categoryCountsLine(counts: CategoryCounts): String =
+    listOfNotNull(
+        if (counts.due > 0) "${counts.due} due" else null,
+        if (counts.fresh > 0) "${counts.fresh} new" else null,
+        if (counts.leeches > 0) "${counts.leeches} tricky" else null
+    ).joinToString(" · ")
 
 /** One library card: a paper's actions, drill dialog and category management. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -73,7 +95,12 @@ internal fun PaperCard(
     mistakeCount: Int = 0,
     dueCount: Int = 0,
     freshCount: Int = 0,
-    leechCount: Int = 0
+    leechCount: Int = 0,
+    selected: Set<String> = emptySet(),
+    onToggleCategory: (String) -> Unit = {},
+    onStartScopedStudy: (List<String>) -> Unit = {},
+    categoryCounts: Map<String, CategoryCounts> = emptyMap(),
+    onExpandCategories: () -> Unit = {}
 ) {
     var showDrillDialog by remember { mutableStateOf(false) }
     var drillCountText by remember { mutableStateOf("10") }
@@ -88,7 +115,23 @@ internal fun PaperCard(
         com.mcqapp.domain.Drill.checkCount(it, available)
     }
     val drillCountValid = countCheck is com.mcqapp.domain.Drill.CountCheck.Ok
-    var expanded by remember { mutableStateOf(false) }
+    // One state with a mode (D1): two booleans allowed Show and Manage at
+    // once, and two animated sections competed for the space.
+    var expansion by remember { mutableStateOf(CardExpansion.Collapsed) }
+
+    // Once per (tree, selection), not per node: state() walks the subtree, so
+    // a per-node call is O(n^2) on a large tree — the drawer computes the
+    // same way.
+    val states = remember(paper.categories, selected) {
+        CategorySelection.states(paper.categories, selected)
+    }
+    val ticked = remember(paper.categories, selected) {
+        CategorySelection.tickedIds(paper.categories, selected)
+    }
+    val rolled = remember(paper.categories, categoryCounts) {
+        rollUpCategoryCounts(paper.categories, categoryCounts)
+    }
+    val scopeTotal = remember(rolled, ticked) { totalCategoryCounts(rolled, ticked) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -116,8 +159,33 @@ internal fun PaperCard(
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
+                // The eye opens the read-only picker (D7); it sits left of
+                // Manage, the same order as Show then Edit in the toolbar.
                 IconButton(
-                    onClick = { expanded = !expanded },
+                    onClick = {
+                        expansion = if (expansion == CardExpansion.Show) {
+                            CardExpansion.Collapsed
+                        } else {
+                            CardExpansion.Show
+                        }
+                        if (expansion == CardExpansion.Show) onExpandCategories()
+                    },
+                    modifier = Modifier.testTag("paper-show-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.Visibility,
+                        contentDescription = stringResource(R.string.show_categories)
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        expansion = if (expansion == CardExpansion.Manage) {
+                            CardExpansion.Collapsed
+                        } else {
+                            CardExpansion.Manage
+                        }
+                        if (expansion == CardExpansion.Manage) onExpandCategories()
+                    },
                     modifier = Modifier.testTag("paper-manage-${paper.id}")
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.manage))
@@ -147,6 +215,34 @@ internal fun PaperCard(
                         else -> "Study"
                     }
                 )
+            }
+            // The scoped session (D5, D6), full width under the paper's own
+            // Study button and outside the FlowRow: a count-bearing label in
+            // the row would resize its neighbours. It exists only while
+            // something is ticked, so an untouched card is unchanged.
+            if (ticked.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { onStartScopedStudy(ticked) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("paper-study-selection-${paper.id}"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        when {
+                            scopeTotal.due > 0 && scopeTotal.fresh > 0 ->
+                                "Study selection (${scopeTotal.due} due, ${scopeTotal.fresh} new)"
+                            scopeTotal.due > 0 -> "Study selection (${scopeTotal.due} due)"
+                            scopeTotal.fresh > 0 -> "Study selection (${scopeTotal.fresh} new)"
+                            else -> "Study selection"
+                        }
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
             FlowRow(
@@ -268,42 +364,139 @@ internal fun PaperCard(
                     }
                 )
             }
-            AnimatedVisibility(visible = expanded) {
+            AnimatedVisibility(visible = expansion != CardExpansion.Collapsed) {
                 Column {
                     Spacer(Modifier.height(8.dp))
                     Text(stringResource(R.string.categories), style = MaterialTheme.typography.labelLarge)
-                    paper.categories.forEachIndexed { index, node ->
-                        CategoryRow(
-                            node = node,
-                            depth = 0,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < paper.categories.lastIndex,
-                            onMoveCategory = onMoveCategory,
-                            onNestCategory = onNestCategory,
-                            onPromoteCategory = onPromoteCategory,
-                            onEditCategory = onEditCategory,
-                            onDeleteCategory = onDeleteCategory,
-                            onEditQuestion = onEditQuestion,
-                            onAddQuestion = onAddQuestion,
-                            onExportCategory = onExportCategory
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onAddCategory, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.Add, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.add_category))
-                        }
-                        TextButton(
-                            onClick = onDelete,
-                            modifier = Modifier.weight(1f).testTag("paper-delete-${paper.id}")
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.delete_paper))
-                        }
+                    when (expansion) {
+                        // Show is read-only (D7): pick what to study, manage
+                        // nothing. No manage icons, no Add/Delete row.
+                        CardExpansion.Show ->
+                            paper.categories.forEach { node ->
+                                ShowCategoryRow(
+                                    node = node,
+                                    depth = 0,
+                                    states = states,
+                                    rolled = rolled,
+                                    onToggle = onToggleCategory
+                                )
+                            }
+                        CardExpansion.Manage ->
+                            ManageCategoryBlock(
+                                paper = paper,
+                                onMoveCategory = onMoveCategory,
+                                onNestCategory = onNestCategory,
+                                onPromoteCategory = onPromoteCategory,
+                                onEditCategory = onEditCategory,
+                                onDeleteCategory = onDeleteCategory,
+                                onEditQuestion = onEditQuestion,
+                                onAddQuestion = onAddQuestion,
+                                onExportCategory = onExportCategory,
+                                onAddCategory = onAddCategory,
+                                onDelete = onDelete
+                            )
+                        CardExpansion.Collapsed -> Unit
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Show mode's row (D7): checkbox, title, and the subtree's non-zero counts.
+ * No manage icons — this surface picks a study scope, it does not edit.
+ */
+@Composable
+private fun ShowCategoryRow(
+    node: CategoryNode,
+    depth: Int,
+    states: Map<String, CategoryCheckState>,
+    rolled: Map<String, CategoryCounts>,
+    onToggle: (String) -> Unit
+) {
+    Column(modifier = Modifier.padding(start = (depth * 24).dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TriStateCheckbox(
+                state = when (states[node.id]) {
+                    CategoryCheckState.CHECKED -> ToggleableState.On
+                    CategoryCheckState.UNCHECKED -> ToggleableState.Off
+                    CategoryCheckState.INDETERMINATE -> ToggleableState.Indeterminate
+                    null -> ToggleableState.Off
+                },
+                onClick = { onToggle(node.id) },
+                modifier = Modifier.testTag("card-cat-${node.id}")
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    node.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val counts = rolled[node.id] ?: CategoryCounts()
+                // A row with no eligible cards stays a plain title.
+                if (!counts.isEmpty) {
+                    Text(
+                        categoryCountsLine(counts),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("card-counts-${node.id}")
+                    )
+                }
+            }
+        }
+        node.children.forEach { child ->
+            ShowCategoryRow(child, depth + 1, states, rolled, onToggle)
+        }
+    }
+}
+
+/** Manage mode's block: today's category rows plus Add category / Delete paper. */
+@Composable
+private fun ManageCategoryBlock(
+    paper: Paper,
+    onMoveCategory: (String, Int) -> Unit,
+    onNestCategory: (String) -> Unit,
+    onPromoteCategory: (String) -> Unit,
+    onEditCategory: (CategoryNode) -> Unit,
+    onDeleteCategory: (String) -> Unit,
+    onEditQuestion: (String, String) -> Unit,
+    onAddQuestion: (String) -> Unit,
+    onExportCategory: (String, String) -> Unit,
+    onAddCategory: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Column {
+        paper.categories.forEachIndexed { index, node ->
+            CategoryRow(
+                node = node,
+                depth = 0,
+                canMoveUp = index > 0,
+                canMoveDown = index < paper.categories.lastIndex,
+                onMoveCategory = onMoveCategory,
+                onNestCategory = onNestCategory,
+                onPromoteCategory = onPromoteCategory,
+                onEditCategory = onEditCategory,
+                onDeleteCategory = onDeleteCategory,
+                onEditQuestion = onEditQuestion,
+                onAddQuestion = onAddQuestion,
+                onExportCategory = onExportCategory
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onAddCategory, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.add_category))
+            }
+            TextButton(
+                onClick = onDelete,
+                modifier = Modifier.weight(1f).testTag("paper-delete-${paper.id}")
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.delete_paper))
             }
         }
     }

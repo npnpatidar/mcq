@@ -685,6 +685,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId: String,
         now: Long = System.currentTimeMillis()
     ): StudyCounts = studyStore.getStudyCounts(paperId, now)
+    suspend fun categoryCounts(paperId: String, now: Long = System.currentTimeMillis()):
+        Map<String, com.mcqapp.domain.CategoryCounts> = studyStore.categoryCounts(paperId, now)
     suspend fun cardState(paperId: String, questionId: String): com.mcqapp.domain.CardState? =
         studyStore.cardState(paperId, questionId)
     suspend fun recordStudyReview(

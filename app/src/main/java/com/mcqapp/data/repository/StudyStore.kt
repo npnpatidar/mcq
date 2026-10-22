@@ -441,6 +441,55 @@ internal class StudyStore(
         )
     }
 
+    /**
+     * The per-category form of [getStudyCounts]: each category's *own*
+     * scheduling sums and question count, with `fresh` derived by the literal
+     * expression [counts] uses (`questions - (storedRows - newish)`, gated by
+     * `introduceNewCards`). The subtree rollup and the paper total happen
+     * above this — in the domain, over `Paper.categories`.
+     *
+     * The grouped read's SQL is copied verbatim from
+     * [CardStateDao.countsForPaper] (a `categoryId` column and a `GROUP BY`
+     * added), so summing the rolled-up totals of the paper's roots equals the
+     * badge. That parity is a test, not a promise (D9 of
+     * `category_card_counts.md`); one caveat stands: a category unreachable
+     * from the tree (dangling `parentId`, a cycle) is counted here but absent
+     * from `Paper.categories`, so the rollup then totals less than the badge —
+     * the same blind spot `Paper.totalQuestions` has today.
+     */
+    suspend fun categoryCounts(
+        paperId: String,
+        now: Long = System.currentTimeMillis()
+    ): Map<String, com.mcqapp.domain.CategoryCounts> {
+        val config = settings.schedulerConfigNow()
+        val questions = db.questionDao().categoryCountsForPaper(paperId)
+        val rows = db.cardStateDao().categoryPopulations(paperId, now)
+        // The populations read joins questions, so it cannot hold a category
+        // the question count lacks; both empty is simply "nothing to show",
+        // the same early return the badge's [counts] takes at zero questions.
+        if (questions.isEmpty() && rows.isEmpty()) return emptyMap()
+
+        val questionCounts = questions.associate { it.categoryId to it.cnt }
+        val populations = rows.associateBy { it.categoryId }
+        val out = LinkedHashMap<String, com.mcqapp.domain.CategoryCounts>()
+        for (id in questionCounts.keys + populations.keys) {
+            val row = populations[id]
+            val count = questionCounts[id] ?: 0
+            val stored = row?.storedRows ?: 0
+            val newish = row?.newish ?: 0
+            // No clamp, on purpose: the parity test is what proves the
+            // arithmetic, and clamping one side would hide a real divergence.
+            val fresh =
+                if (config.introduceNewCards) count - (stored - newish) else 0
+            out[id] = com.mcqapp.domain.CategoryCounts(
+                due = (row?.learning ?: 0) + (row?.due ?: 0),
+                fresh = fresh,
+                leeches = row?.leeches ?: 0
+            )
+        }
+        return out
+    }
+
     /** The stored schedule for a card, or null if it has never been studied. */
     suspend fun cardState(
         paperId: String,

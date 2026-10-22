@@ -74,6 +74,8 @@ fun LibraryScreen(
     val papers by viewModel.papers.collectAsStateWithLifecycle()
     val mistakeCounts by viewModel.mistakeCounts.collectAsStateWithLifecycle()
     val studyCounts by viewModel.studyCounts.collectAsStateWithLifecycle()
+    val selection by viewModel.selection.collectAsStateWithLifecycle()
+    val categoryCounts by viewModel.categoryCounts.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val pendingDelete by viewModel.pendingDelete.collectAsStateWithLifecycle()
     val importReport by viewModel.importReport.collectAsStateWithLifecycle()
@@ -338,6 +340,10 @@ fun LibraryScreen(
                             com.mcqapp.ui.navigation.studyRoute(paperId, categoryIds)
                         )
                     },
+                    selectedByPaper = selection,
+                    onToggleCategory = viewModel::toggleCategory,
+                    onExpandCategories = viewModel::ensureCategoryCounts,
+                    countsByPaper = categoryCounts,
                 )
             }
         }
@@ -428,6 +434,16 @@ fun LibraryScreen(
                                 freshCount = studyCounts[paper.id]?.fresh ?: 0,
                                 leechCount = leechCountBadge,
                                 mistakeCount = mistakeCounts[paper.id] ?: 0,
+                                selected = selection[paper.id].orEmpty(),
+                                onToggleCategory = { id -> viewModel.toggleCategory(paper.id, id) },
+                                onStartScopedStudy = { ids ->
+                                    Logger.i("LIB", "Card study: paperId=${paper.id}, categories=${ids.size}")
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.studyRoute(paper.id, ids)
+                                    )
+                                },
+                                categoryCounts = categoryCounts[paper.id].orEmpty(),
+                                onExpandCategories = { viewModel.ensureCategoryCounts(paper.id) },
                                 onBrowse = {
                                     navController.navigate(com.mcqapp.ui.navigation.browseRoute(paper.id))
                                 },

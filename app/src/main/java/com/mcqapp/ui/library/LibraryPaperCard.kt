@@ -75,7 +75,7 @@ internal fun categoryCountsLine(counts: CategoryCounts): String =
 internal fun PaperCard(
     paper: Paper,
     onStart: () -> Unit,
-    onBrowse: () -> Unit,
+    onBrowse: (tickedIds: List<String>) -> Unit,
     onExport: (tickedIds: List<String>) -> Unit,
     onDelete: () -> Unit,
     onAddCategory: () -> Unit,
@@ -88,7 +88,7 @@ internal fun PaperCard(
     onEditCategory: (CategoryNode) -> Unit = {},
     onDeleteCategory: (String) -> Unit = {},
     onPracticeMistakes: () -> Unit = {},
-    onDrill: (Int, Int) -> Unit = { _, _ -> },
+    onDrill: (count: Int, minutes: Int, tickedIds: List<String>) -> Unit = { _, _, _ -> },
     onStudy: () -> Unit = {},
     onStudyLeeches: () -> Unit = {},
     mistakeCount: Int = 0,
@@ -101,26 +101,9 @@ internal fun PaperCard(
     categoryCounts: Map<String, CategoryCounts> = emptyMap(),
     onExpandCategories: () -> Unit = {}
 ) {
-    var showDrillDialog by remember { mutableStateOf(false) }
-    var drillCountText by remember { mutableStateOf("10") }
-    var drillMinutesText by remember { mutableStateOf("5") }
-    val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
-    val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
-    // Asking for more questions than the paper holds used to be accepted
-    // silently: Drill.sample returns the whole set, so the drill just came out
-    // smaller than the dialog promised. Refuse it here instead.
-    val available = paper.totalQuestions
-    val countCheck = drillCount?.let {
-        com.mcqapp.domain.Drill.checkCount(it, available)
-    }
-    val drillCountValid = countCheck is com.mcqapp.domain.Drill.CountCheck.Ok
-    // One state with a mode (D1): two booleans allowed Show and Manage at
-    // once, and two animated sections competed for the space.
-    var expansion by remember { mutableStateOf(CardExpansion.Collapsed) }
-
     // Once per (tree, selection), not per node: state() walks the subtree, so
     // a per-node call is O(n^2) on a large tree — the drawer computes the
-    // same way.
+    // same way. Declared before the drill state, whose bound reads `ticked`.
     val states = remember(paper.categories, selected) {
         CategorySelection.states(paper.categories, selected)
     }
@@ -131,6 +114,28 @@ internal fun PaperCard(
         rollUpCategoryCounts(paper.categories, categoryCounts)
     }
     val scopeTotal = remember(rolled, ticked) { totalCategoryCounts(rolled, ticked) }
+
+    var showDrillDialog by remember { mutableStateOf(false) }
+    var drillCountText by remember { mutableStateOf("10") }
+    var drillMinutesText by remember { mutableStateOf("5") }
+    val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
+    val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
+    // Asking for more questions than the scope holds used to be accepted
+    // silently: Drill.sample returns the whole set, so the drill just came out
+    // smaller than the dialog promised. Refuse it here instead — against the
+    // ticked branches when there are any, or the bound would lie both ways.
+    val available = if (ticked.isEmpty()) {
+        paper.totalQuestions
+    } else {
+        CategorySelection.questionCount(paper.categories, ticked)
+    }
+    val countCheck = drillCount?.let {
+        com.mcqapp.domain.Drill.checkCount(it, available)
+    }
+    val drillCountValid = countCheck is com.mcqapp.domain.Drill.CountCheck.Ok
+    // One state with a mode (D1): two booleans allowed Show and Manage at
+    // once, and two animated sections competed for the space.
+    var expansion by remember { mutableStateOf(CardExpansion.Collapsed) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -266,18 +271,19 @@ internal fun PaperCard(
                     Text(stringResource(R.string.export))
                 }
                 OutlinedButton(
-                    onClick = onBrowse,
+                    onClick = { onBrowse(ticked) },
                     modifier = Modifier.testTag("paper-browse-${paper.id}")
                 ) {
                     Text(stringResource(R.string.browse))
                 }
                 OutlinedButton(
                     onClick = {
-                        // Default to something this paper can actually supply: ten
-                        // where there are ten or more, otherwise the whole paper.
-                        // Falling back to 1 for any shortfall made a 2-question
-                        // paper open on a single-question drill.
-                        drillCountText = minOf(10, paper.totalQuestions)
+                        // Default to something the scope can actually supply:
+                        // ten where there are ten or more, otherwise everything
+                        // the selection holds. Falling back to 1 for any
+                        // shortfall made a 2-question paper open on a
+                        // single-question drill.
+                        drillCountText = minOf(10, available)
                             .coerceAtLeast(1).toString()
                         showDrillDialog = true
                     },
@@ -322,13 +328,28 @@ internal fun PaperCard(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Spacer(Modifier.height(4.dp))
+                            if (ticked.isNotEmpty()) {
+                                // The bound and the sentence below describe the
+                                // selection, so the dialog has to say what it
+                                // is bound to (E9).
+                                Text(
+                                    stringResource(R.string.study_scope_many, ticked.size),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(Modifier.height(4.dp))
+                            }
                             val tooMany = countCheck as?
                                 com.mcqapp.domain.Drill.CountCheck.TooManyForPaper
                             val noQuestions =
                                 countCheck is com.mcqapp.domain.Drill.CountCheck.NoQuestionsAvailable
+                            val scoped = ticked.isNotEmpty()
                             val guidance = when {
+                                noQuestions && scoped ->
+                                    stringResource(R.string.drill_scope_empty)
                                 noQuestions ->
                                     "This paper has no questions yet, so there is nothing to drill."
+                                tooMany != null && scoped ->
+                                    stringResource(R.string.drill_scope_shortfall, available)
                                 tooMany != null ->
                                     "This paper has only $available question${if (available == 1) "" else "s"}. " +
                                         "Enter $available or fewer."
@@ -352,8 +373,8 @@ internal fun PaperCard(
                         TextButton(
                             onClick = {
                                 showDrillDialog = false
-                                Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes")
-                                onDrill(drillCount!!, drillMinutes!!)
+                                Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes, categories=${ticked.size}")
+                                onDrill(drillCount!!, drillMinutes!!, ticked)
                             },
                             enabled = drillCount != null && drillMinutes != null && drillCountValid
                         ) { Text(stringResource(R.string.start_drill)) }

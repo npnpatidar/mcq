@@ -415,10 +415,17 @@ fun LibraryScreen(
                                         com.mcqapp.ui.navigation.testRoute(paper.id, mistakes = true)
                                     )
                                 },
-                                onDrill = { count, minutes ->
+                                onDrill = { count, minutes, ticked ->
+                                    // Scoped like Study/Test/Export (§15.1): the
+                                    // ticked branches ride on the existing
+                                    // categoryIds argument of the drill route.
+                                    Logger.i("LIB", "Drill: paperId=${paper.id}, categories=${ticked.size}")
                                     navController.navigate(
                                         com.mcqapp.ui.navigation.testRoute(
-                                            paper.id, drillCount = count, drillMinutes = minutes
+                                            paper.id,
+                                            categoryIds = ticked,
+                                            drillCount = count,
+                                            drillMinutes = minutes
                                         )
                                     )
                                 },
@@ -446,8 +453,14 @@ fun LibraryScreen(
                                 },
                                 categoryCounts = categoryCounts[paper.id].orEmpty(),
                                 onExpandCategories = { viewModel.ensureCategoryCounts(paper.id) },
-                                onBrowse = {
-                                    navController.navigate(com.mcqapp.ui.navigation.browseRoute(paper.id))
+                                onBrowse = { ids ->
+                                    // Browse is a pre-filter, not a hidden scope
+                                    // (§15.2): the route seeds the screen's
+                                    // category filter, which the user can clear.
+                                    Logger.i("LIB", "Browse: paperId=${paper.id}, categories=${ids.size}")
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.browseRoute(paper.id, categoryIds = ids)
+                                    )
                                 },
                                 onScopedTest = { ids ->
                                     Logger.i("LIB", "Card test: paperId=${paper.id}, categories=${ids.size}")

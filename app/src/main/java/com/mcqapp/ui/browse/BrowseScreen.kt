@@ -66,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -88,12 +89,14 @@ fun BrowseScreen(
     repository: McqRepository,
     paperId: String,
     focusQuestionId: String = "",
+    initialCategoryIds: List<String> = emptyList(),
     navController: NavController,
     viewModel: BrowseViewModel = viewModel(
         key = "browse-$paperId",
         factory = BrowseViewModelFactory(
             androidx.compose.ui.platform.LocalContext.current.applicationContext as android.app.Application,
-            paperId
+            paperId,
+            initialCategoryIds
         )
     )
 ) {
@@ -251,9 +254,17 @@ fun BrowseScreen(
             ::canMove
         }
         var categoryMenuOpen by remember { mutableStateOf(false) }
-        val categoryFilterId = filterState.categoryFilterId
-        val selectedCategoryTitle = categoryFilterId
-            ?.let { id -> flatCategories.firstOrNull { it.first.id == id }?.first?.title }
+        val categoryFilterIds = filterState.categoryFilterIds
+        // One applied category names itself; several say how many; none says
+        // "All categories". A stale single id falls back to the same word (its
+        // scope is unfiltered, see BrowseViewModel.subtreeIds).
+        val selectedCategoryLabel = when {
+            categoryFilterIds.isEmpty() -> stringResource(R.string.all_categories)
+            categoryFilterIds.size == 1 -> categoryFilterIds.first().let { id ->
+                flatCategories.firstOrNull { it.first.id == id }?.first?.title
+            } ?: stringResource(R.string.all_categories)
+            else -> stringResource(R.string.study_scope_many, categoryFilterIds.size)
+        }
 
         // Delayed spinner: fast loads show blank instead of flashing text.
         val refreshing = items.loadState.refresh is LoadState.Loading
@@ -274,7 +285,7 @@ fun BrowseScreen(
         // passage-block moves are computed against the question's own
         // category list, which no filter reorders.
         val categorySectionMoveEnabled = filterState.filter == BrowseListFilter.ALL &&
-            filterState.query.isBlank() && categoryFilterId == null
+            filterState.query.isBlank() && categoryFilterIds.isEmpty()
         val questionMoveEnabled = filterState.filter == BrowseListFilter.ALL &&
             filterState.query.isBlank()
 
@@ -368,8 +379,7 @@ fun BrowseScreen(
                     onExpandedChange = { categoryMenuOpen = it }
                 ) {
                     OutlinedTextField(
-                        value = selectedCategoryTitle
-                            ?: stringResource(R.string.all_categories),
+                        value = selectedCategoryLabel,
                         onValueChange = {},
                         readOnly = true,
                         label = { Text(stringResource(R.string.category)) },
@@ -378,6 +388,10 @@ fun BrowseScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            // Tagged: the field shows a category title, and a
+                            // scoped list renders that same title as a row
+                            // label, so text alone is not unique.
+                            .testTag("browse-category-filter")
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
                     ExposedDropdownMenu(
@@ -409,7 +423,7 @@ fun BrowseScreen(
                 }
                 if (!refreshing && items.itemCount == 0) {
                     val unfiltered = filterState.filter == BrowseListFilter.ALL &&
-                        filterState.query.isBlank() && categoryFilterId == null
+                        filterState.query.isBlank() && categoryFilterIds.isEmpty()
                     Spacer(Modifier.height(8.dp))
                     Text(
                         stringResource(

@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -820,5 +821,64 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("UITest ui-ctest-q1?", substring = true)
                 .fetchSemanticsNodes().isEmpty()
         )
+    }
+
+    @Test
+    fun cardDrillFollowsTheSelection() {
+        // Tick the SECOND root: its single question becomes the drill's bound,
+        // where the whole paper would have supplied two.
+        val second = seedTwoRoots("ui-cdrill", "UICDrill Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cdrill").performScrollTo().performClick()
+        waitForTag("card-cat-$second")
+        compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
+        compose.onNodeWithTag("paper-drill-ui-cdrill").performScrollTo().performClick()
+        waitFor("Quick drill")
+
+        // The dialog names the scope and opens on what the selection holds.
+        compose.onNodeWithText("1 categories", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("1 random question", substring = true).assertIsDisplayed()
+
+        // Asking for more than the selection holds refuses about the selection,
+        // not about the paper (which would have allowed 2).
+        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("9")
+        compose.onNodeWithText(
+            "This selection has only 1 question(s). Enter 1 or fewer.",
+            substring = false
+        ).assertIsDisplayed()
+        compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+    }
+
+    @Test
+    fun cardBrowseFollowsTheSelection() {
+        // The second root is the only thing a scoped Browse can exclude, so a
+        // whole-paper list would show its sibling too.
+        val second = seedTwoRoots("ui-cbrowse", "UICBrowse Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cbrowse").performScrollTo().performClick()
+        waitForTag("card-cat-$second")
+        compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
+        compose.onNodeWithTag("paper-browse-ui-cbrowse").performScrollTo().performClick()
+
+        // Pre-filtered, and the field names the applied category. The field is
+        // addressed by tag: a scoped list also renders that title as a row
+        // label, so the text would match two nodes.
+        waitFor("UITest ui-cbrowse-q2?")
+        assertTrue(
+            "the unticked root's question leaked into the list",
+            compose.onAllNodesWithText("UITest ui-cbrowse-q1?", substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+        compose.onNodeWithTag("browse-category-filter").assertTextContains("Second")
+
+        // "All categories" clears the pre-filter: both questions are listed.
+        compose.onNodeWithTag("browse-category-filter").performClick()
+        waitFor("All categories")
+        compose.onNodeWithText("All categories", substring = false).performClick()
+        waitFor("UITest ui-cbrowse-q1?")
+        waitFor("UITest ui-cbrowse-q2?")
     }
 }

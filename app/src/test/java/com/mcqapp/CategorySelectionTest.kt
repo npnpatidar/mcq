@@ -246,4 +246,53 @@ class CategorySelectionTest {
             )
         }
     }
+
+    // --- the scope's question count (E9 of category_card_counts.md §15) ---
+
+    /** [node] above gives every node one question; this one sets real counts. */
+    private fun counted(id: String, own: Int, vararg children: CategoryNode): CategoryNode =
+        CategoryNode(
+            id = id,
+            paperId = "p1",
+            title = "Counted $id",
+            parentId = null,
+            children = children.toList(),
+            questionCount = own
+        )
+
+    /**
+     * ```text
+     * P (2)                Q (5)
+     * ├─ C1 (3)
+     * └─ C2 (1)
+     *     └─ C2a (4)
+     * ```
+     */
+    private fun countedForest(): List<CategoryNode> = listOf(
+        counted("P", 2, counted("C1", 3), counted("C2", 1, counted("C2a", 4))),
+        counted("Q", 5)
+    )
+
+    @Test
+    fun theScopeCountSumsTheTickedSubtrees() {
+        val nodes = countedForest()
+        assertEquals(10, CategorySelection.questionCount(nodes, listOf("P")))
+        assertEquals(4, CategorySelection.questionCount(nodes, listOf("C2a")))
+        assertEquals(15, CategorySelection.questionCount(nodes, listOf("P", "Q")))
+    }
+
+    @Test
+    fun theScopeCountCountsAQuestionOnceForANonMaximalPick() {
+        // A parent and its child both ticked is not a reachable tickedIds
+        // shape, but the walk must still count each question once.
+        assertEquals(10, CategorySelection.questionCount(countedForest(), listOf("P", "C2")))
+    }
+
+    @Test
+    fun anEmptyOrUnknownScopeCountsZero() {
+        val nodes = countedForest()
+        assertEquals(0, CategorySelection.questionCount(nodes, emptyList()))
+        assertEquals(0, CategorySelection.questionCount(nodes, listOf("deleted")))
+        assertEquals(0, CategorySelection.questionCount(emptyList(), listOf("P")))
+    }
 }

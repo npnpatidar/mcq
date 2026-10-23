@@ -1,7 +1,6 @@
 package com.mcqapp.ui.test
 
 import android.app.Application
-import com.mcqapp.R
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -317,7 +316,7 @@ class TestViewModel(
                 // Without clearing `loading` the screen sat on "Loading…"
                 // forever with no retry and no explanation.
                 Logger.e("TESTVM", "Failed to load test session", e)
-                _state.update { it.copy(loading = false, loadError = getApplication<Application>().getString(R.string.load_failed, e.message)) }
+                _state.update { it.copy(loading = false, loadError = "Could not start the test: ${e.message}") }
             }
         }
     }
@@ -715,8 +714,7 @@ class TestViewModel(
                 save = {
                     repository.saveAttemptStreamed(
                         paperId = paperId,
-                        paperTitle = current.paper?.title
-                            ?: getApplication<Application>().getString(R.string.test),
+                        paperTitle = current.paper?.title ?: "Test",
                         order = current.order,
                         selections = current.selections,
                         negativeMarking = current.paper?.negativeMarking ?: 0.0,
@@ -743,7 +741,7 @@ class TestViewModel(
                         it.copy(
                             saving = false,
                             submitted = false,
-                            saveError = getApplication<Application>().getString(R.string.save_failed, outcome.message)
+                            saveError = "Could not save your result: ${outcome.message}"
                         )
                     }
                 }

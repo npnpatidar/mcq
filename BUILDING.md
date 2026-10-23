@@ -467,3 +467,72 @@ sha256sum app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The hash differs from section 5 because source, dependencies, and toolchain differ. Always use the freshly calculated checksum for the artifact being distributed.
+
+## 10. This host (mcq checkout, NixOS aarch64, verified 2026-10-23)
+
+Sections 1-8 describe the older `/root/ncal` machine and section 9 the `/home/naresh/repo/ncal`
+session. Neither layout exists here. This section is the authority for the current checkout:
+
+```text
+uname -m:           aarch64 (NixOS)
+repo:               /home/naresh/repo/mcq
+/opt/android-sdk:   missing
+/sdcard:            missing (no Termux/Android shared storage on this host)
+JAVA_HOME:          /tmp/ncal-sdk-links/jdk17   (Nix symlink, OpenJDK 17.0.20.1)
+ANDROID_HOME:       /home/naresh/android-sdk    (real writable SDK, not the Nix copy)
+  build-tools:      36.0.0, 37.0.0
+  platforms:        android-37.0
+aapt2 override:     /tmp/ncal-aapt2/aapt2       (works: aapt 2.20-15087165)
+downloads go to:    /home/naresh/Download       (no /sdcard/Download here)
+```
+
+The aapt2 wrapper is the only emulation piece still needed, and unlike section 9 it points
+directly at the real SDK instead of a writable copy:
+
+```sh
+#!/bin/sh
+exec /tmp/ncal-sdk-links/qemu/bin/qemu-x86_64 -L /tmp/ncal-sysroot \
+  /home/naresh/android-sdk/build-tools/37.0.0/aapt2 "$@"
+```
+
+The working build and test command (verified repeatedly across sessions, including release
+tag builds of 0.0.32):
+
+```sh
+export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
+export ANDROID_HOME=/home/naresh/android-sdk
+export ANDROID_SDK_ROOT=/home/naresh/android-sdk
+
+sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
+  -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
+  --dependency-verification=lenient --no-daemon
+```
+
+Notes specific to this checkout:
+
+- `--dependency-verification=lenient` is still required (same stale-metadata situation as
+  section 9.5; regenerate `gradle/verification-metadata.xml` intentionally, never commit a
+  bypass).
+- `/tmp` is volatile: `/tmp/ncal-sdk-links`, `/tmp/ncal-sysroot` and `/tmp/ncal-aapt2` are
+  lost on reboot. If they are gone, recreate only what section 9 needed for the emulator
+  pieces — jdk17 (9.1), qemu + glibc-x64 + gcc-lib-x64 sysroot (9.3) — then write the wrapper
+  above against `/home/naresh/android-sdk/build-tools/37.0.0/aapt2`. The SDK itself survives;
+  do not redo the section 9.2/9.4 SDK composition.
+- `run-jvm-tests.sh` does not exist on this host. Select pure-JVM tests directly; class-name
+  filters must not quote values (zsh does not re-parse embedded quotes, so `--tests "Foo"`
+  passes the quotes through and matches nothing), and helper files without `@Test` must be
+  excluded or Gradle fails with "No tests found":
+
+```sh
+for f in $(rg --files-without-match '^import org.robolectric' app/src/test/java -g '*.kt'); do
+  rg -q '@Test' "$f" && echo "$f"
+done | sed 's|app/src/test/java/||; s|\.kt$||; s|/|.|g' > /tmp/pure-jvm.txt
+sh gradlew :app:testDebugUnitTest $(printf -- '--tests %s ' $(cat /tmp/pure-jvm.txt)) ...
+```
+
+- Robolectric tests that open a real SQLite database fail here with "The Robolectric native
+  runtime is not supported on Linux (aarch64)" — CI (x86_64) is authoritative for those. As
+  of 2026-10-23 a full local pure-JVM pass covers ~124 classes; the count drops if the
+  selection regresses.
+- CI artifacts are downloaded with `gh run download ... -D /home/naresh/Download` (the
+  `/sdcard/Download` convention in AGENTS.md belongs to the other host).

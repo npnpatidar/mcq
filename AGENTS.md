@@ -35,6 +35,38 @@ cd "$MCQ_REPO" && sh gradlew :app:assembleDebug :app:testDebugUnitTest \
 - Never add a test dependency without asking; the project deliberately uses no SQLite driver
   library and calls `android.database.sqlite` under Robolectric instead.
 
+## This host (NixOS aarch64, repo at /home/naresh/repo/mcq)
+
+The `/sdcard` block above is the other host (Android/Termux). On this machine there is no
+`env.sh` and no `/sdcard`; use these direct exports instead (verified 2026-10-23):
+
+```bash
+export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
+export ANDROID_HOME=/home/naresh/android-sdk
+export ANDROID_SDK_ROOT=/home/naresh/android-sdk
+sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
+  -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
+  --dependency-verification=lenient --no-daemon
+```
+
+- The working aapt2 override here is `/tmp/ncal-aapt2/aapt2` — on this host it exists and
+  works (the "no longer exists" note above applied to the `/sdcard` host). `/opt/android-aapt2/aapt2`
+  does not exist here.
+- All of `/tmp/ncal-*` is volatile: after a reboot rebuild the jdk17 link, qemu and the x86-64
+  sysroot per `BUILDING.md` §9.1/§9.3, then the wrapper per `BUILDING.md` §10. The SDK at
+  `/home/naresh/android-sdk` persists.
+- `run-jvm-tests.sh` does not exist on this host. Pure-JVM selection: files without
+  `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
+  **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
+  matches nothing. Full local pass ≈124 classes.
+- Robolectric/SQLite tests still fail locally (aarch64); CI remains authoritative.
+- APK artifacts download to `/home/naresh/Download`, not `/sdcard/Download`:
+
+```bash
+gh run download <run-id> --name app-debug   -D /home/naresh/Download   # -> app-debug.apk
+gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-release.apk
+```
+
 ## After every push
 
 CI uploads the APKs as artifacts (`if: always()`). When a GitHub Actions build runs, download

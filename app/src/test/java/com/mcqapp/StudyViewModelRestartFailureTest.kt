@@ -80,7 +80,14 @@ class StudyViewModelRestartFailureTest {
                 correctOptionIds = setOf("q1-a")
             )
         )
-        app.repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD)
+        // Graduated a month ago and lapsed an hour later: its relearning step
+        // is overdue, so the pull always has a card — a deterministic seed
+        // that does not depend on the introduce-new-cards toggle other tests
+        // leave behind in the shared DataStore.
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        app.repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+        app.repository.recordStudyReview("p1", "q1", ReviewGrade.AGAIN, now = now - 30 * day + 3_600_000L)
 
         val viewModel = StudyViewModel(app, "p1")
         assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })

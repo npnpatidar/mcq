@@ -471,53 +471,53 @@ The hash differs from section 5 because source, dependencies, and toolchain diff
 ## 10. This host (mcq checkout, NixOS aarch64, verified 2026-10-23)
 
 Sections 1-8 describe the older `/root/ncal` machine and section 9 the `/home/naresh/repo/ncal`
-session. Neither layout exists here. This section is the authority for the current checkout:
+session. Neither layout exists here. **`apk-build/env.sh` + `apk-build/setup-env.sh` automate
+everything below** — the manual paths are kept as the record of what the scripts produce. This
+section is the authority for the current checkout:
 
 ```text
 uname -m:           aarch64 (NixOS)
 repo:               /home/naresh/repo/mcq
 /opt/android-sdk:   missing
 /sdcard:            missing (no Termux/Android shared storage on this host)
-JAVA_HOME:          /tmp/ncal-sdk-links/jdk17   (Nix symlink, OpenJDK 17.0.20.1)
-ANDROID_HOME:       /home/naresh/android-sdk    (real writable SDK, not the Nix copy)
+JAVA_HOME:          /tmp/mcq-apk-env/jdk17        (Nix OpenJDK 17, linked by setup-env.sh)
+ANDROID_HOME:       /home/naresh/android-sdk      (real writable SDK, not the Nix copy)
   build-tools:      36.0.0, 37.0.0
   platforms:        android-37.0
-aapt2 override:     /tmp/ncal-aapt2/aapt2       (works: aapt 2.20-15087165)
-downloads go to:    /home/naresh/Download       (no /sdcard/Download here)
+aapt2 override:     /tmp/mcq-apk-env/aapt2/aapt2  (works: aapt 2.20-15087165)
+downloads go to:    /home/naresh/Download         (no /sdcard/Download here)
 ```
 
-The aapt2 wrapper is the only emulation piece still needed, and unlike section 9 it points
-directly at the real SDK instead of a writable copy:
+The scripts replace the section 9 ad-hoc `/tmp/ncal-*` layout. `setup-env.sh` is idempotent:
+it Nix-builds only the missing pieces (jdk17, qemu, x86-64 glibc + libgcc), assembles the
+`-L` sysroot, and writes the aapt2 wrapper — which, unlike section 9, points directly at the
+real SDK instead of a writable copy:
 
 ```sh
 #!/bin/sh
-exec /tmp/ncal-sdk-links/qemu/bin/qemu-x86_64 -L /tmp/ncal-sysroot \
+exec /tmp/mcq-apk-env/qemu/bin/qemu-x86_64 -L /tmp/mcq-apk-env/sysroot \
   /home/naresh/android-sdk/build-tools/37.0.0/aapt2 "$@"
 ```
 
-The working build and test command (verified repeatedly across sessions, including release
-tag builds of 0.0.32):
+Usage:
 
 ```sh
-export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
-export ANDROID_HOME=/home/naresh/android-sdk
-export ANDROID_SDK_ROOT=/home/naresh/android-sdk
-
+. apk-build/env.sh    # runs setup-env.sh automatically if /tmp was wiped
 sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
-  -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
-  --dependency-verification=lenient --no-daemon
+  $MCQ_AAPT2_OVERRIDE --dependency-verification=lenient --no-daemon
 ```
+
+Tunables: `MCQ_APK_ENV_DIR` (default `/tmp/mcq-apk-env`), `MCQ_ANDROID_SDK` (default
+`$HOME/android-sdk`), `MCQ_BUILD_TOOLS` (default `37.0.0`).
 
 Notes specific to this checkout:
 
 - `--dependency-verification=lenient` is still required (same stale-metadata situation as
   section 9.5; regenerate `gradle/verification-metadata.xml` intentionally, never commit a
   bypass).
-- `/tmp` is volatile: `/tmp/ncal-sdk-links`, `/tmp/ncal-sysroot` and `/tmp/ncal-aapt2` are
-  lost on reboot. If they are gone, recreate only what section 9 needed for the emulator
-  pieces — jdk17 (9.1), qemu + glibc-x64 + gcc-lib-x64 sysroot (9.3) — then write the wrapper
-  above against `/home/naresh/android-sdk/build-tools/37.0.0/aapt2`. The SDK itself survives;
-  do not redo the section 9.2/9.4 SDK composition.
+- `/tmp` is volatile: after a reboot just run `sh apk-build/setup-env.sh` — a full rebuild
+  takes ~6s because the Nix store keeps the artifacts. The SDK itself persists; do not redo
+  the section 9.2/9.4 SDK composition.
 - `run-jvm-tests.sh` does not exist on this host. Select pure-JVM tests directly; class-name
   filters must not quote values (zsh does not re-parse embedded quotes, so `--tests "Foo"`
   passes the quotes through and matches nothing), and helper files without `@Test` must be

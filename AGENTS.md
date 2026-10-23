@@ -38,23 +38,22 @@ cd "$MCQ_REPO" && sh gradlew :app:assembleDebug :app:testDebugUnitTest \
 ## This host (NixOS aarch64, repo at /home/naresh/repo/mcq)
 
 The `/sdcard` block above is the other host (Android/Termux). On this machine there is no
-`env.sh` and no `/sdcard`; use these direct exports instead (verified 2026-10-23):
+`env.sh` at `/sdcard` and no `/sdcard`; use the repo's own environment instead
+(verified 2026-10-23):
 
 ```bash
-export JAVA_HOME=/tmp/ncal-sdk-links/jdk17
-export ANDROID_HOME=/home/naresh/android-sdk
-export ANDROID_SDK_ROOT=/home/naresh/android-sdk
+. apk-build/env.sh          # exports JAVA_HOME, ANDROID_HOME, MCQ_AAPT2_OVERRIDE;
+                            # runs apk-build/setup-env.sh if pieces are missing
 sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
-  -Pandroid.aapt2FromMavenOverride=/tmp/ncal-aapt2/aapt2 \
-  --dependency-verification=lenient --no-daemon
+  $MCQ_AAPT2_OVERRIDE --dependency-verification=lenient --no-daemon
 ```
 
-- The working aapt2 override here is `/tmp/ncal-aapt2/aapt2` — on this host it exists and
-  works (the "no longer exists" note above applied to the `/sdcard` host). `/opt/android-aapt2/aapt2`
-  does not exist here.
-- All of `/tmp/ncal-*` is volatile: after a reboot rebuild the jdk17 link, qemu and the x86-64
-  sysroot per `BUILDING.md` §9.1/§9.3, then the wrapper per `BUILDING.md` §10. The SDK at
-  `/home/naresh/android-sdk` persists.
+- `env.sh`/`setup-env.sh` manage everything under `/tmp/mcq-apk-env` (jdk17, qemu, the
+  x86-64 sysroot and the aapt2 wrapper at `/tmp/mcq-apk-env/aapt2/aapt2`). This replaces
+  the old ad-hoc `/tmp/ncal-*` layout; a full rebuild after a reboot takes ~6s because the
+  Nix store keeps the artifacts. The SDK itself is `/home/naresh/android-sdk` and persists.
+- `/opt/android-aapt2/aapt2` does not exist here; the override the scripts produce is
+  always `/tmp/mcq-apk-env/aapt2/aapt2`.
 - `run-jvm-tests.sh` does not exist on this host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.CategoryNode
@@ -30,17 +32,25 @@ import com.mcqapp.domain.Paper
 
 @Composable
 internal fun PaperDialog(
+    /** Null creates a paper; non-null edits that paper's details in place. */
+    paper: Paper? = null,
     onDismiss: () -> Unit,
     onSave: (String, String, Int, Double) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var duration by remember { mutableStateOf("") }
-    var negative by remember { mutableStateOf("") }
+    var title by remember(paper) { mutableStateOf(paper?.title ?: "") }
+    var description by remember(paper) { mutableStateOf(paper?.description ?: "") }
+    var duration by remember(paper) {
+        mutableStateOf(paper?.durationMinutes?.takeIf { it > 0 }?.toString() ?: "")
+    }
+    var negative by remember(paper) {
+        mutableStateOf(
+            paper?.negativeMarking?.takeIf { it > 0.0 }?.let { com.mcqapp.util.formatDecimalEntry(it) } ?: ""
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.new_paper)) },
+        title = { Text(stringResource(if (paper == null) R.string.new_paper else R.string.edit_paper)) },
         text = {
             Column {
                 OutlinedTextField(
@@ -87,6 +97,57 @@ internal fun PaperDialog(
                 },
                 enabled = title.isNotBlank()
             ) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
+
+/**
+ * The per-attempt duration picker shown when Test is tapped. [initialMinutes]
+ * is the paper's stored duration (0 when untimed), so the field opens ready
+ * to start unchanged; blank means untimed for this run only — the paper's
+ * stored duration is not rewritten.
+ */
+@Composable
+internal fun TestDurationDialog(
+    paperTitle: String,
+    initialMinutes: Int,
+    onDismiss: () -> Unit,
+    onStart: (minutes: Int) -> Unit
+) {
+    var duration by remember(paperTitle, initialMinutes) {
+        mutableStateOf(if (initialMinutes > 0) initialMinutes.toString() else "")
+    }
+    // Clamp through ExamTiming so a typed 10_000_000 lands on the same
+    // ceiling the importer and the ViewModel use.
+    val minutes = com.mcqapp.domain.ExamTiming.minutesFrom(duration.toIntOrNull() ?: 0)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.test_action)) },
+        text = {
+            Column {
+                Text(
+                    paperTitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = duration,
+                    onValueChange = { duration = it.filter { c -> c.isDigit() }.take(6) },
+                    label = { Text(stringResource(R.string.duration_minutes_blank_untimed)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onStart(minutes) }) { Text(stringResource(R.string.start_test)) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }

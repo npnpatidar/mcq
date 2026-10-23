@@ -65,4 +65,14 @@ class NumericInputTest {
         assertEquals("", com.mcqapp.ui.importscreen.numericTextFor(0.0))
         assertEquals("10", com.mcqapp.ui.importscreen.numericTextFor(10))
     }
+
+    @Test
+    fun formatDecimalEntryPrefillsDialogsDotSeparatedAndLocaleStable() {
+        // The edit-paper dialog prefills from a stored Double: a dotted string
+        // the comma-folding filter round-trips, whole numbers without ".0".
+        assertEquals("0.25", formatDecimalEntry(0.25))
+        assertEquals("0.33", formatDecimalEntry(0.33))
+        assertEquals("20", formatDecimalEntry(20.0))
+        assertEquals("0", formatDecimalEntry(0.0))
+    }
 }

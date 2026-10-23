@@ -103,18 +103,21 @@ fun TestSessionScreen(
     mistakesOnly: Boolean = false,
     drillCount: Int = 0,
     drillMinutes: Int = 0,
+    durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION,
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
-        key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly-drill=$drillCount/$drillMinutes",
+        key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly" +
+            "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
             categoryIds,
             mistakesOnly,
             drillCount,
-            drillMinutes
+            drillMinutes,
+            durationMinutes
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()

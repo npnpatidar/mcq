@@ -64,9 +64,12 @@ fun testRoute(
     categoryIds: List<String> = emptyList(),
     mistakes: Boolean = false,
     drillCount: Int = 0,
-    drillMinutes: Int = 0
+    drillMinutes: Int = 0,
+    /** Per-attempt duration in minutes; -1 = the paper's own duration. */
+    minutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION
 ): String = "test?paperId=${encode(paperId)}" +
     "&categories=${encode(categoryIds.joinToString(","))}" +
     "&mistakes=$mistakes" +
     "&drillCount=$drillCount" +
-    "&drillMinutes=$drillMinutes"
+    "&drillMinutes=$drillMinutes" +
+    "&minutes=$minutes"

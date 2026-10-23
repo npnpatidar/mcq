@@ -86,6 +86,7 @@ internal fun PaperCard(
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
+    onEditPaper: () -> Unit = {},
     onScopedTest: (List<String>) -> Unit = {},
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onNestCategory: (String) -> Unit = {},
@@ -427,6 +428,7 @@ internal fun PaperCard(
                                 onEditQuestion = onEditQuestion,
                                 onAddQuestion = onAddQuestion,
                                 onAddCategory = onAddCategory,
+                                onEditPaper = onEditPaper,
                                 onDelete = onDelete
                             )
                         CardExpansion.Collapsed -> Unit
@@ -486,7 +488,7 @@ private fun ShowCategoryRow(
     }
 }
 
-/** Manage mode's block: today's category rows plus Add category / Delete paper. */
+/** Manage mode's block: today's category rows plus Add category / Edit paper / Delete paper. */
 @Composable
 private fun ManageCategoryBlock(
     paper: Paper,
@@ -498,6 +500,7 @@ private fun ManageCategoryBlock(
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
     onAddCategory: () -> Unit,
+    onEditPaper: () -> Unit,
     onDelete: () -> Unit
 ) {
     Column {
@@ -521,6 +524,14 @@ private fun ManageCategoryBlock(
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
                 Text(stringResource(R.string.add_category))
+            }
+            TextButton(
+                onClick = onEditPaper,
+                modifier = Modifier.weight(1f).testTag("paper-edit-${paper.id}")
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = null)
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.edit_paper))
             }
             TextButton(
                 onClick = onDelete,

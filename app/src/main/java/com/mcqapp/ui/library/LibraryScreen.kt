@@ -99,6 +99,11 @@ fun LibraryScreen(
     val context = LocalContext.current
 
     var showPaperDialog by remember { mutableStateOf(false) }
+    // The paper being edited (Manage → Edit paper); null hides the dialog.
+    var editingPaper by remember { mutableStateOf<Paper?>(null) }
+    // A Test tap parks its paper + scope here so the duration dialog can ask
+    // how long this run should be before the route carries it to the session.
+    var pendingTestStart by remember { mutableStateOf<PendingTestStart?>(null) }
     var showCategoryDialog by remember { mutableStateOf(false) }
     var categoryDialogPaperId by remember { mutableStateOf("") }
     var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
@@ -329,10 +334,17 @@ fun LibraryScreen(
                     },
                     onStartTest = { paperId, categoryIds ->
                         scope.launch { drawerState.close() }
+                        val paper = papers.firstOrNull { it.id == paperId }
                         Logger.i("LIB", "Drawer test: paperId=$paperId, categories=${categoryIds.size}")
-                        navController.navigate(
-                            com.mcqapp.ui.navigation.testRoute(paperId, categoryIds)
-                        )
+                        if (paper != null) {
+                            pendingTestStart = PendingTestStart(paper, categoryIds)
+                        } else {
+                            // No paper record (should not happen): fall back to
+                            // the paper's own duration rather than dropping the tap.
+                            navController.navigate(
+                                com.mcqapp.ui.navigation.testRoute(paperId, categoryIds)
+                            )
+                        }
                     },
                     onImport = { importLauncher.launch(arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")) },
                     onStartStudy = { paperId, categoryIds ->
@@ -409,7 +421,7 @@ fun LibraryScreen(
                             val leechCountBadge = studyCounts[paper.id]?.leeches ?: 0
                             PaperCard(
                                 paper = paper,
-                                onStart = { navController.navigate(com.mcqapp.ui.navigation.testRoute(paper.id)) },
+                                onStart = { pendingTestStart = PendingTestStart(paper, emptyList()) },
                                 onPracticeMistakes = {
                                     navController.navigate(
                                         com.mcqapp.ui.navigation.testRoute(paper.id, mistakes = true)
@@ -464,9 +476,7 @@ fun LibraryScreen(
                                 },
                                 onScopedTest = { ids ->
                                     Logger.i("LIB", "Card test: paperId=${paper.id}, categories=${ids.size}")
-                                    navController.navigate(
-                                        com.mcqapp.ui.navigation.testRoute(paper.id, ids)
-                                    )
+                                    pendingTestStart = PendingTestStart(paper, ids)
                                 },
                                 onExport = { tickedIds ->
                                     // Nothing ticked → the whole paper; a
@@ -486,6 +496,7 @@ fun LibraryScreen(
                                     categoryDialogParentId = null
                                     showCategoryDialog = true
                                 },
+                                onEditPaper = { editingPaper = paper },
                                 onEditQuestion = { questionId, categoryId ->
                                     com.mcqapp.ui.editor.EditorSession.clear()
                                     navController.navigate(
@@ -525,6 +536,39 @@ fun LibraryScreen(
             onSave = { title, description, duration, negative ->
                 viewModel.addPaper(title, description, duration, negative)
                 showPaperDialog = false
+            }
+        )
+    }
+
+    editingPaper?.let { paper ->
+        PaperDialog(
+            paper = paper,
+            onDismiss = { editingPaper = null },
+            onSave = { title, description, duration, negative ->
+                viewModel.updatePaper(paper.id, title, description, duration, negative)
+                editingPaper = null
+            }
+        )
+    }
+
+    pendingTestStart?.let { request ->
+        TestDurationDialog(
+            paperTitle = request.paper.title,
+            initialMinutes = request.paper.durationMinutes,
+            onDismiss = { pendingTestStart = null },
+            onStart = { minutes ->
+                pendingTestStart = null
+                Logger.i(
+                    "LIB",
+                    "Test: paperId=${request.paper.id}, categories=${request.categoryIds.size}, minutes=$minutes"
+                )
+                navController.navigate(
+                    com.mcqapp.ui.navigation.testRoute(
+                        request.paper.id,
+                        request.categoryIds,
+                        minutes = minutes
+                    )
+                )
             }
         )
     }
@@ -735,3 +779,13 @@ fun LibraryScreen(
         )
     }
 }
+
+/**
+ * A Test tap waiting on the duration dialog: which paper to start and which
+ * ticked branches scope it. Held in screen state because the dialog resolves
+ * after the tap, and the route needs both values once it does.
+ */
+private data class PendingTestStart(
+    val paper: Paper,
+    val categoryIds: List<String>
+)

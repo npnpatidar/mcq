@@ -45,13 +45,14 @@ fun McqNavHost(repository: McqRepository) {
             LibraryScreen(repository = repository, navController = navController)
         }
         composable(
-            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}",
+            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}&minutes={minutes}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
                 navArgument("categories") { type = NavType.StringType; defaultValue = "" },
                 navArgument("mistakes") { type = NavType.BoolType; defaultValue = false },
                 navArgument("drillCount") { type = NavType.IntType; defaultValue = 0 },
-                navArgument("drillMinutes") { type = NavType.IntType; defaultValue = 0 }
+                navArgument("drillMinutes") { type = NavType.IntType; defaultValue = 0 },
+                navArgument("minutes") { type = NavType.IntType; defaultValue = -1 }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
@@ -59,8 +60,9 @@ fun McqNavHost(repository: McqRepository) {
             val mistakes = entry.arguments?.getBoolean("mistakes") ?: false
             val drillCount = entry.arguments?.getInt("drillCount") ?: 0
             val drillMinutes = entry.arguments?.getInt("drillMinutes") ?: 0
+            val minutes = entry.arguments?.getInt("minutes") ?: -1
             Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories', " +
-                "mistakes=$mistakes, drill=$drillCount/${drillMinutes}min")
+                "mistakes=$mistakes, drill=$drillCount/${drillMinutes}min, minutes=$minutes")
             TestSessionScreen(
                 repository = repository,
                 paperId = paperId,
@@ -68,6 +70,7 @@ fun McqNavHost(repository: McqRepository) {
                 mistakesOnly = mistakes,
                 drillCount = drillCount,
                 drillMinutes = drillMinutes,
+                durationMinutes = minutes,
                 navController = navController
             )
         }

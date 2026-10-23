@@ -2,6 +2,7 @@ package com.mcqapp.domain
 
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.QuestionEntity
+import java.util.Locale
 
 /**
  * Storage breakdown: database file size plus per-paper question counts and
@@ -30,8 +31,8 @@ object StorageInfo {
     fun formatBytes(bytes: Long): String = when {
         bytes < 0 -> "?"
         bytes < 1024 -> "$bytes B"
-        bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
-        else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+        bytes < 1024 * 1024 -> String.format(Locale.ROOT, "%.1f KB", bytes / 1024.0)
+        else -> String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
     }
 
     fun imageCharsOf(question: QuestionEntity, options: List<OptionEntity>): Long =

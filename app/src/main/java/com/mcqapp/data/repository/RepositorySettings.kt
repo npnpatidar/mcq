@@ -290,6 +290,10 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         val prefs = context.dataStore.data.first().asMap()
         val out = LinkedHashMap<String, McqBackupFormat.PreferenceEntry>()
         for ((key, value) in prefs) {
+            // The resume slot is session state, not a setting. Exporting it
+            // would let a settings restore overwrite a newer live snapshot
+            // with whatever was in progress when the backup was taken.
+            if (key.name == progressKey.name) continue
             val entry = when (value) {
                 is Boolean -> McqBackupFormat.PreferenceEntry("boolean", JsonPrimitive(value))
                 is Double -> McqBackupFormat.PreferenceEntry("double", JsonPrimitive(value))
@@ -312,8 +316,14 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
      */
     suspend fun restore(settings: McqBackupFormat.SettingsFile) {
         context.dataStore.edit { prefs ->
+            // The resume snapshot is restored separately, and only after this
+            // call. Clearing it here would destroy a live snapshot on a
+            // settings-only restore, so preserve it across the replace.
+            val progress = prefs[progressKey]
             prefs.clear()
+            if (progress != null) prefs[progressKey] = progress
             for ((name, entry) in settings.preferences) {
+                if (name == progressKey.name) continue
                 val value = entry.value
                 when (entry.type) {
                     "boolean" -> (value as? JsonPrimitive)?.booleanOrNull?.let {

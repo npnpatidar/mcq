@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.SchedulerConfig
@@ -47,6 +48,7 @@ class RepositorySettingsTest {
         // silently drive every later test in the run. Re-assert a blank slate.
         runBlocking {
             store().resetSchedulerConfig()
+            store().clearTestProgress()
             // Fitted weights ride a separate key that resetSchedulerConfig
             // deliberately leaves alone; clear it here or one test's fit would
             // leak into every later assertion in the run.
@@ -233,6 +235,27 @@ class RepositorySettingsTest {
      * exactly as they were, and a pacing write must not be needed to store
      * a fit.
      */
+    /**
+     * A settings restore replaces every preference, but the resume snapshot
+     * is not a setting: clearing it here used to destroy a live in-progress
+     * test on a settings-only restore.
+     */
+    @Test
+    fun settingsRestorePreservesTheLiveResumeSnapshot() = runBlocking {
+        val store = store()
+        store.saveTestProgress("""{"paperId":"p1"}""")
+        store.restore(McqBackupFormat.SettingsFile())
+        assertEquals("""{"paperId":"p1"}""", store.loadTestProgress())
+    }
+
+    /** Nor does an export carry the session slot into another device's restore. */
+    @Test
+    fun settingsSnapshotOmitsTheResumeSnapshot() = runBlocking {
+        val store = store()
+        store.saveTestProgress("""{"paperId":"p1"}""")
+        assertFalse("in_progress_test" in store.snapshot().preferences)
+    }
+
     @Test
     fun writingWeightsAloneLeavesPacingUntouched() = runBlocking {
         val store = store()

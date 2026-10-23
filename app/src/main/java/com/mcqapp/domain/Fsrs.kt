@@ -18,8 +18,9 @@ import kotlin.math.pow
  *    [SchedulerConfig.relearnMs] like SM-2's relearn path; the step ladder
  *    would add a second, parallel notion of "short interval" the study loop
  *    has no UI for.
- *  - No fuzz. Intervals are deterministic so a preview can never lie about
- *    what grading will persist.
+ *  - No fuzz. Intervals are deterministic for a card and a given instant, so
+ *    a preview matches what grading would persist at the moment it was drawn;
+ *    elapsed time can still change the exact delay before the tap.
  *
  * Pure and deterministic: no clock, no randomness, no Android types.
  *

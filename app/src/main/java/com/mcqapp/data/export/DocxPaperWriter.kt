@@ -166,6 +166,17 @@ object DocxPaperWriter {
                 // reset, so the question does not re-bind to the block
                 // above it on re-import.
                 flow("<w:p><w:r><w:t xml:space=\"preserve\">Passage:</w:t></w:r></w:p>")
+            } else {
+                // A question that names no passage in the stream — a
+                // passage deleted after the questions that reference it, or
+                // an incomplete stream — stays member-less: the visible
+                // markers cannot bind it to anything. Unlike every other
+                // uncarryable artifact (options, images), this used to be
+                // silent, so the file just read wrong.
+                warnings.add(
+                    "Question ${question.id} references passage $wanted, which is not " +
+                        "in the stream; the passage context was not written."
+                )
             }
             return wanted
         }
@@ -1126,18 +1137,33 @@ private fun jpegSize(bytes: ByteArray): Pair<Int, Int>? {
     while (i + 9 < bytes.size) {
         if (bytes[i] != 0xFF.toByte()) return null
         val marker = bytes[i + 1].toInt() and 0xFF
-        if (marker == 0xD8 || marker in 0x01..0x09 || marker == 0x64) {
-            i += 2
-            continue
+        when {
+            // Standalone/no-length markers (TEM, RST0-7, EOI): skipping them
+            // like SOI — treating them as length-bearing read the next two
+            // payload bytes as a length and desynced the scan, so a packet
+            // the writer met before the SOF degraded the drawing to the
+            // 320×240 default. Malformed-only in practice (RSTs live after
+            // SOS and the scan answers at the first SOF), but the walk is
+            // now marker-shape-honest either way.
+            marker == 0xFF || marker == 0x01 || marker in 0xD0..0xD9 -> i += 2
+            // SOS (0xDA): everything from here to EOI is entropy-coded data
+            // whose bytes both embed 0xFF-padded markers and carry no size.
+            // There is no size segment after it either, so stop.
+            marker == 0xDA -> return null
+            // SOF0-SOF15 except DHT (C4), JPG (C8) and DAC (CC) carry the size.
+            marker in 0xC0..0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC -> {
+                val h = ((bytes[i + 5].toInt() and 0xFF) shl 8) or (bytes[i + 6].toInt() and 0xFF)
+                val w = ((bytes[i + 7].toInt() and 0xFF) shl 8) or (bytes[i + 8].toInt() and 0xFF)
+                return if (w in 1..1_000_000 && h in 1..1_000_000) w to h else null
+            }
+            else -> {
+                val len = ((bytes[i + 2].toInt() and 0xFF) shl 8) or (bytes[i + 3].toInt() and 0xFF)
+                // A zero/negative length is a corrupt stream; without the
+                // guard the scan advances nowhere and spins.
+                if (len < 2) return null
+                i += 2 + len
+            }
         }
-        val len = ((bytes[i + 2].toInt() and 0xFF) shl 8) or (bytes[i + 3].toInt() and 0xFF)
-        // SOF0-SOF15 except DHT (C4), JPG (C8) and DAC (CC) carry the size.
-        if (marker in 0xC0..0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
-            val h = ((bytes[i + 5].toInt() and 0xFF) shl 8) or (bytes[i + 6].toInt() and 0xFF)
-            val w = ((bytes[i + 7].toInt() and 0xFF) shl 8) or (bytes[i + 8].toInt() and 0xFF)
-            return if (w in 1..1_000_000 && h in 1..1_000_000) w to h else null
-        }
-        i += 2 + len
     }
     return null
 }

@@ -64,6 +64,48 @@ class StudyViewModelRestartFailureTest {
         return condition()
     }
 
+    private suspend fun seedOverdueCard() {
+        app.repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        app.repository.saveQuestion(
+            com.mcqapp.domain.Question(
+                id = "q1",
+                categoryId = "c1",
+                text = "Q?",
+                options = listOf(
+                    com.mcqapp.domain.QuestionOption("q1-a", "A"),
+                    com.mcqapp.domain.QuestionOption("q1-b", "B")
+                ),
+                correctOptionIds = setOf("q1-a")
+            )
+        )
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        app.repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
+        app.repository.recordStudyReview("p1", "q1", ReviewGrade.AGAIN, now = now - 30 * day + 3_600_000L)
+    }
+
+    @Test
+    fun aFailedGradeSurfacesInlineAndLeavesTheCardRetryable() = runBlocking {
+        seedOverdueCard()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        app.repository.db().close()
+        viewModel.next()
+
+        assertTrue(
+            "state=${viewModel.state.value} — a failed write must reach the catch block",
+            awaitCondition { viewModel.state.value.gradeError != null }
+        )
+        assertFalse(viewModel.state.value.grading)
+        assertTrue(viewModel.state.value.gradeError!!.startsWith("Could not save your grade"))
+        // The card is still on screen, so the learner can retry the same grade.
+        assertEquals("q1", viewModel.state.value.current?.questionId)
+        assertTrue(viewModel.state.value.revealed)
+    }
+
     @Test
     fun aFailedRestartSurfacesItsErrorInsteadOfSpinning() = runBlocking {
         // One graduated, one fresh card, so the session has something to pull.

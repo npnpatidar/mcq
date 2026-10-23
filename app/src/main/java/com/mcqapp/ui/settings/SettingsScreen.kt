@@ -911,6 +911,10 @@ private fun AnkiNumberRow(
     var text by remember(current) { mutableStateOf(formatValue(current, step)) }
     val parsed = text.trim().toDoubleOrNull()
     val valid = parsed != null && parsed >= range.start && parsed <= range.endInclusive
+    // Step from what the user typed when it is valid; an invalid field's
+    // buttons are disabled rather than silently snapping back to the last
+    // committed value.
+    val stepBase = if (valid) parsed!! else current
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -921,8 +925,8 @@ private fun AnkiNumberRow(
             Text(help, style = MaterialTheme.typography.bodySmall)
         }
         IconButton(
-            onClick = { onChange((current - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
-            enabled = current > range.start
+            onClick = { onChange((stepBase - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
+            enabled = valid && stepBase > range.start
         ) {
             Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
         }
@@ -947,8 +951,8 @@ private fun AnkiNumberRow(
             modifier = Modifier.width(88.dp)
         )
         IconButton(
-            onClick = { onChange((current + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
-            enabled = current < range.endInclusive
+            onClick = { onChange((stepBase + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
+            enabled = valid && stepBase < range.endInclusive
         ) {
             Icon(Icons.Default.Add, contentDescription = "Increase $label")
         }

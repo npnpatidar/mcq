@@ -46,6 +46,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Trends
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import com.mcqapp.R
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -140,7 +141,7 @@ fun HistoryScreen(
                                     maxLines = 1
                                 )
                                 Text(
-                                    "${mastery.paperTitle} · ${"%.0f%%".format(mastery.rate * 100)}" +
+                                    "${mastery.paperTitle} · ${formatPercent(mastery.rate * 100)}" +
                                         " · ${mastery.correct}/${mastery.graded}",
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -171,8 +172,8 @@ fun HistoryScreen(
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    "${"%.0f%%".format(stat.wrongRate * 100)} wrong" +
-                                        " · ${"%.0f%%".format(stat.skipRate * 100)} skipped" +
+                                    "${formatPercent(stat.wrongRate * 100)} wrong" +
+                                        " · ${formatPercent(stat.skipRate * 100)} skipped" +
                                         " · ${stat.gradedAttempts} attempts",
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -202,7 +203,7 @@ fun HistoryScreen(
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    stringResource(R.string.l_0f).format(attempt.percentage),
+                                    formatPercent(attempt.percentage),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -232,13 +233,13 @@ private fun TrendCard(trend: Trends.PaperTrend) {
                 Text(trend.title, style = MaterialTheme.typography.titleSmall)
                 Text(
                     "${trend.attempts} attempt${if (trend.attempts == 1) "" else "s"}" +
-                        " · best ${"%.0f%%".format(trend.bestPercent)}",
+                        " · best ${formatPercent(trend.bestPercent)}",
                     style = MaterialTheme.typography.labelSmall
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    stringResource(R.string.l_0f).format(trend.latestPercent),
+                    formatPercent(trend.latestPercent),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -249,7 +250,11 @@ private fun TrendCard(trend: Trends.PaperTrend) {
                         else -> "=" to Color.Gray
                     }
                     Text(
-                        "$arrow ${"%.0f".format(kotlin.math.abs(trend.deltaPoints))} pts",
+                        "$arrow ${String.format(
+                            Locale.ROOT,
+                            "%.0f",
+                            kotlin.math.abs(trend.deltaPoints)
+                        )} pts",
                         style = MaterialTheme.typography.labelSmall,
                         color = color
                     )
@@ -258,3 +263,12 @@ private fun TrendCard(trend: Trends.PaperTrend) {
         }
     }
 }
+
+
+/**
+ * ASCII digits and a dot decimal regardless of the device locale: the history
+ * rows sit beside chart labels that already use Locale.ENGLISH, so a German
+ * or Devanagari default here would mix digit systems on one screen.
+ */
+internal fun formatPercent(value: Double): String =
+    String.format(Locale.ROOT, "%.0f%%", value)

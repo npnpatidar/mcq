@@ -78,6 +78,26 @@ class ImportRunJournalTest {
     }
 
     /**
+     * A file can change behind the same URI. The old run's seen/total pair is
+     * no longer about this file, so the notice must stay silent rather than
+     * compare 2500 seen against a different total.
+     */
+    @Test
+    fun aChangedFileIsNotReportedAsTheSameInterruptedRun() {
+        journal.begin("sha-abc", 5000, 1L)
+        journal.progress(2500)
+        assertNull(interruptedImportNotice(journal.current(), "sha-abc", 4000))
+    }
+
+    @Test
+    fun theNoticeUsesTheStoredTotalWhenTheCurrentTotalIsUnknown() {
+        journal.begin("sha-abc", 5000, 1L)
+        journal.progress(2500)
+        val notice = interruptedImportNotice(journal.current(), "sha-abc", 0)
+        assertTrue("should use the recorded total: $notice", notice!!.contains("2500 of 5000"))
+    }
+
+    /**
      * The word "skipped" sends a warning to the "content was dropped" panel;
      * this notice is the opposite, so it must not contain it.
      */

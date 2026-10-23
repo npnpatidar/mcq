@@ -61,6 +61,8 @@ sealed interface ScopeLabel {
 data class StudyUiState(
     val loading: Boolean = true,
     val loadError: String? = null,
+    /** A grade or advance failed to persist; shown inline so the card is not lost. */
+    val gradeError: String? = null,
     val paperTitle: String = "",
     /** The card the session pulled, or null when nothing is eligible. */
     val current: StudyCard? = null,
@@ -592,7 +594,7 @@ class StudyViewModel(
         val proposed = current.pendingGrade ?: return
         if (!current.simplified || !current.revealed) return
         if (current.grading) return
-        _state.update { it.copy(grading = true) }
+        _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
         val dwellSeconds = _state.value.questionElapsedSeconds
         viewModelScope.launch {
@@ -609,7 +611,12 @@ class StudyViewModel(
                 pullCard()
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
-                _state.update { it.copy(grading = false) }
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        gradeError = "Could not save your grade: ${e.message}"
+                    )
+                }
             }
         }
     }
@@ -625,7 +632,7 @@ class StudyViewModel(
         // Claim the card before launching: the write is async, so a second tap
         // would otherwise persist two reviews for the same question.
         if (current.grading) return
-        _state.update { it.copy(grading = true) }
+        _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
         val dwellSeconds = _state.value.questionElapsedSeconds
         viewModelScope.launch {
@@ -642,7 +649,12 @@ class StudyViewModel(
                 pullCard()
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
-                _state.update { it.copy(grading = false) }
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        gradeError = "Could not save your grade: ${e.message}"
+                    )
+                }
             }
         }
     }
@@ -696,9 +708,10 @@ class StudyViewModel(
      * The four button labels for whichever card is on screen.
      *
      * Read off the same pure [com.mcqapp.domain.FsrsScheduler.next] the grading
-     * path uses, so a button cannot promise an interval the scheduler would not
-     * schedule. Nothing is persisted, and a card whose schedule is unknown gets
-     * no labels rather than a guess.
+     * path uses, so a button shows the interval grading would schedule at the
+     * instant the preview is drawn. Time keeps moving between draw and tap, so
+     * the label is a preview, not a promise. Nothing is persisted, and a card
+     * whose schedule is unknown gets no labels rather than a guess.
      */
     private fun refreshPreviews() {
         val cfg = config ?: return

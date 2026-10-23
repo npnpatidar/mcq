@@ -80,8 +80,14 @@ fun interruptedImportNotice(
 ): String? {
     if (record == null || sourceKey == null) return null
     if (record.sourceKey != sourceKey) return null
-    if (record.questionsSeen >= totalQuestions) return null
+    // Compare against the total captured when that run began. The file may
+    // have been replaced since (same URI, different contents), and mixing the
+    // old count with the new total would either suppress the notice or print
+    // a progress figure for the wrong file.
+    if (totalQuestions > 0 && record.totalQuestions != totalQuestions) return null
+    val recordedTotal = record.totalQuestions.takeIf { it > 0 } ?: totalQuestions
+    if (recordedTotal <= 0 || record.questionsSeen >= recordedTotal) return null
     return "A previous import of this file stopped after ${record.questionsSeen} of " +
-        "$totalQuestions questions. Running it again is safe: it continues over " +
+        "$recordedTotal questions. Running it again is safe: it continues over " +
         "whatever was already written."
 }

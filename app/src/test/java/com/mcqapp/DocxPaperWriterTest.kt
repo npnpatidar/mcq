@@ -463,6 +463,20 @@ class DocxPaperWriterTest {
     }
 
     @Test
+    fun jpegSizeSkipsMarkersWithoutALengthSegment() {
+        val bytes = byteArrayOf(
+            0xFF.toByte(), 0xD8.toByte(),
+            0xFF.toByte(), 0x01.toByte(),
+            0xFF.toByte(), 0xD0.toByte(),
+            0xFF.toByte(), 0xE0.toByte(), 0, 4, 0, 0,
+            0xFF.toByte(), 0xC0.toByte(), 0, 17, 8, 0, 20, 0, 30,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0xFF.toByte(), 0xD9.toByte()
+        )
+        assertEquals(30 to 20, imageDimensions(bytes))
+    }
+
+    @Test
     fun remoteImageIsDroppedWithMeaningfulState() {
         val q = QuestionDto(
             id = "q",

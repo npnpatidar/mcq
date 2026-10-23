@@ -17,6 +17,7 @@ import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.editor.EditorSession
 import com.mcqapp.util.Logger
+import com.mcqapp.util.parseNonNegativeDecimal
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -130,6 +131,8 @@ class BrowseViewModel(
     private val _state = MutableStateFlow(BrowseUiState())
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
+    private val _bulkError = MutableStateFlow<String?>(null)
+    val bulkError: StateFlow<String?> = _bulkError.asStateFlow()
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
     // One shared seed, not two adjoined copies: the MutableStateFlow's
@@ -660,6 +663,10 @@ class BrowseViewModel(
         _exportError.value = null
     }
 
+    fun dismissBulkError() {
+        _bulkError.value = null
+    }
+
     fun bulkEdit(
         questionIds: Set<String>,
         marksText: String,
@@ -667,9 +674,17 @@ class BrowseViewModel(
         tagsText: String
     ) {
         viewModelScope.launch {
-            val marks = marksText.trim().takeIf { it.isNotEmpty() }?.let { raw ->
-                raw.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+            val trimmedMarks = marksText.trim()
+            val marks = trimmedMarks.takeIf { it.isNotEmpty() }?.let(::parseNonNegativeDecimal)
+            // A non-blank but unparsable marks value used to fall out as null
+            // while difficulty and tags still applied — the one field the user
+            // saw as invalid was silently the only one ignored. Refuse the
+            // whole edit so nothing is half-applied.
+            if (trimmedMarks.isNotEmpty() && marks == null) {
+                _bulkError.value = "Marks must be a non-negative number."
+                return@launch
             }
+            _bulkError.value = null
             val tags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 .takeIf { tagsText.isNotBlank() }
             repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)

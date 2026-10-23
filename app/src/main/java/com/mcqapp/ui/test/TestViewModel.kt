@@ -105,7 +105,9 @@ class TestViewModel(
     private val categoryIds: List<String>,
     private val mistakesOnly: Boolean = false,
     private val drillCount: Int = 0,
-    private val drillMinutes: Int = 0
+    private val drillMinutes: Int = 0,
+    /** Per-attempt duration from the start picker; 0 = untimed. */
+    private val durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -263,11 +265,14 @@ class TestViewModel(
                     }
                 }
                 optionShuffleSeed = if (shuffleO) seed else 0L
-                // Saturating conversion: drillMinutes and durationMinutes both
-                // originate in files, and minutes * 60 could overflow.
-                val totalSeconds = com.mcqapp.domain.ExamTiming.secondsFrom(
-                    if (isDrill && drillMinutes > 0) drillMinutes
-                    else (paper?.durationMinutes ?: 0)
+                // Saturating conversion: drillMinutes, the picker override and
+                // durationMinutes all originate in files or raw text, and
+                // minutes * 60 could overflow.
+                val totalSeconds = com.mcqapp.domain.ExamTiming.sessionSeconds(
+                    isDrill = isDrill,
+                    drillMinutes = drillMinutes,
+                    overrideMinutes = durationMinutes,
+                    paperMinutes = (paper?.durationMinutes ?: 0)
                 ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
                 val practice = repository.practiceMode().first()
                 val strict = repository.strictMode().first()

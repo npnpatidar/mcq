@@ -100,7 +100,26 @@ class RoutesTest {
     fun drillParametersAreCarried() {
         val route = testRoute("p1", drillCount = 10, drillMinutes = 5)
         assertEquals("10", route.substringAfter("drillCount=").substringBefore("&"))
-        assertEquals("5", route.substringAfter("drillMinutes="))
+        assertEquals("5", route.substringAfter("drillMinutes=").substringBefore("&"))
+    }
+
+    @Test
+    fun thePerRunDurationRidesTheRoute() {
+        // The duration picker's choice travels with the route: 0 must stay 0
+        // (an intentional untimed run), not collapse into the paper default.
+        assertEquals(
+            "30",
+            testRoute("p1", minutes = 30).substringAfter("minutes=")
+        )
+        assertEquals(
+            "0",
+            testRoute("p1", minutes = 0).substringAfter("minutes=")
+        )
+        // No picker (mistakes practice, drill): the sentinel, not 0.
+        assertEquals(
+            "-1",
+            testRoute("p1").substringAfter("minutes=")
+        )
     }
 
     // --- scoped study routes (§9.5) ---

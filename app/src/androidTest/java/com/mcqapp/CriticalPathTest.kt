@@ -64,6 +64,12 @@ class CriticalPathTest {
         }
     }
 
+    /** The Test tap opens the duration picker; confirming starts the session. */
+    private fun confirmTestStart() {
+        waitFor("Duration in minutes")
+        compose.onNodeWithText("Start test", substring = false).performClick()
+    }
+
     @Test
     fun libraryToResults() {
         compose.setContent { McqNavHost(repository = repository) }
@@ -74,6 +80,7 @@ class CriticalPathTest {
         waitFor("UITest Paper")
         compose.onNodeWithTag("paper-title-uitest-paper").assertIsDisplayed()
         compose.onNodeWithTag("paper-test-uitest-paper").performClick()
+        confirmTestStart()
 
         // Q1 correct, Q2 skipped, Q3 wrong. Options live in the
         // scrolling column; Next/Submit sit in the fixed footer.

@@ -285,6 +285,40 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Rewrites a paper's details (title, description, duration, negative
+     * marking) in place. [savePaper] upserts while keeping the paper's
+     * categories and questions, so an edit never orphans a bank's content.
+     */
+    fun updatePaper(
+        paperId: String,
+        title: String,
+        description: String,
+        durationMinutes: Int,
+        negativeMarking: Double
+    ) {
+        viewModelScope.launch {
+            try {
+                val current = repository.getPaper(paperId)
+                if (current == null) {
+                    _exportError.value = "Could not update the paper: it no longer exists"
+                    return@launch
+                }
+                repository.savePaper(
+                    current.copy(
+                        title = title,
+                        description = description,
+                        durationMinutes = com.mcqapp.domain.ExamTiming.minutesFrom(durationMinutes),
+                        negativeMarking = negativeMarking
+                    )
+                )
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Update paper failed", e)
+                _exportError.value = "Could not update the paper: ${e.message}"
+            }
+        }
+    }
+
     fun addCategory(paperId: String, title: String, parentId: String?) {
         viewModelScope.launch {
             try {

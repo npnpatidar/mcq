@@ -38,3 +38,17 @@ fun parseDecimalEntry(text: String): Double =
  */
 fun parseNonNegativeDecimal(text: String): Double? =
     text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
+
+/**
+ * The display counterpart to [parseDecimalEntry]: a plain dotted decimal an
+ * edit dialog can prefill from a stored Double. Locale-stable on purpose —
+ * `String.format(Locale.ROOT)` keeps `0.25` from rendering as `0,25` and then
+ * being round-tripped through the comma-folding filter. Whole numbers lose
+ * the trailing `.0`, so a 0-value prefills as blank-able "0".
+ */
+fun formatDecimalEntry(value: Double): String =
+    if (value == value.toLong().toDouble()) {
+        value.toLong().toString()
+    } else {
+        value.toString()
+    }

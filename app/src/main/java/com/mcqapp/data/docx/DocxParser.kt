@@ -43,13 +43,21 @@ fun isDocxArchive(bytes: ByteArray): Boolean {
     if (bytes.size < 4 || bytes[0].toInt() != ZIP_MAGIC_0 || bytes[1].toInt() != ZIP_MAGIC_1) return false
     return try {
         java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zip ->
+            // Files counted, not entries — the same rule the streaming
+            // classifier in PickedArchive applies: a file manager's re-zip
+            // pads the archive with directory entries, and counting them
+            // pushed word/document.xml past the cap and mis-filed a real
+            // Word bank. The byte overload is the rule's second copy, so it
+            // must not disagree with the primary one.
             var checked = 0
             var entry = zip.nextEntry
             while (entry != null && checked < 12) {
-                if (!entry.isDirectory && entry.name == "word/document.xml") return true
+                if (!entry.isDirectory) {
+                    if (entry.name == "word/document.xml") return true
+                    checked++
+                }
                 zip.closeEntry()
                 entry = zip.nextEntry
-                checked++
             }
             false
         }

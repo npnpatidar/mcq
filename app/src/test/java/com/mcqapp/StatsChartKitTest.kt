@@ -5,6 +5,7 @@ import com.mcqapp.ui.stats.charts.formatCount
 import com.mcqapp.ui.stats.charts.formatDuration
 import com.mcqapp.ui.stats.charts.formatPct
 import com.mcqapp.ui.stats.charts.niceMax
+import com.mcqapp.ui.stats.charts.xAxisLabelIndices
 import com.mcqapp.ui.stats.charts.xAxisLabelStep
 import com.mcqapp.ui.stats.charts.yTicks
 import com.mcqapp.ui.stats.statsCardSummary
@@ -58,6 +59,27 @@ class StatsChartKitTest {
         assertEquals(1, xAxisLabelStep(6))
         assertEquals(2, xAxisLabelStep(12))
         assertEquals(10, xAxisLabelStep(60))
+    }
+
+    // --- x-axis label collision --------------------------------------------
+
+    @Test
+    fun xAxisLabelsKeepTheirSpacingAndTheLastLabelWins() {
+        // Six slots with room to spare: every sparse label is kept.
+        val lefts = listOf(0f, 40f, 80f, 120f, 160f, 200f)
+        val widths = List(6) { 20f }
+        assertEquals(listOf(0, 1, 2, 3, 4, 5), xAxisLabelIndices(lefts, widths, gap = 4f))
+
+        // The last label starts where its neighbour ends: the neighbour is
+        // dropped, not drawn underneath it.
+        val tight = listOf(0f, 20f, 40f, 60f, 80f, 90f)
+        val wideLast = List(6) { 18f }.toMutableList().also { it[5] = 80f }
+        assertEquals(listOf(0, 1, 2, 3, 5), xAxisLabelIndices(tight, wideLast, gap = 2f))
+
+        // A single label is always kept, and malformed parallel lists fail
+        // closed rather than indexing past an end.
+        assertEquals(listOf(0), xAxisLabelIndices(listOf(0f), listOf(10f), gap = 4f))
+        assertEquals(emptyList<Int>(), xAxisLabelIndices(listOf(0f), emptyList(), gap = 4f))
     }
 
     // --- formatters ---------------------------------------------------------

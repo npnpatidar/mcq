@@ -116,9 +116,9 @@ class StringResourceUsageTest {
         // on screen as the text "$mistakeCount" instead of the count. This also
         // caught the version resource when "%1$s" was first added.
         val xml = File("src/main/res/values/strings.xml").readText()
-        // A legitimate format specifier ("%1$s") also contains a '$', so those
-        // are removed before looking for a raw Kotlin template.
-        val formatSpecifier = Regex("""%\d+\$[sd]""")
+        // A legitimate format specifier ("%1$s", "%2$02d") also contains a
+        // '$', so those are removed before looking for a raw Kotlin template.
+        val formatSpecifier = Regex("""%\d+\$[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z]""")
         val offenders = Regex("""<string name="([a-z0-9_]+)">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
             .findAll(xml)
             .map { it.groupValues[1] to it.groupValues[2] }

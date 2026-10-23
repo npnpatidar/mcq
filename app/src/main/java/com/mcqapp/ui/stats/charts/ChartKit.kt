@@ -220,3 +220,39 @@ internal fun MeterBar(fraction: Double, color: Color, modifier: Modifier = Modif
 
 /** How many x-axis labels to draw for [count] bars: roughly one per sixth. */
 internal fun xAxisLabelStep(count: Int): Int = ceil(count / 6.0).toInt().coerceAtLeast(1)
+
+/**
+ * Which x-axis labels actually fit. [lefts] are each label's clamped left
+ * edge, [widths] its measured width. Sparse labels are kept left-to-right;
+ * the always-drawn last label wins any collision, because it names the most
+ * recent point. Without this the last label could butt into its neighbour
+ * when a multi-line label is wider than the step.
+ */
+internal fun xAxisLabelIndices(
+    lefts: List<Float>,
+    widths: List<Float>,
+    gap: Float
+): List<Int> {
+    if (lefts.isEmpty() || lefts.size != widths.size) return emptyList()
+    val last = lefts.lastIndex
+    val step = xAxisLabelStep(lefts.size)
+    val kept = mutableListOf<Int>()
+    for (index in lefts.indices) {
+        if (index % step != 0 && index != last) continue
+        val left = lefts[index]
+        if (index == last) {
+            while (kept.isNotEmpty()) {
+                val previous = kept.last()
+                val previousRight = lefts[previous] + widths[previous]
+                if (previousRight + gap > left) kept.removeAt(kept.lastIndex) else break
+            }
+            kept.add(index)
+        } else {
+            val previous = kept.lastOrNull()
+            if (previous == null || lefts[previous] + widths[previous] + gap <= left) {
+                kept.add(index)
+            }
+        }
+    }
+    return kept
+}

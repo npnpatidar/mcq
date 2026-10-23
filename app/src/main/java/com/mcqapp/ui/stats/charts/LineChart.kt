@@ -144,18 +144,25 @@ internal fun LineChart(
             drawPath(path, s.color, style = Stroke(2.dp.toPx()))
         }
 
-        // Sparse x labels.
-        val step = xAxisLabelStep(labels.size)
-        labels.indices.forEach { index ->
-            if (index % step == 0 || index == labels.size - 1) {
-                val text = textMeasurer.measure(
-                    labels[index],
-                    TextStyle(fontSize = 9.sp, color = labelColor)
-                )
-                val x = (xFor(index) - text.size.width / 2f)
-                    .coerceIn(0f, size.width - text.size.width)
-                drawText(text, topLeft = Offset(x, size.height - bottomPad + 4.dp.toPx()))
-            }
+        // Sparse x labels. Measure first so the last label can push out a
+        // neighbour it would overlap instead of drawing on top of it.
+        val measured = labels.map {
+            textMeasurer.measure(it, TextStyle(fontSize = 9.sp, color = labelColor))
+        }
+        val lefts = measured.mapIndexed { index, text ->
+            (xFor(index) - text.size.width / 2f)
+                .coerceIn(0f, size.width - text.size.width)
+        }
+        val drawn = xAxisLabelIndices(
+            lefts = lefts,
+            widths = measured.map { it.size.width.toFloat() },
+            gap = 4.dp.toPx()
+        )
+        drawn.forEach { index ->
+            drawText(
+                measured[index],
+                topLeft = Offset(lefts[index], size.height - bottomPad + 4.dp.toPx())
+            )
         }
     }
 }

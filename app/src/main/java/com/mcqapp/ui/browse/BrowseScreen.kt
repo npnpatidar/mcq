@@ -80,6 +80,7 @@ import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.util.ContentElements
+import com.mcqapp.util.parseNonNegativeDecimal
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
 
@@ -113,6 +114,7 @@ fun BrowseScreen(
     var exportFormat by remember { mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE) }
 
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+    val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
 
     fun exportTitle(): String {
         val paper = state.paper?.title ?: "Selected"
@@ -572,6 +574,8 @@ fun BrowseScreen(
         }
 
         if (showBulkDialog) {
+            val marksError = bulkMarks.trim().isNotEmpty() &&
+                parseNonNegativeDecimal(bulkMarks) == null
             AlertDialog(
                 onDismissRequest = { showBulkDialog = false },
                 title = { Text("Edit ${selectedIds.size} questions") },
@@ -587,6 +591,12 @@ fun BrowseScreen(
                             onValueChange = { bulkMarks = it },
                             label = { Text(stringResource(R.string.marks_blank_keep)) },
                             singleLine = true,
+                            isError = marksError,
+                            supportingText = if (marksError) {
+                                { Text(stringResource(R.string.marks_must_be_non_negative)) }
+                            } else {
+                                null
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(8.dp))
@@ -618,12 +628,15 @@ fun BrowseScreen(
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        viewModel.bulkEdit(selectedIds, bulkMarks, bulkDifficulty, bulkTags)
-                        selectedIds = emptySet()
-                        selectionMode = false
-                        showBulkDialog = false
-                    }) { Text(stringResource(R.string.apply)) }
+                    TextButton(
+                        onClick = {
+                            viewModel.bulkEdit(selectedIds, bulkMarks, bulkDifficulty, bulkTags)
+                            selectedIds = emptySet()
+                            selectionMode = false
+                            showBulkDialog = false
+                        },
+                        enabled = !marksError
+                    ) { Text(stringResource(R.string.apply)) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showBulkDialog = false }) { Text(stringResource(R.string.cancel)) }
@@ -646,6 +659,19 @@ fun BrowseScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.cancel)) }
+                }
+            )
+        }
+
+        bulkError?.let { message ->
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissBulkError() },
+                title = { Text(stringResource(R.string.edit)) },
+                text = { Text(message) },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.dismissBulkError() }) {
+                        Text(stringResource(R.string.ok))
+                    }
                 }
             )
         }

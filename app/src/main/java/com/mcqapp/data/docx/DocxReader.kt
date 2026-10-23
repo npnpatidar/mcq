@@ -249,18 +249,37 @@ private class BodyReader(
                     sb.append(html)
                     if (content) hasContent = true
                 }
-                child.isWord("del") -> {
-                    val inner = StringBuilder()
-                    var delContent = false
+                child.isWord("del") || child.isWord("moveFrom") -> {
+                    // An unaccepted (not yet "Accept Revision"-ed) deletion or
+                    // move removal. The bank should agree with what Word's
+                    // *accepted* document holds — the deletion is not real text
+                    // an author would keep — so the runs are refused outright
+                    // instead of being struck in. That is a change in
+                    // behaviour on one edge (tracked edits are now applied)
+                    // tracked by the test at DocxTrackedChangesTest.
+                    var dropped = false
                     for (run in child.childElements()) {
                         if (!run.isWord("r")) continue
-                        val (html, content) = runHtml(run, inDel = true)
-                        inner.append(html)
-                        if (content) delContent = true
+                        if (runHtml(run, inDel = true).second) dropped = true
                     }
-                    if (delContent) {
-                        sb.append("<del>").append(inner).append("</del>")
-                        hasContent = true
+                    if (dropped) {
+                        warnings.add(
+                            "A tracked change (a deletion) in the document was applied; " +
+                                "accept the revisions in Word for the same result."
+                        )
+                    }
+                }
+                child.isWord("ins") || child.isWord("moveTo") -> {
+                    // Their insertion counterparts, previously nowhere: the
+                    // runs fell into the no-content branch and an unaccepted
+                    // insertion (a question fixed over Track Changes) was
+                    // imported as if it never happened. Unwrapped as plain
+                    // content, exactly what Word's accepted document carries.
+                    for (run in child.childElements()) {
+                        if (!run.isWord("r")) continue
+                        val (html, content) = runHtml(run, inDel = false)
+                        sb.append(html)
+                        if (content) hasContent = true
                     }
                 }
                 child.isWord("hyperlink") -> {

@@ -92,7 +92,18 @@
     <string name="show_categories">Show categories</string>
     <string name="drill_scope_shortfall">This selection has only %1$d question(s). Enter %1$d or fewer.</string>
     <string name="drill_scope_empty">This selection has no questions to drill.</string>
+    <string name="drill_paper_empty">This paper has no questions yet, so there is nothing to drill.</string>
+    <plurals name="drill_paper_shortfall">
+        <item quantity="one">This paper has only %1$d question. Enter %1$d or fewer.</item>
+        <item quantity="other">This paper has only %1$d questions. Enter %1$d or fewer.</item>
+    </plurals>
+    <plurals name="drill_preview">
+        <item quantity="one">%1$d random question, %2$d:00 on the clock.</item>
+        <item quantity="other">%1$d random questions, %2$d:00 on the clock.</item>
+    </plurals>
+    <string name="drill_enter_positive">Enter positive numbers for both.</string>
     <string name="marks_blank_keep">Marks (blank = keep)</string>
+    <string name="marks_must_be_non_negative">Marks must be a non-negative number.</string>
     <string name="marks_default_1">Marks (default 1)</string>
     <string name="mcq_app">MCQ App</string>
     <string name="minutes">Minutes</string>
@@ -130,6 +141,9 @@
     <string name="passages">Passages</string>
     <string name="new_passage">New passage</string>
     <string name="paper_mistakes_button">Mistakes (%1$d)</string>
+    <string name="paper_study_due_new">Study (%1$d due, %2$d new)</string>
+    <string name="paper_study_due">Study (%1$d due)</string>
+    <string name="paper_study_new">Study (%1$d new)</string>
     <string name="paper_study_selection">Study selection</string>
     <string name="paper_study_selection_due">Study selection (%1$d due)</string>
     <string name="paper_study_selection_due_new">Study selection (%1$d due, %2$d new)</string>
@@ -457,4 +471,42 @@
     <string name="stats_history">History</string>
     <string name="stats_no_history">This card has no logged reviews yet.</string>
     <string name="stats_no_schedule">This card has never been scheduled.</string>
+
+    <!-- Test session: dialogs, banners, review rows, clocks (fifth_bugs #3) -->
+    <plurals name="resume_saved_text">
+        <item quantity="one">%1$d question answered. Your progress was saved when the app closed.</item>
+        <item quantity="other">%1$d questions answered. Your progress was saved when the app closed.</item>
+    </plurals>
+    <plurals name="resume_saved_with_time_text">
+        <item quantity="one">%1$d question answered, %2$02d:%3$02d left. Your progress was saved when the app closed.</item>
+        <item quantity="other">%1$d questions answered, %2$02d:%3$02d left. Your progress was saved when the app closed.</item>
+    </plurals>
+    <plurals name="ungraded_practice_note">
+        <item quantity="one">%1$d question has no answer key and won\'t be scored. You can still answer it for practice.</item>
+        <item quantity="other">%1$d questions have no answer key and won\'t be scored. You can still answer them for practice.</item>
+    </plurals>
+    <string name="drill_banner_text">Drill — %1$d questions on the clock</string>
+    <string name="saving">Saving…</string>
+    <string name="saving_progress_text">Saving result… %1$d of %2$d</string>
+    <string name="answered_progress_text">%1$d/%2$d answered</string>
+    <string name="position_progress_text">%1$d/%2$d</string>
+    <string name="review_row_number">Q%1$d</string>
+    <string name="status_answered">answered</string>
+    <string name="status_unanswered">unanswered</string>
+    <string name="status_ungraded">not scored</string>
+    <string name="status_flagged">flagged</string>
+    <string name="no_explanation">No explanation provided.</string>
+    <string name="question_progress_text">Question %1$d of %2$d</string>
+    <string name="marks_one">%1$s mark</string>
+    <string name="marks_many">%1$s marks</string>
+    <string name="dwell_here">%1$s here</string>
+    <string name="submit_answered_line">Answered: %1$d of %2$d</string>
+    <string name="submit_unanswered_line">Unanswered: %1$d — these score 0</string>
+    <string name="submit_flagged_line">Flagged for review: %1$d</string>
+    <string name="submit_ungraded_line">Not scored (no answer key): %1$d</string>
+    <string name="submit_slowest_line">Longest on Q%1$d: %2$s</string>
+    <string name="palette_go_to_question">Go to question %1$d, %2$s</string>
+    <string name="palette_status_current">current</string>
+    <string name="load_failed">Could not start the test: %1$s</string>
+    <string name="save_failed">Could not save your result: %1$s</string>
 </resources>

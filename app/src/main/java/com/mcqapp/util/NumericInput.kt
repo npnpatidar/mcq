@@ -29,3 +29,12 @@ fun filterDecimalEntry(
 /** The one parse for every numeric field: comma-folded, 0.0 fallback. */
 fun parseDecimalEntry(text: String): Double =
     text.replace(',', '.').toDoubleOrNull() ?: 0.0
+
+/**
+ * A blank optional marks field means "keep", but a non-blank one must be a
+ * finite, non-negative number. Returning null for `0,25`-style junk lets the
+ * caller refuse the whole edit instead of applying the other fields while
+ * silently dropping marks.
+ */
+fun parseNonNegativeDecimal(text: String): Double? =
+    text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }

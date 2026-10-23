@@ -48,6 +48,18 @@ class NumericInputTest {
     }
 
     @Test
+    fun optionalMarksRejectJunkAndNegativesButKeepZero() {
+        assertEquals(0.25, parseNonNegativeDecimal("0,25")!!, 0.0)
+        assertEquals(0.0, parseNonNegativeDecimal("0")!!, 0.0)
+        assertEquals(null, parseNonNegativeDecimal(""))
+        assertEquals(null, parseNonNegativeDecimal("nope"))
+        assertEquals(null, parseNonNegativeDecimal("1,23,456"))
+        assertEquals(null, parseNonNegativeDecimal("-1"))
+        assertEquals(null, parseNonNegativeDecimal("NaN"))
+        assertEquals(null, parseNonNegativeDecimal("Infinity"))
+    }
+
+    @Test
     fun aValueLearnedFromAFileRendersItsTextNotTheBlankClause() {
         assertEquals("0.33", com.mcqapp.ui.importscreen.numericTextFor(0.33))
         assertEquals("", com.mcqapp.ui.importscreen.numericTextFor(0.0))

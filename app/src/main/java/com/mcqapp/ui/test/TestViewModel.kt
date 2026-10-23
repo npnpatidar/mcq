@@ -1,6 +1,7 @@
 package com.mcqapp.ui.test
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
@@ -14,6 +15,7 @@ import com.mcqapp.domain.AnswerReview
 import com.mcqapp.domain.AutoAdvance
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.clockMayRun
+import com.mcqapp.domain.Countdown
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
@@ -133,6 +135,9 @@ class TestViewModel(
 
     private var timerJob: Job? = null
     private var dwellJob: Job? = null
+    /** Wall-clock anchor of [startTimer]: the remaining seconds and the moment. */
+    private var timerAnchorRemaining: Int = 0
+    private var timerAnchorElapsed: Long = 0
 
     /**
      * The last visibility the screen reported (viewport or a covering surface).
@@ -322,24 +327,42 @@ class TestViewModel(
         load()
     }
 
+    /**
+     * The countdown, anchored on the wall clock rather than on tick counts.
+     *
+     * A `delay(1000)`-per-second decrement drifts: every iteration costs the
+     * delay's scheduling slack plus the update itself, so a long paper finished
+     * late by tens of seconds. [Countdown.remainingAt] recomputes what the
+     * anchor says is left, so ticks that run late cannot steal or gift a
+     * second against elapsed real time.
+     */
     private fun startTimer() {
         timerJob?.cancel()
+        val anchored = _state.value
+        timerAnchorRemaining = anchored.remainingSeconds
+        timerAnchorElapsed = SystemClock.elapsedRealtime()
         timerJob = viewModelScope.launch {
             while (true) {
                 delay(1000)
                 val current = _state.value
                 if (current.submitted || current.remainingSeconds <= 0) break
+                val target = Countdown.remainingAt(
+                    timerAnchorRemaining, timerAnchorElapsed, SystemClock.elapsedRealtime()
+                )
+                // A tick (and its update work) can run past a second; a
+                // recomposition of the same value is no progress, so publish
+                // only when the anchor says the clock moved.
+                if (target >= current.remainingSeconds) continue
                 val previous = current.remainingSeconds
-                _state.update { it.copy(remainingSeconds = it.remainingSeconds - 1) }
-                val now = _state.value.remainingSeconds
-                val due = TimerWarnings.newlyDue(previous, now)
+                _state.update { it.copy(remainingSeconds = target) }
+                val due = TimerWarnings.newlyDue(previous, target)
                     .filter { warnedThresholds.add(it) }
                 if (due.isNotEmpty()) {
                     val text = due.joinToString("; ") { TimerWarnings.message(it) }
                     Logger.i("TESTVM", "Time warning: $text")
                     _state.update { it.copy(timeWarning = text) }
                 }
-                if (now <= 0) {
+                if (target <= 0) {
                     submit()
                     break
                 }

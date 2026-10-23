@@ -171,18 +171,25 @@ internal fun StackedBarChart(
             }
         }
 
-        // Sparse x labels.
-        val step = xAxisLabelStep(points.size)
-        points.indices.forEach { index ->
-            if (index % step == 0 || index == points.size - 1) {
-                val text = textMeasurer.measure(
-                    points[index].label,
-                    TextStyle(fontSize = 9.sp, color = labelColor)
-                )
-                val x = (leftPad + index * slot + slot / 2f - text.size.width / 2f)
-                    .coerceIn(0f, size.width - text.size.width)
-                drawText(text, topLeft = Offset(x, size.height - bottomPad + 4.dp.toPx()))
-            }
+        // Sparse x labels. Measure first so the always-drawn last label can
+        // push out a neighbour it would overlap instead of drawing on top.
+        val measured = points.map {
+            textMeasurer.measure(it.label, TextStyle(fontSize = 9.sp, color = labelColor))
+        }
+        val lefts = measured.mapIndexed { index, text ->
+            (leftPad + index * slot + slot / 2f - text.size.width / 2f)
+                .coerceIn(0f, size.width - text.size.width)
+        }
+        val drawn = xAxisLabelIndices(
+            lefts = lefts,
+            widths = measured.map { it.size.width.toFloat() },
+            gap = 4.dp.toPx()
+        )
+        drawn.forEach { index ->
+            drawText(
+                measured[index],
+                topLeft = Offset(lefts[index], size.height - bottomPad + 4.dp.toPx())
+            )
         }
 
         // Tooltip for the selected bar.

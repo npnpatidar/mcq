@@ -3,6 +3,7 @@ package com.mcqapp
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.domain.StorageInfo
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -15,6 +16,18 @@ class StorageInfoTest {
         assertEquals("1.5 KB", StorageInfo.formatBytes(1536))
         assertEquals("26.0 MB", StorageInfo.formatBytes(26L * 1024 * 1024))
         assertEquals("?", StorageInfo.formatBytes(-1))
+    }
+
+    @Test
+    fun formatBytesIgnoresTheDeviceLocale() {
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            assertEquals("1.5 KB", StorageInfo.formatBytes(1536))
+            assertEquals("26.0 MB", StorageInfo.formatBytes(26L * 1024 * 1024))
+        } finally {
+            Locale.setDefault(original)
+        }
     }
 
     @Test

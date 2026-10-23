@@ -52,12 +52,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
@@ -139,10 +141,12 @@ fun TestSessionScreen(
         }
     }
 
-    var showPalette by remember { mutableStateOf(false) }
-    var showSubmitDialog by remember { mutableStateOf(false) }
-    
-    var ungradedDismissed by remember { mutableStateOf(false) }
+    // Saveable, not remember: a rotation mid-exam must not resurrect dealt-with
+    // state. The ungraded dialog reappeared on every rotation even after
+    // Continue was chosen (and its being open re-paused dwell each time).
+    var showPalette by rememberSaveable { mutableStateOf(false) }
+    var showSubmitDialog by rememberSaveable { mutableStateOf(false) }
+    var ungradedDismissed by rememberSaveable { mutableStateOf(false) }
     val ungradedTotal = state.ungradedTotal
     val resumeOffer = state.resumeOffer
     if (resumeOffer != null) {
@@ -154,13 +158,21 @@ fun TestSessionScreen(
             title = { Text(stringResource(R.string.resume_previous_attempt)) },
             text = {
                 Text(
-                    "$answered question(s) answered" +
-                        if (resumeOffer.totalSeconds > 0) {
-                            ", %02d:%02d left.".format(minutes, seconds)
-                        } else {
-                            "."
-                        } +
-                        " Your progress was saved when the app closed."
+                    if (resumeOffer.totalSeconds > 0) {
+                        pluralStringResource(
+                            R.plurals.resume_saved_with_time_text,
+                            answered,
+                            answered,
+                            minutes,
+                            seconds
+                        )
+                    } else {
+                        pluralStringResource(
+                            R.plurals.resume_saved_text,
+                            answered,
+                            answered
+                        )
+                    }
                 )
             },
             confirmButton = {
@@ -177,12 +189,11 @@ fun TestSessionScreen(
             title = { Text(stringResource(R.string.questions_without_an_answer_key)) },
             text = {
                 Text(
-                    if (ungradedTotal == 1)
-                        "1 question has no answer key and won't be scored. " +
-                            "You can still answer it for practice."
-                    else
-                        "$ungradedTotal questions have no answer key and won't be scored. " +
-                            "You can still answer them for practice."
+                    pluralStringResource(
+                        R.plurals.ungraded_practice_note,
+                        ungradedTotal,
+                        ungradedTotal
+                    )
                 )
             },
             confirmButton = {
@@ -218,7 +229,7 @@ fun TestSessionScreen(
             TopAppBar(
                 title = {
                     Text(
-                        state.paper?.title ?: "Test",
+                        state.paper?.title ?: stringResource(R.string.test),
                         maxLines = 1
                     )
                 },
@@ -386,7 +397,7 @@ fun TestSessionScreen(
                             },
                             enabled = !state.saving
                         ) {
-                            Text(if (state.saving) "Saving…" else "Retry")
+                            Text(if (state.saving) stringResource(R.string.saving) else stringResource(R.string.retry))
                         }
                     }
                 }
@@ -402,7 +413,7 @@ fun TestSessionScreen(
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                         Text(
-                            "Saving result… ${state.saveDone} of ${state.saveTotal}",
+                            stringResource(R.string.saving_progress_text, state.saveDone, state.saveTotal),
                             style = MaterialTheme.typography.labelMedium
                         )
                         LinearProgressIndicator(
@@ -468,7 +479,7 @@ fun TestSessionScreen(
                 }
                 if (state.isDrill) {
                     Text(
-                        "Drill — ${state.questionCount} questions on the clock",
+                        stringResource(R.string.drill_banner_text, state.questionCount),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -562,11 +573,11 @@ fun TestSessionScreen(
                 }
                 if (ExamMode.canOpenPalette(state.strictMode)) {
                     TextButton(onClick = { showPalette = !showPalette }) {
-                        Text("${state.answeredCount}/${state.questionCount} answered")
+                        Text(stringResource(R.string.answered_progress_text, state.answeredCount, state.questionCount))
                     }
                 } else {
                     Text(
-                        "${state.currentIndex + 1}/${state.questionCount}",
+                        stringResource(R.string.position_progress_text, state.currentIndex + 1, state.questionCount),
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
@@ -635,7 +646,30 @@ fun TestSessionScreen(
             title = { Text(stringResource(R.string.submit_test)) },
             text = {
                 Column {
-                    Text(SubmitSummary.lines(summary).joinToString("\n"))
+                    // Each summary line through its own resource, so the
+                    // dialog is localisable (SubmitSummary.parts is the order).
+                    SubmitSummary.parts(summary).forEach { line ->
+                        val text = when (line) {
+                            is SubmitSummary.Line.Answered -> stringResource(
+                                R.string.submit_answered_line, line.answered, line.total
+                            )
+                            is SubmitSummary.Line.Unanswered -> stringResource(
+                                R.string.submit_unanswered_line, line.unanswered
+                            )
+                            is SubmitSummary.Line.Flagged -> stringResource(
+                                R.string.submit_flagged_line, line.count
+                            )
+                            is SubmitSummary.Line.Ungraded -> stringResource(
+                                R.string.submit_ungraded_line, line.count
+                            )
+                            is SubmitSummary.Line.Slowest -> stringResource(
+                                R.string.submit_slowest_line,
+                                line.question,
+                                Dwell.format(line.seconds)
+                            )
+                        }
+                        Text(text, style = MaterialTheme.typography.bodyMedium)
+                    }
                     TextButton(onClick = {
                         showSubmitDialog = false
                         viewModel.openAnswerReview()
@@ -691,7 +725,7 @@ fun TestSessionScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "Q${row.number}",
+                                stringResource(R.string.review_row_number, row.number),
                                 style = MaterialTheme.typography.labelLarge,
                                 modifier = Modifier.width(44.dp)
                             )
@@ -702,16 +736,11 @@ fun TestSessionScreen(
                                     maxLines = 1
                                 )
                                 Text(
-                                    buildString {
-                                        append(
-                                            when (row.status) {
-                                                AnswerReview.Status.ANSWERED -> "answered"
-                                                AnswerReview.Status.UNANSWERED -> "unanswered"
-                                                AnswerReview.Status.UNGRADED -> "not scored"
-                                            }
-                                        )
-                                        if (row.flagged) append(" · flagged")
-                                    },
+                                    when (row.status) {
+                                        AnswerReview.Status.ANSWERED -> stringResource(R.string.status_answered)
+                                        AnswerReview.Status.UNANSWERED -> stringResource(R.string.status_unanswered)
+                                        AnswerReview.Status.UNGRADED -> stringResource(R.string.status_ungraded)
+                                    } + if (row.flagged) " · " + stringResource(R.string.status_flagged) else "",
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }
@@ -759,13 +788,14 @@ private fun QuestionHeader(
     val live by (liveDwell ?: MutableStateFlow(dwellSeconds))
         .collectAsStateWithLifecycle()
     // `semantics {}` is not composable: accessibility strings come from
-    // Resources; the visible clock text renders via stringResource.
+    // Resources; the visible clock text renders via resources too, because
+    // its three pieces are glued by questionProgressLabel, a pure function.
     val resources = LocalContext.current.resources
     val progressLabel = questionProgressLabel(
-        index = index,
-        total = total,
-        marks = marks,
-        dwellSeconds = live
+        question = resources.getString(R.string.question_progress_text, index + 1, total),
+        marks = if (marks == 1.0) resources.getString(R.string.marks_one, formatMarks(marks))
+        else resources.getString(R.string.marks_many, formatMarks(marks)),
+        here = resources.getString(R.string.dwell_here, Dwell.format(live))
     )
     TextButton(
         onClick = onToggleDwellPause,
@@ -787,19 +817,17 @@ private fun QuestionHeader(
 }
 
 /**
- * "Question 3 of 10 · 1 mark · 0:42 here". Built in one expression on
- * purpose: an inline `if` inside a `+` chain silently swallows the rest of
- * the string, which is how the dwell time used to disappear for every
+ * "Question 3 of 10 · 1 mark · 0:42 here", from the localized pieces the
+ * composable pulls out of resources. Built in one expression on purpose:
+ * an inline `if` inside a `+` chain silently swallows the rest of the
+ * string, which is how the dwell time used to disappear for every
  * single-mark question.
  */
 internal fun questionProgressLabel(
-    index: Int,
-    total: Int,
-    marks: Double,
-    dwellSeconds: Long
-): String = "Question ${index + 1} of $total" +
-    " · ${formatMarks(marks)} ${if (marks == 1.0) "mark" else "marks"}" +
-    " · ${Dwell.format(dwellSeconds)} here"
+    question: String,
+    marks: String,
+    here: String
+): String = question + " · " + marks + " · " + here
 
 @Composable
 private fun OptionRow(
@@ -903,9 +931,14 @@ private fun ExplanationCard(question: Question) {
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(4.dp))
+            // `resources` rather than stringResource: the fallback travels
+            // inside a ContentElement, not a Text sink, so the render guard
+            // cannot see it — a wide context read is the honest form.
+            val explanationFallback = LocalContext.current.resources
+                .getString(R.string.no_explanation)
             ContentElements(
                 question.explanationElements.ifEmpty {
-                    listOf(com.mcqapp.domain.ContentElement.TextElement("No explanation provided."))
+                    listOf(com.mcqapp.domain.ContentElement.TextElement(explanationFallback))
                 },
                 textStyle = MaterialTheme.typography.bodyMedium
             )
@@ -957,18 +990,21 @@ private fun QuestionPalette(
                         flagged -> palette.trickyOnContainer
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
+                    val resources = LocalContext.current.resources
                     val status = when {
-                        current -> "current"
-                        answered -> "answered"
-                        flagged -> "flagged"
-                        else -> "unanswered"
+                        current -> resources.getString(R.string.palette_status_current)
+                        answered -> resources.getString(R.string.status_answered)
+                        flagged -> resources.getString(R.string.status_flagged)
+                        else -> resources.getString(R.string.status_unanswered)
                     }
                     Box(
                         modifier = Modifier
                             .size(48.dp)
                             .background(bg, RoundedCornerShape(8.dp))
                             .semantics {
-                                contentDescription = "Go to question ${index + 1}, $status"
+                                contentDescription = resources.getString(
+                                    R.string.palette_go_to_question, index + 1, status
+                                )
                             }
                             .clickable { onPick(index) },
                         contentAlignment = Alignment.Center

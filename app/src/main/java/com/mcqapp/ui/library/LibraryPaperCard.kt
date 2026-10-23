@@ -218,10 +218,13 @@ internal fun PaperCard(
                 Spacer(Modifier.width(4.dp))
                 Text(
                     when {
-                        dueCount > 0 && freshCount > 0 -> "Study ($dueCount due, $freshCount new)"
-                        dueCount > 0 -> "Study ($dueCount due)"
-                        freshCount > 0 -> "Study ($freshCount new)"
-                        else -> "Study"
+                        dueCount > 0 && freshCount > 0 ->
+                            stringResource(R.string.paper_study_due_new, dueCount, freshCount)
+                        dueCount > 0 ->
+                            stringResource(R.string.paper_study_due, dueCount)
+                        freshCount > 0 ->
+                            stringResource(R.string.paper_study_new, freshCount)
+                        else -> stringResource(R.string.study)
                     }
                 )
             }
@@ -357,16 +360,18 @@ internal fun PaperCard(
                                 noQuestions && scoped ->
                                     stringResource(R.string.drill_scope_empty)
                                 noQuestions ->
-                                    "This paper has no questions yet, so there is nothing to drill."
+                                    stringResource(R.string.drill_paper_empty)
                                 tooMany != null && scoped ->
                                     stringResource(R.string.drill_scope_shortfall, available)
                                 tooMany != null ->
-                                    "This paper has only $available question${if (available == 1) "" else "s"}. " +
-                                        "Enter $available or fewer."
+                                    pluralStringResource(
+                                        R.plurals.drill_paper_shortfall, available, available
+                                    )
                                 drillCount != null && drillMinutes != null ->
-                                    "$drillCount random question${if (drillCount == 1) "" else "s"}, " +
-                                        "$drillMinutes:00 on the clock."
-                                else -> "Enter positive numbers for both."
+                                    pluralStringResource(
+                                        R.plurals.drill_preview, drillCount, drillCount, drillMinutes
+                                    )
+                                else -> stringResource(R.string.drill_enter_positive)
                             }
                             Text(
                                 guidance,

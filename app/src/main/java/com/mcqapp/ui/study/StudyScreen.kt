@@ -243,6 +243,7 @@ private fun StudyBody(
                     .fillMaxWidth()
                     .padding(16.dp)
             ) {
+                GradeError(state.gradeError)
                 if (!state.revealed) {
                     Button(
                         onClick = { viewModel.reveal() },
@@ -284,6 +285,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             .fillMaxWidth()
             .padding(16.dp)
     ) {
+        GradeError(state.gradeError)
         if (!state.revealed) {
             // Pre-commit: once the answer is visible a guess declaration would be
             // retroactive, so the toggle lives only on the unanswered card.
@@ -348,6 +350,18 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             }
         }
     }
+}
+
+/** A failed grade write stays on the card with a retryable button. */
+@Composable
+private fun GradeError(message: String?) {
+    if (message == null) return
+    Text(
+        message,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier.padding(bottom = 8.dp)
+    )
 }
 
 @Composable

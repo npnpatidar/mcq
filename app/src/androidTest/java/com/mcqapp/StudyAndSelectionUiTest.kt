@@ -109,6 +109,15 @@ class StudyAndSelectionUiTest {
         }
     }
 
+    /**
+     * Every Test tap now lands on the duration picker (prefilled with the
+     * paper's duration); confirming starts the session unchanged.
+     */
+    private fun confirmTestStart() {
+        waitFor("Duration in minutes")
+        compose.onNodeWithText("Start test", substring = false).performClick()
+    }
+
     /** Scrolls the drawer's list until [tag] is on screen, and returns it. */
     private fun drawerNode(tag: String) = compose.onNodeWithTag(tag).performScrollTo()
 
@@ -196,6 +205,7 @@ class StudyAndSelectionUiTest {
         // matching on "Test" alone finds however many papers happen to be left
         // on the library screen — which made this tap order-dependent.
         compose.onNodeWithTag("paper-test-ui-test-clock").performClick()
+        confirmTestStart()
         waitFor("Question 1 of")
 
         compose.onNodeWithTag("test-question-clock").performClick()
@@ -659,6 +669,7 @@ class StudyAndSelectionUiTest {
         drawerNode("drawer-test").assertIsDisplayed()
         compose.onNodeWithTag("drawer-test").assert(hasText("Test (1 categories)"))
         drawerNode("drawer-test").performClick()
+        confirmTestStart()
         waitFor("Question 1 of")
         waitFor("UITest ui-iso-b-q?")
         assertTrue(
@@ -814,6 +825,7 @@ class StudyAndSelectionUiTest {
         waitForTag("card-cat-$second")
         compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
         compose.onNodeWithTag("paper-test-ui-ctest").performScrollTo().performClick()
+        confirmTestStart()
 
         waitFor("UITest ui-ctest-q2?")
         assertTrue(

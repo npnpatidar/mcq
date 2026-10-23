@@ -773,8 +773,13 @@ class StudyViewModel(
                 clockPausedByUser = false
                 _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
+                // loading was set true before the pull; the screen's `when`
+                // checks it first, so a skipped reset would hide this error
+                // behind a spinner forever (the stale card was already nulled).
                 Logger.e("STUDY", "restart failed", e)
-                _state.update { it.copy(loadError = "Could not start the session: ${e.message}") }
+                _state.update {
+                    it.copy(loading = false, loadError = "Could not start the session: ${e.message}")
+                }
             }
         }
     }

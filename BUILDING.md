@@ -285,7 +285,7 @@ A successful build must create `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## 9. NixOS aarch64 session notes (2026-10-01)
 
-This section records the issues hit when running `:app:assembleDebug` on this NixOS `aarch64` host from `/home/naresh/repo/ncal` (the `/opt/android-sdk` and `/root/ncal` paths in sections 1-4 do not exist here), and the exact workarounds used. All generated paths below are intentionally under `/tmp` so the repository stays portable.
+This section records the issues hit when running `:app:assembleDebug` on the NixOS arm64 host from `/home/naresh/repo/ncal` (the `/opt/android-sdk` and `/root/ncal` paths in sections 1-4 do not exist here), and the exact workarounds used. All generated paths below are intentionally under `/tmp` so the repository stays portable.
 
 Workspace differences:
 
@@ -468,7 +468,7 @@ sha256sum app/build/outputs/apk/debug/app-debug.apk
 
 The hash differs from section 5 because source, dependencies, and toolchain differ. Always use the freshly calculated checksum for the artifact being distributed.
 
-## 10. This host (mcq checkout, NixOS aarch64, verified 2026-10-23)
+## 10. NixOS arm64 host (mcq checkout, verified 2026-10-23)
 
 Sections 1-8 describe the older `/root/ncal` machine and section 9 the `/home/naresh/repo/ncal`
 session. Neither layout exists here. **`apk-build/env.sh` + `apk-build/setup-env.sh` automate
@@ -479,7 +479,7 @@ section is the authority for the current checkout:
 uname -m:           aarch64 (NixOS)
 repo:               /home/naresh/repo/mcq
 /opt/android-sdk:   missing
-/sdcard:            missing (no Termux/Android shared storage on this host)
+/sdcard:            missing (no Termux/Android shared storage on the NixOS arm64 host)
 JAVA_HOME:          /tmp/mcq-apk-env/jdk17        (Nix OpenJDK 17, linked by setup-env.sh)
 ANDROID_HOME:       /home/naresh/android-sdk      (real writable SDK, not the Nix copy)
   build-tools:      36.0.0, 37.0.0
@@ -518,7 +518,7 @@ Notes specific to this checkout:
 - `/tmp` is volatile: after a reboot just run `sh apk-build/setup-env.sh` — a full rebuild
   takes ~6s because the Nix store keeps the artifacts. The SDK itself persists; do not redo
   the section 9.2/9.4 SDK composition.
-- `run-jvm-tests.sh` does not exist on this host. Select pure-JVM tests directly; class-name
+- `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Select pure-JVM tests directly; class-name
   filters must not quote values (zsh does not re-parse embedded quotes, so `--tests "Foo"`
   passes the quotes through and matches nothing), and helper files without `@Test` must be
   excluded or Gradle fails with "No tests found":

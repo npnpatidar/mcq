@@ -21,7 +21,7 @@ cd "$MCQ_REPO" && sh gradlew :app:assembleDebug :app:testDebugUnitTest \
   $MCQ_AAPT2_OVERRIDE --no-daemon
 ```
 
-- The `aapt2FromMavenOverride` is only needed on this ARM64 host; `env.sh` exports it
+- The `aapt2FromMavenOverride` is only needed on the Termux host (ARM64); `env.sh` exports it
   (`MCQ_AAPT2`, default `/opt/android-aapt2/aapt2`). GitHub Actions uses the bundled `aapt2`
   and passes no override. The old `/tmp/ncal-aapt2/aapt2` path no longer exists.
 - `run-jvm-tests.sh` used to select classes by grepping the source for the **word**
@@ -29,16 +29,16 @@ cd "$MCQ_REPO" && sh gradlew :app:assembleDebug :app:testDebugUnitTest \
   `BackupStreamingReadTest`, `ScaledRowStorageTest` and `DownscaledImagesTraversalTest` were
   silently skipped. It now selects on `^import org.robolectric`, so a full local pass covers
   them. If a future edit reintroduces a word-match, the symptom is a lower class count.
-- This host is Linux ARM64, so Robolectric tests that open a real SQLite database fail with
-  "The Robolectric native runtime is not supported on Linux (aarch64)". CI (x86_64) is
-  authoritative for those. Pure-JVM tests do run locally.
+- The ARM64 hosts (Termux and the NixOS arm64 host) fail Robolectric tests that open a real
+  SQLite database with "The Robolectric native runtime is not supported on Linux (aarch64)".
+  CI (x86_64) is authoritative for those. Pure-JVM tests do run locally.
 - Never add a test dependency without asking; the project deliberately uses no SQLite driver
   library and calls `android.database.sqlite` under Robolectric instead.
 
-## This host (NixOS aarch64, repo at /home/naresh/repo/mcq)
+## NixOS arm64 host (repo at /home/naresh/repo/mcq)
 
-The `/sdcard` block above is the other host (Android/Termux). On this machine there is no
-`env.sh` at `/sdcard` and no `/sdcard`; use the repo's own environment instead
+The `/sdcard` block above is the other host (Android/Termux). On the NixOS arm64 host there
+is no `env.sh` at `/sdcard` and no `/sdcard`; use the repo's own environment instead
 (verified 2026-10-23):
 
 ```bash
@@ -54,7 +54,7 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
   Nix store keeps the artifacts. The SDK itself is `/home/naresh/android-sdk` and persists.
 - `/opt/android-aapt2/aapt2` does not exist here; the override the scripts produce is
   always `/tmp/mcq-apk-env/aapt2/aapt2`.
-- `run-jvm-tests.sh` does not exist on this host. Pure-JVM selection: files without
+- `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
   matches nothing. Full local pass ≈124 classes.

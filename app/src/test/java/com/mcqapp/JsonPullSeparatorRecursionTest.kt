@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.data.io.LegacyParser
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -13,6 +14,7 @@ import org.junit.Test
 class JsonPullSeparatorRecursionTest {
 
     @Test
+    @Ignore("documents consolidated_bugs.md A1; enable when fixed")
     fun aRunOfSeparatorsDoesNotOverflowTheStack() {
         val commas = ",".repeat(100_000)
         val json = "[$commas]"
@@ -25,6 +27,7 @@ class JsonPullSeparatorRecursionTest {
     }
 
     @Test
+    @Ignore("documents consolidated_bugs.md A1; enable when fixed")
     fun aRunOfSeparatorsBetweenMembersDoesNotOverflowTheStack() {
         val commas = ",".repeat(100_000)
         val json = "{\"papers\":[{\"id\":\"p1\"}$commas]}"

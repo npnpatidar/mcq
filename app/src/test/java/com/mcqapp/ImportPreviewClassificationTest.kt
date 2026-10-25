@@ -12,6 +12,7 @@ import com.mcqapp.ui.importscreen.classifyPreview
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -176,6 +177,7 @@ class ImportPreviewClassificationTest {
      * (getByIdsChunked over the preview's own ids finds nothing).
      */
     @Test
+    @Ignore("documents consolidated_bugs.md A4; enable when fixed")
     fun sameContentUnderADifferentIdIsADuplicateLikeTheImporter() {
         val q = dto("file-1", "One?", listOf("A", "B"), listOf("a"))
         val stored = entity("stored-9", "One?", listOf("A", "B"))

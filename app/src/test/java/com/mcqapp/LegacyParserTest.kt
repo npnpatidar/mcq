@@ -1014,6 +1014,44 @@ class LegacyParserTest {
         assertEquals(1, papers[0].categories.flatMap { it.questions }.size)
     }
 
+    /**
+     * A JSON object's keys may come in any order. A root `questions` wrapper
+     * placed *before* `papers` must not become an extra paper: the whole-file
+     * walk decides after reading the whole object (papers present means the
+     * wrapper's questions are dropped), while the streaming walk used by the
+     * preview and by large imports decides the moment it reads the key. The
+     * two readers must agree, or the preview's paper list differs from what
+     * the import writes.
+     */
+    @Test
+    fun rootQuestionsBeforePapersAddsNoPaper() {
+        val json = """
+        {"questions":[{"id":"rq","text":"Root?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}],
+         "papers":[{"id":"p1","title":"Real","categories":[{"id":"c1","title":"Cat","questions":[
+           {"id":"q1","text":"One?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}]}]}]}
+        """.trimIndent()
+
+        val whole = LegacyParser.parse(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8))).papers
+        val streamed = mutableListOf<String>()
+        LegacyParser.streamImport(
+            ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)),
+            object : LegacyParser.ImportStreamSink {
+                override fun onPaper(header: LegacyParser.PaperHeader) {
+                    streamed += header.id
+                }
+
+                override fun onCategory(category: com.mcqapp.data.io.CategoryDto) = Unit
+
+                override fun onQuestions(
+                    categoryId: String,
+                    questions: List<com.mcqapp.data.io.QuestionDto>
+                ) = Unit
+            }
+        )
+
+        assertEquals(whole.map { it.id }, streamed)
+    }
+
     /** A bare questions array streams the single ephemeral paper. */
     @Test
     fun streamsABareQuestionsArrayAsOnePaper() {

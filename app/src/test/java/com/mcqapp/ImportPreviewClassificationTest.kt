@@ -164,4 +164,30 @@ class ImportPreviewClassificationTest {
         assertTrue(result.first.isEmpty())
         assertTrue(result.second.isEmpty())
     }
+
+    /**
+     * The same content arriving under an id the library does not have: the
+     * importer matches it by content hash and skips it as a duplicate, so the
+     * preview must not count it as new.
+     *
+     * The rows the preview fetches are keyed by the incoming id, so the stored
+     * twin lives under a different key — exactly the shape
+     * [ImportViewModel.refreshDuplicates] produces for this case
+     * (getByIdsChunked over the preview's own ids finds nothing).
+     */
+    @Test
+    fun sameContentUnderADifferentIdIsADuplicateLikeTheImporter() {
+        val q = dto("file-1", "One?", listOf("A", "B"), listOf("a"))
+        val stored = entity("stored-9", "One?", listOf("A", "B"))
+        val result = classifyPreview(
+            hashed = listOf(q to ContentHash.of(q)),
+            existingHashes = setOf(ContentHash.of(q)),
+            existingIds = emptySet(),
+            storedById = emptyMap(),
+            correctById = emptyMap(),
+            storedOptionsByQuestion = emptyMap()
+        )
+        assertEquals("preview must match the importer's content-hash dedup", setOf("file-1"), result.first)
+        assertTrue(result.second.isEmpty())
+    }
 }

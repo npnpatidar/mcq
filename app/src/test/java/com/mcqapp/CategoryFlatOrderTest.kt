@@ -24,7 +24,7 @@ import org.robolectric.annotation.Config
  * chunk, browse's paging cursor. A scoped study screen's chunk boundaries must
  * sit on it too, or a scope of over 500 categories is walked in a different
  * relative category order than the scoped test session next door delivers
- * (third_bugs.md finding #1).
+ * (consolidated_bugs.md finding H3-1).
  *
  * Robolectric needs a real SQLite driver, so this test only runs on x86_64 CI.
  */

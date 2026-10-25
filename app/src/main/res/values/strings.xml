@@ -475,7 +475,7 @@
     <string name="stats_no_history">This card has no logged reviews yet.</string>
     <string name="stats_no_schedule">This card has never been scheduled.</string>
 
-    <!-- Test session: dialogs, banners, review rows, clocks (fifth_bugs #3) -->
+    <!-- Test session: dialogs, banners, review rows, clocks (consolidated_bugs.md H5-3) -->
     <plurals name="resume_saved_text">
         <item quantity="one">%1$d question answered. Your progress was saved when the app closed.</item>
         <item quantity="other">%1$d questions answered. Your progress was saved when the app closed.</item>

@@ -146,7 +146,8 @@ class ImportPaperIdentityTest {
 
         // Paper A's question is still there, unchanged.
         assertEquals("c-paper-a", db.questionDao().getById(sharedId)?.categoryId)
-        assertEquals("Alpha", db.questionDao().getById(sharedId)?.text)
+        // The text column stores the elements JSON, not the flat string.
+        assertEquals("Alpha", db.questionDao().getById(sharedId)?.searchText)
         assertEquals(1, db.questionDao().getByCategory("c-paper-a").size)
     }
 

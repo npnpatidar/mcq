@@ -803,6 +803,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getWeakestCategories(limit: Int = 5): List<com.mcqapp.domain.Mastery.CategoryMastery> =
         historyStore.getWeakestCategories(limit)
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
+    /** Wall-clock finish of the paper's latest attempt, or null when it has none. */
+    suspend fun latestAttemptFinishedAt(paperId: String): Long? =
+        db.attemptDao().getLatestFinishedAt(paperId)
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
     /** Mistaken questions as a session order: content is fetched when one is opened. */
     suspend fun getMistakenQuestionOrder(paperId: String): SessionOrder =

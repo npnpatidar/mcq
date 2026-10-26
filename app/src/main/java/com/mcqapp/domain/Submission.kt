@@ -12,8 +12,11 @@ sealed interface SubmissionOutcome<out T> {
  * The order is the whole point. The snapshot is the only copy of an
  * in-progress exam, so clearing it before the attempt is durable loses the
  * user's work on a storage error or a process death. Clearing afterwards is
- * also allowed to fail silently: once the attempt is stored a stale snapshot
- * is harmless, because it no longer matches a finished session.
+ * allowed to fail: the attempt is already durable, and a snapshot that
+ * outlives its own session is defended against at offer time — the resume
+ * check clears it when the paper's latest attempt was finished after the
+ * snapshot was written (consolidated_bugs.md D8) — but it is *not* harmless
+ * by itself, and this function does not pretend otherwise.
  *
  * A failed save returns [SubmissionOutcome.Failed] and never touches the
  * snapshot, so the caller can keep the session on screen and retry.

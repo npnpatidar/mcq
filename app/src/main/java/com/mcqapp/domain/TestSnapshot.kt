@@ -41,11 +41,37 @@ data class TestSnapshot(
     val optionShuffleSeed: Long = 0L,
     val drillSeed: Long? = null,
     /** Requested drill size (0 = whole selection); the block cut may overshoot. */
-    val drillRequested: Int = 0
+    val drillRequested: Int = 0,
+    /** The session shape: without it a drill/mistakes round and a whole-paper
+     *  test of the same scope were interchangeable on resume, collapsing or
+     *  inflating the session (consolidated_bugs.md D1/D4). */
+    val isDrill: Boolean = false,
+    val mistakesOnly: Boolean = false,
+    /** Seconds already spent in an untimed session, banked on every autosave
+     *  so a kill does not shrink the recorded duration (D7). */
+    val elapsedSeconds: Int = 0,
+    /** Wall-clock moment this document was written, so a snapshot whose
+     *  post-submit clear failed is recognised as finished (D8). */
+    val savedAt: Long = 0
 ) {
-    /** A snapshot resumes only the exact paper + category selection it came from. */
-    fun matches(paperId: String, categoryIds: List<String>): Boolean =
-        this.paperId == paperId && this.categoryIds.toSet() == categoryIds.toSet()
+    /**
+     * A snapshot resumes only the exact paper + category selection — and the
+     * exact session shape — it came from. A drill and a mistakes-only round
+     * are different sessions of the same scope; offering one to the other
+     * adopted the new session's shape with the saved order, collapsing a
+     * 500-question test to a 10-question drill or silently dropping the
+     * drill's cut.
+     */
+    fun matches(
+        paperId: String,
+        categoryIds: List<String>,
+        isDrill: Boolean = false,
+        mistakesOnly: Boolean = false,
+        drillRequested: Int = 0
+    ): Boolean =
+        this.paperId == paperId && this.categoryIds.toSet() == categoryIds.toSet() &&
+            this.isDrill == isDrill && this.mistakesOnly == mistakesOnly &&
+            (!isDrill || this.drillRequested == drillRequested)
 
     /** Whether any question was actually answered (reaching one is not answering). */
     val hasAnswers: Boolean get() = selections.any { it.value.isNotEmpty() }

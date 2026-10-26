@@ -127,9 +127,9 @@ internal fun PaperCard(
     val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
     val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
     // Asking for more questions than the scope holds used to be accepted
-    // silently: Drill.sample returns the whole set, so the drill just came out
-    // smaller than the dialog promised. Refuse it here instead — against the
-    // ticked branches when there are any, or the bound would lie both ways.
+    // silently: the drill just came out smaller than the dialog promised.
+    // Refuse it here instead — against the ticked branches when there are
+    // any, or the bound would lie both ways.
     val available = if (ticked.isEmpty()) {
         paper.totalQuestions
     } else {

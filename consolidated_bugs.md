@@ -67,18 +67,18 @@ adjudication.
 | C7 | Low | BUG | Editor | Passage picker hidden when the category has none → stray member unassignable |
 | C8 | Nit | NIT | Passages | Edge reorder taps silent; flat/mixed list; new passages all `sortOrder=0` |
 | C9 | Nit | NIT | Passages | Dead `updateFields`/`insertIgnore`; wrong KDoc; needless `suspend` |
-| D1 | High | BUG | Resume | Drill and non-drill sessions are interchangeable on resume |
-| D2 | Low | NIT | Drill | `Drill.sample` splits passages, has no production caller (trap) |
-| D3 | Nit | NIT | Drill | `drillRequested` KDoc references a nonexistent `[questions]` field |
-| D4 | High | BUG | Resume | A mistakes-only round and a full test are interchangeable on resume |
-| D5 | Medium | BUG | Resume | Resumed selections/flags are not filtered to the rebuilt order ("5 of 3") |
-| D6 | Low-Med | BUG | Timer | No snapshot write on backgrounding → kill rolls the countdown back |
-| D7 | Low-Med | BUG | Timing | Untimed attempts lose pre-kill elapsed time on resume |
-| D8 | Low | BUG | Submit | A failed snapshot clear leaves a resumable already-saved attempt |
-| D9 | Low | BUG | Resume | `prefetched` survives `resume()` → first card can show the old option order |
-| D10 | Low | BUG | Timing | Dwell/untimed duration use wall clock; countdown uses monotonic clock |
-| D11 | Low | BUG | Scoring | Imported `negativeMarking` is unvalidated → negative makes wrong answers gain marks |
-| D12 | Nit | NIT | Routes | A category id containing `,` cannot round-trip through `test?categories=` |
+| D1 | High | BUG | Resume | Drill and non-drill sessions are interchangeable on resume — **FIXED** |
+| D2 | Low | NIT | Drill | `Drill.sample` splits passages, has no production caller (trap) — **FIXED** |
+| D3 | Nit | NIT | Drill | `drillRequested` KDoc references a nonexistent `[questions]` field — **FIXED** |
+| D4 | High | BUG | Resume | A mistakes-only round and a full test are interchangeable on resume — **FIXED** |
+| D5 | Medium | BUG | Resume | Resumed selections/flags are not filtered to the rebuilt order ("5 of 3") — **FIXED** |
+| D6 | Low-Med | BUG | Timer | No snapshot write on backgrounding → kill rolls the countdown back — **FIXED** |
+| D7 | Low-Med | BUG | Timing | Untimed attempts lose pre-kill elapsed time on resume — **FIXED** |
+| D8 | Low | BUG | Submit | A failed snapshot clear leaves a resumable already-saved attempt — **FIXED** |
+| D9 | Low | BUG | Resume | `prefetched` survives `resume()` → first card can show the old option order — **FIXED** |
+| D10 | Low | BUG | Timing | Dwell/untimed duration use wall clock; countdown uses monotonic clock — **FIXED** |
+| D11 | Low | BUG | Scoring | Imported `negativeMarking` is unvalidated → negative makes wrong answers gain marks — **FIXED** |
+| D12 | Nit | NIT | Routes | A category id containing `,` cannot round-trip through `test?categories=` — **FIXED** |
 | E1 | Medium | BUG | Stats | Every Stats entry replays the whole log twice; first result discarded |
 | E2 | Medium | BUG | Stats | Superseded builds are never cancelled → concurrent full-log replays |
 | E3 | Low | BUG | Charts | StackedBarChart overlay bridges null gaps the LineChart breaks |
@@ -324,7 +324,7 @@ target's positions).
 
 ### D. Drill and test-session resume — from `drill.md` and `tenth_bugs.md`
 
-**D1 · High · BUG — drill and non-drill sessions are interchangeable on resume.**
+**D1 · High · BUG — drill and non-drill sessions are interchangeable on resume.** *FIXED (with D4): `TestSnapshot` carries `isDrill`/`mistakesOnly`/`drillRequested`; `matches()` requires the same shape and `resume()` restores it, clearing the stray drill seed on a non-drill snapshot.*
 `TestSnapshot.matches()` (`TestSnapshot.kt:47-48`) compares only paper + categories.
 `resume()` (`TestViewModel.kt:828-841`) adopts the saved order but keeps the new session's
 `isDrill`/`drillRequested`, and `saved.drillSeed?.let { ... }` (`:819`) has no else, so a fresh
@@ -335,16 +335,16 @@ drops the cut; a 10-drill resumed as 20 redraws a different cut and loses answer
 Also `ungradedTotal` was computed for the old order. *Fix:* restore the drill fields from the
 snapshot (or add them to `matches()`), and treat D4 (mistakes-only) in the same change.
 
-**D2 · Low · NIT — `Drill.sample` is a trap.**
+**D2 · Low · NIT — `Drill.sample` is a trap.** *FIXED: `Drill.sample`/`canSample` deleted (the live cut is `SessionOrder.sampled`); tests rebased on `checkCount`.*
 `Drill.kt:40-43` shuffles and cuts per question, splitting passage blocks, contrary to the
 block rule. No production caller (live cut is `SessionOrder.sampled`), and
 `DrillCountAvailabilityTest:91` pins the splitting. *Fix:* delete `sample`/`canSample` or delegate
 to the block rule.
 
-**D3 · Nit · NIT — stale KDoc.** `TestViewModel.kt:80` references a nonexistent `[questions]`
+**D3 · Nit · NIT — stale KDoc.** *FIXED: the KDoc now references `[order]`.* `TestViewModel.kt:80` references a nonexistent `[questions]`
 field (now `order`).
 
-**D4 · High · BUG — mistakes-only rounds and full tests are interchangeable on resume.**
+**D4 · High · BUG — mistakes-only rounds and full tests are interchangeable on resume.** *FIXED (with D1): `mistakesOnly` persisted and enforced in `matches()`, restored in `resume()`.*
 `TestSnapshot` has no `mistakesOnly` field; a mistakes round is started with no categories, so
 its snapshot matches every whole-paper test (and every other mistakes round) of that paper.
 `checkResumeOffer` offers it and `resume()` keeps the *new* session's `mistakesOnly`. A full test
@@ -354,24 +354,24 @@ a 5-question round into a 200-question test. (This is the mistakes-only half of 
 conflation as D1; one fix must cover both.) *Fix:* persist `mistakesOnly` (+ drill fields) and
 include them in `matches()`, restoring the shape in `resume()`.
 
-**D5 · Medium · BUG — a resume does not filter saved answers to the rebuilt order.**
+**D5 · Medium · BUG — a resume does not filter saved answers to the rebuilt order.** *FIXED: `resume()` intersects selections/revealed/flagged/dwell with the rebuilt order's ids.*
 `resume()` adopts `selections`/`revealed`/`flagged` wholesale (`TestViewModel.kt:831-837`);
 `answeredCount` counts all selections (`:96`) while `questionCount` is the order size (`:98`).
 The header/dialog then print "5/3 answered" and `SubmitSummary.unanswered` goes negative (line
 silently dropped). *Fix:* intersect the maps with the rebuilt order (or count only order ids).
 
-**D6 · Low-Med · BUG — no snapshot write when the app backgrounds.**
+**D6 · Low-Med · BUG — no snapshot write when the app backgrounds.** *FIXED: `onAppBackgrounded()` persists the snapshot after banking the dwell.*
 `persistProgress` runs only on answer/reveal/flag/goTo; `onAppBackgrounded`
 (`TestViewModel.kt:477-479`) only pauses dwell, `flushDwell` (`:436-447`) does not persist. A
 kill/swipe after answering restores the older `remainingSeconds` (and loses unbanked dwell).
 *Fix:* persist after the flush in `onAppBackgrounded()`.
 
-**D7 · Low-Med · BUG — untimed attempts lose elapsed time on resume.**
+**D7 · Low-Med · BUG — untimed attempts lose elapsed time on resume.** *FIXED: the snapshot banks `elapsedSeconds`; `resume()` re-anchors the start on it.*
 `submit()` stores `now - startTimestamp` (`:703-707`); `resume()` resets `startTimestamp` (`:843`)
 and the snapshot has no elapsed field. A 40-minute untimed session killed and resumed for 5
 minutes is saved as 5 minutes. *Fix:* persist the untimed elapsed (or wall-clock start).
 
-**D8 · Low · BUG — a failed snapshot clear leaves a resumable saved attempt.**
+**D8 · Low · BUG — a failed snapshot clear leaves a resumable saved attempt.** *FIXED: snapshots carry `savedAt`; the resume offer clears a snapshot once the paper has a later-finished attempt (new `AttemptDao.getLatestFinishedAt`). `Submission`'s doc no longer claims staleness is harmless.*
 `Submission.kt:31-35` swallows a clear failure and its doc claims the stale snapshot is
 harmless; nothing marks the snapshot submitted and `checkResumeOffer` has no such check, so the
 next same-paper test offers it and resuming+submitting writes a second attempt and re-applies
@@ -379,25 +379,25 @@ per-question stats. (Verification: save-first/clear-second ordering itself is de
 defect is the false doc claim + missing marker.) *Fix:* record the finished attempt (or clear
 again when the paper's latest attempt is newer).
 
-**D9 · Low · BUG (timing) — `prefetched` survives `resume()`.**
+**D9 · Low · BUG (timing) — `prefetched` survives `resume()`.** *FIXED: `resume()` nulls the read-ahead before resolving the current card.*
 `load()` prefetches with the fresh option-shuffle seed; `resume()` swaps to the saved seed
 (`:825`) and `resolveCurrent` prefers `prefetched` (`:601-604`), publishing the first resumed
 card with the pre-resume option order. Only the first card, only with option shuffle.
 *Fix:* null `prefetched` in `resume()`.
 
-**D10 · Low · BUG — dwell/untimed duration use the wall clock, countdown the monotonic clock.**
+**D10 · Low · BUG — dwell/untimed duration use the wall clock, countdown the monotonic clock.** *FIXED: dwell and the untimed duration run on `SystemClock.elapsedRealtime()`; wall time is kept only for `finishedAt` and `savedAt`.*
 Countdown is anchored on `elapsedRealtime` (`:348,355`), but dwell and untimed duration use
 `currentTimeMillis` (`:401,439,458,465,706`); an NTP/manual clock change distorts dwell and can
 store a negative untimed duration. *Fix:* use `elapsedRealtime` for both; wall time only for
 `finishedAt`.
 
-**D11 · Low · BUG — imported `negativeMarking` is not sign-checked.**
+**D11 · Low · BUG — imported `negativeMarking` is not sign-checked.** *FIXED: `sanitizedNegativeMarking` (finite, > 0, else 0.0) applied at every paper write in both importers.*
 Scoring treats it as a magnitude (`Scoring.kt:16`, `HistoryStore.kt:210`); the UI cannot type a
 minus but imported/restored banks are stored verbatim (`Importer.kt:145,154`;
 `StreamingImportSession.kt:258`), so `-0.25` makes every wrong answer *add* 0.25×marks.
 *Fix:* clamp/sanitize at the import/model boundary (`max(0.0, …)`, reject NaN/∞).
 
-**D12 · Nit · NIT — a `,` in a category id breaks the test route.**
+**D12 · Nit · NIT — a `,` in a category id breaks the test route.** *FIXED: category lists are double-encoded per id (`encodeCategoryList`) and decoded on parse, in the test, study and browse routes.*
 `Routes.testRoute` joins ids with `,` (`Routes.kt:70-75`) and `McqNavHost` splits on `,`
 (`:69`). One id `"a,b"` becomes two, possibly matching other real categories. Hand-edited banks
 only. Same shape exists for the browse route.

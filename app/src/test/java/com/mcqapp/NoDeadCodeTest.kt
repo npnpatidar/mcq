@@ -212,8 +212,13 @@ class NoDeadCodeTest {
         }
         for (file in listOf("Importer.kt" to importer, "StreamingImportSession.kt" to streaming)) {
             val (name, text) = file
-            assertTrue("$name stores the scaled question", text.contains("scaledQuestion.toQuestionEntity("))
-            assertTrue("$name stores the scaled options", text.contains("scaledQuestion.toOptionEntities("))
+            // The written rows come from the scaled twin; a cross-paper id or
+            // passage remap (consolidated_bugs.md A2/A3) copies that twin into
+            // `questionForWrite` before the write, so the builders' receiver is
+            // `questionForWrite` — still the scaled lineage, never the file's
+            // own DTO.
+            assertTrue("$name stores the scaled question", text.contains("questionForWrite.toQuestionEntity("))
+            assertTrue("$name stores the scaled options", text.contains("questionForWrite.toOptionEntities("))
             assertTrue(
                 "$name stores the scaled passage",
                 text.contains("passageDto.withDownscaledImages().toPassageEntity(")

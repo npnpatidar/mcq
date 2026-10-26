@@ -1900,6 +1900,10 @@ interface AttemptDao {
     @Query("SELECT * FROM attempts WHERE paperId = :paperId ORDER BY finishedAt ASC")
     suspend fun getByPaper(paperId: String): List<AttemptEntity>
 
+    /** Wall-clock finish of the paper's latest attempt, or null when it has none. */
+    @Query("SELECT MAX(finishedAt) FROM attempts WHERE paperId = :paperId")
+    suspend fun getLatestFinishedAt(paperId: String): Long?
+
     @Query("SELECT * FROM attempts WHERE id = :id")
     suspend fun getById(id: Long): AttemptEntity?
 

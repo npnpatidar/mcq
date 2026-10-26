@@ -288,7 +288,7 @@ internal class StreamingImportSession(
                     title = editedHeader.title,
                     description = editedHeader.description,
                     durationMinutes = editedHeader.durationMinutes,
-                    negativeMarking = editedHeader.negativeMarking
+                    negativeMarking = sanitizedNegativeMarking(editedHeader.negativeMarking)
                 )
             )
         } else {
@@ -297,7 +297,7 @@ internal class StreamingImportSession(
                 title = editedHeader.title,
                 description = editedHeader.description,
                 durationMinutes = editedHeader.durationMinutes,
-                negativeMarking = editedHeader.negativeMarking
+                negativeMarking = sanitizedNegativeMarking(editedHeader.negativeMarking)
             )
         }
         catsInPaper.clear()

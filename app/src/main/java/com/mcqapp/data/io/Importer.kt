@@ -147,7 +147,7 @@ class Importer(
                             title = paperDto.title,
                             description = paperDto.description,
                             durationMinutes = paperDto.durationMinutes,
-                            negativeMarking = paperDto.negativeMarking
+                            negativeMarking = sanitizedNegativeMarking(paperDto.negativeMarking)
                         )
                     )
                 } else {
@@ -156,7 +156,7 @@ class Importer(
                         title = paperDto.title,
                         description = paperDto.description,
                         durationMinutes = paperDto.durationMinutes,
-                        negativeMarking = paperDto.negativeMarking
+                        negativeMarking = sanitizedNegativeMarking(paperDto.negativeMarking)
                     )
                 }
 
@@ -960,3 +960,12 @@ internal fun PassageDto.toPassageEntity(
         sortOrder = sortOrder
     )
 }
+
+/**
+ * A `negativeMarking` the scoring treats as a magnitude: the UI cannot type a
+ * minus, so only an imported or restored bank can carry one, and a negative
+ * value would make every wrong answer *add* marks. Non-finite values are
+ * rejected the same way (consolidated_bugs.md D11).
+ */
+internal fun sanitizedNegativeMarking(value: Double): Double =
+    if (value.isFinite() && value > 0.0) value else 0.0

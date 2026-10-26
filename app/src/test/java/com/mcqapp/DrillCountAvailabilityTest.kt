@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -68,8 +67,8 @@ class DrillCountAvailabilityTest {
 
         val paper = repository.observePapers().first().single { it.id == "p1" }
         assertEquals("the drill dialog would refuse a valid count if this is wrong", 3, paper.totalQuestions)
-        assertTrue(Drill.canSample(3, paper.totalQuestions))
-        assertFalse(Drill.canSample(4, paper.totalQuestions))
+        assertEquals(Drill.CountCheck.Ok, Drill.checkCount(3, paper.totalQuestions))
+        assertEquals(Drill.CountCheck.TooManyForPaper(4, 3), Drill.checkCount(4, paper.totalQuestions))
     }
 
     @Test
@@ -78,20 +77,5 @@ class DrillCountAvailabilityTest {
         val paper = repository.observePapers().first().single { it.id == "empty" }
         assertEquals(0, paper.totalQuestions)
         assertEquals(Drill.CountCheck.NoQuestionsAvailable, Drill.checkCount(10, paper.totalQuestions))
-    }
-
-    @Test
-    fun aDrillNeverRunsWithMoreQuestionsThanThePaperHolds() = runBlocking {
-        repository.ensurePaperAndCategory("p1", "Paper", "c", "Cat")
-        repository.saveQuestion(question("q1", "c"))
-        repository.saveQuestion(question("q2", "c"))
-
-        val available = repository.observePapers().first().single { it.id == "p1" }.totalQuestions
-        // Whatever the UI let through, Drill.sample must not invent questions.
-        val sampled = Drill.sample(repository.getQuestionsForPaper("p1"), 50, 7L)
-        assertTrue(
-            "a drill of 50 must not exceed the $available questions that exist",
-            sampled.size <= available
-        )
     }
 }

@@ -270,9 +270,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun exportAll(uri: Uri, onError: (String) -> Unit) {
+    fun exportAll(uri: Uri, onError: (String) -> Unit, onDone: () -> Unit = {}) {
         viewModelScope.launch {
             exportAllOn(uri, onError = onError)
+            onDone()
         }
     }
 
@@ -317,7 +318,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Writes the full backup zip; every entry streams, nothing is held whole. */
-    fun backupAll(uri: Uri, onError: (String) -> Unit) {
+    fun backupAll(uri: Uri, onError: (String) -> Unit, onDone: () -> Unit = {}) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
@@ -341,7 +342,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         exportedAt = System.currentTimeMillis(),
                         papers = paperRows.size,
                         questions = db.questionDao().countQuestions(),
-                        attempts = db.attemptDao().getAllAttempts().size,
+                        attempts = db.attemptDao().countAll(),
                         // Counted in SQL: the rows are streamed below, never listed.
                         reviews = db.reviewLogDao().countAll()
                     )
@@ -382,6 +383,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)
                 onError("Backup failed: ${e.message}")
+            } finally {
+                onDone()
             }
         }
     }

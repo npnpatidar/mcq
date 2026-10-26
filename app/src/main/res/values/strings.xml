@@ -72,6 +72,26 @@
     </plurals>
     <string name="export_bookmarks">Export bookmarks</string>
     <string name="export_failed">Export failed</string>
+    <string name="update_answers_help">When a file repeats a question\'s text and options but corrects its answer key, update the stored answer instead of reporting it as a duplicate.</string>
+    <string name="review_order_help">Review always shows the order you were given. Scoring is unaffected: answers are matched by option, not position.</string>
+    <string name="image_weight_help">Image weight counts embedded pictures; large banks shrink automatically at import.</string>
+    <string name="export_all_help">Backs up every paper, bookmark and attempt to one JSON file. Re-import it anywhere to restore content and history.</string>
+    <string name="app_about_help">MCQ App — practice multiple-choice papers offline. Import JSON question banks, take timed tests with negative marking, review explanations, and track your history.</string>
+    <string name="response_time_thresholds_help">The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.</string>
+    <string name="advanced_anki">Advanced Anki settings</string>
+    <string name="next_day_starts_at">Next day starts at</string>
+    <string name="next_day_starts_at_help">Hour of the day a new study day begins, on this device\'s clock</string>
+    <string name="maximum_interval">Maximum interval</string>
+    <string name="maximum_interval_help">Longest interval any review can get</string>
+    <string name="relearning_delay">Relearning delay</string>
+    <string name="relearning_delay_help">How long until a failed card returns</string>
+    <string name="leech_threshold">Leech threshold</string>
+    <string name="leech_threshold_help">Failures before a card is flagged tricky</string>
+    <string name="theme_system_default">System default</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="backup_failed">Backup failed</string>
+    <string name="restore_failed">Restore failed</string>
     <string name="export_logs">Export Logs</string>
     <string name="flag_question">Flag question</string>
     <string name="formula">Formula</string>

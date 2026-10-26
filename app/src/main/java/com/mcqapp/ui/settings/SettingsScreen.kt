@@ -1,5 +1,6 @@
 package com.mcqapp.ui.settings
 
+import android.content.ActivityNotFoundException
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -90,20 +91,37 @@ fun SettingsScreen(
     // rememberSaveable: the pickers and confirm dialogs recreate the activity,
     // and plain `remember` dismissed the confirm and lost the picked URI and
     // the typed-error strings (consolidated_bugs.md F4/H10).
+    // The failure dialog's title follows the operation: backup and restore
+    // failures used to report under "Export failed" (consolidated_bugs.md
+    // H1). H6: a busy flag keeps a second export/backup/restore from queuing
+    // behind (and wiping) the first.
     var exportError by rememberSaveable { mutableStateOf<String?>(null) }
+    var exportErrorTitle by rememberSaveable { mutableStateOf("") }
+    var busy by rememberSaveable { mutableStateOf(false) }
+    // Resolved in composition: the callbacks are not composable scopes.
+    val exportFailedTitle = stringResource(R.string.export_failed)
+    val backupFailedTitle = stringResource(R.string.backup_failed)
+    val restoreFailedTitle = stringResource(R.string.restore_failed)
+    val exportLogsTitle = stringResource(R.string.export_logs)
+    fun fail(title: String) = { error: String ->
+        exportErrorTitle = title
+        exportError = error
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.exportAll(it) { error -> exportError = error }
+            busy = true
+            viewModel.exportAll(it, onError = fail(exportFailedTitle)) { busy = false }
         }
     }
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.backupAll(it) { error -> exportError = error }
+            busy = true
+            viewModel.backupAll(it, onError = fail(backupFailedTitle)) { busy = false }
         }
     }
     var showRestoreConfirm by rememberSaveable { mutableStateOf(false) }
@@ -142,7 +160,11 @@ fun SettingsScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(stringResource(R.string.theme), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
-                    listOf("system" to "System default", "light" to "Light", "dark" to "Dark").forEach { (value, label) ->
+                    listOf(
+                        "system" to stringResource(R.string.theme_system_default),
+                        "light" to stringResource(R.string.theme_light),
+                        "dark" to stringResource(R.string.theme_dark)
+                    ).forEach { (value, label) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -259,9 +281,7 @@ fun SettingsScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(stringResource(R.string.refresh_answers_on_re_import))
                             Text(
-                                stringResource(R.string.when_a_file_repeats_a_question_s_text_and_options_but_correc) +
-                                    "its answer key, update the stored answer instead of " +
-                                    "reporting it as a duplicate.",
+                                stringResource(R.string.update_answers_help),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -340,8 +360,7 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        stringResource(R.string.review_always_shows_the_order_you_were_given) +
-                            "Scoring is unaffected: answers are matched by option, not position.",
+                        stringResource(R.string.review_order_help),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -411,8 +430,7 @@ fun SettingsScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            stringResource(R.string.image_weight_counts_embedded_pictures_large_banks_shrink) +
-                                "automatically at import.",
+                            stringResource(R.string.image_weight_help),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -450,6 +468,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = { exportLauncher.launch("mcq-export.json") },
+                        enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(stringResource(R.string.export_all_data_json))
@@ -457,6 +476,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = { backupLauncher.launch("mcqapp-backup.zip") },
+                        enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(stringResource(R.string.backup_full))
@@ -469,6 +489,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = { restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                        enabled = !busy,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(stringResource(R.string.restore_backup))
@@ -481,20 +502,33 @@ fun SettingsScreen(
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = {
+                            // Both failure modes used to be silent (no log
+                            // file) or fatal (no chooser activity)
+                            // (consolidated_bugs.md H9).
                             val path = com.mcqapp.util.Logger.logFilePath()
-                            if (path != null) {
-                                val file = java.io.File(path)
-                                val uri = androidx.core.content.FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
-                                    file
+                            if (path == null) {
+                                exportErrorTitle = exportLogsTitle
+                                exportError = "No log file exists yet."
+                                return@Button
+                            }
+                            val file = java.io.File(path)
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            )
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            try {
+                                context.startActivity(
+                                    android.content.Intent.createChooser(intent, "Export Logs")
                                 )
-                                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(android.content.Intent.createChooser(intent, "Export Logs"))
+                            } catch (e: ActivityNotFoundException) {
+                                exportErrorTitle = exportLogsTitle
+                                exportError = "No app can handle this share."
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -503,8 +537,7 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        stringResource(R.string.backs_up_every_paper_bookmark_and_attempt_to_one_json_file) +
-                            "Re-import it anywhere to restore content and history.",
+                        stringResource(R.string.export_all_help),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -516,9 +549,7 @@ fun SettingsScreen(
                     Text(stringResource(R.string.about), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        stringResource(R.string.mcq_app_practice_multiple_choice_papers_offline) +
-                            "Import JSON question banks, take timed tests with negative marking, " +
-                            "review explanations, and track your history.",
+                        stringResource(R.string.app_about_help),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(Modifier.height(8.dp))
@@ -545,10 +576,14 @@ fun SettingsScreen(
                 androidx.compose.material3.TextButton(onClick = {
                     showRestoreConfirm = false
                     restoreUri?.let { uri ->
+                        busy = true
                         viewModel.restoreBackup(
                             uri,
-                            onError = { error -> exportError = error },
-                            onDone = { report -> restoreDone = report }
+                            onError = fail(restoreFailedTitle),
+                            onDone = { report ->
+                                busy = false
+                                restoreDone = report
+                            }
                         )
                     }
                 }) { Text(stringResource(R.string.restore_replace_everything)) }
@@ -838,8 +873,7 @@ private fun AnkiSchedulerSection(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                stringResource(R.string.the_response_time_thresholds_only_apply_when_rebuilding_a_sc) +
-                    stringResource(R.string.response_time_thresholds_study_tail),
+                stringResource(R.string.response_time_thresholds_help),
                 style = MaterialTheme.typography.bodySmall
             )
             Spacer(Modifier.height(12.dp))
@@ -865,8 +899,8 @@ private fun AnkiSchedulerSection(
             Spacer(Modifier.height(12.dp))
             Text(stringResource(R.string.study_day), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
-                label = "Next day starts at",
-                help = "Hour of the day a new study day begins, on this device's clock",
+                label = stringResource(R.string.next_day_starts_at),
+                help = stringResource(R.string.next_day_starts_at_help),
                 value = config.dayStartHour,
                 step = 1.0,
                 range = 0f..23f,
@@ -874,8 +908,8 @@ private fun AnkiSchedulerSection(
                 onChange = { onChange(config.copy(dayStartHour = it.toInt())) }
             )
             AnkiNumberRow(
-                label = "Maximum interval",
-                help = "Longest interval any review can get",
+                label = stringResource(R.string.maximum_interval),
+                help = stringResource(R.string.maximum_interval_help),
                 value = config.maxIntervalDays,
                 step = 1.0,
                 range = 1f..36500f,
@@ -886,8 +920,8 @@ private fun AnkiSchedulerSection(
             Spacer(Modifier.height(12.dp))
             Text(stringResource(R.string.lapses), style = MaterialTheme.typography.labelLarge)
             AnkiNumberRow(
-                label = "Relearning delay",
-                help = "How long until a failed card returns",
+                label = stringResource(R.string.relearning_delay),
+                help = stringResource(R.string.relearning_delay_help),
                 value = config.relearnMs / 60000.0,
                 // Half-minute steps: a restored 90000 ms is 1.5 real minutes,
                 // and step 1.0 both displayed it as "1" and overwrote it with
@@ -898,8 +932,8 @@ private fun AnkiSchedulerSection(
                 onChange = { onChange(config.copy(relearnMs = (it * 60000).toLong())) }
             )
             AnkiNumberRow(
-                label = "Leech threshold",
-                help = "Failures before a card is flagged tricky",
+                label = stringResource(R.string.leech_threshold),
+                help = stringResource(R.string.leech_threshold_help),
                 value = config.leechThreshold,
                 step = 1.0,
                 range = 1f..100f,

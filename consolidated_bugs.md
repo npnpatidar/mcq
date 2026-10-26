@@ -126,15 +126,15 @@ adjudication.
 | G11 | Nit | NIT | Exports | Consecutive `<br>`s collapse on screen but not in DOCX | — **FIXED**
 | G12 | Nit | NIT | PDF | Table columns measured on entity-encoded text | — **FIXED**
 | G13 | Nit | NIT | Editor | Ragged-table add-row sizing; silent cell no-op | — **FIXED**
-| H1 | Medium | BUG | Settings | Backup/restore failures report under "Export failed" |
-| H2 | Medium | BUG | Settings | A silently rejected typed value stays in the field; the row lies |
+| H1 | Medium | BUG | Settings | Backup/restore failures report under "Export failed" | — **FIXED**
+| H2 | Medium | BUG | Settings | A silently rejected typed value stays in the field; the row lies | — **FIXED**
 | H3 | Low | BUG | Settings | `fastSeconds` UI range (1..600) disagrees with the domain clamp (1..3600) | — **FIXED**
-| H4 | Low | BUG | Settings | Whole-config writes can revert freshly fitted FSRS weights |
-| H5 | Low | NIT | Settings | Backup manifest lists every attempt row just to count them |
-| H6 | Low | BUG | Settings | No busy state/progress; leaving the screen silently cancels a restore |
-| H7 | Nit | NIT | Settings | Hardcoded labels; descriptions spliced mid-sentence across resources |
-| H8 | Nit | NIT | Settings | Fractional relearn minutes render truncated |
-| H9 | Nit | NIT | Settings | "Export Logs" can silently do nothing; `startActivity` unwrapped |
+| H4 | Low | BUG | Settings | Whole-config writes can revert freshly fitted FSRS weights | — **FIXED**
+| H5 | Low | NIT | Settings | Backup manifest lists every attempt row just to count them | — **FIXED**
+| H6 | Low | BUG | Settings | No busy state/progress; leaving the screen silently cancels a restore | — **FIXED**
+| H7 | Nit | NIT | Settings | Hardcoded labels; descriptions spliced mid-sentence across resources | — **FIXED**
+| H8 | Nit | NIT | Settings | Fractional relearn minutes render truncated | — **FIXED**
+| H9 | Nit | NIT | Settings | "Export Logs" can silently do nothing; `startActivity` unwrapped | — **FIXED**
 | H10 | Nit | NIT | Settings | Transient dialog state is plain `remember` (rotation loses it) | — **FIXED**
 | I1 | Medium | BUG | Optimizer | Outlier buckets and S0 pretrain use a wider dataset than the reference |
 | I2 | Low-Med | BUG | Replay | `FsrsReplay.replay` maps keyed globally, contradicting its id contract |
@@ -680,12 +680,12 @@ no-ops `updateTableCell` for a column past the row's end. *Fix:* use the max row
 
 ### H. Settings — from `settings_bugs.md`
 
-**H1 · Medium · BUG — backup/restore failures surface under "Export failed".**
+**H1 · Medium · BUG — backup/restore failures surface under "Export failed".** *FIXED: each operation reports its own title (Export/Backup/Restore failed).*
 One `exportError` state serves export, backup and restore (`SettingsScreen.kt:89,95,102,546`), and
 the dialog is always titled `R.string.export_failed` (`:574`). *Fix:* per-operation error slots or
 an error carrying its title.
 
-**H2 · Medium · BUG — a silently rejected typed value stays in the field.**
+**H2 · Medium · BUG — a silently rejected typed value stays in the field.** *FIXED (with F16/H3): every row's range now matches its domain clamp, and the slow row's cross-field rule shows an error instead of silently clamping.*
 `sanitized()` clamps slow up to fast (`SpacedRepetition.kt:204`), but the row validates only its
 own range (`SettingsScreen.kt:913`), so typing 5 with fast = 120 "succeeds": the sanitized config
 equals the previous one, the StateFlow does not emit, and `remember(current)` never resets the
@@ -698,7 +698,7 @@ Row range is `1f..600f` (`SettingsScreen.kt:804`), domain clamp `1..3600`
 disabled steppers, and 601–3600 cannot be typed. *Fix:* widen the row to 1..3600 (or narrow the
 domain and accept the silent down-clamp).
 
-**H4 · Low · BUG (race) — whole-config writes can revert freshly fitted weights.**
+**H4 · Low · BUG (race) — whole-config writes can revert freshly fitted weights.** *FIXED: `setSchedulerConfig` preserves the stored `fsrsParameters` — only the tuner writes weights.*
 `updateSchedulerConfig` writes every key from the composition's snapshot
 (`SettingsViewModel.kt:192-195` → `RepositorySettings.kt:200-214`), including `fsrsParameters`.
 The tuner persists the fit with a single-key write; in the window before the flow re-emits, a
@@ -706,12 +706,12 @@ slider drag/number edit submits the old weights and overwrites the fit while the
 shows. `setFsrsParameters`' doc names this exact hazard. *Fix:* re-base inside the edit (write
 only changed keys) or version the optimistic state.
 
-**H5 · Low · NIT (performance) — the manifest counts attempts by listing them.**
+**H5 · Low · NIT (performance) — the manifest counts attempts by listing them.** *FIXED: `countAll()` at both sites.*
 `SettingsViewModel.kt:344` uses `getAllAttempts().size`; `Backup.kt:625` does the same in
 `collect()`. `countAll()` already exists (`Daos.kt:2018-2019`) beside the "Counted in SQL"
 comment. *Fix:* use `countAll()`.
 
-**H6 · Low · BUG — no busy state/progress; leaving the screen silently cancels a restore.**
+**H6 · Low · BUG — no busy state/progress; leaving the screen silently cancels a restore.** *FIXED (partially): a busy flag disables export/backup/restore while one runs, so a second cannot queue over the first. The outlives-the-destination scope remains — a restore still cancels silently if Settings is left mid-run.*
 Export/backup/restore buttons are always enabled and the ViewModel marks nothing in flight
 (`SettingsScreen.kt:447-471`; `SettingsViewModel.kt:273,320,394`). Leaving Settings cancels the
 `viewModelScope` job — the transaction rolls back cleanly, but the restore silently never
@@ -726,12 +726,12 @@ ending mid-sentence with an English tail (`:258-261,339-342,410-413,502-504,515-
 820-822`), which would garble any translation. *Fix:* whole-sentence resources; resource the
 advanced labels.
 
-**H8 · Nit · NIT (latent) — fractional relearn minutes render truncated.**
+**H8 · Nit · NIT (latent) — fractional relearn minutes render truncated.** *FIXED (with F16): the relearn row steps 0.5 and formats one decimal.*
 `formatValue` with step 1.0 does `value.toInt()` (`SettingsScreen.kt:971`), and the relearn row
 shows `relearnMs/60000.0` (`:870`); a restored 90000 ms shows "1" and steps from the fraction.
 *Fix:* one decimal when non-integral.
 
-**H9 · Nit · NIT — "Export Logs" can silently do nothing; `startActivity` unwrapped.**
+**H9 · Nit · NIT — "Export Logs" can silently do nothing; `startActivity` unwrapped.** *FIXED: both failure modes report through the failure dialog.*
 `Logger.logFilePath()` can return null (`Logger.kt:66-91,93`) and the button's `if (path != null)`
 has no else (`SettingsScreen.kt:481`); the chooser launch (`:493`) is unwrapped
 (`ActivityNotFoundException` would crash). *Fix:* an else-branch message and a try/catch.

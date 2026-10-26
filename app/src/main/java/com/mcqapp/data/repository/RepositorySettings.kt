@@ -209,7 +209,14 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
-            prefs[fsrsParametersKey] = c.fsrsParameters.joinToString(",")
+            // The weights are NOT written from the incoming config: only the
+            // tuner writes them, with [setFsrsParameters], and in the window
+            // before this screen's flow re-emits a whole-config write carried
+            // the composition's stale copy over the fresh fit while the
+            // success banner showed (consolidated_bugs.md H4). The stored
+            // value is always the newest, so it stays.
+            val stored = prefs[fsrsParametersKey] ?: c.fsrsParameters.joinToString(",")
+            prefs[fsrsParametersKey] = stored
         }
     }
 

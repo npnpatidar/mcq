@@ -622,7 +622,7 @@ class BackupSource(private val db: AppDatabase) {
                 inProgressTest = inProgressTest
             )
             papers = paperRows.size
-            attempts = db.attemptDao().getAllAttempts().size
+            attempts = db.attemptDao().countAll()
             reviews = reviewLog.size
         }
         val manifest = McqBackupFormat.Manifest(

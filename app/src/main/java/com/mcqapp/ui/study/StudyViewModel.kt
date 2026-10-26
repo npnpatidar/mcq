@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -300,7 +302,11 @@ class StudyViewModel(
             try {
                 pullCard()
             } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(grading = false, gradeError = "Could not load the next card: ${e.message}")
+                }
+                return@launch
             } catch (e: Exception) {
                 Logger.e("STUDY", "loadNext failed", e)
                 _state.update {
@@ -676,7 +682,19 @@ class StudyViewModel(
                 }
                 pullCard()
             } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+                // A closed database surfaces its failure as cancellation, not
+                // as an exception; rethrow only when THIS job is actually
+                // being cancelled, or the failed write reports nothing and
+                // the buttons freeze mid-grade.
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
+                        else "Could not save your grade: ${e.message}",
+                        gradedAndStuck = persisted
+                    )
+                }
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update {
@@ -728,7 +746,19 @@ class StudyViewModel(
                 }
                 pullCard()
             } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+                // A closed database surfaces its failure as cancellation, not
+                // as an exception; rethrow only when THIS job is actually
+                // being cancelled, or the failed write reports nothing and
+                // the buttons freeze mid-grade.
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
+                        else "Could not save your grade: ${e.message}",
+                        gradedAndStuck = persisted
+                    )
+                }
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update {

@@ -250,7 +250,16 @@ object HtmlPaperWriter {
                     sb.append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
                         sb.append("<tr>")
-                        for (cell in row) sb.append("<td>").append(esc(cell)).append("</td>")
+                        // Cells carry inline markup like a TextElement; the
+                        // escaped plain text rendered every tag literally
+                        // (consolidated_bugs.md G1).
+                        for (cell in row) {
+                            sb.append("<td>")
+                                .append(com.mcqapp.util.tableCellHtml(cell) {
+                                    com.mcqapp.data.sanitizeMathml(it)
+                                })
+                                .append("</td>")
+                        }
                         sb.append("</tr>")
                     }
                     sb.append("</table>")

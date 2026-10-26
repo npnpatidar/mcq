@@ -474,7 +474,13 @@ object PdfPaperWriter {
             val natural = FloatArray(cols) { 2 * pad }
             for (row in rows) {
                 for (c in 0 until cols) {
-                    val w = textPaint.measureText(stripInlineHtml(row.getOrElse(c) { "" })) + 2 * pad
+                    // Measured on the DECODED text: cells render decoded
+                    // (entities decoded by the span pipeline), and measuring
+                    // the encoded form over-wide the entity-heavy columns
+                    // (consolidated_bugs.md G12).
+                    val w = textPaint.measureText(
+                        decodeEntities(stripInlineHtml(com.mcqapp.util.sanitizeTableCell(row.getOrElse(c) { "" })))
+                    ) + 2 * pad
                     if (w > natural[c]) natural[c] = w
                 }
             }
@@ -507,7 +513,12 @@ object PdfPaperWriter {
                 return fm.descent - fm.ascent + fm.leading
             }
             for (row in rows) {
-                val spans = List(cols) { c -> spannedFromInlineHtml(row.getOrElse(c) { "" }) }
+                // Cells carry inline markup like body text; a picture or a
+                // formula collapses to a marker the span pipeline can show
+                // (consolidated_bugs.md G1-G3).
+                val spans = List(cols) { c ->
+                    spannedFromInlineHtml(com.mcqapp.util.sanitizeTableCell(row.getOrElse(c) { "" }))
+                }
                 val layouts = spans.mapIndexed { c, span ->
                     if (span.isBlank()) null
                     else cellLayout(span, edges[c + 1] - edges[c] - 2 * pad)
@@ -636,12 +647,18 @@ internal fun spannedFromInlineHtml(text: String): Spanned {
             }
             spans.isNotEmpty() -> {
                 if (closing) {
-                    // A close with no matching open pops nothing and is
-                    // dropped, the way a real tag would be when rendered.
-                    if (open.lastOrNull()?.first == tag) {
-                        val (_, start) = open.removeLast()
-                        for (span in spans) {
-                            out.setSpan(span, start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    // Pop-until-found, mirroring InlineHtml.parse: a
+                    // mis-nested close (`<u>a <b>b</u> c</b>`) used to be
+                    // dropped when it did not match the stack top, so the
+                    // underline vanished and the bold leaked over the rest
+                    // (consolidated_bugs.md G5).
+                    val idx = open.indexOfLast { it.first == tag }
+                    if (idx >= 0) {
+                        while (open.size > idx) {
+                            val (openTag, start) = open.removeLast()
+                            for (span in styleSpans(openTag)) {
+                                out.setSpan(span, start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            }
                         }
                     }
                 } else {

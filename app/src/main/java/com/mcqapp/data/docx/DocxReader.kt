@@ -515,6 +515,12 @@ private class BodyReader(
                     }
                 }
                 cells.add(parts.joinToString(" "))
+                // A horizontally merged cell spans extra grid columns: pad so
+                // the row's later cells keep their columns instead of shifting
+                // one left per merge (consolidated_bugs.md G4). Vertical merge
+                // (vMerge) needs no padding.
+                val span = cell.getAttribute("w:gridSpan").toIntOrNull()?.takeIf { it > 1 } ?: 1
+                repeat(span - 1) { cells.add("") }
             }
             rows.add(cells)
         }

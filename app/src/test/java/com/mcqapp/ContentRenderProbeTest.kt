@@ -97,17 +97,16 @@ class ContentRenderProbeTest {
     }
 
     /**
-     * BUG (mixed view): newlines inside a table cell are not turned into
-     * <br/>, so a DOCX cell with a line break renders as one collapsed line
-     * — while the native table (Text) shows the same cell as two lines.
+     * FIXED (consolidated_bugs.md G10): newlines inside a table cell become
+     * <br/>, matching how a TextElement renders.
      */
     @Test
-    fun mixedViewKeepsRawNewlineInTableCell() {
+    fun mixedViewBreaksNewlinesInTableCell() {
         val html = mixedContentHtml(
             listOf(ContentElement.TableElement(listOf(listOf("line1\nline2")))),
             16f, "rgba(0,0,0,1)"
         )
-        assertTrue(html.contains("<td>line1\nline2</td>"))
+        assertTrue(html.contains("<td>line1<br/>line2</td>"))
     }
 
     /**

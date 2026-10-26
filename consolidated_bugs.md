@@ -113,19 +113,19 @@ adjudication.
 | F17 | Low | NIT | Settings | Retention slider writes DataStore on every drag frame | — **FIXED**
 | F18 | Low | BUG | Bookmarks | Export opens the output stream on the main thread | — **FIXED**
 | F19 | Nit | NIT | Test | "No questions in this selection" flashes at session start | — **FIXED**
-| G1 | High | BUG | Tables | Table cell markup renders as literal tags in-app/HTML |
-| G2 | High | BUG | Tables | A picture in a DOCX cell renders as a base64 blob |
-| G3 | High | BUG | Tables | Equations in cells render as raw MathML |
-| G4 | Medium | BUG | Import | DOCX merged cells (`w:gridSpan`) shift later cells a column left |
-| G5 | Medium | BUG | PDF | Mis-nested inline closes dropped, not popped → formatting lost/leaked |
-| G6 | Medium | BUG | DOCX | `tableXml` writes cells as escaped plain text (formatting lost) |
-| G7 | Low | BUG | Mixed view | `stripMathAttributes` keeps only the first `<math>`; surrounding text dropped |
-| G8 | Low | BUG | In-app vs exports | Unknown tags: screen strips, exporters keep; the KDoc says the opposite |
-| G9 | Low | BUG | Mixed view | `$…$` TeX delimiters mangle ordinary text containing two `$` |
-| G10 | Nit | NIT | Tables | Cell newlines render differently in native vs mixed view/HTML |
-| G11 | Nit | NIT | Exports | Consecutive `<br>`s collapse on screen but not in DOCX |
-| G12 | Nit | NIT | PDF | Table columns measured on entity-encoded text |
-| G13 | Nit | NIT | Editor | Ragged-table add-row sizing; silent cell no-op |
+| G1 | High | BUG | Tables | Table cell markup renders as literal tags in-app/HTML | — **FIXED**
+| G2 | High | BUG | Tables | A picture in a DOCX cell renders as a base64 blob | — **FIXED**
+| G3 | High | BUG | Tables | Equations in cells render as raw MathML | — **FIXED**
+| G4 | Medium | BUG | Import | DOCX merged cells (`w:gridSpan`) shift later cells a column left | — **FIXED**
+| G5 | Medium | BUG | PDF | Mis-nested inline closes dropped, not popped → formatting lost/leaked | — **FIXED**
+| G6 | Medium | BUG | DOCX | `tableXml` writes cells as escaped plain text (formatting lost) | — **FIXED**
+| G7 | Low | BUG | Mixed view | `stripMathAttributes` keeps only the first `<math>`; surrounding text dropped | — **FIXED**
+| G8 | Low | BUG | In-app vs exports | Unknown tags: screen strips, exporters keep; the KDoc says the opposite | — **FIXED**
+| G9 | Low | BUG | Mixed view | `$…$` TeX delimiters mangle ordinary text containing two `$` | — **FIXED**
+| G10 | Nit | NIT | Tables | Cell newlines render differently in native vs mixed view/HTML | — **FIXED**
+| G11 | Nit | NIT | Exports | Consecutive `<br>`s collapse on screen but not in DOCX | — **FIXED**
+| G12 | Nit | NIT | PDF | Table columns measured on entity-encoded text | — **FIXED**
+| G13 | Nit | NIT | Editor | Ragged-table add-row sizing; silent cell no-op | — **FIXED**
 | H1 | Medium | BUG | Settings | Backup/restore failures report under "Export failed" |
 | H2 | Medium | BUG | Settings | A silently rejected typed value stays in the field; the row lies |
 | H3 | Low | BUG | Settings | `fastSeconds` UI range (1..600) disagrees with the domain clamp (1..3600) | — **FIXED**
@@ -605,7 +605,7 @@ as loading).
 
 ### G. Maths tables and inline formatting — from `twelfth_bugs.md`
 
-**G1 · High · BUG — table cell markup renders as literal tags.**
+**G1 · High · BUG — table cell markup renders as literal tags.** *FIXED: shared cell helpers in `util/ContentElements.kt` — the native table parses cells with `InlineHtml.parse`, the mixed view and the HTML export run them through `renderInlineHtml` (`tableCellHtml`); PDF already rendered inline and now receives sanitized cells.*
 Cells deliberately carry inline markup (DOCX `paraHtml`, Anki `parseTable`, Anki export), but the
 native table uses a bare `Text(cell)` (`ContentElements.kt:100-107`), the mixed view
 `escapeHtmlData(cell)` (`:189`) and the HTML export `esc(cell)` (`HtmlPaperWriter.kt:253`). Only
@@ -613,41 +613,41 @@ PDF (`PdfPaperWriter.kt:510`) and the Anki export render it. *Fix:* route cells 
 `InlineHtml.parse` / `renderInlineHtml` / `inlineRuns`; the image/math cases (G2/G3) need the cell
 model split into blocks (or a visible placeholder).
 
-**G2 · High · BUG — a picture in a DOCX cell renders as a base64 blob.**
+**G2 · High · BUG — a picture in a DOCX cell renders as a base64 blob.** *FIXED: the cell model stays text-only; a picture collapses to the visible `[image]` marker on every surface.*
 `DocxReader.kt:388-394` emits a data-URI `<img>` into the cell string; both in-app table paths
 render it as text (`ContentElements.kt:100,189`), dumping the base64. *Fix:* cell element model,
 or strip `<img>` to a `[image]` marker as a stopgap.
 
-**G3 · High · BUG — equations in cells render as raw MathML.**
+**G3 · High · BUG — equations in cells render as raw MathML.** *FIXED: the mixed view strips cell math for MathJax, the HTML export sanitizes it, and text surfaces show the `[formula]` marker.*
 `DocxReader.kt:395-409` puts `<math>…</math>` into the cell; the mixed view only typesets
 `MathElement`s (`ContentElements.kt:184` vs `189`), and PDF's `spannedFromInlineHtml` knows no
 `<math>` (`PdfPaperWriter.kt:510,623-662`). A Word maths table is unreadable in-app and in PDF.
 *Fix:* same model change; for the mixed view, emit cell math through `stripMathAttributes`.
 
-**G4 · Medium · BUG — merged DOCX cells shift every later cell a column left.**
+**G4 · Medium · BUG — merged DOCX cells shift every later cell a column left.** *FIXED: `w:gridSpan` pads the row with empty cells.*
 `DocxReader.kt:499-522` ignores `w:gridSpan`; a row `[H1(span2), H2]` imports as `[H1, H2]`, so
 later cells land one column left in-app, in PDF and on re-export. Vertical merge is safe.
 *Fix:* read `w:gridSpan w:val` and pad with empty strings.
 
-**G5 · Medium · BUG — mis-nested inline closes are dropped, not popped (PDF).**
+**G5 · Medium · BUG — mis-nested inline closes are dropped, not popped (PDF).** *FIXED: `spannedFromInlineHtml` pops until the tag is found, mirroring `InlineHtml.parse`; pinned by `PdfInlineSpanTest` (CI-authoritative).*
 `PdfPaperWriter.kt:638-646` honours a close only when it matches the stack top; for
 `<u>a <b>b</u> c</b>` no underline is emitted and bold leaks over " c". `InlineHtml` pops-until-
 found and the DOCX writer toggles per tag — three answers for one stored string, PDF worst.
 *Fix:* mirror `InlineHtml.parse`; needs a CI Robolectric pin.
 
-**G6 · Medium · BUG — DOCX export writes table cells as escaped plain text.**
+**G6 · Medium · BUG — DOCX export writes table cells as escaped plain text.** *FIXED: cells go through `inlineRuns`/`ParaBuilder`.*
 `DocxPaperWriter.kt:585-592` uses one escaped `w:t` per cell; `inlineRuns` (which works) is never
 applied to cells, so Word shows literal `<u>u</u><mark>m</mark>`. Payload round-trips
 byte-stably, so this is a visible-document defect only. *Fix:* run cells through
 `inlineRuns`/`ParaBuilder`.
 
-**G7 · Low · BUG (latent) — `stripMathAttributes` drops text around a `<math>` block.**
+**G7 · Low · BUG (latent) — `stripMathAttributes` drops text around a `<math>` block.** *FIXED: surrounding prose is kept, escaped as text.*
 `ContentElements.kt:295-300` keeps only the first match's value, discarding surrounding prose.
 Importers currently emit pure math blocks; the structured `{"type":"math"}` shape is taken
 verbatim (`LegacyParser.kt:1427-1430`). *Fix:* emit the surrounding text escaped, as
 `splitTextRuns` does.
 
-**G8 · Low · BUG — unknown tags: the screen strips, the exporters keep, and the KDoc lies.**
+**G8 · Low · BUG — unknown tags: the screen strips, the exporters keep, and the KDoc lies.** *FIXED: the contract is documented as deliberate (strip in-app — the page runs JS; keep visible in exports) in `InlineHtml`'s KDoc.*
 `InlineHtml.parse` strips unknown tags (`InlineHtml.kt:89`), while `renderInlineHtml`,
 PDF and DOCX deliberately keep them visible (`RichTextHtml.kt:24-27`,
 `PdfPaperWriter.kt:651-655`, `DocxPaperWriter.kt:670-672`); the class doc claims "left visible
@@ -655,24 +655,24 @@ rather than swallowed" (`InlineHtml.kt:19-21`). `Pick <one> & "all"?` loses `<on
 *Fix:* pick one contract (rendering unknown tags literally in-app risks wrapper-tag noise) and
 align the doc/comments.
 
-**G9 · Low · BUG — `$…$` delimiters mangle ordinary text.**
+**G9 · Low · BUG — `$…$` delimiters mangle ordinary text.** *FIXED: the mixed view no longer enables single-`$` inline math; formulas are MathML blocks.*
 `ContentElements.kt:212` enables single-`$` inline math for body text; an imported sentence with
 two `$` ("paid $5 … got $10") typesets the middle as garbled math. The HTML export does not
 enable `$…$`, so screen and export disagree. *Fix:* drop the `$` delimiter or escape `\$`.
 
-**G10 · Nit · NIT — cell newlines diverge.** `ContentElements.kt:183` converts `\n`→`<br/>` for
+**G10 · Nit · NIT — cell newlines diverge.** *FIXED: cells convert newlines to `<br/>` in the HTML surfaces; the native table shows them as Text always did.* `ContentElements.kt:183` converts `\n`→`<br/>` for
 `TextElement`s only; cells (`:189`) collapse the break in the mixed view/HTML while native
 `Text(cell)` shows it.
 
-**G11 · Nit · NIT — consecutive `<br>`s collapse on screen but not in DOCX.**
+**G11 · Nit · NIT — consecutive `<br>`s collapse on screen but not in DOCX.** *FIXED: `inlineRuns` drops a break that follows a break.*
 `InlineHtml.kt:73-75` and `PdfPaperWriter.kt:634-635` suppress the second break;
 `DocxPaperWriter.kt:669,707-708` emits one `w:br` per tag, so the DOCX gains a blank line.
 
-**G12 · Nit · NIT — PDF table columns measured on encoded text.**
+**G12 · Nit · NIT — PDF table columns measured on encoded text.** *FIXED: measured on the decoded, tag-stripped text the cell renders with.*
 `PdfPaperWriter.kt:477` measures `stripInlineHtml(cell)` (tags stripped, entities not) while cells
 render decoded (`:629,660`), so entity-heavy cells get over-wide columns.
 
-**G13 · Nit · NIT — editor ragged tables.**
+**G13 · Nit · NIT — editor ragged tables.** *FIXED: a new row takes the widest row's width, and a cell edit past a short row pads it.*
 `EditorViewModel.kt:318-321` sizes a new row from `rows.firstOrNull()`; `:309-316` silently
 no-ops `updateTableCell` for a column past the row's end. *Fix:* use the max row width and pad.
 

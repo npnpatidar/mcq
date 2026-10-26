@@ -97,8 +97,13 @@ private fun TableElement(element: ContentElement.TableElement) {
         element.rows.forEach { row ->
             Row {
                 row.forEach { cell ->
+                    // Cells carry the same inline markup as a TextElement: a
+                    // bare Text() rendered every tag literally. Pictures and
+                    // formulas, which a native text run cannot show, collapse
+                    // to a marker (consolidated_bugs.md G1-G3).
+                    val annotated = remember(cell) { InlineHtml.parse(sanitizeTableCell(cell)) }
                     Text(
-                        cell,
+                        annotated,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier
                             .weight(1f)
@@ -186,7 +191,14 @@ internal fun mixedContentHtml(
                     append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
                         append("<tr>")
-                        for (cell in row) append("<td>").append(escapeHtmlData(cell)).append("</td>")
+                        // Cells carry inline markup; pictures collapse to a
+                        // marker and formulas go through the same strip as a
+                        // MathElement, so MathJax typesets them
+                        // (consolidated_bugs.md G1-G3).
+                        for (cell in row) {
+                            append("<td>").append(tableCellHtml(cell) { stripMathAttributes(it) })
+                            append("</td>")
+                        }
                         append("</tr>")
                     }
                     append("</table>")
@@ -209,7 +221,10 @@ internal fun mixedContentHtml(
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; img-src data:; style-src 'unsafe-inline'">
         <script>
-        MathJax = { tex: { inlineMath: [['$', '$']] } };
+        // Single-$ TeX delimiters stay OFF: an ordinary sentence containing
+        // two "$" signs typeset its middle as garbled math, and the HTML
+        // export never enabled them (consolidated_bugs.md G9). Formulas are
+        // stored and rendered as MathML blocks.
         </script>
         <script src="$MATHJAX_ASSET_URL"></script>
         <style>
@@ -289,15 +304,21 @@ internal fun androidx.compose.ui.graphics.Color.toCssRgba(): String {
  * `<annotation>`), and ensure an `<mrow>` wrapper remains.
  */
 internal fun stripMathAttributes(mathml: String): String {
-    // Extract the first <math>…</math> block: MathLive output may carry
-    // leading/trailing whitespace, which the old removePrefix logic
-    // turned into nested <math> that MathJax rejects.
-    val block = Regex("<math[\\s>].*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        .find(mathml.trim())?.value
+    val trimmed = mathml.trim()
+    // Surrounding prose is kept, escaped as text (as splitTextRuns does), not
+    // dropped: the function used to keep only the first <math> block and
+    // silently discard everything around it (consolidated_bugs.md G7).
+    val firstMatch = Regex("<math[\\s>].*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(trimmed)
+    val prefix = firstMatch?.let { trimmed.substring(0, it.range.first) }.orEmpty()
+    val suffix = firstMatch?.let { trimmed.substring(it.range.last + 1) }.orEmpty()
+    val block = firstMatch?.value
         // No <math> block: the field is not MathML at all. Emit the content
         // escaped as text — wrapping it in <math> would hand a hostile
         // payload to the JS-enabled page as live markup.
-        ?: return com.mcqapp.data.sanitizeMathml(mathml.trim())
+        ?: return listOf(prefix, suffix).filter { it.isNotBlank() }
+            .joinToString(" ") { com.mcqapp.data.sanitizeMathml(it) }
+            .ifBlank { com.mcqapp.data.sanitizeMathml(trimmed) }
     var result = block
         .replace(Regex("<math\\s+[^>]*>", RegexOption.IGNORE_CASE)) { "<math>" }
         .replace(Regex("</math\\s*>", RegexOption.IGNORE_CASE)) { "</math>" }
@@ -324,7 +345,58 @@ internal fun stripMathAttributes(mathml: String): String {
     } else {
         "<math><mrow>$inner</mrow></math>"
     }
-    return wrapped
+    return buildString {
+        if (prefix.isNotBlank()) append(com.mcqapp.data.escapeHtmlText(prefix))
+        append(wrapped)
+        if (suffix.isNotBlank()) append(com.mcqapp.data.escapeHtmlText(suffix))
+    }
+}
+
+
+// --- table cells (consolidated_bugs.md G1-G3) ---
+//
+// Cells deliberately carry inline markup (DOCX paraHtml, Anki's parseTable,
+// the Anki export), but two of their rich cases have no place in a plain text
+// pipeline: a picture (G2 — the DOCX reader emits a data-URI <img> into the
+// cell, which text renderers dumped as base64) and a formula (G3 — raw
+// MathML outside the mixed view's MathJax).
+
+internal const val CELL_IMAGE_MARKER = "[image]"
+internal const val CELL_FORMULA_MARKER = "[formula]"
+
+private val cellImgPattern = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+private val cellMathPattern =
+    Regex("<math\\b.*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
+/**
+ * The cell on a surface that can show neither pictures nor formulas: both
+ * collapse to a visible marker, the rest of the markup stays for the inline
+ * pipeline.
+ */
+internal fun sanitizeTableCell(cell: String): String =
+    cellImgPattern.replace(cellMathPattern.replace(cell, CELL_FORMULA_MARKER), CELL_IMAGE_MARKER)
+
+/**
+ * The cell as HTML: the markup between formulas goes through the same inline
+ * pipeline as a TextElement (newlines as breaks, G10), each formula through
+ * [mathHtml] (the mixed view's MathJax strip, the HTML export's sanitizer),
+ * pictures as a marker.
+ */
+internal fun tableCellHtml(cell: String, mathHtml: (String) -> String): String {
+    val marked = cellImgPattern.replace(cell, CELL_IMAGE_MARKER)
+    val out = StringBuilder()
+    var pos = 0
+    for (match in cellMathPattern.findAll(marked)) {
+        out.append(com.mcqapp.data.renderInlineHtml(
+            marked.substring(pos, match.range.first).replace("\n", "<br/>")
+        ))
+        out.append(mathHtml(match.value))
+        pos = match.range.last + 1
+    }
+    out.append(com.mcqapp.data.renderInlineHtml(
+        marked.substring(pos).replace("\n", "<br/>")
+    ))
+    return out.toString()
 }
 
 /** Same escaping as the exporters: one escaper, not four copies. */

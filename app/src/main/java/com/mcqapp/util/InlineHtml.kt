@@ -16,8 +16,12 @@ import androidx.compose.ui.unit.em
  *
  * Storage keeps the raw string (Anki actually renders basic HTML, so the
  * export path wants it untouched); only the on-screen text is formatted.
- * Anything unrecognized — unknown tags, a bare `&` or `<` as in `5 < 6` —
- * is left visible rather than swallowed.
+ * The contract (consolidated_bugs.md G8): **this parser strips** tags it
+ * does not know and drops entities' typos as text, because a JS-enabled
+ * page must not invent wrapper-tag noise; the PDF and DOCX exporters
+ * deliberately keep unknown tags visible instead — one stored string, two
+ * deliberate renderings. A bare `&` or `<` as in `5 < 6` shows as text
+ * everywhere.
  */
 object InlineHtml {
 

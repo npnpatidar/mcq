@@ -188,10 +188,25 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /**
      * Applies a single change. Each field edit writes the whole config, so the
      * in-progress value and the stored value never drift apart.
+     *
+     * The weights are re-based on the STORED config before the write: the
+     * composition's snapshot can be a re-emit behind a fresh fit (the tuner
+     * persists with its own single-key write), and writing the snapshot's
+     * stale weights over it reverted the fit while the success banner showed
+     * (consolidated_bugs.md H4). Only the tuner's own path changes weights,
+     * so the stored copy is always the newest.
      */
     fun updateSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
-        _schedulerConfig.value = config.sanitized()
-        viewModelScope.launch { repository.setSchedulerConfig(config) }
+        val sanitized = config.sanitized()
+        viewModelScope.launch {
+            val stored = try {
+                repository.schedulerConfigNow()
+            } catch (_: Exception) {
+                sanitized
+            }
+            repository.setSchedulerConfig(sanitized.copy(fsrsParameters = stored.fsrsParameters))
+        }
+        _schedulerConfig.value = sanitized
     }
 
     fun resetSchedulerConfig() {

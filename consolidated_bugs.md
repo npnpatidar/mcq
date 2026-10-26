@@ -136,12 +136,12 @@ adjudication.
 | H8 | Nit | NIT | Settings | Fractional relearn minutes render truncated | — **FIXED**
 | H9 | Nit | NIT | Settings | "Export Logs" can silently do nothing; `startActivity` unwrapped | — **FIXED**
 | H10 | Nit | NIT | Settings | Transient dialog state is plain `remember` (rotation loses it) | — **FIXED**
-| I1 | Medium | BUG | Optimizer | Outlier buckets and S0 pretrain use a wider dataset than the reference |
-| I2 | Low-Med | BUG | Replay | `FsrsReplay.replay` maps keyed globally, contradicting its id contract |
-| I3 | Low-Med | BUG | Study | A pull failure after a persisted grade misreports and invites double-persist |
-| I4 | Low | BUG | Study | `stop()` during an in-flight grade is undone |
-| I5 | Low | BUG | Study | `pullCard` skip-loop is unbounded |
-| I6 | Nit | NIT | Study | `retry()` has no in-flight guard (double-tap double-loads) |
+| I1 | Medium | BUG | Optimizer | Outlier buckets and S0 pretrain use a wider dataset than the reference | — **FIXED**
+| I2 | Low-Med | BUG | Replay | `FsrsReplay.replay` maps keyed globally, contradicting its id contract | — **FIXED**
+| I3 | Low-Med | BUG | Study | A pull failure after a persisted grade misreports and invites double-persist | — **FIXED**
+| I4 | Low | BUG | Study | `stop()` during an in-flight grade is undone | — **FIXED**
+| I5 | Low | BUG | Study | `pullCard` skip-loop is unbounded | — **FIXED**
+| I6 | Nit | NIT | Study | `retry()` has no in-flight guard (double-tap double-loads) | — **FIXED**
 | J1 | High | BUG | Editor | Delete after Prev/Next deletes the previously shown question | — **FIXED**
 | J2 | High | BUG | Editor | Delete is live in the import-preview editor and deletes a library row | — **FIXED**
 | J3 | Medium | BUG | Editor | Formula edits can be lost (400 ms debounce vs save/move) | — **FIXED**
@@ -698,7 +698,7 @@ Row range is `1f..600f` (`SettingsScreen.kt:804`), domain clamp `1..3600`
 disabled steppers, and 601–3600 cannot be typed. *Fix:* widen the row to 1..3600 (or narrow the
 domain and accept the silent down-clamp).
 
-**H4 · Low · BUG (race) — whole-config writes can revert freshly fitted weights.** *FIXED: `setSchedulerConfig` preserves the stored `fsrsParameters` — only the tuner writes weights.*
+**H4 · Low · BUG (race) — whole-config writes can revert freshly fitted weights.** *FIXED: `SettingsViewModel.updateSchedulerConfig` re-bases the weights on the stored config before writing (the store keeps its whole-config contract; the VM is where the stale snapshot lived).*
 `updateSchedulerConfig` writes every key from the composition's snapshot
 (`SettingsViewModel.kt:192-195` → `RepositorySettings.kt:200-214`), including `fsrsParameters`.
 The tuner persists the fit with a single-key write; in the window before the flow re-emits, a
@@ -745,7 +745,7 @@ loses the picked URI. *Fix:* `rememberSaveable` (custom saver for `Uri`).
 
 ### I. FSRS and the study loop — from `fourteenth_bugs.md`
 
-**I1 · Medium · BUG — the optimizer's dataset deviates from the reference recipe.**
+**I1 · Medium · BUG — the optimizer's dataset deviates from the reference recipe.** *FIXED: the outlier buckets and the S0 pretrain restrict to cards with exactly one inter-day review, as the reference does.*
 `FsrsOptimizer.kt:206-210,234-237` build the outlier buckets and the w0–w3 pretrain from every
 complete card with ≥1 inter-day review, while fsrs-rs restricts both to cards with exactly one
 inter-day review. On any studied library the bucket sizes/removals, `smoothAndFill` counts and
@@ -753,7 +753,7 @@ the fitted w0..w3 differ from the claimed reference; the deviation is neither do
 intentional-looking. *Fix:* restrict both to `deltas.count { it >= 1 } == 1`, or document the
 deviation explicitly.
 
-**I2 · Low-Med · BUG (latent API) — `FsrsReplay.replay` breaks its own id contract.**
+**I2 · Low-Med · BUG (latent API) — `FsrsReplay.replay` breaks its own id contract.** *FIXED: the enrichment maps key by `(questionId, id)`.*
 `FsrsReplay.kt:52-53` keys two maps by row id globally and reads them back globally
 (`:99-100`), while `RawReview`'s doc only requires per-question uniqueness (`:26-29`). Colliding
 ids across cards overwrite each other's predictions (verified by running it: a 3-day card read a
@@ -767,18 +767,18 @@ grade" (false) and the graded card stays actionable; retrying writes a second re
 a second schedule advance. *Fix:* split the catches, keep the persisted result, neutralize the
 grade buttons, word it "Could not load the next card".
 
-**I4 · Low · BUG — `stop()` during an in-flight grade is undone.**
+**I4 · Low · BUG — `stop()` during an in-flight grade is undone.** *FIXED: an atomic stopped flag; the completing grade refuses to serve a new card.*
 `stop()` (`:677-680`) sets `finished = true`; the completing grade coroutine's `pullCard()` sets
 `finished = false` (`:319`) and serves a new card, reopening the session the learner just ended.
 *Fix:* a stopped flag checked before `pullCard()`, or cancel the grade job.
 
-**I5 · Low · BUG (race) — `pullCard`'s skip-loop is unbounded.**
+**I5 · Low · BUG (race) — `pullCard`'s skip-loop is unbounded.** *FIXED: a vanished-card streak beyond three ends the session instead of hanging.*
 `StudyViewModel.kt:289-295` `while (true) { … ?: continue }` re-pulls without changing anything if
 the question vanishes between the pull's SQL read and `getQuestion`; the session then hangs with
 a spinner and no error/log. The drill path is safe (`drillIndex` advances). *Fix:* bound the skip
 streak (one retry, then `finishEmpty()` with a note).
 
-**I6 · Nit · NIT — `retry()` has no in-flight guard.** `StudyViewModel.kt:267-270` nulls
+**I6 · Nit · NIT — `retry()` has no in-flight guard.** *FIXED: retry early-returns while loading.* `StudyViewModel.kt:267-270` nulls
 `loadError` and launches `load()`; a double-tap runs two loads, both end in `pullCard()`, and
 `reviewsSinceNew` increments twice. *Fix:* early-return while loading.
 

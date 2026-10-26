@@ -161,10 +161,11 @@ fun SettingsScreen(
                     Text(stringResource(R.string.theme), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     listOf(
-                        "system" to stringResource(R.string.theme_system_default),
-                        "light" to stringResource(R.string.theme_light),
-                        "dark" to stringResource(R.string.theme_dark)
-                    ).forEach { (value, label) ->
+                        "system" to R.string.theme_system_default,
+                        "light" to R.string.theme_light,
+                        "dark" to R.string.theme_dark
+                    ).forEach { (value, labelRes) ->
+                    val label = stringResource(labelRes)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

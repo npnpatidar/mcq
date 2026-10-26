@@ -78,7 +78,6 @@
     <string name="export_all_help">Backs up every paper, bookmark and attempt to one JSON file. Re-import it anywhere to restore content and history.</string>
     <string name="app_about_help">MCQ App — practice multiple-choice papers offline. Import JSON question banks, take timed tests with negative marking, review explanations, and track your history.</string>
     <string name="response_time_thresholds_help">The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.</string>
-    <string name="advanced_anki">Advanced Anki settings</string>
     <string name="next_day_starts_at">Next day starts at</string>
     <string name="next_day_starts_at_help">Hour of the day a new study day begins, on this device\'s clock</string>
     <string name="maximum_interval">Maximum interval</string>

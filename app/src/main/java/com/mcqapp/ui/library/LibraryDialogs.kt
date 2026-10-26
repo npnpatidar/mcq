@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,12 +38,12 @@ internal fun PaperDialog(
     onDismiss: () -> Unit,
     onSave: (String, String, Int, Double) -> Unit
 ) {
-    var title by remember(paper) { mutableStateOf(paper?.title ?: "") }
-    var description by remember(paper) { mutableStateOf(paper?.description ?: "") }
-    var duration by remember(paper) {
+    var title by rememberSaveable(paper) { mutableStateOf(paper?.title ?: "") }
+    var description by rememberSaveable(paper) { mutableStateOf(paper?.description ?: "") }
+    var duration by rememberSaveable(paper) {
         mutableStateOf(paper?.durationMinutes?.takeIf { it > 0 }?.toString() ?: "")
     }
-    var negative by remember(paper) {
+    var negative by rememberSaveable(paper) {
         mutableStateOf(
             paper?.negativeMarking?.takeIf { it > 0.0 }?.let { com.mcqapp.util.formatDecimalEntry(it) } ?: ""
         )
@@ -163,10 +164,10 @@ internal fun EditCategoryDialog(
     onDismiss: () -> Unit,
     onSave: (title: String, parentId: String?) -> Unit
 ) {
-    var title by remember { mutableStateOf(category.title) }
+    var title by rememberSaveable { mutableStateOf(category.title) }
     val paper = papers.firstOrNull { it.id == category.paperId }
     val categories = paper?.categories ?: emptyList()
-    var selectedParent by remember { mutableStateOf(category.parentId) }
+    var selectedParent by rememberSaveable { mutableStateOf(category.parentId) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -211,10 +212,10 @@ internal fun CategoryDialog(
     onDismiss: () -> Unit,
     onSave: (title: String, parentId: String?) -> Unit
 ) {
-    var title by remember { mutableStateOf("") }
+    var title by rememberSaveable { mutableStateOf("") }
     val paper = papers.firstOrNull { it.id == paperId }
     val categories = paper?.categories ?: emptyList()
-    var selectedParent by remember { mutableStateOf(parentId) }
+    var selectedParent by rememberSaveable { mutableStateOf(parentId) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

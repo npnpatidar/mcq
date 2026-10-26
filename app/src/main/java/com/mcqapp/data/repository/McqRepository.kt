@@ -731,6 +731,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** How many bookmarks there are, for the header count and the empty state. */
     fun observeBookmarkCount(): Flow<Int> = historyStore.observeBookmarkCount()
     suspend fun toggleBookmark(questionId: String) = historyStore.toggleBookmark(questionId)
+    /** Idempotent: removing an already-removed bookmark is a no-op. */
+    suspend fun deleteBookmark(questionId: String) = historyStore.deleteBookmark(questionId)
     suspend fun isBookmarked(questionId: String): Boolean = historyStore.isBookmarked(questionId)
 
     /**
@@ -789,7 +791,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun resultPagingSource(
         attemptId: Long,
         filter: String,
-        bookmarked: Set<String>
+        bookmarked: () -> Set<String>
     ): androidx.paging.PagingSource<ResultPageKey, com.mcqapp.domain.NumberedResult> =
         historyStore.resultPagingSource(attemptId, filter, bookmarked)
     suspend fun getResultAggregates(attemptId: Long) =

@@ -518,7 +518,17 @@ class BrowseViewModel(
             val scope = currentScope()
             val size = repository.browseFilteredCount(scope)
             if (size == 0) return@launch
-            val index = repository.browseFilteredIndexOf(anchorId, scope).coerceIn(0, size - 1)
+            // browseFilteredIndexOf is a keyset count: for an anchor outside
+            // the current scope it returns the number of in-scope rows before
+            // the anchor's position, never -1, so a bare coerceIn silently
+            // started Prev/Next from the wrong row. Verify like
+            // [browseIndexOf] does (consolidated_bugs.md F9).
+            val counted = repository.browseFilteredIndexOf(anchorId, scope)
+            val index = if (repository.browseFilteredIdAt(counted, scope) == anchorId) {
+                counted
+            } else {
+                return@launch
+            }
             onReady(
                 EditorSession.Cursor(size, index) { offset ->
                     repository.browseFilteredIdAt(offset, scope)
@@ -618,9 +628,27 @@ class BrowseViewModel(
             try {
                 // Sessions and the list hold refs; content comes back by id.
                 // Contained in questionIds, so a stale ref still exports the
-                // question the user selected.
-                val selected = repository.getQuestionsByIds(questionIds.toList())
-                    .sortedBy { q -> questionIds.indexOf(q.id) }
+                // question the user selected. The export is ordered by the
+                // browse scope's own ordering, not the tick order: the ticked
+                // set is a LinkedHashSet, so a whole-paper selection used to
+                // sort properly while a partial one exported in tap order
+                // (consolidated_bugs.md F11). A row outside the current scope
+                // (the filter changed since it was ticked) keeps its relative
+                // tail position rather than disappearing from its own export.
+                val scope = currentScope()
+                val byId = repository.getQuestionsByIds(questionIds.toList())
+                    .associateBy { it.id }
+                val positions = HashMap<String, Int>()
+                questionIds.forEachIndexed { tickIndex, id ->
+                    val counted = repository.browseFilteredIndexOf(id, scope)
+                    positions[id] = if (repository.browseFilteredIdAt(counted, scope) == id) {
+                        counted
+                    } else {
+                        Int.MAX_VALUE - (questionIds.size - tickIndex)
+                    }
+                }
+                val selected = byId.values
+                    .sortedBy { positions[it.id] ?: Int.MAX_VALUE }
                 if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
                 // The passages the selection's member questions reference,
                 // resolved the same way a paper export's are.

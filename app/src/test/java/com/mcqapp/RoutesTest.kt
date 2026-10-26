@@ -2,6 +2,7 @@ package com.mcqapp
 
 import android.net.Uri
 import com.mcqapp.ui.navigation.browseRoute
+import com.mcqapp.ui.navigation.decodeCategoryList
 import com.mcqapp.ui.navigation.editorRoute
 import com.mcqapp.ui.navigation.resultsRoute
 import com.mcqapp.ui.navigation.studyRoute
@@ -66,9 +67,18 @@ class RoutesTest {
     @Test
     fun theCategoryListSurvivesCommas() {
         val route = testRoute("p1", listOf("c1", "c2"))
-        assertEquals("c1,c2", Uri.decode(route.substringAfter("categories=").substringBefore("&")))
-        // Commas must be encoded or the CSV would be ambiguous in the URL.
-        assertEquals("c1%2Cc2", route.substringAfter("categories=").substringBefore("&"))
+        assertEquals(
+            listOf("c1", "c2"),
+            decodeCategoryList(Uri.decode(route.substringAfter("categories=").substringBefore("&")))
+        )
+        // Each id is encoded twice: Navigation decodes the query argument once,
+        // so a comma INSIDE an id must still be escaped after that decode, or
+        // it would split exactly like the separator (consolidated_bugs.md D12).
+        val sneaky = testRoute("p1", listOf("a,b"))
+        assertEquals(
+            listOf("a,b"),
+            decodeCategoryList(Uri.decode(sneaky.substringAfter("categories=").substringBefore("&")))
+        )
     }
 
     @Test
@@ -85,10 +95,10 @@ class RoutesTest {
         assertEquals("browse/paper-1?focus=q1", browseRoute("paper-1", "q1"))
 
         val route = browseRoute("paper-1", categoryIds = listOf("c1", "c2"))
-        assertEquals("browse/paper-1?categories=c1%2Cc2", route)
+        assertEquals("browse/paper-1?categories=c1,c2", route)
         assertEquals(
             listOf("c1", "c2"),
-            Uri.decode(route.substringAfter("categories=")).split(',')
+            decodeCategoryList(route.substringAfter("categories="))
         )
         assertEquals(
             "browse/paper-1?focus=q1&categories=c1",
@@ -134,9 +144,13 @@ class RoutesTest {
     @Test
     fun studyCarriesCategories() {
         val route = studyRoute("p1", listOf("c1", "c2"))
-        assertEquals("study/p1?categories=c1%2Cc2", route)
-        // Commas are encoded, so the CSV is unambiguous in the URL.
-        assertEquals("c1,c2", Uri.decode(route.substringAfter("categories=")))
+        assertEquals("study/p1?categories=c1,c2", route)
+        // Each id is double-encoded, so a comma inside an id survives
+        // Navigation's own decode without posing as the separator (D12).
+        assertEquals(
+            listOf("c1", "c2"),
+            decodeCategoryList(Uri.decode(route.substringAfter("categories=")))
+        )
     }
 
     @Test

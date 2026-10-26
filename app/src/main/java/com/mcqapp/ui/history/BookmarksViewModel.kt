@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 
 data class BookmarksUiState(val count: Int = 0)
@@ -29,26 +28,22 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     val state: StateFlow<BookmarksUiState> = _state.asStateFlow()
 
     /**
-     * Rebuilt whenever the bookmark set changes, so removing (or adding) a
-     * bookmark from anywhere refreshes the visible list. The trigger is the
-     * table's invalidation, not its contents: the ids themselves would be
-     * handed back in full on every change, and this is the one screen that
-     * already knows every row is bookmarked. Pages carry content only as they
-     * scroll in.
+     * One Pager generation: the paging source invalidates itself when the
+     * bookmarks table changes (see [McqRepository.bookmarkedPagingSource]), so
+     * removing (or adding) a bookmark from anywhere refreshes the visible list
+     * in place. The old `flatMapLatest` rebuilt the whole pager — and reset
+     * its scroll to the top — on every toggle (consolidated_bugs.md F14).
      */
     val pagingData: Flow<PagingData<com.mcqapp.domain.BookmarkedQuestion>> =
-        repository.observeBookmarkChanges()
-            .flatMapLatest {
-                Pager(
-                    PagingConfig(
-                        pageSize = BOOKMARKS_PAGE,
-                        initialLoadSize = BOOKMARKS_PAGE,
-                        enablePlaceholders = false
-                    )
-                ) {
-                    repository.bookmarkedPagingSource()
-                }.flow
-            }
+        Pager(
+            PagingConfig(
+                pageSize = BOOKMARKS_PAGE,
+                initialLoadSize = BOOKMARKS_PAGE,
+                enablePlaceholders = false
+            )
+        ) {
+            repository.bookmarkedPagingSource()
+        }.flow
             .cachedIn(viewModelScope)
 
     init {
@@ -61,7 +56,10 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun removeBookmark(questionId: String) {
-        viewModelScope.launch { repository.toggleBookmark(questionId) }
+        // Idempotent delete, not a toggle: the row is still composed while the
+        // list refreshes, so a second tap used to re-add the bookmark it had
+        // just removed (consolidated_bugs.md F15).
+        viewModelScope.launch { repository.deleteBookmark(questionId) }
     }
 
     private val _exportError = MutableStateFlow<String?>(null)
@@ -73,20 +71,25 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         viewModelScope.launch {
             try {
-                val stream = com.mcqapp.data.io.Exporter(repository.db()).bookmarkStream()
-                    ?: throw IllegalStateException("No bookmarked questions to export")
-                val file = (
-                    getApplication<Application>().contentResolver.openOutputStream(uri)
-                        ?: throw IllegalStateException("Could not open output stream")
-                    ).use { sink ->
-                    com.mcqapp.data.export.PaperExporter(repository.db())
-                        .exportStream(
-                            stream,
-                            com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
-                            format,
-                            sink,
-                            twoColumnPdf = repository.pdfTwoColumn().first()
-                        )
+                // The output stream opens on IO: a slow or cloud-backed
+                // provider used to open it on the main dispatcher and jank
+                // (consolidated_bugs.md F18). Settings already did this.
+                val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val stream = com.mcqapp.data.io.Exporter(repository.db()).bookmarkStream()
+                        ?: throw IllegalStateException("No bookmarked questions to export")
+                    (
+                        getApplication<Application>().contentResolver.openOutputStream(uri)
+                            ?: throw IllegalStateException("Could not open output stream")
+                        ).use { sink ->
+                        com.mcqapp.data.export.PaperExporter(repository.db())
+                            .exportStream(
+                                stream,
+                                com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                                format,
+                                sink,
+                                twoColumnPdf = repository.pdfTwoColumn().first()
+                            )
+                    }
                 }
                 Logger.i("BOOKVM", "Exported ${file.fileName}")
                 _exportError.value = null

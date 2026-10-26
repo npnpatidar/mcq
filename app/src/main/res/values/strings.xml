@@ -333,6 +333,8 @@
     <!-- Statistics page -->
     <string name="stats">Statistics</string>
     <string name="stats_load_error">Statistics could not be loaded.</string>
+    <string name="paging_refresh_failed">This list could not be loaded.</string>
+    <string name="paging_append_failed">More items could not be loaded.</string>
     <string name="stats_all_papers">All papers</string>
     <string name="stats_no_data">Not enough data yet</string>
     <string name="tab_overview">Overview</string>

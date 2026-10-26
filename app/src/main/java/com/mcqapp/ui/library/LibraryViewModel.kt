@@ -16,6 +16,7 @@ import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
 import com.mcqapp.util.Logger
+import com.mcqapp.util.displayName
 import java.io.InputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +29,182 @@ import kotlinx.coroutines.launch
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /**
+     * The export the format dialog and the system save dialog are working on.
+     *
+     * Held in the VM: the save dialog recreates the activity, and composition
+     * state came back all-null, so the re-delivered URI fell through to
+     * [exportAll] — the whole library written to the file the user picked for
+     * one paper or selection (consolidated_bugs.md F2).
+     */
+    data class PendingExportTarget(
+        val paperId: String? = null,
+        val selection: Triple<String, List<String>, Int>? = null,
+        val format: com.mcqapp.data.export.ExportFormat? = null
+    )
+
+    private val _pendingExport = MutableStateFlow<PendingExportTarget?>(null)
+    val pendingExport: StateFlow<PendingExportTarget?> = _pendingExport.asStateFlow()
+
+    fun setPendingExport(target: PendingExportTarget?) {
+        _pendingExport.value = target
+    }
+
+    fun consumePendingExport(): PendingExportTarget? {
+        val target = _pendingExport.value
+        _pendingExport.value = null
+        return target
+    }
+
+    /**
+     * Classifies a picked import file and hands the result to the callbacks.
+     *
+     * This runs in [viewModelScope]: the composition scope the picker callback
+     * used to run in is cancelled by the recreation a picker can itself
+     * trigger, silently dropping the pick with no error and no navigation
+     * (consolidated_bugs.md F13).
+     *
+     * Off the main thread and size-capped: the pick used to be read with
+     * readBytes() on the UI thread, which ANR'd or died on OOM — a failure
+     * `catch (Exception)` does not cover.
+     */
+    fun onImportPicked(
+        picked: Uri,
+        contentResolver: android.content.ContentResolver,
+        onDocx: (bytes: ByteArray, name: String) -> Unit,
+        onJsonUri: (Uri) -> Unit,
+        onJsonBytes: (ByteArray) -> Unit
+    ) {
+        viewModelScope.launch {
+            // Read a bounded prefix first. It is enough to tell a zip from
+            // JSON and to keep a small bank in memory, but it never allocates
+            // the whole large bank: a bigger JSON is streamed from the Uri.
+            val prefix = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    contentResolver.openInputStream(picked)?.use { stream ->
+                        com.mcqapp.util.readPrefix(
+                            stream,
+                            com.mcqapp.ui.importscreen.JSON_STREAM_THRESHOLD_BYTES.toLong()
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.e("LIB", "Failed to read import file", e)
+                showError("Could not read the file: ${e.message}")
+                return@launch
+            } ?: run {
+                showError("Could not read the file.")
+                return@launch
+            }
+
+            // Route by content, not by name or MIME type (pickers report
+            // both inconsistently). Both .apkg and .docx are zips, so a
+            // .docx is told apart by its word/document.xml entry; our
+            // JSON can arrive under any extension and stays on the text
+            // path below.
+            val isZip = prefix.bytes.size >= 2 && prefix.bytes[0] == 'P'.code.toByte() &&
+                prefix.bytes[1] == 'K'.code.toByte()
+
+            if (isZip) {
+                // Classify by streaming the archive's entry names, so the file
+                // is never read whole. Both .apkg and .docx are zips; a Word
+                // file is told apart by its word/document.xml entry, a backup
+                // by its manifest. A backup with images in it is often over the
+                // old size cap — "too large to import" would be the wrong thing
+                // to tell someone who picked a file that was never meant to be
+                // imported at all.
+                val kind = try {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        contentResolver.openInputStream(picked)?.use { stream ->
+                            com.mcqapp.ui.library.classifyPickedArchive(stream)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Logger.e("LIB", "Failed to read import file", e)
+                    showError("Could not read the file: ${e.message}")
+                    return@launch
+                } ?: run {
+                    showError("Could not read the file.")
+                    return@launch
+                }
+                when (kind) {
+                    com.mcqapp.ui.library.PickedArchive.DOCX -> {
+                        // A Word bank is small and the parser wants its bytes,
+                        // so read it now, under the same cap as before.
+                        val bytes = try {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                contentResolver.openInputStream(picked)?.use { stream ->
+                                    com.mcqapp.util.readBounded(stream)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Logger.e("LIB", "Failed to read import file", e)
+                            showError(
+                                if (e is com.mcqapp.util.ImportTooLargeException) {
+                                    com.mcqapp.util.tooLargeMessage(
+                                        e.atLeastBytes,
+                                        com.mcqapp.util.MAX_IMPORT_BYTES
+                                    )
+                                } else {
+                                    "Could not read the file: ${e.message}"
+                                }
+                            )
+                            return@launch
+                        } ?: run {
+                            showError("Could not read the file.")
+                            return@launch
+                        }
+                        Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
+                        // The file name becomes the paper title (the document
+                        // rarely names its own paper). The provider's display
+                        // name, not the opaque row id a content Uri carries in
+                        // lastPathSegment.
+                        onDocx(bytes, contentResolver.displayName(picked) ?: "")
+                    }
+                    com.mcqapp.ui.library.PickedArchive.BACKUP -> {
+                        // Restore is the reverse of export: it replaces the
+                        // whole library, while import only adds papers.
+                        Logger.i("LIB", "picked library backup: not an import")
+                        showError(backupNotABankMessage())
+                    }
+                    com.mcqapp.ui.library.PickedArchive.OTHER -> {
+                        // The deck is streamed straight from the Uri by the
+                        // importer, so the archive is never held as bytes.
+                        val title = contentResolver.displayName(picked) ?: "deck.apkg"
+                        importAnkiPackage(title) {
+                            contentResolver.openInputStream(picked)
+                        }
+                    }
+                }
+                return@launch
+            }
+
+            if (prefix.truncated) {
+                // Too large to hold as bytes: the import screen re-opens the
+                // Uri, previews a bounded sample and streams the rest.
+                Logger.i("LIB", "picked large import file: streaming from uri")
+                onJsonUri(picked)
+            } else {
+                // Bytes stay bytes: the String copy that used to be made here
+                // doubled the bank in memory before the parser ever saw it.
+                val bytes = prefix.bytes
+                val fingerprint = try {
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(bytes)
+                    digest.joinToString("") { "%02x".format(it) }.take(12)
+                } catch (e: Exception) {
+                    "unknown"
+                }
+                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint")
+                onJsonBytes(bytes)
+            }
+        }
+    }
+
+    /** The "picked a backup" message, shared with the import path. */
+    private fun backupNotABankMessage(): String =
+        com.mcqapp.ui.library.backupNotABankMessage()
 
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

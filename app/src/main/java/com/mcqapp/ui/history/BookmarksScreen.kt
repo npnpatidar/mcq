@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +56,8 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+import com.mcqapp.ui.common.PagingAppendErrorItem
+import com.mcqapp.ui.common.PagingRefreshErrorItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,7 +72,10 @@ fun BookmarksScreen(
 
     var showFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
-    var pendingFormat by remember { mutableStateOf<ExportFormat?>(null) }
+    // rememberSaveable: the system save dialog recreates the activity, and a
+    // plain `remember` came back null so the re-delivered URI was dropped
+    // (consolidated_bugs.md F4). Enums are Serializable and save as-is.
+    var pendingFormat by rememberSaveable { mutableStateOf<ExportFormat?>(null) }
 
     fun onExportDocument(uri: Uri?) {
         val format = pendingFormat
@@ -124,7 +130,10 @@ fun BookmarksScreen(
             )
         }
     ) { padding ->
-        if (state.count == 0) {
+        // A failed refresh rendered as an empty or blank list with no way
+        // back (consolidated_bugs.md F6).
+        val refreshFailed = items.loadState.refresh is LoadState.Error
+        if (state.count == 0 && !refreshFailed) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -199,6 +208,16 @@ fun BookmarksScreen(
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp))
                         }
+                    }
+                }
+                if (items.loadState.append is LoadState.Error) {
+                    item(key = "bookmarks-append-error", contentType = "append-error") {
+                        PagingAppendErrorItem(items)
+                    }
+                }
+                if (refreshFailed) {
+                    item(key = "bookmarks-refresh-error", contentType = "refresh-error") {
+                        PagingRefreshErrorItem(items)
                     }
                 }
             }

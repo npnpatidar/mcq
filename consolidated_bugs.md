@@ -94,25 +94,25 @@ adjudication.
 | E13 | Nit | NIT | Sheet | Predicted retention truncates instead of rounding |
 | E14 | Nit | NIT | Stats | Scope selector's paper list read once in `init` |
 | E15 | Nit | NIT | Stats | KPI pairs retention (subset) with reviews (all) without a qualifier |
-| F1 | High | BUG | Import UI | Process-death guard fires on every recreation → destroys a live import |
-| F2 | High | BUG | Library | Stale export scope falls through to `exportAll` (whole library) |
-| F3 | High | BUG | Test | Countdown never restarts after a failed save (auto-submit dead) |
-| F4 | Medium | BUG | Bookmarks/Settings | Picked file silently ignored after activity recreation |
-| F5 | Medium | BUG | Browse | Deep-link auto-scroll re-fires on every filter/pager generation |
-| F6 | Medium | BUG | Results/Search/Bookmarks | `LoadState.Error` renders as a blank list; append errors unhandled |
-| F7 | Medium | BUG | Browse | Selection survives filter changes; bulk ops hit hidden rows |
-| F8 | Medium | BUG | Test | Question scroll position carries over to the next question |
-| F9 | Low | BUG | Browse | `openEditor` clamps an out-of-scope anchor to a wrong cursor |
-| F10 | Low | BUG | Browse | Selection state is plain `remember` → rotation discards it |
-| F11 | Low | NIT | Browse | Selection export ordered by tick order, not list order |
-| F12 | Low | NIT | Library | Every library dialog lives in plain `remember` |
-| F13 | Low | BUG | Library | Picked file read in the composition scope; recreation drops it |
-| F14 | Low | BUG | Bookmarks | Every bookmark toggle rebuilds the pager → deep scroll jumps to top |
-| F15 | Low | BUG | Bookmarks | "Delete" calls `toggleBookmark`; a double-tap re-adds the row |
-| F16 | Low | BUG | Settings | `AnkiNumberRow` display and stored value diverge (1.5 → "1", slow/fast clamp) |
-| F17 | Low | NIT | Settings | Retention slider writes DataStore on every drag frame |
-| F18 | Low | BUG | Bookmarks | Export opens the output stream on the main thread |
-| F19 | Nit | NIT | Test | "No questions in this selection" flashes at session start |
+| F1 | High | BUG | Import UI | Process-death guard fires on every recreation → destroys a live import | — **FIXED**
+| F2 | High | BUG | Library | Stale export scope falls through to `exportAll` (whole library) | — **FIXED**
+| F3 | High | BUG | Test | Countdown never restarts after a failed save (auto-submit dead) | — **FIXED**
+| F4 | Medium | BUG | Bookmarks/Settings | Picked file silently ignored after activity recreation | — **FIXED**
+| F5 | Medium | BUG | Browse | Deep-link auto-scroll re-fires on every filter/pager generation | — **FIXED**
+| F6 | Medium | BUG | Results/Search/Bookmarks | `LoadState.Error` renders as a blank list; append errors unhandled | — **FIXED**
+| F7 | Medium | BUG | Browse | Selection survives filter changes; bulk ops hit hidden rows | — **FIXED**
+| F8 | Medium | BUG | Test | Question scroll position carries over to the next question | — **FIXED**
+| F9 | Low | BUG | Browse | `openEditor` clamps an out-of-scope anchor to a wrong cursor | — **FIXED**
+| F10 | Low | BUG | Browse | Selection state is plain `remember` → rotation discards it | — **FIXED**
+| F11 | Low | NIT | Browse | Selection export ordered by tick order, not list order | — **FIXED**
+| F12 | Low | NIT | Library | Every library dialog lives in plain `remember` | — **FIXED**
+| F13 | Low | BUG | Library | Picked file read in the composition scope; recreation drops it | — **FIXED**
+| F14 | Low | BUG | Bookmarks | Every bookmark toggle rebuilds the pager → deep scroll jumps to top | — **FIXED**
+| F15 | Low | BUG | Bookmarks | "Delete" calls `toggleBookmark`; a double-tap re-adds the row | — **FIXED**
+| F16 | Low | BUG | Settings | `AnkiNumberRow` display and stored value diverge (1.5 → "1", slow/fast clamp) | — **FIXED**
+| F17 | Low | NIT | Settings | Retention slider writes DataStore on every drag frame | — **FIXED**
+| F18 | Low | BUG | Bookmarks | Export opens the output stream on the main thread | — **FIXED**
+| F19 | Nit | NIT | Test | "No questions in this selection" flashes at session start | — **FIXED**
 | G1 | High | BUG | Tables | Table cell markup renders as literal tags in-app/HTML |
 | G2 | High | BUG | Tables | A picture in a DOCX cell renders as a base64 blob |
 | G3 | High | BUG | Tables | Equations in cells render as raw MathML |
@@ -128,14 +128,14 @@ adjudication.
 | G13 | Nit | NIT | Editor | Ragged-table add-row sizing; silent cell no-op |
 | H1 | Medium | BUG | Settings | Backup/restore failures report under "Export failed" |
 | H2 | Medium | BUG | Settings | A silently rejected typed value stays in the field; the row lies |
-| H3 | Low | BUG | Settings | `fastSeconds` UI range (1..600) disagrees with the domain clamp (1..3600) |
+| H3 | Low | BUG | Settings | `fastSeconds` UI range (1..600) disagrees with the domain clamp (1..3600) | — **FIXED**
 | H4 | Low | BUG | Settings | Whole-config writes can revert freshly fitted FSRS weights |
 | H5 | Low | NIT | Settings | Backup manifest lists every attempt row just to count them |
 | H6 | Low | BUG | Settings | No busy state/progress; leaving the screen silently cancels a restore |
 | H7 | Nit | NIT | Settings | Hardcoded labels; descriptions spliced mid-sentence across resources |
 | H8 | Nit | NIT | Settings | Fractional relearn minutes render truncated |
 | H9 | Nit | NIT | Settings | "Export Logs" can silently do nothing; `startActivity` unwrapped |
-| H10 | Nit | NIT | Settings | Transient dialog state is plain `remember` (rotation loses it) |
+| H10 | Nit | NIT | Settings | Transient dialog state is plain `remember` (rotation loses it) | — **FIXED**
 | I1 | Medium | BUG | Optimizer | Outlier buckets and S0 pretrain use a wider dataset than the reference |
 | I2 | Low-Med | BUG | Replay | `FsrsReplay.replay` maps keyed globally, contradicting its id contract |
 | I3 | Low-Med | BUG | Study | A pull failure after a persisted grade misreports and invites double-persist |
@@ -482,7 +482,7 @@ only in the true-retention help string, so "92% · 148 reviews" can read as "92%
 
 ### F. UI layer — from `ui_bugs.md`
 
-**F1 · High · BUG — the process-death guard fires on every recreation and destroys a live import.**
+**F1 · High · BUG — the process-death guard fires on every recreation and destroys a live import.** *FIXED: `setNoSourceError` only fires for a VM that is still loading with nothing in it.*
 `ImportScreen.kt:178-204` runs `LaunchedEffect(Unit)`, consumes the holder and, when all sources
 are null, calls `setNoSourceError()` (`ImportViewModel.kt:783-790`) — but the ViewModel (keyed to
 the back-stack entry) survives recreation with the preview intact. Any config change over the
@@ -490,28 +490,28 @@ preview, and every return from the preview editor, shows a Go-back-only fatal di
 the screen and loses the import. *Fix:* gate the error on "the VM has nothing loaded", or consume
 the source in VM init keyed by fingerprint.
 
-**F2 · High · BUG (needs recreation) — stale export scope falls through to `exportAll`.**
+**F2 · High · BUG (needs recreation) — stale export scope falls through to `exportAll`.** *FIXED: the pending export target (paper/selection/format) lives in `LibraryViewModel`; `exportAll` has no caller on the screen any more.*
 `LibraryScreen.kt:111-117` holds the pending target in plain `remember`. The system save dialog
 recreates the activity; the launcher re-delivers the URI to a composition where all three vars
 are null and `onExportDocument` (`:121-137`) falls into `exportAll(it)` — the whole library
 written to the file the user picked for one paper/selection. `exportAll` has no legitimate caller
 on this screen. *Fix:* `rememberSaveable`/ViewModel-held pending target.
 
-**F3 · High · BUG — the countdown never restarts after a failed save.**
+**F3 · High · BUG — the countdown never restarts after a failed save.** *FIXED: the Failed branch restarts the dwell ticker and the countdown while time remains.*
 `submit()` cancels `timerJob`/`dwellJob` up front; the `SubmissionOutcome.Failed` branch
 (`TestViewModel.kt:743-752`) resets `saving/submitted` but never calls `startTimer()` (callers
 are only `load`, `resume`, `discardResume`). The clock freezes and auto-submit is dead while the
 user keeps answering; recorded duration freezes too. *Fix:* restart the timer in the Failed
 branch when time remains.
 
-**F4 · Medium · BUG (needs recreation) — a picked file is silently ignored.**
+**F4 · Medium · BUG (needs recreation) — a picked file is silently ignored.** *FIXED: `pendingFormat` (bookmarks) and the settings restore trio are `rememberSaveable`.*
 `BookmarksScreen.kt:70-78` keeps `pendingFormat` in plain `remember`; if the activity recreates
 while the picker is up, the result arrives with `pendingFormat == null` and is dropped. Settings
 has the same class with its `restoreUri`/`showRestoreConfirm` confirm-dialog variant
 (`SettingsScreen.kt:105-116,541-550`). (Verification correction: `pendingFormat` exists only in
 BookmarksScreen, not Settings.) *Fix:* `rememberSaveable`/ViewModel-held pending choice.
 
-**F5 · Medium · BUG — the deep-link auto-scroll re-fires on every pager generation.**
+**F5 · Medium · BUG — the deep-link auto-scroll re-fires on every pager generation.** *FIXED: the scroll is one-shot per focus id, flagged only once the anchor resolves.*
 `BrowseScreen.kt:305-312` keys the effect on `listHasRows`; every filter change and every
 `observePapers`→`bumpCategories()` rebuilds the Pager (`BrowseViewModel.kt:184-188,201-226`),
 flipping `itemCount` 0→>0 and re-running the scroll. After a deep link, any filter chip or write
@@ -519,24 +519,24 @@ elsewhere yanks the list back to the focused row. (Canonical entry; the deleted
 `browse_bug.md` BUG 2 describes the same defect and adds the `bumpCategories` churn note.)
 *Fix:* one-shot per focus id (`rememberSaveable` flag set only when the anchor resolves).
 
-**F6 · Medium · BUG — a paging error renders as a blank list (three screens).**
+**F6 · Medium · BUG — a paging error renders as a blank list (three screens).** *FIXED: shared `PagingRefreshErrorItem`/`PagingAppendErrorItem` (retry via `items.retry()`) wired into results, search and bookmarks.*
 `ResultsScreen.kt:267-291` has no `LoadState.Error` branch; `SearchScreen.kt:101-112`'s `when`
 covers only loading/empty; `BookmarksScreen.kt:127-204` never checks refresh state. A failed
 refresh shows a blank area with no message/retry, and append errors are handled nowhere (the
 spinner simply stops). *Fix:* a shared error row + retry via `items.retry()`, plus an
 append-error footer.
 
-**F7 · Medium · BUG — selection survives a filter change; bulk ops hit hidden rows.**
+**F7 · Medium · BUG — selection survives a filter change; bulk ops hit hidden rows.** *FIXED: any filter-scope change drops the selection (pruning cannot see past the loaded pages).*
 `BrowseScreen.kt:106-107` holds selection; filter handlers never touch it and the chips stay
 tappable in selection mode. Tick 5, switch the category, and Delete/Edit act on the invisible 5.
 *Fix:* prune the selection to the visible scope on filter change (or exit selection mode).
 
-**F8 · Medium · BUG — the test question scroll position carries over.**
+**F8 · Medium · BUG — the test question scroll position carries over.** *FIXED: the scroll resets on question change.*
 `TestSessionScreen.kt:446` uses an unkeyed `rememberScrollState()` with no reset on question
 change, so question N+1 opens at the previous offset (a rotation resets it — inconsistent).
 *Fix:* `LaunchedEffect(question.id) { scrollState.scrollTo(0) }` or key by id.
 
-**F9 · Low · BUG — `openEditor` clamps a stale anchor to a wrong cursor.**
+**F9 · Low · BUG — `openEditor` clamps a stale anchor to a wrong cursor.** *FIXED: the counted index is verified with `browseFilteredIdAt`, as `browseIndexOf` does; an out-of-scope anchor bails.*
 `BrowseViewModel.kt:521` coerces `browseFilteredIndexOf(anchorId, scope)` into `0..size-1`
 without verification. That function is a keyset *count* (never −1); for an out-of-scope anchor it
 returns the count of in-scope rows before the anchor's position, so the editor's "N of M" and
@@ -545,37 +545,37 @@ Prev/Next start from the wrong place. The sibling `browseIndexOf` (`:502-509`) v
 wrong; the deleted `browse_bug.md` BUG 4 has the accurate description. Merged here.) *Fix:* apply
 the same id-at-index verification and bail/fall back.
 
-**F10 · Low · BUG — browse selection is lost on rotation.** `BrowseScreen.kt:106-114`
+**F10 · Low · BUG — browse selection is lost on rotation.** *FIXED: selection/exports are `rememberSaveable`.* `BrowseScreen.kt:106-114`
 (`selectionMode`, `selectedIds`, `exportIds`) is plain `remember`; a config change discards a
 multi-select, and process death with the picker up makes export silently no-op. *Fix:*
 `rememberSaveable` (save the set as an `ArrayList<String>`).
 
-**F11 · Low · NIT — selection export is ordered by tick order.** `BrowseViewModel.kt:622-623`
+**F11 · Low · NIT — selection export is ordered by tick order.** *FIXED: rows are ordered by the browse scope's own positions; out-of-scope rows keep their relative tail order.* `BrowseViewModel.kt:622-623`
 sorts by `questionIds.indexOf`, and `selectedIds` is a tick-ordered `LinkedHashSet`; a
 whole-paper export sorts properly, the selection path does not. *Fix:* order by the browse
 scope's own ordering.
 
-**F12 · Low · NIT — every library dialog is composition state.** `LibraryScreen.kt:101-117`,
+**F12 · Low · NIT — every library dialog is composition state.** *FIXED: dialog flags, typed fields (paper/category/drill) and the drawer state are `rememberSaveable`; object-backed edit dialogs still close on recreation by design.* `LibraryScreen.kt:101-117`,
 `LibraryPaperCard.kt:124-126` (drill fields), `LibraryDrawer.kt:82` are plain `remember`; a
 rotation closes dialogs and discards typed input. (Verification: user-facing typed-input loss, so
 arguably a BUG, but recorded at the report's NIT grade.) *Fix:* `rememberSaveable`.
 
-**F13 · Low · BUG (needs recreation) — the pick is read in the composition scope.**
+**F13 · Low · BUG (needs recreation) — the pick is read in the composition scope.** *FIXED: classification and bounded reads run in `LibraryViewModel.onImportPicked`.*
 `LibraryScreen.kt:98` creates `rememberCoroutineScope()` and the import-picker callback (`:175`)
 runs the bounded read/classify/DOCX parse in it; a recreation cancels it with no error or
 navigation. The apkg path already goes through the ViewModel. *Fix:* hand the Uri to
 `LibraryViewModel`.
 
-**F14 · Low · BUG — every bookmark toggle rebuilds the pager.** `BookmarksViewModel.kt:39-52`
+**F14 · Low · BUG — every bookmark toggle rebuilds the pager.** *FIXED: one Pager generation per screen — the paging sources invalidate themselves via the Room invalidation tracker (observer self-removes) and re-read the saved set per load; bookmarks and the results Saved chip both refresh in place.* `BookmarksViewModel.kt:39-52`
 wraps the Pager in `flatMapLatest` over bookmark changes; each generation starts at `key = null`,
 so a deep scroll jumps to the top on every toggle. `ResultsViewModel.kt:57-88` has the same class
 on the "Saved" chip. *Fix:* let Room invalidation drive one Pager generation.
 
-**F15 · Low · BUG — "Delete" is a toggle.** `BookmarksViewModel.kt:63-65` calls
+**F15 · Low · BUG — "Delete" is a toggle.** *FIXED: idempotent `deleteBookmark`.* `BookmarksViewModel.kt:63-65` calls
 `toggleBookmark`; a second tap (row still composed) re-adds the deleted bookmark, and a row
 un-bookmarked elsewhere is un-deleted. *Fix:* an idempotent `deleteBookmark`.
 
-**F16 · Low · BUG — `AnkiNumberRow` display and stored value diverge.** (a)
+**F16 · Low · BUG — `AnkiNumberRow` display and stored value diverge.** *FIXED: the relearn row steps in 0.5; `AnkiNumberRow` takes a cross-field `validExtra` and never commits a value failing it (the slow row requires slow ≥ fast).* (a)
 `SettingsScreen.kt:870-871` shows `relearnMs/60000.0` with `step = 1.0`, and `formatValue`
 truncates (`:963-973`): 1.5 min shows "1" and stepping writes 2.0 over 90000 ms. (b)
 `SpacedRepetition.kt:204` clamps slow up to fast, but the row's validity check is range-only, so
@@ -583,19 +583,19 @@ typing 5 with fast = 120 shows a phantom "5" (the StateFlow does not emit, `reme
 never resets) while 120 is stored. Same widget class as H2/H3. *Fix:* step in 0.5/store seconds;
 validate the cross-field rule in the row instead of sanitizing silently.
 
-**F17 · Low · NIT — the retention slider writes DataStore per drag frame.**
+**F17 · Low · NIT — the retention slider writes DataStore per drag frame.** *FIXED: one commit per gesture via `onValueChangeFinished`.*
 `SettingsScreen.kt:652-658` → `SettingsViewModel.kt:192-195` → a full DataStore edit per
 `onValueChange`. (Verification remark: per-keystroke writes for text rows are documented as
 deliberate at `SettingsViewModel.kt:188-191`; the slider's per-frame writes are not covered by
 that rationale.) *Fix:* commit on `onValueChangeFinished` or debounce.
 
-**F18 · Low · BUG — bookmark export opens the stream on the main thread.**
+**F18 · Low · BUG — bookmark export opens the stream on the main thread.** *FIXED: the export runs in `Dispatchers.IO`.*
 `BookmarksViewModel.kt:74-90` calls `contentResolver.openOutputStream` inside a plain
 `viewModelScope.launch` (Main.immediate); Settings wraps the identical call in
 `Dispatchers.IO` (`SettingsViewModel.kt:324,351`). Slow/cloud providers can jank/ANR.
 *Fix:* `withContext(Dispatchers.IO)`.
 
-**F19 · Nit · NIT — "No questions in this selection" flashes at session start.**
+**F19 · Nit · NIT — "No questions in this selection" flashes at session start.** *FIXED: a null card over a non-empty order shows a spinner; the empty text is for an empty order.*
 `TestViewModel.kt:291-306` publishes `loading = false` before `resolveCurrent()` (`:312`) resolves
 the first card asynchronously, so `TestSessionScreen.kt:432-441` renders the empty branch for a
 frame. *Fix:* keep loading until the first publish (or treat `current == null && order.isNotEmpty()`
@@ -692,7 +692,7 @@ equals the previous one, the StateFlow does not emit, and `remember(current)` ne
 text. The field shows 5 while 120 is stored and every keystroke/stepper is swallowed.
 *Fix:* react to the sanitized round-trip (show an error/hint) rather than silently clamping.
 
-**H3 · Low · BUG — `fastSeconds` UI range disagrees with the domain clamp.**
+**H3 · Low · BUG — `fastSeconds` UI range disagrees with the domain clamp.** *FIXED: the row range is 1..3600, matching `sanitized`.*
 Row range is `1f..600f` (`SettingsScreen.kt:804`), domain clamp `1..3600`
 (`SpacedRepetition.kt:203`): a restored 601–3600 value renders as a permanent error with
 disabled steppers, and 601–3600 cannot be typed. *Fix:* widen the row to 1..3600 (or narrow the
@@ -736,7 +736,7 @@ shows `relearnMs/60000.0` (`:870`); a restored 90000 ms shows "1" and steps from
 has no else (`SettingsScreen.kt:481`); the chooser launch (`:493`) is unwrapped
 (`ActivityNotFoundException` would crash). *Fix:* an else-branch message and a try/catch.
 
-**H10 · Nit · NIT — transient dialog state lost on rotation.**
+**H10 · Nit · NIT — transient dialog state lost on rotation.** *FIXED: export error, restore confirm/URI/done and the advanced section are `rememberSaveable`.*
 `exportError`, `showRestoreConfirm`, `restoreDone`, `restoreUri` (`SettingsScreen.kt:89,105-107`)
 and `advancedExpanded` (`:609`) are plain `remember`; a rotation dismisses the restore confirm and
 loses the picked URI. *Fix:* `rememberSaveable` (custom saver for `Uri`).

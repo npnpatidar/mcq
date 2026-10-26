@@ -757,6 +757,14 @@ class TestViewModel(
                             saveError = "Could not save your result: ${outcome.message}"
                         )
                     }
+                    // submit() cancelled both timers up front; without this the
+                    // countdown froze and auto-submit stayed dead while the
+                    // user kept answering, and the recorded duration stopped
+                    // with it (consolidated_bugs.md F3).
+                    startDwellTicker()
+                    setDwellActive(true)
+                    val after = _state.value
+                    if (after.totalSeconds > 0 && after.remainingSeconds > 0) startTimer()
                 }
             }
         }

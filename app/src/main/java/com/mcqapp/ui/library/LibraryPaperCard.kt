@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -121,9 +122,10 @@ internal fun PaperCard(
     }
     val scopeTotal = remember(rolled, ticked) { totalCategoryCounts(rolled, ticked) }
 
-    var showDrillDialog by remember { mutableStateOf(false) }
-    var drillCountText by remember { mutableStateOf("10") }
-    var drillMinutesText by remember { mutableStateOf("5") }
+    // Typed drill fields survive rotation (consolidated_bugs.md F12).
+    var showDrillDialog by rememberSaveable { mutableStateOf(false) }
+    var drillCountText by rememberSaveable { mutableStateOf("10") }
+    var drillMinutesText by rememberSaveable { mutableStateOf("5") }
     val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
     val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
     // Asking for more questions than the scope holds used to be accepted

@@ -799,13 +799,23 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      * Process death on the Import screen: the static holder is empty and no
      * text was passed, so nothing will ever flip loading off. Show an error
      * instead of an infinite spinner.
+     *
+     * The screen's launch effect runs on every recreation, with every source
+     * already consumed — but the VM (keyed to the back-stack entry) survives
+     * with the preview intact, so only a VM that has nothing loaded and is
+     * still waiting is a real process death. Gating here is what keeps a
+     * rotation over the preview, and every return from the preview editor,
+     * from destroying a live import (consolidated_bugs.md F1).
      */
     fun setNoSourceError() {
-        _state.update {
-            it.copy(
-                loading = false,
-                error = "Could not read the file. Please pick it again."
-            )
+        val current = _state.value
+        if (current.loading && current.questions.isEmpty() && current.originalFile == null) {
+            _state.update {
+                it.copy(
+                    loading = false,
+                    error = "Could not read the file. Please pick it again."
+                )
+            }
         }
     }
 

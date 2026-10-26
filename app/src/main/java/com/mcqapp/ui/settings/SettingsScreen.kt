@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,7 +87,10 @@ fun SettingsScreen(
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var exportError by remember { mutableStateOf<String?>(null) }
+    // rememberSaveable: the pickers and confirm dialogs recreate the activity,
+    // and plain `remember` dismissed the confirm and lost the picked URI and
+    // the typed-error strings (consolidated_bugs.md F4/H10).
+    var exportError by rememberSaveable { mutableStateOf<String?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -102,9 +106,9 @@ fun SettingsScreen(
             viewModel.backupAll(it) { error -> exportError = error }
         }
     }
-    var showRestoreConfirm by remember { mutableStateOf(false) }
-    var restoreDone by remember { mutableStateOf<String?>(null) }
-    var restoreUri by remember { mutableStateOf<Uri?>(null) }
+    var showRestoreConfirm by rememberSaveable { mutableStateOf(false) }
+    var restoreDone by rememberSaveable { mutableStateOf<String?>(null) }
+    var restoreUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -606,7 +610,7 @@ private fun AnkiSchedulerSection(
     // Collapsed by default: the tuning knobs underneath are for Anki
     // veterans, and an open wall of numbers is what made this screen feel
     // complex. The everyday controls stay above the fold.
-    var advancedExpanded by remember { mutableStateOf(false) }
+    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -649,9 +653,18 @@ private fun AnkiSchedulerSection(
             Text(stringResource(R.string.study_section), style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(8.dp))
             Text(stringResource(R.string.target_retention), style = MaterialTheme.typography.bodyMedium)
+            // One commit per gesture: the drag frames used to write DataStore
+            // per frame (consolidated_bugs.md F17). The text rows' per-keystroke
+            // writes are documented deliberate; the slider's were not.
+            var dragRetention by rememberSaveable(config.desiredRetention) {
+                mutableStateOf(config.desiredRetention.toFloat())
+            }
             Slider(
-                value = config.desiredRetention.toFloat(),
-                onValueChange = { onChange(config.copy(desiredRetention = it.toDouble())) },
+                value = dragRetention,
+                onValueChange = { dragRetention = it },
+                onValueChangeFinished = {
+                    onChange(config.copy(desiredRetention = dragRetention.toDouble()))
+                },
                 // 0.75..0.97 in 0.01 steps: matches SchedulerConfig.sanitized's clamp.
                 valueRange = 0.75f..0.97f,
                 steps = 21
@@ -801,7 +814,11 @@ private fun AnkiSchedulerSection(
                 help = stringResource(R.string.easy_answer_threshold_help),
                 value = config.fastSeconds,
                 step = 1.0,
-                range = 1f..600f,
+                // 1..3600: the domain clamps fastSeconds to 1..3600
+                // (SpacedRepetition.sanitized), and a restored 601-3600 value
+                // used to render as a permanent error with dead steppers
+                // (consolidated_bugs.md H3).
+                range = 1f..3600f,
                 suffix = "s",
                 onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
             )
@@ -812,6 +829,10 @@ private fun AnkiSchedulerSection(
                 step = 1.0,
                 range = 1f..3600f,
                 suffix = "s",
+                // The domain clamps slow up to fast; without this check a typed
+                // value below fast "succeeded" silently, left a phantom in the
+                // field and stored the old value (consolidated_bugs.md F16/H2).
+                validExtra = { it >= config.fastSeconds },
                 onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
             )
 
@@ -868,7 +889,10 @@ private fun AnkiSchedulerSection(
                 label = "Relearning delay",
                 help = "How long until a failed card returns",
                 value = config.relearnMs / 60000.0,
-                step = 1.0,
+                // Half-minute steps: a restored 90000 ms is 1.5 real minutes,
+                // and step 1.0 both displayed it as "1" and overwrote it with
+                // 2.0 on the first step (consolidated_bugs.md F16).
+                step = 0.5,
                 range = 1.0f..1440.0f,
                 suffix = "m",
                 onChange = { onChange(config.copy(relearnMs = (it * 60000).toLong())) }
@@ -905,12 +929,17 @@ private fun AnkiNumberRow(
     step: Double,
     range: ClosedFloatingPointRange<Float>,
     suffix: String? = null,
+    /** Cross-field validity on top of [range]: a typed value failing it shows
+     *  an error and is never committed, instead of being clamped away
+     *  silently (consolidated_bugs.md F16/H2). */
+    validExtra: ((Double) -> Boolean)? = null,
     onChange: (Double) -> Unit
 ) {
     val current = value.toDouble()
     var text by remember(current) { mutableStateOf(formatValue(current, step)) }
     val parsed = text.trim().toDoubleOrNull()
-    val valid = parsed != null && parsed >= range.start && parsed <= range.endInclusive
+    val valid = parsed != null && parsed >= range.start && parsed <= range.endInclusive &&
+        (validExtra == null || validExtra.invoke(parsed))
     // Step from what the user typed when it is valid; an invalid field's
     // buttons are disabled rather than silently snapping back to the last
     // committed value.
@@ -924,8 +953,9 @@ private fun AnkiNumberRow(
             Text(label)
             Text(help, style = MaterialTheme.typography.bodySmall)
         }
+        val downTarget = (stepBase - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())
         IconButton(
-            onClick = { onChange((stepBase - step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
+            onClick = { if (validExtra == null || validExtra.invoke(downTarget)) onChange(downTarget) },
             enabled = valid && stepBase > range.start
         ) {
             Icon(Icons.Default.Remove, contentDescription = "Decrease $label")
@@ -940,7 +970,9 @@ private fun AnkiNumberRow(
                 val filtered = com.mcqapp.util.filterDecimalEntry(input, allowLeadingMinus = true)
                 text = filtered
                 val candidate = filtered.trim().toDoubleOrNull()
-                if (candidate != null && candidate >= range.start && candidate <= range.endInclusive) {
+                if (candidate != null && candidate >= range.start && candidate <= range.endInclusive &&
+                    (validExtra == null || validExtra.invoke(candidate))
+                ) {
                     onChange(candidate)
                 }
             },
@@ -950,8 +982,9 @@ private fun AnkiNumberRow(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.width(88.dp)
         )
+        val upTarget = (stepBase + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())
         IconButton(
-            onClick = { onChange((stepBase + step).coerceIn(range.start.toDouble(), range.endInclusive.toDouble())) },
+            onClick = { if (validExtra == null || validExtra.invoke(upTarget)) onChange(upTarget) },
             enabled = valid && stepBase < range.endInclusive
         ) {
             Icon(Icons.Default.Add, contentDescription = "Increase $label")

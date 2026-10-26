@@ -57,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
@@ -103,15 +104,20 @@ fun BrowseScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val allPapers by viewModel.papers.collectAsStateWithLifecycle()
-    var selectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    // rememberSaveable: a config change used to discard a multi-select, and
+    // process death with the picker up made export silently no-op
+    // (consolidated_bugs.md F10). Sets and enums are Serializable.
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     // The id set is captured at pick time: CreateDocument hands back a Uri
     // later, by which point selection mode may already be over.
-    var exportIds by remember { mutableStateOf(emptySet<String>()) }
-    var exportFormat by remember { mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE) }
+    var exportIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    var exportFormat by rememberSaveable {
+        mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE)
+    }
 
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
@@ -235,6 +241,17 @@ fun BrowseScreen(
         LaunchedEffect(filterState.query) {
             if (filterState.query != searchInput) searchInput = filterState.query
         }
+        // A filter change re-scopes the list: a selection made under the old
+        // scope would let bulk Delete/Edit act on rows now hidden — the chips
+        // stay tappable in selection mode (consolidated_bugs.md F7). The
+        // selection is dropped wholesale; pruning to the visible window cannot
+        // work, because paging hides rows beyond the loaded pages too.
+        LaunchedEffect(filterState.query, filterState.categoryFilterIds, filterState.filter) {
+            if (selectionMode) {
+                selectionMode = false
+                selectedIds = emptySet()
+            }
+        }
 
         val flatCategories = remember(state.paper) {
             CategorySelection.flatten(state.paper?.categories ?: emptyList())
@@ -302,12 +319,23 @@ fun BrowseScreen(
         // the effect runs again once the list has one — paging then jumps to
         // the row only because PagingConfig.jumpThreshold is set (jumps are off
         // by default), and reloads the page around it instead of walking there.
+        //
+        // The scroll is one-shot per focus id: every filter chip and every
+        // write elsewhere rebuilds the pager, flipping itemCount 0→>0 again,
+        // and the effect used to yank the list back to the focused row each
+        // time (consolidated_bugs.md F5). The flag is set only once the
+        // anchor has actually resolved, so a first pass that runs before the
+        // list has rows still gets its scroll.
+        var scrolledTo by rememberSaveable(focusQuestionId) { mutableStateOf(false) }
         val listHasRows = items.itemCount > 0
         LaunchedEffect(focusQuestionId, listHasRows) {
-            if (focusQuestionId.isBlank() || !listHasRows) return@LaunchedEffect
+            if (focusQuestionId.isBlank() || !listHasRows || scrolledTo) return@LaunchedEffect
             viewModel.browseIndexOf(focusQuestionId) { index ->
                 // +1 for the header item above the cards.
-                if (index >= 0) listState.scrollToItem(index + 1)
+                if (index >= 0) {
+                    listState.scrollToItem(index + 1)
+                    scrolledTo = true
+                }
             }
         }
         // Keep the rows around the viewport loaded, cards and passages

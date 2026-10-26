@@ -492,7 +492,11 @@ private fun PassageEditDialog(
                             id = initial?.id.orEmpty(),
                             categoryId = categoryId,
                             title = title.trim(),
-                            elements = elements
+                            elements = elements,
+                            // The dialog edits text only: dropping the image
+                            // here deleted it on every save, untouched or not
+                            // (consolidated_bugs.md C4).
+                            image = initial?.image
                         )
                     )
                 },

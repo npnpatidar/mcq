@@ -58,10 +58,14 @@ internal class PassageStore(
         Logger.d("REPO", "savePassage(id=$id, category=${passage.categoryId}, title='${passage.title}')")
         db.withTransaction {
             val existing = db.passageDao().getById(id)
+            // A new passage appends after its category's current tail: every
+            // new passage used to take sortOrder 0, so the (now ordered)
+            // management list interleaved them (consolidated_bugs.md C8).
+            val sortOrder = existing?.sortOrder
+                ?: passage.sortOrder.takeIf { it > 0 }
+                ?: (db.passageDao().getMaxSortOrder(passage.categoryId) ?: -1) + 1
             val content = mapper.toEntity(passage.copy(id = id))
-            db.passageDao().upsert(
-                content.copy(sortOrder = existing?.sortOrder ?: passage.sortOrder)
-            )
+            db.passageDao().upsert(content.copy(sortOrder = sortOrder))
             // A passage's members must live in its category (the group is
             // only meaningful together). Moving the passage to another
             // category therefore moves every member with it — otherwise they
@@ -188,9 +192,9 @@ internal class PassageStore(
     }
 
     /**
-     * Passages of one category with the questions that belong to each, in
-     * authored order — the shape Browse and the test-session block builder
-     * both need.
+     * Groups the given questions by their passage, blocks in passage
+     * sortOrder. The repository exposes it as [McqRepository.buildPassageBlocks]
+     * — the only production caller — with the rest under test.
      */
     suspend fun buildBlocks(questions: List<Question>): List<PassageBlock> {
         val passageIds = questions.mapNotNull { it.passageId }.distinct()

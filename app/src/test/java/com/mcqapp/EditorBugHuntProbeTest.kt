@@ -165,6 +165,8 @@ class EditorBugHuntProbeTest {
         val optA = vm.state.value.options.first { it.id == "a" }
         assertTrue("the option does hold content (legacy image)", optA.image.isNotBlank())
         assertTrue("but its element list is empty", optA.elements.isEmpty())
-        assertFalse("Save is permanently disabled for this question", vm.state.value.canSave)
+        // FIXED (consolidated_bugs.md J8): the legacy image counts as the
+        // option's content, so the question saves.
+        assertTrue("Save stays enabled for this question", vm.state.value.canSave)
     }
 }

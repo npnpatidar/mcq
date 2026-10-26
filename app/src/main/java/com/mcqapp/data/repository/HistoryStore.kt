@@ -524,7 +524,24 @@ internal class HistoryStore(
         val ids = db.attemptDao().getMistakenQuestionIdsForPaper(paperId)
         if (ids.isEmpty()) return emptyList()
         val byId = db.questionDao().getSessionRefsByIdsChunked(ids).associateBy { it.id }
-        return ids.mapNotNull { byId[it] }
+        val refs = ids.mapNotNull { byId[it] }
+        // Two members of one passage missed at different times used to sit in
+        // two runs, and the drill's block shuffle could place them far apart.
+        // Each passage group lands whole at its first member's position; the
+        // groups keep their most-recently-missed-first order
+        // (consolidated_bugs.md C6).
+        val byPassage = refs.filter { it.passageId != null }.groupBy { it.passageId!! }
+        val emitted = mutableSetOf<String>()
+        val out = mutableListOf<com.mcqapp.data.local.SessionRef>()
+        for (ref in refs) {
+            val pid = ref.passageId
+            if (pid == null) {
+                out += ref
+            } else if (emitted.add(pid)) {
+                out += byPassage.getValue(pid)
+            }
+        }
+        return out
     }
 
     suspend fun getMistakenQuestions(paperId: String): List<Question> {

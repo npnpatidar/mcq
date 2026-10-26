@@ -58,15 +58,15 @@ adjudication.
 | B4 | Low | BUG | Browse | Search input can revert a keystroke in the commit frame |
 | B5 | Nit | NIT | Search | `escapeLike` KDoc is orphaned above `prefilterKey` |
 | B6 | Nit | NIT | Search | Unused `repository` parameter; dead trailing `Spacer` |
-| C1 | Medium | BUG | Passages | Bulk "move to category" strands passage members (no enforcement/re-placement) |
-| C2 | Medium | BUG | Passages | Bulk "copy to category" keeps `passageId` with no enforcement/placement |
-| C3 | Medium | BUG | Passages | Reorder arrows write `sortOrder`, but the list query has no `ORDER BY` |
-| C4 | Medium | BUG | Passages | Editing a passage (even untouched) deletes its image |
-| C5 | Low | BUG | Browse | Passage header first-member lookup uses a different order than the list |
-| C6 | Low | BUG | Session | Mistakes-only order can split a passage set across the drill/shuffle |
-| C7 | Low | BUG | Editor | Passage picker hidden when the category has none → stray member unassignable |
-| C8 | Nit | NIT | Passages | Edge reorder taps silent; flat/mixed list; new passages all `sortOrder=0` |
-| C9 | Nit | NIT | Passages | Dead `updateFields`/`insertIgnore`; wrong KDoc; needless `suspend` |
+| C1 | Medium | BUG | Passages | Bulk "move to category" strands passage members (no enforcement/re-placement) | — **FIXED**
+| C2 | Medium | BUG | Passages | Bulk "copy to category" keeps `passageId` with no enforcement/placement | — **FIXED**
+| C3 | Medium | BUG | Passages | Reorder arrows write `sortOrder`, but the list query has no `ORDER BY` | — **FIXED**
+| C4 | Medium | BUG | Passages | Editing a passage (even untouched) deletes its image | — **FIXED**
+| C5 | Low | BUG | Browse | Passage header first-member lookup uses a different order than the list | — **FIXED**
+| C6 | Low | BUG | Session | Mistakes-only order can split a passage set across the drill/shuffle | — **FIXED**
+| C7 | Low | BUG | Editor | Passage picker hidden when the category has none → stray member unassignable | — **FIXED**
+| C8 | Nit | NIT | Passages | Edge reorder taps silent; flat/mixed list; new passages all `sortOrder=0` | — **FIXED**
+| C9 | Nit | NIT | Passages | Dead `updateFields`/`insertIgnore`; wrong KDoc; needless `suspend` | — **FIXED**
 | D1 | High | BUG | Resume | Drill and non-drill sessions are interchangeable on resume — **FIXED** |
 | D2 | Low | NIT | Drill | `Drill.sample` splits passages, has no production caller (trap) — **FIXED** |
 | D3 | Nit | NIT | Drill | `drillRequested` KDoc references a nonexistent `[questions]` field — **FIXED** |
@@ -257,7 +257,7 @@ end padding rather than a literal no-op). Remove both.
 
 ### C. Passages — from `passages_bugs.md`
 
-**C1 · Medium · BUG — bulk "move to category" strands passage members.**
+**C1 · Medium · BUG — bulk "move to category" strands passage members.** *FIXED: the move re-homes the passage row and pulls every sibling member along (a new `QuestionMoveRow` projection), then re-places each group; cross-paper schedule resets cover the pulled members too.*
 `QuestionStore.kt:405-434` writes `categoryId` only — no `enforcePassageCategory`, no
 `placeWithGroup` — unlike `savePassage`, `saveQuestion`, `assignQuestions` and the importer.
 A moved member's passage row stays in the source category, so the editor/picker no longer offers
@@ -266,14 +266,14 @@ on a cross-paper move), and `deletePassage` stays refused. `saveQuestion`'s enfo
 on the assignment *changing* (`:287`), so a later save does not heal it. *Fix:* redirect members
 to the passage's category or move the passage row with them and re-place the group.
 
-**C2 · Medium · BUG — bulk "copy to category" creates out-of-place members.**
+**C2 · Medium · BUG — bulk "copy to category" creates out-of-place members.** *FIXED: a clone keeps its membership only when the passage already lives in the target category, and then joins the group's tail via `placeWithGroup`.*
 `QuestionStore.kt:437-455` clones keep `passageId` (`:318`), with no enforcement/placement and
 append at the target tail (`:309-314`). Partial selection → two runs; same-category copy → a
 second run outside the group; full cross-category copy → passage-ownership break as C1. Member
 count grows so the passage cannot be deleted. *Fix:* drop `passageId` on the clone when the
 target differs from the passage's category, or route through `assignQuestions` semantics.
 
-**C3 · Medium · BUG — reorder arrows write a field the list never reads.**
+**C3 · Medium · BUG — reorder arrows write a field the list never reads.** *FIXED: `PassageDao.getAll`/`observeAll` order by `sortOrder, rowid`.*
 `PassagesScreen.kt:112` observes `passageDao.observeAll()`; `observeAll`/`getAll`
 (`Daos.kt:173-177`) have no `ORDER BY`, while `movePassage` renumbers `sortOrder`
 (`PassageStore.kt:173-188`). The arrows therefore have no visible effect in the management list.
@@ -281,20 +281,20 @@ Additionally the REPLACE upsert (`Daos.kt:206-207`) re-inserts the row with a fr
 editing any passage moves it to the end of the rowid-ordered list. *Fix:* `ORDER BY sortOrder,
 rowid` in `observeAll`/`getAll` (or sort on the screen).
 
-**C4 · Medium · BUG — editing a passage silently deletes its image.**
+**C4 · Medium · BUG — editing a passage silently deletes its image.** *FIXED: the dialog carries `image = initial?.image`.*
 `PassagesScreen.kt:490-497` builds the saved `Passage` from id/category/title/elements only;
 `image` defaults to null (`Models.kt:282`) and `savePassage` writes it as-is
 (`PassageStore.kt:61-64`). Every save — including an untouched open+Save — wipes the picture,
 which both importers and all three renderers support. *Fix:* carry `image = initial?.image`.
 
-**C5 · Low · BUG — the passage header's first-member lookup uses a different order.**
+**C5 · Low · BUG — the passage header's first-member lookup uses a different order.** *FIXED: `getFirstRefIdByPassage` joins categories and follows the display order; the KDoc drops the shared-category assumption.*
 `Daos.kt:736-740` orders by `sortOrder, rowid` only; Browse (and every other member query) uses
 `categories.sortOrder, categories.title, questions.sortOrder, questions.rowid`
 (`Daos.kt:674-675`). The KDoc's "members share one category" assumption is exactly what C1/C2
 break, so a split group draws its header on a later row. *Fix:* join `categories` and match the
 display order; drop the assumption from the KDoc.
 
-**C6 · Low · BUG (data-shape) — mistakes-only order can split a passage set.**
+**C6 · Low · BUG (data-shape) — mistakes-only order can split a passage set.** *FIXED: `getMistakenQuestionRefs` emits each passage group whole at its first member's position, groups in most-recently-missed order.*
 `Daos.kt:1952-1960` orders mistakes most-recent-first; `SessionOrder.of` builds blocks from runs
 of equal `passageId` (`PassageBlocks.kt:31-42`) and `shuffled`/`sampled` permute runs
 (`SessionOrder.kt:76-89,131-146`). Two members missed at different times become two blocks and
@@ -302,20 +302,20 @@ can be placed far apart, contradicting the "a drill never splits a passage" rule
 still rendered, so severity stays low. *Fix:* group members when building the mistakes order, or
 document the exception at the D1 comment.
 
-**C7 · Low · BUG — a stray member cannot be unassigned.**
+**C7 · Low · BUG — a stray member cannot be unassigned.** *FIXED: the picker shows whenever the question is assigned; the menu offers this category's passages plus Remove, and the title resolves against all of the paper's passages.*
 `QuestionEditorScreen.kt:205-208` composes the passage dropdown only when the current category
 has passages; "Remove from passage" lives inside that dropdown (`:512-519`). A member pointing at
 another category's passage shows "No passage" and, when the current category has no passages, has
 no unassign action at all (changing category drops it as a side effect). *Fix:* show the picker
 whenever `state.passageId != null`, or add a standalone remove action.
 
-**C8 · Nit · NIT — reorder/creation rough edges.**
+**C8 · Nit · NIT — reorder/creation rough edges.** *FIXED (partially): new passages append after the category tail (`getMaxSortOrder`), so they no longer interleave; the edge-tap silence and the mixed-paper list remain as-is.*
 Arrows never disabled at a category edge (`movePassage` clamps and returns false, silent); the
 list is flat and paper-mixed while `movePassage` reorders within one category; new passages all
 get `sortOrder = 0`; changing a passage's category keeps the old `sortOrder` (collides with the
 target's positions).
 
-**C9 · Nit · NIT — dead and misleading passage surface.**
+**C9 · Nit · NIT — dead and misleading passage surface.** *FIXED: `PassageDao.updateFields`/`insertIgnore` deleted (a targeted `updateCategory` replaces the former), `buildBlocks`' KDoc names the real caller, `toPassageDto` is no longer `suspend`.*
 `PassageDao.updateFields` (also skips `searchText`/`searchTextFolded` — a future trap) and
 `insertIgnore` have no callers; `PassageStore.buildBlocks`' KDoc names callers that do not exist
 (only tests use it); `PassageEntity.toPassageDto()` is `suspend` for no reason.

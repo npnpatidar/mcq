@@ -432,7 +432,7 @@ class Exporter(private val db: AppDatabase) {
         return dto.copy(passages = passagesOf(categories))
     }
 
-    private suspend fun PassageEntity.toPassageDto(): PassageDto {
+    private fun PassageEntity.toPassageDto(): PassageDto {
         val elements = text.parseContentElements(json)
         return PassageDto(
             id = id,

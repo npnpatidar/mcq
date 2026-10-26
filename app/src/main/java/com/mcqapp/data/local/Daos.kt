@@ -121,6 +121,14 @@ data class QuestionCategoryRow(
     val categoryId: String
 )
 
+/** The bulk move's row: membership travels with it, so a passage group moves
+ *  whole (consolidated_bugs.md C1). */
+data class QuestionMoveRow(
+    val id: String,
+    val categoryId: String,
+    val passageId: String?
+)
+
 /**
  * A card row plus its physical `rowid`. The projection exists so the
  * statistics load can keyset-page cards in exactly `getAll()`'s order — the
@@ -170,10 +178,13 @@ interface PassageDao {
     @Query("SELECT * FROM passages WHERE categoryId = :categoryId ORDER BY sortOrder, rowid")
     suspend fun getByCategory(categoryId: String): List<PassageEntity>
 
-    @Query("SELECT * FROM passages")
+    // sortOrder, rowid: the reorder arrows renumber sortOrder, and the
+    // management list never read it — an edit's REPLACE rowid bounce also
+    // moved rows to the end of the list (consolidated_bugs.md C3).
+    @Query("SELECT * FROM passages ORDER BY sortOrder, rowid")
     suspend fun getAll(): List<PassageEntity>
 
-    @Query("SELECT * FROM passages")
+    @Query("SELECT * FROM passages ORDER BY sortOrder, rowid")
     fun observeAll(): Flow<List<PassageEntity>>
 
     /** One-row probe: fires on any passage write without loading the table. */
@@ -206,18 +217,12 @@ interface PassageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(passage: PassageEntity)
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertIgnore(passage: PassageEntity)
+    /** A passage group moves whole: the bulk member move re-homes the row. */
+    @Query("UPDATE passages SET categoryId = :categoryId WHERE id = :id")
+    suspend fun updateCategory(id: String, categoryId: String)
 
-    @Query("UPDATE passages SET categoryId = :categoryId, title = :title, text = :text, image = :image, sortOrder = :sortOrder WHERE id = :id")
-    suspend fun updateFields(
-        id: String,
-        categoryId: String,
-        title: String,
-        text: String,
-        image: String?,
-        sortOrder: Int
-    )
+    @Query("SELECT MAX(sortOrder) FROM passages WHERE categoryId = :categoryId")
+    suspend fun getMaxSortOrder(categoryId: String): Int?
 
     @Query("UPDATE passages SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
@@ -728,14 +733,18 @@ interface QuestionDao {
 
     /**
      * The passage's first member, for the Browse row that carries its header.
-     * A passage's members share one category (the importer folds strays into
-     * the passage's category), so within it the display order is the question
-     * order — which makes a `LIMIT 1` read the first member, where the whole
-     * ordered passage was read just to take its first row.
+     * The order is the display order itself — categories first (sortOrder,
+     * title), then the questions — not the bare question order: a group whose
+     * members do not share one category (the very state the group rules
+     * exist to heal) otherwise draws its header on a later row than the one
+     * Browse shows first (consolidated_bugs.md C5).
      */
     @Query(
-        "SELECT id FROM questions WHERE passageId = :passageId " +
-            "ORDER BY sortOrder, rowid LIMIT 1"
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.passageId = :passageId " +
+            "ORDER BY categories.sortOrder, categories.title, questions.sortOrder, questions.rowid " +
+            "LIMIT 1"
     )
     suspend fun getFirstRefIdByPassage(passageId: String): String?
 
@@ -1125,6 +1134,11 @@ interface QuestionDao {
     /** Which of [ids] exist, and under which category — nothing else is loaded. */
     @Query("SELECT id, categoryId FROM questions WHERE id IN (:ids)")
     suspend fun getIdCategoriesByIds(ids: List<String>): List<QuestionCategoryRow>
+
+    /** id, category and passage for the bulk move: a passage group moves
+     *  whole (consolidated_bugs.md C1). */
+    @Query("SELECT id, categoryId, passageId FROM questions WHERE id IN (:ids)")
+    suspend fun getIdCategoryPassageByIds(ids: List<String>): List<QuestionMoveRow>
 
     /**
      * The first page of one paper's questions and their categories, for the

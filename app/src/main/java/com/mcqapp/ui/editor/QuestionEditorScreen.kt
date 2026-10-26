@@ -224,9 +224,15 @@ fun QuestionEditorScreen(
             val categoryPassages = remember(state.passages, state.categoryId) {
                 state.passages.filter { it.categoryId == state.categoryId }
             }
-            if (categoryPassages.isNotEmpty()) {
+            // The picker shows whenever the category has passages OR the
+            // question is already assigned: a member pointing at another
+            // category's passage (the stray state the group rules heal) used
+            // to render "No passage" with no unassign action at all
+            // (consolidated_bugs.md C7).
+            if (categoryPassages.isNotEmpty() || state.passageId != null) {
                 PassageDropdown(
-                    passages = categoryPassages,
+                    passages = state.passages,
+                    assignable = categoryPassages,
                     selectedId = state.passageId,
                     onSelect = { viewModel.updatePassage(it) }
                 )
@@ -532,7 +538,10 @@ private fun CategoryDropdown(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PassageDropdown(
+    /** All of the paper's passages, for resolving an out-of-category title. */
     passages: List<com.mcqapp.domain.Passage>,
+    /** The menu's choices: this category's passages. */
+    assignable: List<com.mcqapp.domain.Passage>,
     selectedId: String?,
     onSelect: (String?) -> Unit
 ) {
@@ -561,7 +570,7 @@ private fun PassageDropdown(
                     expanded = false
                 }
             )
-            passages.forEach { passage ->
+            assignable.forEach { passage ->
                 DropdownMenuItem(
                     text = { Text(passage.title.ifBlank { stringResource(R.string.passage) }) },
                     onClick = {

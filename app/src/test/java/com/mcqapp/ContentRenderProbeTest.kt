@@ -81,19 +81,17 @@ class ContentRenderProbeTest {
     }
 
     /**
-     * BUG (mixed view): a table cell's markup is escaped, so the page shows
-     * literal "<u>u</u>" text instead of an underlined "u".
+     * FIXED (consolidated_bugs.md G1): a table cell's inline markup renders
+     * through the same pipeline as a TextElement.
      */
     @Test
-    fun mixedViewEscapesCellMarkupInsteadOfRenderingIt() {
+    fun mixedViewRendersCellMarkup() {
         val html = mixedContentHtml(
             listOf(ContentElement.TableElement(listOf(listOf("<u>u</u>", "<mark>m</mark>")))),
             16f, "rgba(0,0,0,1)"
         )
-        // The escaped markup is what the page actually shows as text —
-        // formatting never renders inside a cell.
-        assertTrue(html.contains("<td>&lt;u&gt;u&lt;/u&gt;</td>"))
-        assertTrue(html.contains("<td>&lt;mark&gt;m&lt;/mark&gt;</td>"))
+        assertTrue(html.contains("<td><u>u</u></td>"))
+        assertTrue(html.contains("<td><mark>m</mark></td>"))
     }
 
     /**
@@ -168,15 +166,17 @@ xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
     }
 
     /**
-     * BUG: stripMathAttributes keeps only the FIRST <math> block; any text
-     * around it in the same MathElement is silently dropped on screen.
-     * Reachable through the JSON import's {"type":"math","content":…} shape
-     * (only the plain-"text" path splits runs on <math>).
+     * FIXED (consolidated_bugs.md G7): text around the <math> block is kept,
+     * escaped as text, instead of being dropped.
      */
     @Test
-    fun textAroundMathBlockIsDropped() {
+    fun textAroundMathBlockIsKept() {
         val rendered = stripMathAttributes("Solve <math><mi>x</mi></math> now")
-        assertEquals("surrounding text lost", "<math><mrow><mi>x</mi></mrow></math>", rendered)
+        assertEquals(
+            "surrounding text kept",
+            "Solve <math><mrow><mi>x</mi></mrow></math> now",
+            rendered
+        )
     }
 
     /**

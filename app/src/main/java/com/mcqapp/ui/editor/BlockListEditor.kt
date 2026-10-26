@@ -45,6 +45,10 @@ import com.mcqapp.R
 @Composable
 fun BlockListEditor(
     elements: List<ContentElement>,
+    /** Identity of the load this list belongs to (the question id, an option
+     *  id): included in the block keys so a re-targeted editor rebuilds its
+     *  formula blocks (consolidated_bugs.md J4). */
+    generation: String = "",
     onAddBlock: (EditorBlockType) -> Unit,
     onUpdateBlock: (index: Int, element: ContentElement) -> Unit,
     onRemoveBlock: (index: Int) -> Unit,
@@ -65,7 +69,7 @@ fun BlockListEditor(
             // Keyed by content: inserting, removing or reordering a block now
             // gives the moved block its own composition instead of handing the
             // existing WebView to a different formula.
-            androidx.compose.runtime.key(blockKey(element, index)) {
+            androidx.compose.runtime.key(blockKey(element, index, generation)) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -169,8 +173,14 @@ fun BlockListEditor(
  * MathLive editor additionally syncs a changed value through its `update`
  * block, so reuse cannot leave a stale formula on screen.
  */
-internal fun blockKey(element: ContentElement, index: Int): String =
-    "$index:${element::class.simpleName}"
+internal fun blockKey(element: ContentElement, index: Int, generation: String = ""): String {
+    val base = "$index:${element::class.simpleName}"
+    // A formula block at the same index in a DIFFERENT question must not
+    // inherit the previous question's WebView: the user-edited latch would
+    // refuse the new formula, and typing over what is shown would overwrite
+    // the loaded question's MathML (consolidated_bugs.md J4).
+    return if (generation.isEmpty()) base else "$generation|$base"
+}
 
 private fun blockLabel(element: ContentElement): String = when (element) {
     is ContentElement.TextElement -> "Text"

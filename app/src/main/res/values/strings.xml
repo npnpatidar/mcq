@@ -190,6 +190,7 @@
     <string name="review_answers">Review answers</string>
     <string name="review_flagged">Review flagged</string>
     <string name="save">Save</string>
+    <string name="no_correct_answer_warning">No answer is marked correct — this question will not be graded.</string>
     <string name="search">Search</string>
     <string name="search_all_papers">Search all papers</string>
     <string name="search_text_or_tags">Search text or tags</string>

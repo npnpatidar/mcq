@@ -117,7 +117,7 @@ fun SearchScreen(
             // blank list with no way back (consolidated_bugs.md F6).
             if (refresh is LoadState.Error) {
                 PagingErrorRow(
-                    message = stringResource(R.string.paging_refresh_failed),
+                    messageRes = R.string.paging_refresh_failed,
                     onRetry = { hits.retry() }
                 )
             }

@@ -3,6 +3,7 @@ package com.mcqapp.ui.editor
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -180,6 +181,24 @@ fun QuestionEditorScreen(
             )
             return@Scaffold
         }
+        // The initial load failed: say so instead of an eternal spinner or a
+        // silently empty form (consolidated_bugs.md J5).
+        state.loadError?.let { error ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            return@Scaffold
+        }
 
         Column(
             modifier = Modifier
@@ -218,6 +237,7 @@ fun QuestionEditorScreen(
             Spacer(Modifier.height(4.dp))
             BlockListEditor(
                 elements = state.elements,
+                generation = state.questionId,
                 onAddBlock = viewModel::addBlock,
                 onUpdateBlock = viewModel::updateBlock,
                 onRemoveBlock = viewModel::removeBlock,
@@ -304,6 +324,7 @@ fun QuestionEditorScreen(
             // question body only, so explanation tables render read-only.
             BlockListEditor(
                 elements = state.explanationElements,
+                generation = state.questionId,
                 onAddBlock = viewModel::addExplanationBlock,
                 onUpdateBlock = viewModel::updateExplanationBlock,
                 onRemoveBlock = viewModel::removeExplanationBlock,
@@ -328,18 +349,40 @@ fun QuestionEditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            // A failed save/delete is reported here instead of crashing
+            // (consolidated_bugs.md J7).
+            state.saveError?.let { error ->
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            // The import path flags exactly this state in its warnings; the
+            // editor used to save it silently (consolidated_bugs.md J9).
+            if (state.options.isNotEmpty() && state.options.none { it.isCorrect }) {
+                Text(
+                    stringResource(R.string.no_correct_answer_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { viewModel.save { navController.popBackStack() } },
                     modifier = Modifier.weight(1f),
-                    enabled = canProceed
+                    enabled = canProceed && !state.saving
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(Modifier.padding(2.dp))
                     Text(stringResource(R.string.save))
                 }
-                if (!state.isNew) {
+                // Delete edits a stored row: it never rendered for a new
+                // question, and now it also hides on an import preview, where
+                // it used to delete the stored row the preview came from
+                // (consolidated_bugs.md J2).
+                if (!state.isNew && !viewModel.editingFromImport) {
                     OutlinedButton(onClick = {
                         viewModel.delete { navController.popBackStack() }
                     }) {
@@ -397,6 +440,7 @@ private fun OptionEditorRow(
         // editing is omitted here to keep scope sane.
         BlockListEditor(
             elements = option.elements,
+            generation = option.id,
             onAddBlock = onAddBlock,
             onUpdateBlock = onUpdateBlock,
             onRemoveBlock = onRemoveBlock,

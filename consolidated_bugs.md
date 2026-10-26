@@ -142,15 +142,15 @@ adjudication.
 | I4 | Low | BUG | Study | `stop()` during an in-flight grade is undone |
 | I5 | Low | BUG | Study | `pullCard` skip-loop is unbounded |
 | I6 | Nit | NIT | Study | `retry()` has no in-flight guard (double-tap double-loads) |
-| J1 | High | BUG | Editor | Delete after Prev/Next deletes the previously shown question |
-| J2 | High | BUG | Editor | Delete is live in the import-preview editor and deletes a library row |
-| J3 | Medium | BUG | Editor | Formula edits can be lost (400 ms debounce vs save/move) |
-| J4 | Medium | BUG | Editor | Stale formula shown after Prev/Next (block key not per-load) |
-| J5 | Medium | BUG | Editor | Init failure strands the editor on "Loading…" forever |
-| J6 | Medium | BUG | Editor | Process death during import editing → phantom edit; save crashes (FK) |
-| J7 | Low-Med | BUG | Editor | Unguarded save/delete; double-tap Save duplicates a new question |
-| J8 | Low | BUG | Editor | Legacy image-only option makes a question permanently unsavable |
-| J9 | Low | BUG | Editor | A question with no correct answer saves silently (import warns) |
+| J1 | High | BUG | Editor | Delete after Prev/Next deletes the previously shown question | — **FIXED**
+| J2 | High | BUG | Editor | Delete is live in the import-preview editor and deletes a library row | — **FIXED**
+| J3 | Medium | BUG | Editor | Formula edits can be lost (400 ms debounce vs save/move) | — **FIXED**
+| J4 | Medium | BUG | Editor | Stale formula shown after Prev/Next (block key not per-load) | — **FIXED**
+| J5 | Medium | BUG | Editor | Init failure strands the editor on "Loading…" forever | — **FIXED**
+| J6 | Medium | BUG | Editor | Process death during import editing → phantom edit; save crashes (FK) | — **FIXED**
+| J7 | Low-Med | BUG | Editor | Unguarded save/delete; double-tap Save duplicates a new question | — **FIXED**
+| J8 | Low | BUG | Editor | Legacy image-only option makes a question permanently unsavable | — **FIXED**
+| J9 | Low | BUG | Editor | A question with no correct answer saves silently (import warns) | — **FIXED**
 | K1 | Low-Med | BUG | Browse | A slow refresh blanks the whole screen (controls unmounted) |
 | K2 | Low | BUG | Browse | Punctuation-only tags field clears all tags on bulk edit |
 | K3 | Low | NIT | Browse | Transient stale-rowMoves race after a write |
@@ -786,13 +786,13 @@ streak (one retry, then `finishEmpty()` with a note).
 
 ### J. Question editor — from `add_bugs.md`
 
-**J1 · High · BUG — Delete after Prev/Next deletes the previously shown question.**
+**J1 · High · BUG — Delete after Prev/Next deletes the previously shown question.** *FIXED: `delete()` targets `state.questionId`.*
 `moveToQuestion` retargets the same VM by updating `state.questionId` (`:626` import, `:671` DB),
 but `delete()` targets the immutable constructor `questionId` (`:705-710`). Delete renders for any
 `!isNew` question (`QuestionEditorScreen.kt:342`), so moving Q2→Q3 then Delete removes Q2.
 *Fix:* delete `state.questionId` (and clear the session queue entry).
 
-**J2 · High · BUG — Delete is live in the import-preview editor and deletes from the library.**
+**J2 · High · BUG — Delete is live in the import-preview editor and deletes from the library.** *FIXED: `delete()` refuses import sessions and the button hides (`editingFromImport`).*
 Import ids are never blank (`LegacyParser.kt:1371-1372`), so `isNew` is false and Delete renders;
 `delete()` has no `fromImportSession` branch (unlike `save()`/`moveToQuestion`) and calls
 `repository.deleteQuestion` — removing a stored row from a preview-only screen. *Fix:* hide
@@ -811,7 +811,7 @@ same index keeps the same WebView and the `userEdited` latch (`MathLiveEditor.kt
 overwrites the new question's MathML. *Fix:* include the question id / load generation in the
 key, or reset the latch on a different-question load.
 
-**J5 · Medium · BUG — init failure strands the editor on "Loading…".**
+**J5 · Medium · BUG — init failure strands the editor on "Loading…".** *FIXED: a `loadError` state renders the failure.*
 `EditorViewModel.kt:238-240`'s catch only logs; `loading` is never cleared and there is no error
 state, so the screen shows Loading forever with no way forward. *Fix:* set `loading = false` plus
 an error field and render it (retry optional).
@@ -824,21 +824,21 @@ upserts a question with `categoryId = ""` → FK violation (`questions.categoryI
 with the unguarded save → crash. *Fix:* reset `questionId = ""`/`isNew = true` when a non-blank
 id is missing, or surface an error.
 
-**J7 · Low-Med · BUG — unguarded save/delete; double-tap Save duplicates a new question.**
+**J7 · Low-Med · BUG — unguarded save/delete; double-tap Save duplicates a new question.** *FIXED: both are guarded and reported via `saveError`; a `saving` flag blocks re-entry, and a new question's minted id is written back.*
 `save()` (`:565-569`) and `delete()` (`:705-710`) have no try/catch (contrast `moveToQuestion` at
 `:698-700`), so any Room failure crashes and `onDone()` never runs. Save is gated only on
 `canSave`, not in-flight; a double-tap on a new question calls `buildDto()` twice while
 `state.questionId` is blank, minting two ids (`:497`) → two identical rows. *Fix:* wrap both in
 try/catch; disable Save in flight and write the minted id back.
 
-**J8 · Low · BUG — a legacy image-only option makes the question unsavable.**
+**J8 · Low · BUG — a legacy image-only option makes the question unsavable.** *FIXED: `canSave` counts the option (and question) scalar image as content.*
 An option with `image` but empty elements loads as `[TextElement("")]`
 (`QuestionContentMapper.kt:50`), `isSignificant()` (`EditorViewModel.kt:42-47`) rejects it, so
 `canSave` is false forever and dirty Prev/Next is blocked. The UI deliberately preserves legacy
 images (`QuestionEditorScreen.kt:235-238`). *Fix:* count the legacy image in significance, or
 migrate it to an Image block on load.
 
-**J9 · Low · BUG — a question with no correct answer saves silently.**
+**J9 · Low · BUG — a question with no correct answer saves silently.** *FIXED: a visible warning renders above Save (the tolerant save itself is by design).*
 `canSave` (`:85-88`) never checks `options.any { it.isCorrect }` and `toggleCorrect` allows zero
 (`:350-354`), so the question persists ungraded with no warning, while the import screen flags
 exactly this state (`ImportWarnings.kt:34`). *Fix:* at minimum a visible warning (the import path

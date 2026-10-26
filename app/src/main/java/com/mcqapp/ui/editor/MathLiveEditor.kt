@@ -46,7 +46,6 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         "MathLive.MathfieldElement.soundsDirectory = null;" +
         "}" +
         "mf.setValue(" + initialLatexJson + ");" +
-        "var t = null;" +
         // A programmatic set must not be echoed back as if the user had typed
         // it, or a recycled block would write one formula into another.
         "var applying = false;" +
@@ -61,10 +60,16 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         "try { if (pos !== null) mf.selection.position = pos; } catch (e) {}" +
         "setTimeout(function () { applying = false; }, 0);" +
         "};" +
+        // Every input crosses the bridge immediately (consolidated_bugs.md
+        // J3): the old 400 ms debounce left the last keystrokes inside the
+        // WebView, so save() and Prev/Next snapshotted a stale formula and
+        // the dirty-check could read a pre-edit signature. Formulas are
+        // short; serialising one per keystroke is cheap next to losing an
+        // edit. The `applying` guard still stops a programmatic set from
+        // echoing back.
         "mf.addEventListener('input', function () {" +
         "if (applying) return;" +
-        "if (t) clearTimeout(t);" +
-        "t = setTimeout(function () { Android.onMathMl(mf.getValue('math-ml')); }, 400);" +
+        "Android.onMathMl(mf.getValue('math-ml'));" +
         "});" +
         "});" +
         "</script></body></html>"

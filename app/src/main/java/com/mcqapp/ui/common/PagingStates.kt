@@ -25,7 +25,7 @@ import com.mcqapp.R
 /** One row: the message plus a Retry that calls [LazyPagingItems.retry]. */
 @Composable
 fun PagingErrorRow(
-    message: String,
+    messageRes: Int,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -36,7 +36,7 @@ fun PagingErrorRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            message,
+            stringResource(messageRes),
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f)
         )
@@ -49,7 +49,7 @@ fun PagingErrorRow(
 fun PagingRefreshErrorItem(items: LazyPagingItems<*>, modifier: Modifier = Modifier) {
     if (items.loadState.refresh is LoadState.Error) {
         PagingErrorRow(
-            message = stringResource(R.string.paging_refresh_failed),
+            messageRes = R.string.paging_refresh_failed,
             onRetry = { items.retry() },
             modifier = modifier
         )
@@ -61,7 +61,7 @@ fun PagingRefreshErrorItem(items: LazyPagingItems<*>, modifier: Modifier = Modif
 fun PagingAppendErrorItem(items: LazyPagingItems<*>, modifier: Modifier = Modifier) {
     if (items.loadState.append is LoadState.Error) {
         PagingErrorRow(
-            message = stringResource(R.string.paging_append_failed),
+            messageRes = R.string.paging_append_failed,
             onRetry = { items.retry() },
             modifier = modifier
         )

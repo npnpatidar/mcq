@@ -89,6 +89,12 @@ internal class StreamingImportSession(
 
     /** passageId -> categoryId of its first member, for this paper. */
     private val paperPassageRecords = LinkedHashMap<String, String>()
+    /** raw passage id -> the effective id this import resolves it to, first paper wins */
+    private val passageEffective = HashMap<String, String>()
+    /** effective passage id -> the raw id the file's tail names the passage by */
+    private val passageRawByEffective = HashMap<String, String>()
+    /** per paper: raw -> effective for this paper's member questions */
+    private val passageIdRemap = HashMap<String, String>()
 
     /**
      * Where each accepted question landed, for the tail's `scheduling` — which
@@ -99,7 +105,11 @@ internal class StreamingImportSession(
         if (captureSchedules) HashMap() else null
 
     /** The paper a question was written under, and its stored content hash. */
-    private class ScheduleTarget(val paperId: String, val contentHash: String)
+    private class ScheduleTarget(
+        val paperId: String,
+        val questionId: String,
+        val contentHash: String
+    )
 
     /** Logged once when a file carries schedules but the import did not ask for them. */
     private var warnedNoScheduleCapture = false
@@ -307,6 +317,7 @@ internal class StreamingImportSession(
         currentMaxSort = -1
         maxSortLoaded = false
         paperPassageRecords.clear()
+        passageIdRemap.clear()
         paperOpen = true
     }
 
@@ -386,7 +397,16 @@ internal class StreamingImportSession(
         // to be a duplicate: the whole-file importer's skip needs at least one.
         sawAnyQuestion = true
         val scaled = applied.map { it.withDownscaledImages() }
-        val hashes = scaled.map { ContentHash.of(it) }
+        // Members follow their passage's remap: a question row must point at
+        // the passage row this import writes (consolidated_bugs.md A3). The
+        // hash follows the written shape, because that is what the study
+        // layer recomputes from the row.
+        val effective = scaled.map { q ->
+            val pid = q.passageId ?: return@map q
+            val eff = passageIdRemap.getOrPut(pid) { resolvePassageId(pid) }
+            if (eff == pid) q else q.copy(passageId = eff)
+        }
+        val hashes = effective.map { ContentHash.of(it) }
         val matchIds = db.questionDao().getMatchesByContentHashesChunked(hashes)
         val matchedIds = matchIds.map { it.id }.distinct()
         val candidates = candidates(matchIds, matchedIds)
@@ -402,13 +422,14 @@ internal class StreamingImportSession(
         val writtenById = HashMap<String, QuestionEntity>()
 
         applied.forEachIndexed { index, dto ->
-            val scaledQuestion = scaled[index]
+            val scaledQuestion = effective[index]
             val contentHash = hashes[index]
             // Record the passage before any duplicate/refresh decision: the
             // whole-file importer writes passages while scanning a
             // category's questions, so even an all-duplicate category still
-            // files its passage under this category.
-            dto.passageId?.let { passageId ->
+            // files its passage under this category. The id recorded is the
+            // effective one the member rows carry.
+            scaledQuestion.passageId?.let { passageId ->
                 paperPassageRecords.putIfAbsent(passageId, currentCategoryId!!)
             }
             val inExisting = contentHash in dbHashes || contentHash in batchWritten
@@ -457,7 +478,34 @@ internal class StreamingImportSession(
             }
 
             val existingQuestion = writtenById[dto.id] ?: sameId[dto.id]?.first
-            val resolvedSortOrder = if (existingQuestion == null) {
+            // A question id is global, but a foreign file may reuse an id the
+            // library already stores under a different paper: REPLACE would
+            // move that row (and its options and answer key) into this paper.
+            // Remap to stay unique, as the whole-file importer's category path
+            // does (consolidated_bugs.md A2). A row this import already wrote
+            // (writtenById) is adopted with its id, remapped or not.
+            val existingOwner = existingQuestion?.let {
+                db.categoryDao().getById(it.categoryId)?.paperId
+            }
+            val ownedElsewhere = existingOwner != null && existingOwner != effectivePaperId
+            val effectiveQuestionId = when {
+                existingQuestion != null && !ownedElsewhere -> existingQuestion.id
+                ownedElsewhere -> {
+                    Logger.w(
+                        "STREAMIMPORT",
+                        "Question id ${dto.id} belongs to paper $existingOwner, " +
+                            "remapping for paper $effectivePaperId"
+                    )
+                    "$effectivePaperId-${dto.id}"
+                }
+                else -> dto.id
+            }
+            val questionForWrite = if (effectiveQuestionId == scaledQuestion.id) {
+                scaledQuestion
+            } else {
+                scaledQuestion.copy(id = effectiveQuestionId)
+            }
+            val resolvedSortOrder = if (existingQuestion == null || ownedElsewhere) {
                 if (!maxSortLoaded) {
                     currentMaxSort = db.questionDao().getMaxSortOrder(currentCategoryId!!) ?: -1
                     maxSortLoaded = true
@@ -475,7 +523,7 @@ internal class StreamingImportSession(
             // under a new paper's category still needs that category.
             enableWrites()
             needsWrite = true
-            val entity = scaledQuestion.toQuestionEntity(
+            val entity = questionForWrite.toQuestionEntity(
                 categoryId = categoryId,
                 sortOrder = resolvedSortOrder,
                 contentHash = contentHash,
@@ -483,19 +531,19 @@ internal class StreamingImportSession(
             )
             db.questionDao().upsert(entity)
             writtenById[dto.id] = entity
-            batchWritten.getOrPut(contentHash) { mutableListOf() }.add(scaledQuestion)
+            batchWritten.getOrPut(contentHash) { mutableListOf() }.add(questionForWrite)
 
-            db.optionDao().deleteByQuestion(dto.id)
-            db.optionDao().upsertAll(scaledQuestion.toOptionEntities(json))
-            db.correctAnswerDao().deleteByQuestion(dto.id)
+            db.optionDao().deleteByQuestion(effectiveQuestionId)
+            db.optionDao().upsertAll(questionForWrite.toOptionEntities(json))
+            db.correctAnswerDao().deleteByQuestion(effectiveQuestionId)
             db.correctAnswerDao().upsertAll(
-                dto.correctOptionIds.map { CorrectAnswerEntity(dto.id, it) }
+                dto.correctOptionIds.map { CorrectAnswerEntity(effectiveQuestionId, it) }
             )
 
             // Accepted, so a tail `scheduling` entry naming it applies at
-            // [finish]: remember the paper it landed under and the hash of its
-            // stored bytes.
-            acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, contentHash))
+            // [finish]: remember the paper it landed under, the row id it was
+            // written under, and the hash of its stored bytes.
+            acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, effectiveQuestionId, contentHash))
 
             // Review progress is applied only to a question this import
             // accepted, exactly as the whole-file importer applies the file's
@@ -506,7 +554,7 @@ internal class StreamingImportSession(
                 db.cardStateDao().upsert(
                     CardStateEntity(
                         paperId = effectivePaperId,
-                        questionId = dto.id,
+                        questionId = effectiveQuestionId,
                         ease = schedule.ease,
                         intervalDays = schedule.intervalDays,
                         dueAt = schedule.dueAt,
@@ -520,7 +568,7 @@ internal class StreamingImportSession(
                             CardStateKind.valueOf(schedule.cardState)
                         }.getOrDefault(CardStateKind.NEW),
                         reviewCount = schedule.reviewCount,
-                        contentHash = ContentHash.of(scaledQuestion)
+                        contentHash = contentHash
                     )
                 )
                 restoredSchedules++
@@ -566,11 +614,54 @@ internal class StreamingImportSession(
 
     // --- tail -------------------------------------------------------------
 
+    /**
+     * The passage id this import writes [rawId] under, decided at the first
+     * member reference (the rows themselves are written at [writePassages]).
+     * A passage owned by another paper — a stored row, or a claim by an
+     * earlier paper of this same import whose row only lands at the tail —
+     * is remapped for this paper, as the whole-file importer remaps it
+     * (consolidated_bugs.md A3).
+     */
+    private suspend fun resolvePassageId(rawId: String): String {
+        val claimed = passageEffective[rawId]
+        val effective = if (claimed != null) {
+            if (claimed == rawId || claimed == "$effectivePaperId-$rawId") {
+                claimed
+            } else {
+                Logger.w(
+                    "STREAMIMPORT",
+                    "Passage id $rawId belongs to another paper, " +
+                        "remapping for paper $effectivePaperId"
+                )
+                "$effectivePaperId-$rawId"
+            }
+        } else {
+            val existing = db.passageDao().getById(rawId)
+            val owner = existing?.let { db.categoryDao().getById(it.categoryId)?.paperId }
+            if (owner != null && owner != effectivePaperId) {
+                Logger.w(
+                    "STREAMIMPORT",
+                    "Passage id $rawId belongs to paper $owner, " +
+                        "remapping for paper $effectivePaperId"
+                )
+                "$effectivePaperId-$rawId"
+            } else {
+                rawId
+            }
+        }
+        passageEffective.putIfAbsent(rawId, effective)
+        passageRawByEffective[effective] = rawId
+        return effective
+    }
+
     private suspend fun writePassages(tail: LegacyParser.StreamedFile) {
         if (passagePaper.isEmpty()) return
         val byId = tail.passages.associateBy { it.id }
         for (passageId in passagePaper.keys.toList()) {
-            val passageDto = byId[passageId]
+            // The maps are keyed by the effective id; the tail names the
+            // passage by its raw file id.
+            val rawId = passageRawByEffective[passageId] ?: passageId
+            val passageDto = byId[rawId]
             if (passageDto == null) {
                 // The whole-file importer only writes a passage that is
                 // present in the file's `passages` list.
@@ -711,7 +802,7 @@ internal class StreamingImportSession(
             db.cardStateDao().upsert(
                 CardStateEntity(
                     paperId = target.paperId,
-                    questionId = questionId,
+                    questionId = target.questionId,
                     ease = schedule.ease,
                     intervalDays = schedule.intervalDays,
                     dueAt = schedule.dueAt,

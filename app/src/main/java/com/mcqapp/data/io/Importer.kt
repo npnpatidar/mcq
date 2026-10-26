@@ -133,6 +133,11 @@ class Importer(
                     (if (existingByTitle != null) " (matched by title)" else "") + ", " +
                     "${paperDto.categories.size} categories")
 
+                // Per paper: the passage id a question's `passageId` resolves to
+                // for THIS paper. A remap decided for one paper must not leak
+                // into the next (consolidated_bugs.md A3).
+                val passageIdRemap = HashMap<String, String>()
+
                 // Never REPLACE papers/categories: REPLACE deletes the row and
                 // FK CASCADE wipes its questions, which dedup would then skip.
                 if (isNewPaper) {
@@ -285,28 +290,62 @@ class Importer(
                     // Passages referenced by this category's questions are written
                     // right here, inside the same transaction and AFTER the owning
                     // category row exists: a passage's categoryId FK needs it. The
-                    // file's `passages` array is global, so this runs once per
-                    // passage (first member wins) via seenPassageIds.
+                    // file's `passages` array is global, so the row write happens
+                    // once per effective id (first member wins) via seenPassageIds.
+                    // The resolution below runs for every referencing category so
+                    // each paper's member questions follow the same remap.
                     val categoryPassageIds = categoryDto.questions
                         .mapNotNull { it.passageId }
-                        .filter { it !in seenPassageIds }
+                        .distinct()
                     for (passageId in categoryPassageIds) {
                         val passageDto = file.passages.firstOrNull { it.id == passageId }
                             ?: continue
-                        seenPassageIds.add(passageId)
-                        paperPassageIds.add(passageId)
+                        // A passage id owned by a DIFFERENT paper must never be
+                        // reused: REPLACE would move the row, and the stray-fold
+                        // below would drag its members into this paper. Remap to
+                        // stay unique (consolidated_bugs.md A3).
                         val existing = db.passageDao().getById(passageId)
+                        val existingOwner = existing?.let {
+                            db.categoryDao().getById(it.categoryId)?.paperId
+                        }
+                        val effectivePassageId =
+                            if (existingOwner != null && existingOwner != effectivePaperId) {
+                                Logger.w(
+                                    "IMPORT",
+                                    "Passage id $passageId belongs to paper $existingOwner, " +
+                                        "remapping for paper $effectivePaperId"
+                                )
+                                "$effectivePaperId-$passageId"
+                            } else {
+                                passageId
+                            }
+                        passageIdRemap[passageId] = effectivePassageId
+                        if (!seenPassageIds.add(effectivePassageId)) continue
+                        paperPassageIds.add(effectivePassageId)
+                        val existingEffective =
+                            if (effectivePassageId == passageId) existing
+                            else db.passageDao().getById(effectivePassageId)
                         db.passageDao().upsert(
                             passageDto.withDownscaledImages().toPassageEntity(
                                 categoryId = effectiveCatId,
-                                sortOrder = existing?.sortOrder ?: 0,
+                                sortOrder = existingEffective?.sortOrder ?: 0,
                                 json = json
                             )
                         )
                     }
 
                     categoryDto.questions.forEachIndexed { questionIndex, questionDto ->
+                        // Members follow their passage's remap: a question row
+                        // must point at the passage row this import wrote
+                        // (consolidated_bugs.md A3). The hash follows the
+                        // written shape, because that is what the study layer
+                        // recomputes from the row.
                         val scaledQuestion = scaledCategory.questions[questionIndex]
+                            .passageId
+                            ?.let { passageIdRemap[it] }
+                            ?.takeIf { it != scaledCategory.questions[questionIndex].passageId }
+                            ?.let { scaledCategory.questions[questionIndex].copy(passageId = it) }
+                            ?: scaledCategory.questions[questionIndex]
                         // Hash the scaled twin: its images are the bytes this
                         // import actually stores, so a later re-import of an
                         // export (which carries the stored bytes) hashes the
@@ -404,7 +443,33 @@ class Importer(
                         // New questions append after existing ones; updates keep
                         // their current position so re-imports never reorder.
                         val existingQuestion = db.questionDao().getById(questionDto.id)
-                        val resolvedSortOrder = if (existingQuestion == null) {
+                        // A question id is global, but a foreign file may reuse
+                        // an id the library already stores under a different
+                        // paper: REPLACE would move that row (and its options
+                        // and answer key) into this paper. Remap to stay unique,
+                        // exactly as the category path above does
+                        // (consolidated_bugs.md A2).
+                        val existingOwner = existingQuestion?.let {
+                            db.categoryDao().getById(it.categoryId)?.paperId
+                        }
+                        val ownedElsewhere = existingOwner != null &&
+                            existingOwner != effectivePaperId
+                        val effectiveQuestionId = if (ownedElsewhere) {
+                            Logger.w(
+                                "IMPORT",
+                                "Question id ${questionDto.id} belongs to paper $existingOwner, " +
+                                    "remapping for paper $effectivePaperId"
+                            )
+                            "$effectivePaperId-${questionDto.id}"
+                        } else {
+                            questionDto.id
+                        }
+                        val questionForWrite = if (effectiveQuestionId == scaledQuestion.id) {
+                            scaledQuestion
+                        } else {
+                            scaledQuestion.copy(id = effectiveQuestionId)
+                        }
+                        val resolvedSortOrder = if (existingQuestion == null || ownedElsewhere) {
                             newQuestions++
                             (db.questionDao().getMaxSortOrder(effectiveCatId) ?: -1) + 1
                         } else {
@@ -412,17 +477,17 @@ class Importer(
                             existingQuestion.sortOrder
                         }
                         if (Logger.verbose || importProgressLogs % 500 == 1L) {
-                            Logger.d("IMPORT", "  ${if (existingQuestion == null) "INSERT" else "UPDATE"} " +
-                                "id=${questionDto.id}, sortOrder=$resolvedSortOrder")
+                            Logger.d("IMPORT", "  ${if (existingQuestion == null || ownedElsewhere) "INSERT" else "UPDATE"} " +
+                                "id=$effectiveQuestionId, sortOrder=$resolvedSortOrder")
                         }
 
-                        // NOTE: the question row below carries passageId from the
-                        // file; the passage rows themselves were already written
-                        // above, so the id always resolves inside this transaction.
+                        // NOTE: the question row below carries the passageId the
+                        // passage rows above were written under, so the id always
+                        // resolves inside this transaction.
                         // Built from the scaled twin: the row's element JSON is
                         // what the content hash reads back on the next import.
                         db.questionDao().upsert(
-                            scaledQuestion.toQuestionEntity(
+                            questionForWrite.toQuestionEntity(
                                 categoryId = effectiveCatId,
                                 sortOrder = resolvedSortOrder,
                                 contentHash = contentHash,
@@ -434,7 +499,7 @@ class Importer(
                         // content must collapse onto this one, as it did when
                         // each collision was resolved with its own query.
                         writtenThisImport.getOrPut(contentHash) { mutableListOf() }
-                            .add(scaledQuestion)
+                            .add(questionForWrite)
 
                         // Review progress is applied only to a question this
                         // import accepted. A duplicate is skipped above, so
@@ -448,7 +513,7 @@ class Importer(
                             db.cardStateDao().upsert(
                                 CardStateEntity(
                                     paperId = effectivePaperId,
-                                    questionId = questionDto.id,
+                                    questionId = effectiveQuestionId,
                                     ease = schedule.ease,
                                     intervalDays = schedule.intervalDays,
                                     dueAt = schedule.dueAt,
@@ -462,17 +527,17 @@ class Importer(
                                         com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
                                     }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),
                                     reviewCount = schedule.reviewCount,
-                                    contentHash = ContentHash.of(scaledQuestion)
+                                    contentHash = contentHash
                                 )
                             )
                             restoredSchedules++
                         }
 
-                        db.optionDao().deleteByQuestion(questionDto.id)
-                        db.optionDao().upsertAll(scaledQuestion.toOptionEntities(json))
-                        db.correctAnswerDao().deleteByQuestion(questionDto.id)
+                        db.optionDao().deleteByQuestion(effectiveQuestionId)
+                        db.optionDao().upsertAll(questionForWrite.toOptionEntities(json))
+                        db.correctAnswerDao().deleteByQuestion(effectiveQuestionId)
                         db.correctAnswerDao().upsertAll(
-                            questionDto.correctOptionIds.map { CorrectAnswerEntity(questionDto.id, it) }
+                            questionDto.correctOptionIds.map { CorrectAnswerEntity(effectiveQuestionId, it) }
                         )
                     }
                 }

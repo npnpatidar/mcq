@@ -2,7 +2,6 @@ package com.mcqapp
 
 import com.mcqapp.data.io.LegacyParser
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -14,28 +13,29 @@ import org.junit.Test
 class JsonPullSeparatorRecursionTest {
 
     @Test
-    @Ignore("documents consolidated_bugs.md A1; enable when fixed")
     fun aRunOfSeparatorsDoesNotOverflowTheStack() {
         val commas = ",".repeat(100_000)
         val json = "[$commas]"
-        try {
-            val file = LegacyParser.parse(json.byteInputStream())
-            assertTrue(file.warnings.isNotEmpty() || file.papers.isEmpty())
+        // The parse must simply survive. A separator-only bare array carries
+        // no questions, so like `[]` it degenerates to a paper with none —
+        // the pinned contract is "no crash", not a warning.
+        val file = try {
+            LegacyParser.parse(json.byteInputStream())
         } catch (e: StackOverflowError) {
             throw AssertionError("scan() recursed once per separator and overflowed the stack", e)
         }
+        assertTrue(file.papers.all { it.questions.isEmpty() })
     }
 
     @Test
-    @Ignore("documents consolidated_bugs.md A1; enable when fixed")
     fun aRunOfSeparatorsBetweenMembersDoesNotOverflowTheStack() {
         val commas = ",".repeat(100_000)
         val json = "{\"papers\":[{\"id\":\"p1\"}$commas]}"
-        try {
-            val file = LegacyParser.parse(json.byteInputStream())
-            assertTrue(file.papers.isNotEmpty() || file.warnings.isNotEmpty())
+        val file = try {
+            LegacyParser.parse(json.byteInputStream())
         } catch (e: StackOverflowError) {
             throw AssertionError("scan() recursed once per separator and overflowed the stack", e)
         }
+        assertTrue(file.papers.isNotEmpty() || file.warnings.isNotEmpty())
     }
 }

@@ -300,7 +300,8 @@ internal fun classifyPreview(
     existingIds: Set<String>,
     storedById: Map<String, com.mcqapp.data.local.QuestionEntity>,
     correctById: Map<String, Set<String>>,
-    storedOptionsByQuestion: Map<String, List<com.mcqapp.data.local.OptionEntity>>
+    storedOptionsByQuestion: Map<String, List<com.mcqapp.data.local.OptionEntity>>,
+    storedIdsByHash: Map<String, List<String>> = emptyMap()
 ): Pair<Set<String>, Set<String>> {
     val duplicates = HashSet<String>()
     val changed = HashSet<String>()
@@ -329,6 +330,20 @@ internal fun classifyPreview(
             if (changedAnswer) changed.add(q.id) else duplicates.add(q.id)
         } else if (q.id in existingIds) {
             changed.add(q.id)
+        } else if (hash in existingHashes) {
+            // Same content under an id the library does not have: both
+            // importers deduplicate by content across the library and skip
+            // the row, so the preview must not count it as new
+            // (consolidated_bugs.md A4).
+            val sameContentElsewhere = storedIdsByHash[hash].orEmpty().any { storedId ->
+                val stored = storedById[storedId] ?: return@any false
+                com.mcqapp.data.io.ContentHash.sameQuestionContent(
+                    stored,
+                    storedOptionsByQuestion[storedId].orEmpty(),
+                    scaled
+                )
+            }
+            if (sameContentElsewhere) duplicates.add(q.id)
         }
     }
     return duplicates to changed
@@ -447,16 +462,20 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     // of snapshotting every id and hash in the database: a large
                     // library built two whole-table sets on the heap exactly
                     // while the parsed bank was live. Column-narrow, and only
-                    // matching rows come back.
-                    val hashes = repository.db().questionDao()
+                    // matching rows come back. The matches are kept (id per
+                    // hash) so same-content rows under a different id classify
+                    // as duplicates, exactly as the importers skip them
+                    // (consolidated_bugs.md A4).
+                    val matches = repository.db().questionDao()
                         .getMatchesByContentHashesChunked(hashed.map { it.second })
-                        .mapTo(HashSet()) { it.contentHash }
+                    val hashes = matches.mapTo(HashSet()) { it.contentHash }
+                    val storedIdsByHash = matches.groupBy({ it.contentHash }, { it.id })
                     val ids = repository.db().questionDao()
                         .getExistingIdsChunked(hashed.map { it.first.id })
                         .toHashSet()
-                    val interesting = hashed
+                    val interesting = (hashed
                         .filter { (q, hash) -> q.id in ids || hash in hashes }
-                        .map { it.first.id }
+                        .map { it.first.id } + matches.map { it.id })
                         .distinct()
                     matchedCount = interesting.size
                     if (interesting.isEmpty()) {
@@ -473,7 +492,8 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                             .getForQuestionsChunked(interesting)
                             .groupBy { it.questionId }
                         classifyPreview(
-                            hashed, hashes, ids, storedById, correctById, storedOptionsByQuestion
+                            hashed, hashes, ids, storedById, correctById, storedOptionsByQuestion,
+                            storedIdsByHash
                         )
                     }
                 }

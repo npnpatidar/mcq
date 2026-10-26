@@ -46,12 +46,12 @@ adjudication.
 
 | ID | Sev | Kind | Area | Finding |
 |---|---|---|---|---|
-| A1 | High | BUG | Parser | `JsonPull.scan()` recurses per separator → `StackOverflowError` kills the app |
-| A2 | High | BUG | Import | Question id owned by another paper is REPLACE-moved into the importing paper |
-| A3 | High | BUG | Import | Reused passage id drags another paper's member questions across |
-| A4 | Medium | BUG | Import preview | Same content under a different id counts "new" in preview, "duplicate" in import |
-| A5 | Low | BUG | Parser | Root `questions` before `papers` adds a phantom paper in the streaming reader |
-| A6 | Nit | NIT | Anki export | Paper title containing `::` seeds an extra empty deck |
+| A1 | High | BUG | Parser | `JsonPull.scan()` recurses per separator → `StackOverflowError` kills the app — **FIXED** |
+| A2 | High | BUG | Import | Question id owned by another paper is REPLACE-moved into the importing paper — **FIXED** |
+| A3 | High | BUG | Import | Reused passage id drags another paper's member questions across — **FIXED** |
+| A4 | Medium | BUG | Import preview | Same content under a different id counts "new" in preview, "duplicate" in import — **FIXED** |
+| A5 | Low | BUG | Parser | Root `questions` before `papers` adds a phantom paper in the streaming reader — **FIXED** |
+| A6 | Nit | NIT | Anki export | Paper title containing `::` seeds an extra empty deck — **FIXED** |
 | B1 | Medium | BUG | Search | Global-search passage post-filter uses `"\n"`; stored column uses `" "` |
 | B2 | Medium | NIT | Search | `Scope.OPTIONS` over-fetches (walks text/tag candidates the authority rejects) |
 | B3 | Low | BUG | Search | A scope tap commits the stale debounced query; debounce timer not restarted |
@@ -161,7 +161,7 @@ adjudication.
 
 ### A. Import, parser, Anki export — from `eighth_bugs.md`
 
-**A1 · High · BUG — `JsonPull.scan()` recurses once per separator → app crash.**
+**A1 · High · BUG — `JsonPull.scan()` recurses once per separator → app crash.** *FIXED: `scan()` loops over separators (`JsonPull.kt`); pinned by the enabled `JsonPullSeparatorRecursionTest`.*
 `JsonPull.kt:213-216`: the `,`/`:` branch calls `scan()` for each consecutive separator. A run of
 ~100k commas (legal JSON, trivially crafted) overflows the stack; `StackOverflowError` is an
 `Error`, so every `catch (Exception)` boundary (parser, streaming importer, import-screen
@@ -171,7 +171,7 @@ Committed `JsonPullSeparatorRecursionTest` pins the fix; it is committed as
 lands (CI-authoritative). *Fix:* loop over separators; optionally catch `Throwable` (rethrow
 `CancellationException`) at parse boundaries.
 
-**A2 · High · BUG — a question id owned by another paper is moved, not copied.**
+**A2 · High · BUG — a question id owned by another paper is moved, not copied.** *FIXED: ids owned by another paper are remapped (`paperId-id`) in both `Importer.kt` and `StreamingImportSession.kt`, mirroring the category path; pinned by the enabled `ImportPaperIdentityTest.aQuestionIdOwnedByAnotherPaperIsNotMoved`.*
 `Importer.kt:406-431`: `getById` is global (no paper check) and the upsert is
 `@Insert(REPLACE)` (`Daos.kt:1243-1244`), so an incoming question whose id already exists under
 another paper is deleted and re-inserted under the importing category; its options/answer key
@@ -182,7 +182,7 @@ number from `1`, so collisions are easy. Pinned by committed (CI)
 *Fix:* remap (e.g. `"$paperId-$id"`) or skip+warn when the id belongs to a different paper; same
 in the streaming session.
 
-**A3 · High · BUG — a reused passage id drags another paper's questions along.**
+**A3 · High · BUG — a reused passage id drags another paper's questions along.** *FIXED: passage ids owned by another paper are remapped in both importers, members follow the remap, and the stray-fold sees only this import's effective ids; pinned by the enabled `ImportPaperIdentityTest.aPassageIdOwnedByAnotherPaperDoesNotDragMembers`.*
 `Importer.kt:298-305` upserts the passage by id with REPLACE (same move problem), then
 `:485-497` folds every member whose category differs into the importing category — including the
 owning paper's members. One colliding passage id migrates a whole passage group.
@@ -190,7 +190,7 @@ owning paper's members. One colliding passage id migrates a whole passage group.
 `ImportPaperIdentityTest.aPassageIdOwnedByAnotherPaperDoesNotDragMembers`, `@Ignore`d until fixed.
 *Fix:* ownership check on the passage row and restrict the fold to ids this import wrote.
 
-**A4 · Medium · BUG — preview says "new", the importers skip it as duplicate.**
+**A4 · Medium · BUG — preview says "new", the importers skip it as duplicate.** *FIXED: `refreshDuplicates` keeps the hash-matched rows and `classifyPreview` takes `storedIdsByHash`, classifying same-content-different-id as duplicate; pinned by the enabled `ImportPreviewClassificationTest`.*
 `ImportViewModel.kt:312-332` classifies against `storedById[q.id]` only, while
 `refreshDuplicates` (`:457-467`) fetched rows for ids ∪ hashes. Same content under a different
 id therefore classifies as new, but both importers deduplicate by content across the library
@@ -198,14 +198,14 @@ id therefore classifies as new, but both importers deduplicate by content across
 `ImportPreviewClassificationTest`, `@Ignore`d until fixed. *Fix:* classify against hash-matched
 stored rows too.
 
-**A5 · Low · BUG — root `questions` before `papers` adds a phantom paper (streaming only).**
+**A5 · Low · BUG — root `questions` before `papers` adds a phantom paper (streaming only).** *FIXED: `walkRootObjectStreaming` buffers root-question batches and decides at the end of the object, as the whole-file reader does; pinned by the enabled `LegacyParserTest.rootQuestionsBeforePapersAddsNoPaper`.*
 `LegacyParser.kt:341-343` decides "as paper" when the key is read; the whole-file reader
 (`:715-717`) decides after the object ends. JSON objects are unordered, so the same file yields
 two papers (preview/large import) or one (small import). Pinned by committed
 `LegacyParserTest.rootQuestionsBeforePapersAddsNoPaper`, `@Ignore`d until fixed. *Fix:* remember root
 questions and decide after the object ends, as the whole-file path does.
 
-**A6 · Nit · NIT — a paper title containing `::` exports an extra empty deck.**
+**A6 · Nit · NIT — a paper title containing `::` exports an extra empty deck.** *FIXED: `AnkiPackageWriter` seeds `deckIds` with `segmentFor(paperTitle, "Untitled")`.*
 `AnkiPackageWriter.kt:133` seeds `deckIds[paperTitle.trim()]` (raw) while notes use
 `deckNameFor`/`segmentFor` (`::` → `: `, `:342`). A title `A::B` registers both `A::B` (unused)
 and `A: B`; Anki imports the phantom nested deck. Blank title likewise (`""` vs `Untitled`).

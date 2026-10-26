@@ -12,7 +12,6 @@ import com.mcqapp.ui.importscreen.classifyPreview
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -171,13 +170,11 @@ class ImportPreviewClassificationTest {
      * importer matches it by content hash and skips it as a duplicate, so the
      * preview must not count it as new.
      *
-     * The rows the preview fetches are keyed by the incoming id, so the stored
-     * twin lives under a different key — exactly the shape
-     * [ImportViewModel.refreshDuplicates] produces for this case
-     * (getByIdsChunked over the preview's own ids finds nothing).
+     * [ImportViewModel.refreshDuplicates] fetches the hash-matched stored rows
+     * (their ids ride in `storedIdsByHash`, their entities in `storedById`),
+     * which is what makes the twin reachable here (consolidated_bugs.md A4).
      */
     @Test
-    @Ignore("documents consolidated_bugs.md A4; enable when fixed")
     fun sameContentUnderADifferentIdIsADuplicateLikeTheImporter() {
         val q = dto("file-1", "One?", listOf("A", "B"), listOf("a"))
         val stored = entity("stored-9", "One?", listOf("A", "B"))
@@ -185,11 +182,31 @@ class ImportPreviewClassificationTest {
             hashed = listOf(q to ContentHash.of(q)),
             existingHashes = setOf(ContentHash.of(q)),
             existingIds = emptySet(),
-            storedById = emptyMap(),
+            storedById = mapOf("stored-9" to stored),
             correctById = emptyMap(),
-            storedOptionsByQuestion = emptyMap()
+            storedOptionsByQuestion = mapOf("stored-9" to options("stored-9", listOf("A", "B"))),
+            storedIdsByHash = mapOf(ContentHash.of(q) to listOf("stored-9"))
         )
         assertEquals("preview must match the importer's content-hash dedup", setOf("file-1"), result.first)
+        assertTrue(result.second.isEmpty())
+    }
+
+    /** Same content elsewhere, but the stored twin's content differs (a table
+     * the hash cannot see): genuinely new, not a duplicate. */
+    @Test
+    fun aHashMatchedRowWithDifferentContentIsStillNew() {
+        val q = dto("file-1", "One?", listOf("A", "B"), listOf("a"))
+        val stored = entity("stored-9", "One?", listOf("A", "B"))
+        val result = classifyPreview(
+            hashed = listOf(q to ContentHash.of(q)),
+            existingHashes = setOf(ContentHash.of(q)),
+            existingIds = emptySet(),
+            storedById = mapOf("stored-9" to stored),
+            correctById = emptyMap(),
+            storedOptionsByQuestion = mapOf("stored-9" to options("stored-9", listOf("A", "Different"))),
+            storedIdsByHash = mapOf(ContentHash.of(q) to listOf("stored-9"))
+        )
+        assertTrue(result.first.isEmpty())
         assertTrue(result.second.isEmpty())
     }
 }

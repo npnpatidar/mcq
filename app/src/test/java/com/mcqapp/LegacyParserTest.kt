@@ -6,7 +6,6 @@ import com.mcqapp.data.io.toQuestionEntity
 import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 import java.io.ByteArrayInputStream
 
@@ -1025,7 +1024,6 @@ class LegacyParserTest {
      * the import writes.
      */
     @Test
-    @Ignore("documents consolidated_bugs.md A5; enable when fixed")
     fun rootQuestionsBeforePapersAddsNoPaper() {
         val json = """
         {"questions":[{"id":"rq","text":"Root?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}],

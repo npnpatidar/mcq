@@ -327,6 +327,15 @@ object LegacyParser {
         var passages = emptyList<PassageDto>()
         var version = 1
         var papersEmitted = 0
+        // The DOCX wrapper decision waits for the end of the object: JSON
+        // objects are unordered, so `questions` may precede `papers`, and
+        // deciding at key-read time fabricated a phantom ephemeral paper
+        // beside the real ones (consolidated_bugs.md A5). The batches are
+        // buffered here; only a file that ended with no paper flushes them,
+        // exactly as [walkRootObject] decides after the object ends. Only
+        // the last `questions` key counts, as the whole-file reader's
+        // overwrite does, and an empty array builds no paper.
+        var deferredRoot: Triple<String, String, MutableList<List<QuestionDto>>>? = null
         reader.beginObject()
         while (reader.hasNext()) {
             when (reader.nextName()) {
@@ -338,20 +347,14 @@ object LegacyParser {
                     // but, as in the whole-file walk, dropped.
                     val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
                     val categoryId = "$paperId-uncat"
-                    val asPaper = papersEmitted == 0
-                    var announced = false
-                    if (asPaper) sink.onPaper(PaperHeader(paperId, "Imported Questions", "", 0, 0.0))
                     val seen = HashSet<String>()
+                    val batches = mutableListOf<List<QuestionDto>>()
                     readQuestionsStreaming(
                         reader, "question", warnings, seen, batchSize, scan,
-                        onFirst = {
-                            if (asPaper && !announced) {
-                                sink.onCategory(CategoryDto(categoryId, "Uncategorized"))
-                                announced = true
-                            }
-                        },
-                        onBatch = { if (asPaper) sink.onQuestions(categoryId, it) }
+                        onFirst = {},
+                        onBatch = { batches.add(it) }
                     )
+                    if (batches.isNotEmpty()) deferredRoot = Triple(paperId, categoryId, batches)
                 }
                 "passages" -> passages = readArrayOrWarn(
                     reader, "File", "passages", "passage", warnings
@@ -381,6 +384,13 @@ object LegacyParser {
             }
         }
         reader.endObject()
+        if (papersEmitted == 0) {
+            deferredRoot?.let { (paperId, categoryId, batches) ->
+                sink.onPaper(PaperHeader(paperId, "Imported Questions", "", 0, 0.0))
+                sink.onCategory(CategoryDto(categoryId, "Uncategorized"))
+                for (batch in batches) sink.onQuestions(categoryId, batch)
+            }
+        }
         return StreamedFile(version, passages, emptyList(), emptyList(), emptyMap(), warnings)
     }
 

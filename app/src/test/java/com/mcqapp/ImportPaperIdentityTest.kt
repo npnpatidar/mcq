@@ -17,7 +17,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -115,7 +114,6 @@ class ImportPaperIdentityTest {
      * loses the question and its options/answer key are overwritten.
      */
     @Test
-    @Ignore("documents consolidated_bugs.md A2; enable when fixed")
     fun aQuestionIdOwnedByAnotherPaperIsNotMoved() = runBlocking {
         Importer(db).import(file("paper-a", "Paper A", "Alpha"))
         val sharedId = "q-paper-a"
@@ -159,7 +157,6 @@ class ImportPaperIdentityTest {
      * passage id therefore drags another paper's questions along with it.
      */
     @Test
-    @Ignore("documents consolidated_bugs.md A3; enable when fixed")
     fun aPassageIdOwnedByAnotherPaperDoesNotDragMembers() = runBlocking {
         val paperA = McqFileDto(
             version = 1,

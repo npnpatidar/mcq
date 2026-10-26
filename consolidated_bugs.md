@@ -52,12 +52,12 @@ adjudication.
 | A4 | Medium | BUG | Import preview | Same content under a different id counts "new" in preview, "duplicate" in import — **FIXED** |
 | A5 | Low | BUG | Parser | Root `questions` before `papers` adds a phantom paper in the streaming reader — **FIXED** |
 | A6 | Nit | NIT | Anki export | Paper title containing `::` seeds an extra empty deck — **FIXED** |
-| B1 | Medium | BUG | Search | Global-search passage post-filter uses `"\n"`; stored column uses `" "` |
-| B2 | Medium | NIT | Search | `Scope.OPTIONS` over-fetches (walks text/tag candidates the authority rejects) |
-| B3 | Low | BUG | Search | A scope tap commits the stale debounced query; debounce timer not restarted |
-| B4 | Low | BUG | Browse | Search input can revert a keystroke in the commit frame |
-| B5 | Nit | NIT | Search | `escapeLike` KDoc is orphaned above `prefilterKey` |
-| B6 | Nit | NIT | Search | Unused `repository` parameter; dead trailing `Spacer` |
+| B1 | Medium | BUG | Search | Global-search passage post-filter uses `"\n"`; stored column uses `" "` | — **FIXED**
+| B2 | Medium | NIT | Search | `Scope.OPTIONS` over-fetches (walks text/tag candidates the authority rejects) | — **FIXED**
+| B3 | Low | BUG | Search | A scope tap commits the stale debounced query; debounce timer not restarted | — **FIXED**
+| B4 | Low | BUG | Browse | Search input can revert a keystroke in the commit frame | — **FIXED**
+| B5 | Nit | NIT | Search | `escapeLike` KDoc is orphaned above `prefilterKey` | — **FIXED**
+| B6 | Nit | NIT | Search | Unused `repository` parameter; dead trailing `Spacer` | — **FIXED**
 | C1 | Medium | BUG | Passages | Bulk "move to category" strands passage members (no enforcement/re-placement) | — **FIXED**
 | C2 | Medium | BUG | Passages | Bulk "copy to category" keeps `passageId` with no enforcement/placement | — **FIXED**
 | C3 | Medium | BUG | Passages | Reorder arrows write `sortOrder`, but the list query has no `ORDER BY` | — **FIXED**
@@ -215,7 +215,7 @@ and `A: B`; Anki imports the phantom nested deck. Blank title likewise (`""` vs 
 
 ### B. Search — from `search_bugs.md`
 
-**B1 · Medium · BUG — the passage post-filter string disagrees with the stored column.**
+**B1 · Medium · BUG — the passage post-filter string disagrees with the stored column.** *FIXED: the post-filter map reads the stored `passage.searchText` column; `PassageRepositoryTest` now pins a phrase straddling the title-body boundary ("cycle rain").*
 `McqRepository.kt:277` builds `passage.title + "\n" + searchableText` (no trim), while every
 writer stores `passageSearchText` = `title + " " + body` trimmed (`Models.kt:158-159`,
 `QuestionContentMapper.kt:102-103`). The SQL prefilter matches the stored column, then the
@@ -224,14 +224,14 @@ boundary. Browse's SQL-only query finds it — two search surfaces disagree on i
 *Fix:* build the map with `passageSearchText(...)`; add a CI assertion to
 `PassageRepositoryTest.globalSearchFindsAMemberThroughItsPassageText` for `"cycle rain"`.
 
-**B2 · Medium · NIT (performance) — `Scope.OPTIONS` walks every candidate to exhaustion.**
+**B2 · Medium · NIT (performance) — `Scope.OPTIONS` walks every candidate to exhaustion.** *FIXED: an options-only prefilter (`searchOptionsOnly`) bounds the authority's input for that scope.*
 `McqRepository.kt:267-268` routes OPTIONS to `searchIncludingOptions` (union of text, tags,
 options, passage), while the authority accepts only option matches
 (`QuestionSearch.kt:83`). A common word matching many stems but no options parses the whole
 candidate set with all options to end at "no matches". Correctness is fine; cost lands on the
 Options chip. *Fix:* an options-only prefilter for that scope.
 
-**B3 · Low · BUG — a scope tap commits the stale debounced query.**
+**B3 · Low · BUG — a scope tap commits the stale debounced query.** *FIXED: the whole `SearchRequest` is the debounced unit, so a scope change restarts the same window as typing.*
 `SearchViewModel.kt:51-54`: `combine(query.debounce(300), scope)` — a scope change re-emits
 immediately with the last *debounced* query, so the pager paints stale results for 300 ms and
 the pending debounce is not restarted. (Verification correction: the report's secondary claim
@@ -239,16 +239,16 @@ that "Searching…" stays hidden is wrong — `debouncing` compares the live tri
 true mid-typing.) *Fix:* debounce the combined request and/or compare the whole
 `SearchRequest`.
 
-**B4 · Low · BUG — the browse search field can revert a keystroke.**
+**B4 · Low · BUG — the browse search field can revert a keystroke.** *FIXED: the sync-back only runs on an unfocused field.*
 `BrowseScreen.kt:235-237`: the sync-back effect copies `filterState.query` into `searchInput`
 whenever they differ; a keystroke in the frame after the debounced commit lands is overwritten.
 One-frame window. *Fix:* sync back only when unfocused, or key on request generation.
 
-**B5 · Nit · NIT — `escapeLike`'s KDoc is orphaned.**
+**B5 · Nit · NIT — `escapeLike`'s KDoc is orphaned.** *FIXED: the doc sits on `escapeLike`.*
 `QuestionSearch.kt:15-20` documents `escapeLike` but floats above `prefilterKey`'s own KDoc;
 `escapeLike` (`:52-57`) is undocumented. Move the doc down.
 
-**B6 · Nit · NIT — dead surface on `SearchScreen`.**
+**B6 · Nit · NIT — dead surface on `SearchScreen`.** *FIXED: the unused parameter and the leftover Spacer are gone.*
 `repository: McqRepository` is an unused parameter (`SearchScreen.kt:48`); the trailing
 `Spacer(Modifier.width(8.dp))` (`:154`) is a leftover (verification: it acts as accidental 8 dp
 end padding rather than a literal no-op). Remove both.

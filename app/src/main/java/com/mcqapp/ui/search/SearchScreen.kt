@@ -38,7 +38,6 @@ import androidx.navigation.NavController
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
-import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.previewText
 import com.mcqapp.R
 import com.mcqapp.ui.common.PagingAppendErrorItem
@@ -47,7 +46,6 @@ import com.mcqapp.ui.common.PagingErrorRow
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
-    repository: McqRepository,
     navController: NavController,
     viewModel: SearchViewModel = viewModel()
 ) {
@@ -162,7 +160,6 @@ fun SearchScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            Spacer(Modifier.width(8.dp))
                         }
                     }
                 }

@@ -270,6 +270,9 @@ class PassageRepositoryTest {
         assertEquals(listOf("q1"), hits.map { it.question.id })
         // The title matches too.
         assertEquals(listOf("q1"), repository.searchGlobal("water cycle").map { it.question.id })
+        // A phrase straddling the title-to-body boundary matches the stored
+        // column's single-space join (consolidated_bugs.md B1).
+        assertEquals(listOf("q1"), repository.searchGlobal("cycle rain").map { it.question.id })
         // Standalone questions stay findable; nothing false-matches.
         assertTrue(repository.searchGlobal("Q q2").map { it.question.id }.contains("q2"))
         assertTrue(repository.searchGlobal("fills rivers").none { it.question.id == "q2" })

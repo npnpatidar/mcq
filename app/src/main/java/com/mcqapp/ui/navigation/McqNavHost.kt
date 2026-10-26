@@ -133,7 +133,7 @@ fun McqNavHost(repository: McqRepository) {
         }
         composable("search") {
             Logger.i("NAV", "search screen")
-            SearchScreen(repository = repository, navController = navController)
+            SearchScreen(navController = navController)
         }
         composable(
             route = "editor?questionId={questionId}&paperId={paperId}&categoryId={categoryId}",

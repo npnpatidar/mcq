@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -232,6 +233,9 @@ fun BrowseScreen(
 
         // The field shows what was typed; the list's query follows 300 ms later.
         var searchInput by remember { mutableStateOf("") }
+        // Whether the field holds the user's focus: the sync-back below must
+        // not touch it while they are typing.
+        var searchFocused by remember { mutableStateOf(false) }
         LaunchedEffect(searchInput) {
             if (searchInput != filterState.query) {
                 delay(300)
@@ -239,7 +243,13 @@ fun BrowseScreen(
             }
         }
         LaunchedEffect(filterState.query) {
-            if (filterState.query != searchInput) searchInput = filterState.query
+            // A keystroke landing in the frame after a debounced commit used
+            // to be overwritten by this sync-back, reverting the field
+            // (consolidated_bugs.md B4). Sync only an unfocused field — a
+            // focused one is ahead of the committed query by design.
+            if (filterState.query != searchInput && !searchFocused) {
+                searchInput = filterState.query
+            }
         }
         // A filter change re-scopes the list: a selection made under the old
         // scope would let bulk Delete/Edit act on rows now hidden — the chips
@@ -381,7 +391,9 @@ fun BrowseScreen(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { searchFocused = it.isFocused }
                 )
                 Spacer(Modifier.height(8.dp))
                 FlowRow(

@@ -1254,6 +1254,27 @@ interface QuestionDao {
         offset: Int
     ): List<QuestionEntity>
 
+    /**
+     * The OPTIONS scope's prefilter: option texts only. The union query above
+     * walks every text/tag/passage candidate the in-memory authority then
+     * rejects — a common word matching many stems but no option parsed the
+     * whole candidate set to end at "no matches" (consolidated_bugs.md B2).
+     * The filter remains the authority; this only bounds its input.
+     */
+    @Query(
+        "SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
+            "LEFT JOIN options ON options.questionId = questions.id " +
+            "WHERE options.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR options.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "ORDER BY qrowid DESC LIMIT :limit OFFSET :offset"
+    )
+    suspend fun searchOptionsOnly(
+        query: String,
+        fragment: String,
+        limit: Int,
+        offset: Int
+    ): List<QuestionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(question: QuestionEntity)
 

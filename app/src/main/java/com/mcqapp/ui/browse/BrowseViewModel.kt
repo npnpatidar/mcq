@@ -50,7 +50,6 @@ data class CategoryContext(
  * the main thread.
  */
 data class RowMoveState(
-    val indexInCategory: Int,
     val canMoveUp: Boolean,
     val canMoveDown: Boolean,
     val passageCanMoveUp: Boolean,
@@ -304,6 +303,12 @@ class BrowseViewModel(
         }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             val moves = rowMoveStates(window, _state.value.categoryContexts)
+            // The generation check is deliberately not a lock: a write that
+            // lands between this read and the update bumps the counter and
+            // this stale result is discarded. A pre-invalidation state can
+            // still flash for a frame or two (computed before the bump,
+            // published after); that is cosmetic and cheaper than
+            // synchronising every refresh (consolidated_bugs.md K3).
             if (generation != rowMovesGeneration) return@launch
             _state.update { it.copy(rowMoves = moves) }
         }
@@ -518,7 +523,17 @@ class BrowseViewModel(
             val scope = currentScope()
             val size = repository.browseFilteredCount(scope)
             if (size == 0) return@launch
-            val index = repository.browseFilteredIndexOf(anchorId, scope).coerceIn(0, size - 1)
+            // browseFilteredIndexOf is a keyset count: for an anchor outside
+            // the current scope it returns the number of in-scope rows before
+            // the anchor's position, never -1, so a bare coerceIn silently
+            // started Prev/Next from the wrong row. Verify like
+            // [browseIndexOf] does (consolidated_bugs.md F9).
+            val counted = repository.browseFilteredIndexOf(anchorId, scope)
+            val index = if (repository.browseFilteredIdAt(counted, scope) == anchorId) {
+                counted
+            } else {
+                return@launch
+            }
             onReady(
                 EditorSession.Cursor(size, index) { offset ->
                     repository.browseFilteredIdAt(offset, scope)
@@ -555,13 +570,6 @@ class BrowseViewModel(
             repository.moveQuestionsToCategory(questionIds, targetCategoryId)
             invalidateContexts()
             Logger.i("BROWSEVM", "Moved ${questionIds.size} questions to $targetCategoryId")
-        }
-    }
-
-    fun swapQuestions(firstId: String, secondId: String) {
-        viewModelScope.launch {
-            repository.swapQuestionOrder(firstId, secondId)
-            invalidateContexts()
         }
     }
 
@@ -618,9 +626,27 @@ class BrowseViewModel(
             try {
                 // Sessions and the list hold refs; content comes back by id.
                 // Contained in questionIds, so a stale ref still exports the
-                // question the user selected.
-                val selected = repository.getQuestionsByIds(questionIds.toList())
-                    .sortedBy { q -> questionIds.indexOf(q.id) }
+                // question the user selected. The export is ordered by the
+                // browse scope's own ordering, not the tick order: the ticked
+                // set is a LinkedHashSet, so a whole-paper selection used to
+                // sort properly while a partial one exported in tap order
+                // (consolidated_bugs.md F11). A row outside the current scope
+                // (the filter changed since it was ticked) keeps its relative
+                // tail position rather than disappearing from its own export.
+                val scope = currentScope()
+                val byId = repository.getQuestionsByIds(questionIds.toList())
+                    .associateBy { it.id }
+                val positions = HashMap<String, Int>()
+                questionIds.forEachIndexed { tickIndex, id ->
+                    val counted = repository.browseFilteredIndexOf(id, scope)
+                    positions[id] = if (repository.browseFilteredIdAt(counted, scope) == id) {
+                        counted
+                    } else {
+                        Int.MAX_VALUE - (questionIds.size - tickIndex)
+                    }
+                }
+                val selected = byId.values
+                    .sortedBy { positions[it.id] ?: Int.MAX_VALUE }
                 if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
                 // The passages the selection's member questions reference,
                 // resolved the same way a paper export's are.
@@ -685,8 +711,12 @@ class BrowseViewModel(
                 return@launch
             }
             _bulkError.value = null
+            // The gate is on the FILTERED list: `" ,"` passed the raw-text
+            // check, the filtered list came out empty, and the write deleted
+            // every tag although the dialog says blank fields keep existing
+            // values (consolidated_bugs.md K2).
             val tags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                .takeIf { tagsText.isNotBlank() }
+                .takeIf { it.isNotEmpty() }
             repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
             invalidateContexts()
             Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
@@ -797,7 +827,6 @@ internal fun rowMoveStatesOf(
             val first = runStart[index]
             val last = runEnd[index]
             out[ref.id] = RowMoveState(
-                indexInCategory = index,
                 // Same predicates as PassageReorder.canMove / movePassageBlock:
                 // a member may swap within its run, a standalone row with a
                 // neighbour, and only a non-blank passage id moves as a block.

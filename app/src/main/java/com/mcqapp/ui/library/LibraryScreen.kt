@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,40 +99,43 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    var showPaperDialog by remember { mutableStateOf(false) }
+    // Dialog flags ride rotation (plain `remember` closed them and
+    // discarded typed input) — consolidated_bugs.md F12.
+    var showPaperDialog by rememberSaveable { mutableStateOf(false) }
     // The paper being edited (Manage → Edit paper); null hides the dialog.
     var editingPaper by remember { mutableStateOf<Paper?>(null) }
     // A Test tap parks its paper + scope here so the duration dialog can ask
     // how long this run should be before the route carries it to the session.
     var pendingTestStart by remember { mutableStateOf<PendingTestStart?>(null) }
-    var showCategoryDialog by remember { mutableStateOf(false) }
-    var categoryDialogPaperId by remember { mutableStateOf("") }
-    var categoryDialogParentId by remember { mutableStateOf<String?>(null) }
+    var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
+    var categoryDialogPaperId by rememberSaveable { mutableStateOf("") }
+    var categoryDialogParentId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingCategory by remember { mutableStateOf<com.mcqapp.domain.CategoryNode?>(null) }
-    var pendingExportPaperId by remember { mutableStateOf<String?>(null) }
-    // (paperId, ticked branches, branch count): Export follows the selection
-    // when something is ticked, and the count is for the dialog's title only.
-    var pendingExportSelection by remember { mutableStateOf<Triple<String, List<String>, Int>?>(null) }
-    var pendingExportFormat by remember { mutableStateOf<ExportFormat?>(null) }
-    var showExportFormatDialog by remember { mutableStateOf(false) }
-    var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
+    // The export target (paper or selection, and the chosen format) lives in
+    // the ViewModel: the system save dialog recreates the activity, and plain
+    // `remember` came back all-null, so the re-delivered URI fell through to
+    // exportAll — the whole library written to one paper's file
+    // (consolidated_bugs.md F2).
+    val pendingExportTarget by viewModel.pendingExport.collectAsStateWithLifecycle()
+    var showExportFormatDialog by rememberSaveable { mutableStateOf(false) }
+    var exportFormat by rememberSaveable { mutableStateOf(ExportFormat.JSON_INLINE) }
 
     // The format must travel in state: saver callbacks fire after the save
     // dialog, so anything baked into the callback itself goes stale.
     fun onExportDocument(uri: Uri?) {
-        val paperId = pendingExportPaperId
-        val selection = pendingExportSelection
-        val format = pendingExportFormat
-        pendingExportPaperId = null
-        pendingExportSelection = null
-        pendingExportFormat = null
+        val pending = viewModel.consumePendingExport()
         uri?.let {
-            if (selection != null && format != null) {
-                viewModel.exportSelectionAs(it, selection.first, selection.second, format)
-            } else if (paperId != null && format != null) {
-                viewModel.exportPaperAs(it, paperId, format)
-            } else if (paperId == null && selection == null) {
-                viewModel.exportAll(it)
+            val selection = pending?.selection
+            val format = pending?.format
+            when {
+                selection != null && format != null ->
+                    viewModel.exportSelectionAs(it, selection.first, selection.second, format)
+                pending?.paperId != null && format != null ->
+                    viewModel.exportPaperAs(it, pending.paperId, format)
+                // Nothing pending: the dialog was dismissed or the state was
+                // lost. exportAll has no legitimate caller here, so doing
+                // nothing is the only safe answer.
+                else -> Unit
             }
         }
     }
@@ -168,137 +172,27 @@ fun LibraryScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         val picked = uri ?: return@rememberLauncherForActivityResult
-        // Off the main thread and size-capped: this used to run in the
-        // picker callback with readBytes(), so a large pick allocated the
-        // whole file on the UI thread and ANR'd or died on OOM, which
-        // catch (Exception) does not cover.
-        scope.launch {
-            // Read a bounded prefix first. It is enough to tell a zip from
-            // JSON and to keep a small bank in memory, but it never allocates
-            // the whole large bank: a bigger JSON is streamed from the Uri.
-            val prefix = try {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(picked)?.use { stream ->
-                        com.mcqapp.util.readPrefix(
-                            stream,
-                            com.mcqapp.ui.importscreen.JSON_STREAM_THRESHOLD_BYTES.toLong()
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.e("LIB", "Failed to read import file", e)
-                viewModel.showError("Could not read the file: ${e.message}")
-                return@launch
-            } ?: run {
-                viewModel.showError("Could not read the file.")
-                return@launch
+        // The classify/read pipeline runs in the ViewModel: the composition
+        // scope this callback used to run in is cancelled by the recreation a
+        // picker can itself trigger, silently dropping the pick with no error
+        // and no navigation (consolidated_bugs.md F13).
+        viewModel.onImportPicked(
+            picked,
+            context.contentResolver,
+            onDocx = { bytes, name ->
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = name
+                navController.navigate("import/direct")
+            },
+            onJsonUri = {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri = it
+                navController.navigate("import/direct")
+            },
+            onJsonBytes = {
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = it
+                navController.navigate("import/direct")
             }
-
-            // Route by content, not by name or MIME type (pickers report
-            // both inconsistently). Both .apkg and .docx are zips, so a
-            // .docx is told apart by its word/document.xml entry; our
-            // JSON can arrive under any extension and stays on the text
-            // path below.
-            val isZip = prefix.bytes.size >= 2 && prefix.bytes[0] == 'P'.code.toByte() &&
-                prefix.bytes[1] == 'K'.code.toByte()
-
-            if (isZip) {
-                // Classify by streaming the archive's entry names, so the file
-                // is never read whole. Both .apkg and .docx are zips; a Word
-                // file is told apart by its word/document.xml entry, a backup
-                // by its manifest. A backup with images in it is often over the
-                // old size cap — "too large to import" would be the wrong thing
-                // to tell someone who picked a file that was never meant to be
-                // imported at all.
-                val kind = try {
-                    withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(picked)?.use { stream ->
-                            classifyPickedArchive(stream)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Logger.e("LIB", "Failed to read import file", e)
-                    viewModel.showError("Could not read the file: ${e.message}")
-                    return@launch
-                } ?: run {
-                    viewModel.showError("Could not read the file.")
-                    return@launch
-                }
-                when (kind) {
-                    PickedArchive.DOCX -> {
-                        // A Word bank is small and the parser wants its bytes,
-                        // so read it now, under the same cap as before.
-                        val bytes = try {
-                            withContext(Dispatchers.IO) {
-                                context.contentResolver.openInputStream(picked)?.use { stream ->
-                                    com.mcqapp.util.readBounded(stream)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Logger.e("LIB", "Failed to read import file", e)
-                            viewModel.showError(
-                                if (e is com.mcqapp.util.ImportTooLargeException) {
-                                    com.mcqapp.util.tooLargeMessage(
-                                        e.atLeastBytes,
-                                        com.mcqapp.util.MAX_IMPORT_BYTES
-                                    )
-                                } else {
-                                    "Could not read the file: ${e.message}"
-                                }
-                            )
-                            return@launch
-                        } ?: run {
-                            viewModel.showError("Could not read the file.")
-                            return@launch
-                        }
-                        Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
-                        com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxBytes = bytes
-                        // The file name becomes the paper title (the document rarely
-                        // names its own paper). The provider's display name, not the
-                        // opaque row id a content Uri carries in lastPathSegment.
-                        com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName =
-                            context.contentResolver.displayName(picked)
-                        navController.navigate("import/direct")
-                    }
-                    PickedArchive.BACKUP -> {
-                        // Restore is the reverse of export: it replaces the
-                        // whole library, while import only adds papers.
-                        Logger.i("LIB", "picked library backup: not an import")
-                        viewModel.showError(backupNotABankMessage())
-                    }
-                    PickedArchive.OTHER -> {
-                        // The deck is streamed straight from the Uri by the
-                        // importer, so the archive is never held as bytes.
-                        val title = context.contentResolver.displayName(picked) ?: "deck.apkg"
-                        viewModel.importAnkiPackage(title) {
-                            context.contentResolver.openInputStream(picked)
-                        }
-                    }
-                }
-                return@launch
-            }
-
-            if (prefix.truncated) {
-                // Too large to hold as bytes: the import screen re-opens the
-                // Uri, previews a bounded sample and streams the rest.
-                Logger.i("LIB", "picked large import file: streaming from uri")
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri = picked
-            } else {
-                // Bytes stay bytes: the String copy that used to be made here
-                // doubled the bank in memory before the parser ever saw it.
-                val bytes = prefix.bytes
-                val fingerprint = try {
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                        .digest(bytes)
-                    digest.joinToString("") { "%02x".format(it) }.take(12)
-                } catch (e: Exception) {
-                    "unknown"
-                }
-                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint")
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = bytes
-            }
-            navController.navigate("import/direct")
-        }
+        )
     }
 
     ModalNavigationDrawer(
@@ -481,12 +375,15 @@ fun LibraryScreen(
                                 onExport = { tickedIds ->
                                     // Nothing ticked → the whole paper; a
                                     // selection → exactly its branches (E1).
-                                    if (tickedIds.isEmpty()) {
-                                        pendingExportPaperId = paper.id
-                                    } else {
-                                        pendingExportSelection =
-                                            Triple(paper.id, tickedIds, tickedIds.size)
-                                    }
+                                    viewModel.setPendingExport(
+                                        if (tickedIds.isEmpty()) {
+                                            LibraryViewModel.PendingExportTarget(paperId = paper.id)
+                                        } else {
+                                            LibraryViewModel.PendingExportTarget(
+                                                selection = Triple(paper.id, tickedIds, tickedIds.size)
+                                            )
+                                        }
+                                    )
                                     exportFormat = ExportFormat.JSON_INLINE
                                     showExportFormatDialog = true
                                 },
@@ -703,14 +600,12 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = {
                 showExportFormatDialog = false
-                pendingExportPaperId = null
-                pendingExportSelection = null
-                pendingExportFormat = null
+                viewModel.setPendingExport(null)
             },
             title = {
                 Text(
-                    if (pendingExportSelection != null) {
-                        "Export selection (${pendingExportSelection!!.third} categories)"
+                    if (pendingExportTarget?.selection != null) {
+                        "Export selection (${pendingExportTarget?.selection?.third} categories)"
                     } else {
                         "Export format"
                     }
@@ -745,35 +640,31 @@ fun LibraryScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val selection = pendingExportSelection
-                    val paper = papers.firstOrNull { it.id == pendingExportPaperId }
-                    val selectionPaper = papers.firstOrNull { it.id == selection?.first }
+                    val target = pendingExportTarget
+                    val paper = papers.firstOrNull { it.id == target?.paperId }
+                    val selectionPaper = papers.firstOrNull { it.id == target?.selection?.first }
                     showExportFormatDialog = false
-                    if (selection != null) {
-                        pendingExportFormat = exportFormat
+                    if (target != null && (target.paperId != null || target.selection != null)) {
+                        viewModel.setPendingExport(target.copy(format = exportFormat))
                         exportSaver(exportFormat).launch(
-                            PaperExporter.fileNameFor(
-                                "${selectionPaper?.title.orEmpty()} (selection)",
-                                exportFormat
-                            )
+                            if (target.selection != null) {
+                                PaperExporter.fileNameFor(
+                                    "${selectionPaper?.title.orEmpty()} (selection)",
+                                    exportFormat
+                                )
+                            } else {
+                                PaperExporter.fileNameFor(paper?.title.orEmpty(), exportFormat)
+                            }
                         )
-                    } else if (paper != null) {
-                        pendingExportFormat = exportFormat
-                        exportSaver(exportFormat)
-                            .launch(PaperExporter.fileNameFor(paper.title, exportFormat))
                     } else {
-                        pendingExportPaperId = null
-                        pendingExportSelection = null
-                        pendingExportFormat = null
+                        viewModel.setPendingExport(null)
                     }
                 }) { Text(stringResource(R.string.export)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showExportFormatDialog = false
-                    pendingExportPaperId = null
-                    pendingExportSelection = null
-                    pendingExportFormat = null
+                    viewModel.setPendingExport(null)
                 }) { Text(stringResource(R.string.cancel)) }
             }
         )

@@ -203,39 +203,43 @@ internal class JsonPull(input: InputStream) : Closeable {
     }
 
     private fun scan() {
-        skipWhitespace()
-        val c = read()
-        if (c == -1) {
-            current = Token.EOF
-            return
-        }
-        when (val ch = c.toChar()) {
-            ',' , ':' -> {
-                // A separator outside string context: the next token follows.
-                scan()
+        while (true) {
+            skipWhitespace()
+            val c = read()
+            if (c == -1) {
+                current = Token.EOF
                 return
             }
-            '{' -> current = Token.BEGIN_OBJECT
-            '}' -> current = Token.END_OBJECT
-            '[' -> current = Token.BEGIN_ARRAY
-            ']' -> current = Token.END_ARRAY
-            '"' -> {
-                literal = readString()
-                val expectsName = ctx.lastOrNull()?.let { it.kind == '{' && it.nameExpected } == true
-                current = if (expectsName) Token.NAME else Token.STRING
-                if (expectsName) ctx.last().nameExpected = false
-                return
-            }
-            else -> {
-                val word = readLiteral(ch)
-                current = when (word) {
-                    "true", "false" -> Token.BOOLEAN
-                    "null" -> Token.NULL
-                    else -> Token.NUMBER
+            when (val ch = c.toChar()) {
+                ',' , ':' -> {
+                    // A separator outside string context: the next token follows.
+                    // Iterate, not recurse: a hand-crafted run of ~100k separators
+                    // would otherwise overflow the stack (consolidated_bugs.md A1).
+                    continue
                 }
-                literal = word
-                return
+                '{' -> current = Token.BEGIN_OBJECT
+                '}' -> current = Token.END_OBJECT
+                '[' -> current = Token.BEGIN_ARRAY
+                ']' -> current = Token.END_ARRAY
+                '"' -> {
+                    literal = readString()
+                    val expectsName = ctx.lastOrNull()?.let { it.kind == '{' && it.nameExpected } == true
+                    current = if (expectsName) Token.NAME else Token.STRING
+                    if (expectsName) ctx.last().nameExpected = false
+                    return
+                }
+                else -> {
+                    val word = readLiteral(ch)
+                    current = when (word) {
+                        "true", "false" -> Token.BOOLEAN
+                        "null" -> Token.NULL
+                        else -> Token.NUMBER
+                    }
+                    literal = word
+                    return
+                }
             }
+            return
         }
     }
 

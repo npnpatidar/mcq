@@ -128,9 +128,12 @@ object AnkiPackageWriter {
         val passages = stream.passages.associate { it.id to AnkiDtoMapper.toPassage(it) }
         val categoryPaths = categoryPaths(stream.categories)
         // Deck name -> id, in first-seen order, so a re-export numbers them the
-        // same way and Anki matches decks across exports.
+        // same way and Anki matches decks across exports. Seeded with the same
+        // cleaned root the notes use (segmentFor), so a title carrying `::` or
+        // a blank one does not register a phantom deck beside the real one
+        // (consolidated_bugs.md A6).
         val deckIds = LinkedHashMap<String, Long>()
-        deckIds[paperTitle.trim()] = DECK_ID
+        deckIds[segmentFor(paperTitle, "Untitled")] = DECK_ID
         fun deckIdFor(name: String): Long = deckIds.getOrPut(name) { DECK_ID + deckIds.size }
 
         // Counts the notes the walk writes, which is also what `col.conf.nextPos`

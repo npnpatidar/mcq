@@ -19,8 +19,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 
 data class ResultsUiState(
@@ -52,10 +52,14 @@ class ResultsViewModel(
     private val _state = MutableStateFlow(ResultsUiState())
     val state: StateFlow<ResultsUiState> = _state.asStateFlow()
 
-    private val request = MutableStateFlow(ResultsRequest(ReviewFilters.ALL, emptySet()))
+    private val request = MutableStateFlow(ResultsRequest(ReviewFilters.ALL))
 
     val pagingData: Flow<PagingData<NumberedResult>> = request
         .flatMapLatest { req ->
+            // The pager is keyed on the filter alone: the saved set is read at
+            // load time and the source invalidates itself on bookmark writes,
+            // so a toggle refreshes the Saved chip in place instead of
+            // rebuilding the pager and its scroll (consolidated_bugs.md F14).
             Pager(
                 PagingConfig(
                     pageSize = RESULTS_PAGE,
@@ -63,7 +67,7 @@ class ResultsViewModel(
                     enablePlaceholders = false
                 )
             ) {
-                repository.resultPagingSource(attemptId, req.filter, req.savedIds)
+                repository.resultPagingSource(attemptId, req.filter) { _state.value.bookmarked }
             }.flow
         }
         .cachedIn(viewModelScope)
@@ -77,12 +81,11 @@ class ResultsViewModel(
             repository.observeBookmarks().collect { ids ->
                 val saved = ids.toSet()
                 _state.update { it.copy(bookmarked = saved) }
+                // The paging source re-reads the set per load and invalidates
+                // on this very table, so nothing needs re-keying here; only
+                // an emptied Saved chip falls back to the whole attempt.
                 if (saved.isEmpty() && _state.value.filter == ReviewFilters.SAVED) {
                     updateFilter(ReviewFilters.ALL)
-                } else {
-                    request.update {
-                        it.copy(savedIds = if (it.filter == ReviewFilters.SAVED) saved else emptySet())
-                    }
                 }
             }
         }
@@ -125,12 +128,7 @@ class ResultsViewModel(
 
     fun updateFilter(filter: String) {
         _state.update { it.copy(filter = filter) }
-        request.update {
-            it.copy(
-                filter = filter,
-                savedIds = if (filter == ReviewFilters.SAVED) _state.value.bookmarked else emptySet()
-            )
-        }
+        request.update { it.copy(filter = filter) }
     }
 
     fun toggleBookmark(questionId: String) {
@@ -143,7 +141,7 @@ class ResultsViewModel(
         }
     }
 
-    private data class ResultsRequest(val filter: String, val savedIds: Set<String>)
+    private data class ResultsRequest(val filter: String)
 
     companion object {
         private const val RESULTS_PAGE = 40

@@ -49,6 +49,8 @@ import androidx.compose.ui.platform.LocalContext
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.ui.ResultsViewModelFactory
+import com.mcqapp.ui.common.PagingAppendErrorItem
+import com.mcqapp.ui.common.PagingRefreshErrorItem
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import java.text.SimpleDateFormat
@@ -265,6 +267,11 @@ fun ResultsScreen(
                 }
             }
             val refresh = items.loadState.refresh
+            if (refresh is LoadState.Error) {
+                item(contentType = "refresh-error") {
+                    PagingRefreshErrorItem(items)
+                }
+            }
             if (refresh is LoadState.NotLoading && items.itemCount == 0) {
                 item(contentType = "empty") {
                     Text(
@@ -302,6 +309,11 @@ fun ResultsScreen(
                             modifier = Modifier.size(20.dp)
                         )
                     }
+                }
+            }
+            if (items.loadState.append is LoadState.Error) {
+                item(key = "results-append-error", contentType = "append-error") {
+                    PagingAppendErrorItem(items)
                 }
             }
         }

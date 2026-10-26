@@ -43,6 +43,10 @@ internal fun StackedBarChart(
     /** The overlay line's right-axis ceiling; 1.0 for a rate, counts otherwise. */
     overlayMax: Double = 1.0,
     overlayLabel: (Double) -> String = { formatPct(it) },
+    /** How the tooltip prints a bar's segment total; defaults to the raw
+     *  integer, which under a formatted axis ("1h") read "3600"
+     *  (consolidated_bugs.md E7). */
+    totalLabel: (Double) -> String = { it.roundToInt().toString() },
     emptyText: (@Composable () -> Unit)? = null
 ) {
     val textMeasurer = rememberTextMeasurer()
@@ -144,7 +148,14 @@ internal fun StackedBarChart(
             val path = Path()
             var started = false
             points.indices.forEach { index ->
-                val value = overlay!![index] ?: return@forEach
+                // A null hour breaks the line (the chart's own comment
+                // promises gap handling; LineChart resets the same way), it
+                // does not bridge straight to the next known point
+                // (consolidated_bugs.md E3).
+                val value = overlay!![index] ?: run {
+                    started = false
+                    return@forEach
+                }
                 val x = leftPad + index * slot + slot / 2f
                 val y = topPad + plotHeight * (1f - (value / overlayCeiling).toFloat())
                 if (started) {
@@ -195,7 +206,7 @@ internal fun StackedBarChart(
         // Tooltip for the selected bar.
         if (selected in points.indices) {
             val bar = points[selected]
-            val total = bar.segments.take(segmentCount).sum().roundToInt()
+            val total = totalLabel(bar.segments.take(segmentCount).sum())
             val overlayText = if (hasOverlay && overlay!![selected] != null) {
                 "\n" + overlayLabel(overlay[selected]!!)
             } else {

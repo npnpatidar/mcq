@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -148,7 +149,10 @@ internal fun axisLabelColor(): Color = MaterialTheme.colorScheme.onSurfaceVarian
  */
 internal fun niceMax(value: Double): Double {
     if (value <= 0.0) return 1.0
-    val exponent = log10(value).toInt()
+    // floor, not truncate: log10(0.5) = -0.3 truncates to 0 and returned 1.0
+    // for a value below 1 (consolidated_bugs.md E4). Every current caller
+    // coerces >= 1, so this is the latent contract only.
+    val exponent = floor(log10(value)).toInt()
     val base = 10.0.pow(exponent)
     val scaled = value / base
     val nice = when {

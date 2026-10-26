@@ -2,6 +2,7 @@ package com.mcqapp.data.repository
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
+import androidx.room.InvalidationTracker
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.AttemptDao
@@ -65,6 +66,12 @@ internal class HistoryStore(
     /** How many bookmarks there are, for the header count and empty state. */
     fun observeBookmarkCount(): Flow<Int> = db.bookmarkDao().observeCount()
 
+    /** Removes one bookmark; a no-op when it is already gone, so a delete
+     *  button can never re-add what a second tap finds still composed. */
+    suspend fun deleteBookmark(questionId: String) {
+        db.bookmarkDao().remove(questionId)
+    }
+
     suspend fun toggleBookmark(questionId: String) {
         // One transaction: the check and the flip must observe one state, or
         // a double-tap racing within one dispatcher hop reads the same value
@@ -117,8 +124,23 @@ internal class HistoryStore(
      * the last item of the previous page — not a row count — so edits ahead
      * of the cursor cannot shift the window.
      */
-    fun bookmarkedPagingSource(): PagingSource<BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion> =
-        BookmarksPagingSource { key, limit -> bookmarkedPage(key, limit) }
+    fun bookmarkedPagingSource(): PagingSource<BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion> {
+        val source = BookmarksPagingSource { key, limit -> bookmarkedPage(key, limit) }
+        // One Pager generation per screen: the source invalidates itself when
+        // the bookmarks table changes, so Paging refreshes in place and the
+        // reader's position survives (consolidated_bugs.md F14) instead of the
+        // ViewModel rebuilding the whole pager — and its scroll — per toggle.
+        // The observer removes itself: each generation would otherwise leak
+        // one.
+        val tracker = db.invalidationTracker
+        tracker.addObserver(object : InvalidationTracker.Observer("bookmarks") {
+            override fun onInvalidated(tables: Set<String>) {
+                source.invalidate()
+                tracker.removeObserver(this)
+            }
+        })
+        return source
+    }
 
     private suspend fun bookmarkedPage(key: BookmarkPageKey?, limit: Int): BookmarkPage {
         val entities =
@@ -408,14 +430,27 @@ internal class HistoryStore(
     fun resultPagingSource(
         attemptId: Long,
         filter: String,
-        bookmarked: Set<String>
-    ): PagingSource<ResultPageKey, NumberedResult> = ResultsPagingSource(
-        attemptId = attemptId,
-        filter = filter,
-        bookmarked = bookmarked,
-        dao = db.attemptDao(),
-        map = { it.toDomainResult() }
-    )
+        bookmarked: () -> Set<String>
+    ): PagingSource<ResultPageKey, NumberedResult> {
+        val source = ResultsPagingSource(
+            attemptId = attemptId,
+            filter = filter,
+            bookmarked = bookmarked,
+            dao = db.attemptDao(),
+            map = { it.toDomainResult() }
+        )
+        // The Saved chip's set is read at load time and the source invalidates
+        // on bookmark writes, so a toggle refreshes the list in place instead
+        // of the ViewModel rebuilding the pager (consolidated_bugs.md F14).
+        val tracker = db.invalidationTracker
+        tracker.addObserver(object : InvalidationTracker.Observer("bookmarks") {
+            override fun onInvalidated(tables: Set<String>) {
+                source.invalidate()
+                tracker.removeObserver(this)
+            }
+        })
+        return source
+    }
 
     suspend fun getResultAggregates(attemptId: Long): ResultAggregates =
         db.attemptDao().getResultAggregates(attemptId)
@@ -489,7 +524,24 @@ internal class HistoryStore(
         val ids = db.attemptDao().getMistakenQuestionIdsForPaper(paperId)
         if (ids.isEmpty()) return emptyList()
         val byId = db.questionDao().getSessionRefsByIdsChunked(ids).associateBy { it.id }
-        return ids.mapNotNull { byId[it] }
+        val refs = ids.mapNotNull { byId[it] }
+        // Two members of one passage missed at different times used to sit in
+        // two runs, and the drill's block shuffle could place them far apart.
+        // Each passage group lands whole at its first member's position; the
+        // groups keep their most-recently-missed-first order
+        // (consolidated_bugs.md C6).
+        val byPassage = refs.filter { it.passageId != null }.groupBy { it.passageId!! }
+        val emitted = mutableSetOf<String>()
+        val out = mutableListOf<com.mcqapp.data.local.SessionRef>()
+        for (ref in refs) {
+            val pid = ref.passageId
+            if (pid == null) {
+                out += ref
+            } else if (emitted.add(pid)) {
+                out += byPassage.getValue(pid)
+            }
+        }
+        return out
     }
 
     suspend fun getMistakenQuestions(paperId: String): List<Question> {
@@ -605,7 +657,7 @@ private const val RESULT_SCAN_WINDOW = 200
 private class ResultsPagingSource(
     private val attemptId: Long,
     private val filter: String,
-    private val bookmarked: Set<String>,
+    private val bookmarked: () -> Set<String>,
     private val dao: AttemptDao,
     private val map: (QuestionResultEntity) -> QuestionResult
 ) : PagingSource<ResultPageKey, NumberedResult>() {
@@ -668,7 +720,7 @@ private class ResultsPagingSource(
         ReviewFilters.SKIPPED ->
             scan.selectedOptionIds.isBlank() && scan.correctOptionIds.isNotBlank()
         ReviewFilters.UNGRADED -> scan.correctOptionIds.isBlank()
-        ReviewFilters.SAVED -> scan.questionId in bookmarked
+        ReviewFilters.SAVED -> scan.questionId in bookmarked()
         else -> true
     }
 

@@ -244,7 +244,17 @@ private fun StudyBody(
                     .padding(16.dp)
             ) {
                 GradeError(state.gradeError)
-                if (!state.revealed) {
+                if (state.gradedAndStuck) {
+                    // The grade is already stored; re-grading would double it.
+                    // Only the next card is missing (consolidated_bugs.md I3).
+                    Button(
+                        onClick = { viewModel.loadNext() },
+                        enabled = !state.grading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.retry))
+                    }
+                } else if (!state.revealed) {
                     Button(
                         onClick = { viewModel.reveal() },
                         modifier = Modifier.fillMaxWidth()
@@ -343,7 +353,9 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Button(
                     onClick = { viewModel.next() },
                     modifier = Modifier.weight(1f).testTag("study-next"),
-                    enabled = !state.grading
+                    // The card is graded and stuck: re-tapping Next would
+                    // double-persist it (consolidated_bugs.md I3).
+                    enabled = !state.grading && !state.gradedAndStuck
                 ) {
                     Text(stringResource(R.string.next))
                 }

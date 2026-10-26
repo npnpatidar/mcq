@@ -13,12 +13,6 @@ object QuestionSearch {
     enum class Scope(val label: String) { ALL("All"), QUESTION("Questions"), OPTIONS("Options") }
 
     /**
-     * Escapes a user query for use inside a SQL `LIKE` pattern declared with
-     * `ESCAPE '\'`. `%`, `_` and `\` lose their wildcard meaning, so the DAO
-     * prefilter matches literally instead of overfetching every row that
-     * happens to satisfy a user-typed wildcard.
-     */
-    /**
      * The longest single alphanumeric run of the query, ORed into the SQL
      * prefilter beside the whole query.
      *
@@ -49,6 +43,12 @@ object QuestionSearch {
     /** Below this a run matches almost everything, so fall back to the query. */
     private const val MIN_PREFILTER_RUN = 2
 
+    /**
+     * Escapes a user query for use inside a SQL `LIKE` pattern declared with
+     * `ESCAPE '\'`. `%`, `_` and `\` lose their wildcard meaning, so the DAO
+     * prefilter matches literally instead of overfetching every row that
+     * happens to satisfy a user-typed wildcard.
+     */
     fun escapeLike(query: String): String = buildString(query.length) {
         query.forEach { ch ->
             if (ch == '%' || ch == '_' || ch == '\\') append('\\')

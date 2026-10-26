@@ -206,6 +206,12 @@ object FsrsOptimizer {
         val removed = computeRemovedPairs(
             prepared.filterNot { it.seeded }
                 .filter { it.firstInterday >= 0 }
+                // The reference's recipe trains the outlier buckets on cards
+                // with EXACTLY one inter-day review; the code accepted every
+                // card with at least one, which silently changed the buckets,
+                // the smoothAndFill counts and the fitted w0..w3
+                // (consolidated_bugs.md I1).
+                .filter { it.deltas.count { d -> d >= 1 } == 1 }
                 .map { InitSample(it.ratings[0], it.deltas[it.firstInterday], it.ratings[it.firstInterday] > 1) }
         )
         val trainItems = ArrayList<ItemRef>()
@@ -233,6 +239,8 @@ object FsrsOptimizer {
         // are excluded — their first logged review is not a first exposure.
         val initKept = prepared.filterNot { it.seeded }
             .filter { it.firstInterday >= 0 }
+            // Same exactly-one restriction as the buckets above (I1).
+            .filter { it.deltas.count { d -> d >= 1 } == 1 }
             .filter { it.deltas[it.firstInterday] !in removed[it.ratings[0]] }
             .map { InitSample(it.ratings[0], it.deltas[it.firstInterday], it.ratings[it.firstInterday] > 1) }
 

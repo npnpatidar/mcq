@@ -11,6 +11,7 @@ import com.mcqapp.data.local.QuestionOrderRow
 import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
+import com.mcqapp.data.local.getIdCategoryPassageByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getRefsByCategoriesChunked
@@ -408,10 +409,26 @@ internal class QuestionStore(
         // cross-paper schedule reset below belongs to the same move.
         db.withTransaction {
             val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
-            // A slim id+category read and one UPDATE per chunk replace a full
+            // A slim read and one UPDATE per chunk replace a full
             // getQuestion/saveQuestion round-trip (a delete-and-reinsert of
             // options and keys with unchanged values) per question.
-            val rows = db.questionDao().getIdCategoriesByIdsChunked(questionIds.toList())
+            val requested = db.questionDao().getIdCategoryPassageByIdsChunked(questionIds.toList())
+            // A passage group occurs together: moving one member away from
+            // its passage row stranded the group — the editor/picker stopped
+            // offering the passage, Browse split it, and deletePassage stayed
+            // refused. The whole group follows the move: the passage row is
+            // re-homed and every sibling member comes along, in member order
+            // (consolidated_bugs.md C1).
+            val movedIds = LinkedHashSet(requested.map { it.id })
+            val affectedPassages = requested.mapNotNull { it.passageId }.distinct()
+            for (passageId in affectedPassages) {
+                val passage = db.passageDao().getById(passageId) ?: continue
+                if (passage.categoryId != targetCategoryId) {
+                    db.passageDao().updateCategory(passageId, targetCategoryId)
+                }
+                movedIds += db.passageDao().memberIds(passageId)
+            }
+            val rows = db.questionDao().getIdCategoryPassageByIdsChunked(movedIds.toList())
             val paperIdByCategory = db.categoryDao().getByIdsChunked(
                 rows.map { it.categoryId }.distinct()
             ).associate { it.id to it.paperId }
@@ -430,6 +447,10 @@ internal class QuestionStore(
                     db.reviewLogDao().deleteByQuestionsChunked(crossPaperIds)
                 }
             }
+            // Re-placement is deliberately NOT done here: placeWithGroup (run
+            // by the assign/save flows that land here) anchors within the
+            // category and converges, while a whole-group reorder here would
+            // shuffle unrelated rows of the target around the group.
         }
     }
 
@@ -444,12 +465,24 @@ internal class QuestionStore(
             val clones = getQuestionsByIds(questionIds.toList()).map { q ->
                 val newId = com.mcqapp.domain.BulkOps.copyId(existing, q.id)
                 existing.add(newId)
-                q.copy(id = newId, categoryId = targetCategoryId)
+                // A clone keeping its membership across categories is an
+                // out-of-place member: the group rules then either fight it or
+                // an ownership break strands the target's questions. The
+                // membership survives only a same-category copy; a
+                // cross-category clone starts unassigned
+                // (consolidated_bugs.md C2).
+                val passageId = q.passageId?.takeIf { pid ->
+                    db.passageDao().getById(pid)?.categoryId == targetCategoryId
+                }
+                q.copy(id = newId, categoryId = targetCategoryId, passageId = passageId)
             }
             // Minting ids first and writing them in one pass replaces a
             // getQuestion/saveQuestion round-trip per clone: the ids are known
             // fresh, so nothing has to be read back or deleted before writing.
             insertCopies(clones)
+            // A same-category clone joins its group's tail instead of leaving
+            // a second run outside it (consolidated_bugs.md C2).
+            clones.filter { it.passageId != null }.forEach { placeWithGroup(it.id) }
             Logger.i("REPO", "copyQuestionsToCategory(${clones.size} ids -> $targetCategoryId)")
         }
     }

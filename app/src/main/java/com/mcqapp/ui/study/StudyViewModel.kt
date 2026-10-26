@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -63,6 +65,10 @@ data class StudyUiState(
     val loadError: String? = null,
     /** A grade or advance failed to persist; shown inline so the card is not lost. */
     val gradeError: String? = null,
+    /** A grade WAS persisted but the next card failed to load: the card on
+     *  screen is already graded, so the buttons stand down instead of
+     *  inviting a double review (consolidated_bugs.md I3). */
+    val gradedAndStuck: Boolean = false,
     val paperTitle: String = "",
     /** The card the session pulled, or null when nothing is eligible. */
     val current: StudyCard? = null,
@@ -169,6 +175,10 @@ class StudyViewModel(
      */
     private var questionInView = true
 
+    /** Set by [stop]; an in-flight grade honours it instead of reopening the
+     *  session. Reset when a new session loads. */
+    private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
+
     init {
         load()
         startDwellTicker()
@@ -192,8 +202,16 @@ class StudyViewModel(
     private var drillCards: List<StudyCard>? = null
     private var drillIndex = 0
 
+
+    /** The load in flight; a retry cancels it rather than awaiting it — a
+     *  stuck load (a closed database parks its query) must not block the
+     *  retry the user asked for (consolidated_bugs.md I6). */
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     private fun load() {
-        viewModelScope.launch {
+        stopped.set(false)
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             try {
                 val paper = repository.getPaper(paperId)
                 config = repository.schedulerConfigNow()
@@ -265,8 +283,38 @@ class StudyViewModel(
 
     /** Re-runs a failed load after the user asks for it. */
     fun retry() {
-        _state.update { it.copy(loading = true, loadError = null) }
+        // A double-tap ran two loads, both ending in pullCard, and the
+        // new-card counter climbed twice (consolidated_bugs.md I6). The
+        // in-flight load is cancelled, so the double-load cannot happen and
+        // a stuck one cannot block the retry.
         load()
+    }
+
+    /**
+     * Resumes after a pull failure following a persisted grade: the review is
+     * stored, so only the next card is needed (consolidated_bugs.md I3).
+     */
+    fun loadNext() {
+        val current = _state.value
+        if (!current.gradedAndStuck || current.grading) return
+        _state.update { it.copy(grading = true, gradeError = null) }
+        viewModelScope.launch {
+            try {
+                pullCard()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(grading = false, gradeError = "Could not load the next card: ${e.message}")
+                }
+                return@launch
+            } catch (e: Exception) {
+                Logger.e("STUDY", "loadNext failed", e)
+                _state.update {
+                    it.copy(grading = false, gradeError = "Could not load the next card: ${e.message}")
+                }
+                return@launch
+            }
+        }
     }
 
     /** The next card: the drill's fixed list, or whatever the scheduler pulls. */
@@ -286,13 +334,28 @@ class StudyViewModel(
      * mid-session are skipped; when nothing eligible remains the session ends.
      */
     private suspend fun pullCard() {
+        var skipStreak = 0
         while (true) {
             val card = nextCard()
             if (card == null) {
                 finishEmpty()
                 return
             }
-            val question = repository.getQuestion(card.questionId) ?: continue
+            val question = repository.getQuestion(card.questionId)
+            if (question == null) {
+                // The question vanished between the pull's SQL read and this
+                // fetch. The scheduler path re-pulls the very same card, so
+                // the loop never changed anything and the session hung with a
+                // spinner; a bounded streak ends it instead
+                // (consolidated_bugs.md I5).
+                if (++skipStreak > 3) {
+                    Logger.w("STUDY", "pullCard: $skipStreak cards vanished mid-pull; ending the session")
+                    finishEmpty()
+                    return
+                }
+                continue
+            }
+            skipStreak = 0
             val passage = question.passageId?.let { pid ->
                 repository.getPassagesByIds(listOf(pid)).firstOrNull()
             }
@@ -305,6 +368,7 @@ class StudyViewModel(
                     selection = emptySet(),
                     revealed = false,
                     grading = false,
+                    gradedAndStuck = false,
                     pendingGrade = null,
                     lastResult = null,
                     isGuess = false,
@@ -598,23 +662,47 @@ class StudyViewModel(
         pauseQuestionClock()
         val dwellSeconds = _state.value.questionElapsedSeconds
         viewModelScope.launch {
+            var persisted = false
             try {
                 val next = repository.recordStudyReview(
                     paperId, question.id, proposed, dwellSeconds
                 )
+                persisted = true
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $proposed (auto), next in ${next.intervalDays}d, " +
                         "leech=${next.leech}"
                 )
                 advanceStats(proposed)
+                // stop() during the write ends the session; serving a new
+                // card would undo it (consolidated_bugs.md I4).
+                if (stopped.get()) {
+                    _state.update { it.copy(grading = false) }
+                    return@launch
+                }
                 pullCard()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // A closed database surfaces its failure as cancellation, not
+                // as an exception; rethrow only when THIS job is actually
+                // being cancelled, or the failed write reports nothing and
+                // the buttons freeze mid-grade.
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
+                        else "Could not save your grade: ${e.message}",
+                        gradedAndStuck = persisted
+                    )
+                }
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update {
                     it.copy(
                         grading = false,
-                        gradeError = "Could not save your grade: ${e.message}"
+                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
+                        else "Could not save your grade: ${e.message}",
+                        gradedAndStuck = persisted
                     )
                 }
             }
@@ -636,23 +724,49 @@ class StudyViewModel(
         pauseQuestionClock()
         val dwellSeconds = _state.value.questionElapsedSeconds
         viewModelScope.launch {
+            // Persist and pull are split: a pull failure after a persisted
+            // grade must not read as a failed grade — the review is already
+            // stored, and retrying would write a second one
+            // (consolidated_bugs.md I3).
+            var persisted = false
             try {
                 val next = repository.recordStudyReview(
                     paperId, question.id, grade, dwellSeconds
                 )
+                persisted = true
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $grade, next in ${next.intervalDays}d, " +
                         "leech=${next.leech}"
                 )
                 advanceStats(grade)
+                if (stopped.get()) {
+                    _state.update { it.copy(grading = false) }
+                    return@launch
+                }
                 pullCard()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // A closed database surfaces its failure as cancellation, not
+                // as an exception; rethrow only when THIS job is actually
+                // being cancelled, or the failed write reports nothing and
+                // the buttons freeze mid-grade.
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
+                        else "Could not save your grade: ${e.message}",
+                        gradedAndStuck = persisted
+                    )
+                }
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) failed", e)
                 _state.update {
                     it.copy(
                         grading = false,
-                        gradeError = "Could not save your grade: ${e.message}"
+                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
+                        else "Could not save your grade: ${e.message}",
+                        gradedAndStuck = persisted
                     )
                 }
             }
@@ -675,6 +789,10 @@ class StudyViewModel(
      * the scheduler put it — due when it is due.
      */
     fun stop() {
+        // Set before the state flip: an in-flight grade checks this after its
+        // persist and refuses to serve a new card, which used to reopen the
+        // session the learner just ended (consolidated_bugs.md I4).
+        stopped.set(true)
         pauseQuestionClock()
         _state.update { it.copy(finished = true, emptyReason = EmptyReason.None) }
     }

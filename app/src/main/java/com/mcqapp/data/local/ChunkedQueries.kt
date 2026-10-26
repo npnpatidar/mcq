@@ -97,6 +97,9 @@ suspend fun PaperDao.getByIdsChunked(ids: List<String>): List<PaperEntity> =
 suspend fun QuestionDao.getIdCategoriesByIdsChunked(ids: List<String>): List<QuestionCategoryRow> =
     ids.chunks().flatMap { getIdCategoriesByIds(it) }
 
+suspend fun QuestionDao.getIdCategoryPassageByIdsChunked(ids: List<String>): List<QuestionMoveRow> =
+    ids.chunks().flatMap { getIdCategoryPassageByIds(it) }
+
 suspend fun QuestionDao.updateCategoryChunked(ids: Collection<String>, categoryId: String): Int =
     ids.toList().chunks().sumOf { updateCategory(it, categoryId) }
 

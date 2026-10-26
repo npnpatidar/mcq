@@ -100,7 +100,7 @@ class ResultsPagingTest {
             result("q4", correct = false, graded = false),
             result("q5", correct = true, graded = true)
         )
-        val rows = walk { repository.resultPagingSource(id, ReviewFilters.ALL, emptySet()) }
+        val rows = walk { repository.resultPagingSource(id, ReviewFilters.ALL) { emptySet() } }
         assertEquals(listOf("q1", "q2", "q3", "q4", "q5"), rows.map { it.result.questionId })
         assertEquals(listOf(0, 1, 2, 3, 4), rows.map { it.index })
     }
@@ -116,24 +116,24 @@ class ResultsPagingTest {
             result("q4", correct = false, graded = false, selected = false),
             result("q5", correct = true, graded = true)
         )
-        val correct = walk { repository.resultPagingSource(id, ReviewFilters.CORRECT, emptySet()) }
+        val correct = walk { repository.resultPagingSource(id, ReviewFilters.CORRECT) { emptySet() } }
         assertEquals(listOf("q1", "q5"), correct.map { it.result.questionId })
         assertEquals(listOf(0, 4), correct.map { it.index })
 
-        val wrong = walk { repository.resultPagingSource(id, ReviewFilters.WRONG, emptySet()) }
+        val wrong = walk { repository.resultPagingSource(id, ReviewFilters.WRONG) { emptySet() } }
         assertEquals(listOf("q2"), wrong.map { it.result.questionId })
         assertEquals(listOf(1), wrong.map { it.index })
 
-        val skipped = walk { repository.resultPagingSource(id, ReviewFilters.SKIPPED, emptySet()) }
+        val skipped = walk { repository.resultPagingSource(id, ReviewFilters.SKIPPED) { emptySet() } }
         assertEquals(listOf("q3"), skipped.map { it.result.questionId })
         assertEquals(listOf(2), skipped.map { it.index })
 
-        val ungraded = walk { repository.resultPagingSource(id, ReviewFilters.UNGRADED, emptySet()) }
+        val ungraded = walk { repository.resultPagingSource(id, ReviewFilters.UNGRADED) { emptySet() } }
         assertEquals(listOf("q4"), ungraded.map { it.result.questionId })
         assertEquals(listOf(3), ungraded.map { it.index })
 
         val saved = walk {
-            repository.resultPagingSource(id, ReviewFilters.SAVED, setOf("q5"))
+            repository.resultPagingSource(id, ReviewFilters.SAVED) { setOf("q5") }
         }
         assertEquals(listOf("q5"), saved.map { it.result.questionId })
         assertEquals(listOf(4), saved.map { it.index })

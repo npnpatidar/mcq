@@ -285,7 +285,7 @@ A successful build must create `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## 9. NixOS aarch64 session notes (2026-10-01)
 
-This section records the issues hit when running `:app:assembleDebug` on this NixOS `aarch64` host from `/home/naresh/repo/ncal` (the `/opt/android-sdk` and `/root/ncal` paths in sections 1-4 do not exist here), and the exact workarounds used. All generated paths below are intentionally under `/tmp` so the repository stays portable.
+This section records the issues hit when running `:app:assembleDebug` on the NixOS arm64 host from `/home/naresh/repo/ncal` (the `/opt/android-sdk` and `/root/ncal` paths in sections 1-4 do not exist here), and the exact workarounds used. All generated paths below are intentionally under `/tmp` so the repository stays portable.
 
 Workspace differences:
 
@@ -467,3 +467,72 @@ sha256sum app/build/outputs/apk/debug/app-debug.apk
 ```
 
 The hash differs from section 5 because source, dependencies, and toolchain differ. Always use the freshly calculated checksum for the artifact being distributed.
+
+## 10. NixOS arm64 host (mcq checkout, verified 2026-10-23)
+
+Sections 1-8 describe the older `/root/ncal` machine and section 9 the `/home/naresh/repo/ncal`
+session. Neither layout exists here. **`apk-build/env.sh` + `apk-build/setup-env.sh` automate
+everything below** — the manual paths are kept as the record of what the scripts produce. This
+section is the authority for the current checkout:
+
+```text
+uname -m:           aarch64 (NixOS)
+repo:               /home/naresh/repo/mcq
+/opt/android-sdk:   missing
+/sdcard:            missing (no Termux/Android shared storage on the NixOS arm64 host)
+JAVA_HOME:          /tmp/mcq-apk-env/jdk17        (Nix OpenJDK 17, linked by setup-env.sh)
+ANDROID_HOME:       /home/naresh/android-sdk      (real writable SDK, not the Nix copy)
+  build-tools:      36.0.0, 37.0.0
+  platforms:        android-37.0
+aapt2 override:     /tmp/mcq-apk-env/aapt2/aapt2  (works: aapt 2.20-15087165)
+downloads go to:    /home/naresh/Download         (no /sdcard/Download here)
+```
+
+The scripts replace the section 9 ad-hoc `/tmp/ncal-*` layout. `setup-env.sh` is idempotent:
+it Nix-builds only the missing pieces (jdk17, qemu, x86-64 glibc + libgcc), assembles the
+`-L` sysroot, and writes the aapt2 wrapper — which, unlike section 9, points directly at the
+real SDK instead of a writable copy:
+
+```sh
+#!/bin/sh
+exec /tmp/mcq-apk-env/qemu/bin/qemu-x86_64 -L /tmp/mcq-apk-env/sysroot \
+  /home/naresh/android-sdk/build-tools/37.0.0/aapt2 "$@"
+```
+
+Usage:
+
+```sh
+. apk-build/env.sh    # runs setup-env.sh automatically if /tmp was wiped
+sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
+  $MCQ_AAPT2_OVERRIDE --dependency-verification=lenient --no-daemon
+```
+
+Tunables: `MCQ_APK_ENV_DIR` (default `/tmp/mcq-apk-env`), `MCQ_ANDROID_SDK` (default
+`$HOME/android-sdk`), `MCQ_BUILD_TOOLS` (default `37.0.0`).
+
+Notes specific to this checkout:
+
+- `--dependency-verification=lenient` is still required (same stale-metadata situation as
+  section 9.5; regenerate `gradle/verification-metadata.xml` intentionally, never commit a
+  bypass).
+- `/tmp` is volatile: after a reboot just run `sh apk-build/setup-env.sh` — a full rebuild
+  takes ~6s because the Nix store keeps the artifacts. The SDK itself persists; do not redo
+  the section 9.2/9.4 SDK composition.
+- `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Select pure-JVM tests directly; class-name
+  filters must not quote values (zsh does not re-parse embedded quotes, so `--tests "Foo"`
+  passes the quotes through and matches nothing), and helper files without `@Test` must be
+  excluded or Gradle fails with "No tests found":
+
+```sh
+for f in $(rg --files-without-match '^import org.robolectric' app/src/test/java -g '*.kt'); do
+  rg -q '@Test' "$f" && echo "$f"
+done | sed 's|app/src/test/java/||; s|\.kt$||; s|/|.|g' > /tmp/pure-jvm.txt
+sh gradlew :app:testDebugUnitTest $(printf -- '--tests %s ' $(cat /tmp/pure-jvm.txt)) ...
+```
+
+- Robolectric tests that open a real SQLite database fail here with "The Robolectric native
+  runtime is not supported on Linux (aarch64)" — CI (x86_64) is authoritative for those. As
+  of 2026-10-23 a full local pure-JVM pass covers ~124 classes; the count drops if the
+  selection regresses.
+- CI artifacts are downloaded with `gh run download ... -D /home/naresh/Download` (the
+  `/sdcard/Download` convention in AGENTS.md belongs to the other host).

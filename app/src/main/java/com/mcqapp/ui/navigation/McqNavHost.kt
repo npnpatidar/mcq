@@ -66,7 +66,7 @@ fun McqNavHost(repository: McqRepository) {
             TestSessionScreen(
                 repository = repository,
                 paperId = paperId,
-                categoryIds = categories.split(",").filter { it.isNotBlank() },
+                categoryIds = decodeCategoryList(categories),
                 mistakesOnly = mistakes,
                 drillCount = drillCount,
                 drillMinutes = drillMinutes,
@@ -116,9 +116,9 @@ fun McqNavHost(repository: McqRepository) {
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
             val focus = entry.arguments?.getString("focus").orEmpty()
-            val categories = entry.arguments?.getString("categories").orEmpty()
-                .split(',')
-                .filter { it.isNotBlank() }
+            val categories = decodeCategoryList(
+                entry.arguments?.getString("categories").orEmpty()
+            )
             Logger.i("NAV", "browse screen: paperId=$paperId, focus='$focus', categories=${categories.size}")
             BrowseScreen(
                 repository = repository,
@@ -133,7 +133,7 @@ fun McqNavHost(repository: McqRepository) {
         }
         composable("search") {
             Logger.i("NAV", "search screen")
-            SearchScreen(repository = repository, navController = navController)
+            SearchScreen(navController = navController)
         }
         composable(
             route = "editor?questionId={questionId}&paperId={paperId}&categoryId={categoryId}",
@@ -165,8 +165,9 @@ fun McqNavHost(repository: McqRepository) {
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
-            val categories = entry.arguments?.getString("categories").orEmpty()
-                .split(",").filter { it.isNotBlank() }
+            val categories = decodeCategoryList(
+                entry.arguments?.getString("categories").orEmpty()
+            )
             val leechesOnly = entry.arguments?.getBoolean("leechesOnly") ?: false
             Logger.i(
                 "NAV",

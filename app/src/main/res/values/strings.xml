@@ -72,6 +72,30 @@
     </plurals>
     <string name="export_bookmarks">Export bookmarks</string>
     <string name="export_failed">Export failed</string>
+    <string name="update_answers_help">When a file repeats a question\'s text and options but corrects its answer key, update the stored answer instead of reporting it as a duplicate.</string>
+    <string name="review_order_help">Review always shows the order you were given. Scoring is unaffected: answers are matched by option, not position.</string>
+    <string name="image_weight_help">Image weight counts embedded pictures; large banks shrink automatically at import.</string>
+    <string name="export_all_help">Backs up every paper, bookmark and attempt to one JSON file. Re-import it anywhere to restore content and history.</string>
+    <string name="app_about_help">MCQ App — practice multiple-choice papers offline. Import JSON question banks, take timed tests with negative marking, review explanations, and track your history.</string>
+    <string name="response_time_thresholds_help">The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.</string>
+    <string name="next_day_starts_at">Next day starts at</string>
+    <string name="next_day_starts_at_help">Hour of the day a new study day begins, on this device\'s clock</string>
+    <string name="maximum_interval">Maximum interval</string>
+    <string name="maximum_interval_help">Longest interval any review can get</string>
+    <string name="relearning_delay">Relearning delay</string>
+    <string name="relearning_delay_help">How long until a failed card returns</string>
+    <string name="leech_threshold">Leech threshold</string>
+    <string name="leech_threshold_help">Failures before a card is flagged tricky</string>
+    <string name="theme_system_default">System default</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="backup_failed">Backup failed</string>
+    <string name="browse_title">Browse questions</string>
+    <string name="n_selected">%1$d selected</string>
+    <string name="edit_n_questions">Edit %1$d questions</string>
+    <string name="delete_n_questions">Delete %1$d questions?</string>
+    <string name="select_paper">Select paper</string>
+    <string name="restore_failed">Restore failed</string>
     <string name="export_logs">Export Logs</string>
     <string name="flag_question">Flag question</string>
     <string name="formula">Formula</string>
@@ -190,6 +214,7 @@
     <string name="review_answers">Review answers</string>
     <string name="review_flagged">Review flagged</string>
     <string name="save">Save</string>
+    <string name="no_correct_answer_warning">No answer is marked correct — this question will not be graded.</string>
     <string name="search">Search</string>
     <string name="search_all_papers">Search all papers</string>
     <string name="search_text_or_tags">Search text or tags</string>
@@ -333,6 +358,8 @@
     <!-- Statistics page -->
     <string name="stats">Statistics</string>
     <string name="stats_load_error">Statistics could not be loaded.</string>
+    <string name="paging_refresh_failed">This list could not be loaded.</string>
+    <string name="paging_append_failed">More items could not be loaded.</string>
     <string name="stats_all_papers">All papers</string>
     <string name="stats_no_data">Not enough data yet</string>
     <string name="tab_overview">Overview</string>
@@ -358,9 +385,10 @@
     <string name="stats_introduced">Introduced</string>
     <string name="stats_due_now">Due</string>
     <string name="stats_backlog">Backlog</string>
+    <string name="stats_backlog_help">Cards whose due time has passed (counted live, not per day).</string>
     <string name="stats_today_kinds">Learning %1$d · Review %2$d · Relearning %3$d</string>
     <string name="stats_overview">Overview</string>
-    <string name="stats_retention">Retention</string>
+    <string name="stats_retention">Retention (first of day)</string>
     <string name="stats_desired_retention">Desired retention</string>
     <string name="stats_desired_retention_value">Desired retention: %1$s</string>
     <string name="stats_mature_retention">Mature retention</string>
@@ -409,7 +437,7 @@
     <string name="weekday_sat">Sat</string>
     <string name="weekday_sun">Sun</string>
     <string name="stats_forecast">Forecast</string>
-    <string name="stats_forecast_help">Scheduled reviews for the next 30 days. The line is the total outstanding if you skip every day.</string>
+    <string name="stats_forecast_help">Scheduled reviews for the next 30 days, bucketed by day (the first bar is everything due before today). The line is the total outstanding if you skip every day.</string>
     <string name="stats_cumulative_if_skipped">If skipped</string>
     <string name="stats_overdue_value">Overdue: %1$d</string>
     <string name="stats_due_today_value">Due today: %1$d</string>
@@ -446,6 +474,7 @@
     <string name="stats_card_counts">Card counts</string>
     <string name="stats_total">Total</string>
     <string name="stats_overdue_age">Overdue age</string>
+    <string name="stats_paper_table_capped">%1$d more papers not shown.</string>
     <string name="stats_overdue_age_help">How long the scheduled cards have already been past due.</string>
     <string name="stats_overdue_mean">Mean age %1$s d</string>
     <string name="stats_overdue_oldest">Oldest %1$d d</string>
@@ -475,7 +504,7 @@
     <string name="stats_no_history">This card has no logged reviews yet.</string>
     <string name="stats_no_schedule">This card has never been scheduled.</string>
 
-    <!-- Test session: dialogs, banners, review rows, clocks (fifth_bugs #3) -->
+    <!-- Test session: dialogs, banners, review rows, clocks (consolidated_bugs.md H5-3) -->
     <plurals name="resume_saved_text">
         <item quantity="one">%1$d question answered. Your progress was saved when the app closed.</item>
         <item quantity="other">%1$d questions answered. Your progress was saved when the app closed.</item>

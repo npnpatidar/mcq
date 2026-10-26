@@ -57,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
@@ -64,6 +65,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -103,15 +105,20 @@ fun BrowseScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val allPapers by viewModel.papers.collectAsStateWithLifecycle()
-    var selectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    // rememberSaveable: a config change used to discard a multi-select, and
+    // process death with the picker up made export silently no-op
+    // (consolidated_bugs.md F10). Sets and enums are Serializable.
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     // The id set is captured at pick time: CreateDocument hands back a Uri
     // later, by which point selection mode may already be over.
-    var exportIds by remember { mutableStateOf(emptySet<String>()) }
-    var exportFormat by remember { mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE) }
+    var exportIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    var exportFormat by rememberSaveable {
+        mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE)
+    }
 
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
@@ -167,8 +174,8 @@ fun BrowseScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (selectionMode) "${selectedIds.size} selected"
-                        else state.paper?.title ?: "Browse questions"
+                        if (selectionMode) stringResource(R.string.n_selected, selectedIds.size)
+                        else state.paper?.title ?: stringResource(R.string.browse_title)
                     )
                 },
                 navigationIcon = {
@@ -226,6 +233,9 @@ fun BrowseScreen(
 
         // The field shows what was typed; the list's query follows 300 ms later.
         var searchInput by remember { mutableStateOf("") }
+        // Whether the field holds the user's focus: the sync-back below must
+        // not touch it while they are typing.
+        var searchFocused by remember { mutableStateOf(false) }
         LaunchedEffect(searchInput) {
             if (searchInput != filterState.query) {
                 delay(300)
@@ -233,7 +243,24 @@ fun BrowseScreen(
             }
         }
         LaunchedEffect(filterState.query) {
-            if (filterState.query != searchInput) searchInput = filterState.query
+            // A keystroke landing in the frame after a debounced commit used
+            // to be overwritten by this sync-back, reverting the field
+            // (consolidated_bugs.md B4). Sync only an unfocused field — a
+            // focused one is ahead of the committed query by design.
+            if (filterState.query != searchInput && !searchFocused) {
+                searchInput = filterState.query
+            }
+        }
+        // A filter change re-scopes the list: a selection made under the old
+        // scope would let bulk Delete/Edit act on rows now hidden — the chips
+        // stay tappable in selection mode (consolidated_bugs.md F7). The
+        // selection is dropped wholesale; pruning to the visible window cannot
+        // work, because paging hides rows beyond the loaded pages too.
+        LaunchedEffect(filterState.query, filterState.categoryFilterIds, filterState.filter) {
+            if (selectionMode) {
+                selectionMode = false
+                selectedIds = emptySet()
+            }
         }
 
         val flatCategories = remember(state.paper) {
@@ -271,7 +298,16 @@ fun BrowseScreen(
         // Delayed spinner: fast loads show blank instead of flashing text.
         val refreshing = items.loadState.refresh is LoadState.Loading
         val showLoading = com.mcqapp.util.rememberDelayedVisibility(refreshing && items.itemCount == 0)
-        if (showLoading) {
+        // The whole-screen early return is the FIRST load's business only:
+        // the same condition is true during every filter-change refresh, and
+        // returning here unmounted the search field, the chips and the
+        // dialogs for as long as a big paper took to refresh
+        // (consolidated_bugs.md K1).
+        var firstLoadDone by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(items.loadState.refresh) {
+            if (items.loadState.refresh is LoadState.NotLoading) firstLoadDone = true
+        }
+        if (showLoading && !firstLoadDone) {
             Text(
                 stringResource(R.string.loading),
                 modifier = Modifier
@@ -302,12 +338,23 @@ fun BrowseScreen(
         // the effect runs again once the list has one — paging then jumps to
         // the row only because PagingConfig.jumpThreshold is set (jumps are off
         // by default), and reloads the page around it instead of walking there.
+        //
+        // The scroll is one-shot per focus id: every filter chip and every
+        // write elsewhere rebuilds the pager, flipping itemCount 0→>0 again,
+        // and the effect used to yank the list back to the focused row each
+        // time (consolidated_bugs.md F5). The flag is set only once the
+        // anchor has actually resolved, so a first pass that runs before the
+        // list has rows still gets its scroll.
+        var scrolledTo by rememberSaveable(focusQuestionId) { mutableStateOf(false) }
         val listHasRows = items.itemCount > 0
         LaunchedEffect(focusQuestionId, listHasRows) {
-            if (focusQuestionId.isBlank() || !listHasRows) return@LaunchedEffect
+            if (focusQuestionId.isBlank() || !listHasRows || scrolledTo) return@LaunchedEffect
             viewModel.browseIndexOf(focusQuestionId) { index ->
                 // +1 for the header item above the cards.
-                if (index >= 0) listState.scrollToItem(index + 1)
+                if (index >= 0) {
+                    listState.scrollToItem(index + 1)
+                    scrolledTo = true
+                }
             }
         }
         // Keep the rows around the viewport loaded, cards and passages
@@ -338,6 +385,17 @@ fun BrowseScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // A later refresh keeps the controls composed and notes the load
+            // above the list instead of replacing the screen (K1).
+            if (showLoading) {
+                item(key = "browse-loading", contentType = "loading") {
+                    Text(
+                        stringResource(R.string.loading),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             item(key = "browse-controls") {
                 androidx.compose.material3.OutlinedTextField(
                     // The field shows what was typed; the list follows 300 ms
@@ -353,7 +411,9 @@ fun BrowseScreen(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { searchFocused = it.isFocused }
                 )
                 Spacer(Modifier.height(8.dp))
                 FlowRow(
@@ -578,7 +638,7 @@ fun BrowseScreen(
                 parseNonNegativeDecimal(bulkMarks) == null
             AlertDialog(
                 onDismissRequest = { showBulkDialog = false },
-                title = { Text("Edit ${selectedIds.size} questions") },
+                title = { Text(stringResource(R.string.edit_n_questions, selectedIds.size)) },
                 text = {
                     Column {
                         Text(
@@ -647,7 +707,7 @@ fun BrowseScreen(
         if (showDeleteConfirm) {
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
-                title = { Text("Delete ${selectedIds.size} questions?") },
+                title = { Text(stringResource(R.string.delete_n_questions, selectedIds.size)) },
                 text = { Text(stringResource(R.string.this_cannot_be_undone)) },
                 confirmButton = {
                     TextButton(onClick = {
@@ -778,7 +838,7 @@ fun BrowseScreen(
                             onExpandedChange = { paperMenuOpen = it }
                         ) {
                             OutlinedTextField(
-                                value = movePaper?.title ?: "Select paper",
+                                value = movePaper?.title ?: stringResource(R.string.select_paper),
                                 onValueChange = {},
                                 readOnly = true,
                                 singleLine = true,
@@ -1067,29 +1127,6 @@ private fun PassageHeaderCard(
         }
     }
 }
-
-/**
- * The browse screen's single-category filter: with a set of category ids, only
- * those categories' questions remain; null (or empty) keeps the list whole.
- */
-internal fun applyCategoryFilter(
-    questions: List<com.mcqapp.domain.Question>,
-    categoryIds: Set<String>?
-): List<com.mcqapp.domain.Question> =
-    applyCategoryFilter(questions, categoryIds) { it.categoryId }
-
-/**
- * The browse screen's single-category filter over any item that knows its
- * category: with a set of category ids, only those categories' items remain;
- * null (or empty) keeps the list whole.
- */
-internal fun <T> applyCategoryFilter(
-    questions: List<T>,
-    categoryIds: Set<String>?,
-    categoryIdOf: (T) -> String
-): List<T> =
-    if (categoryIds.isNullOrEmpty()) questions
-    else questions.filter { categoryIdOf(it) in categoryIds }
 
 /**
  * The ids of [rootId] plus every descendant, read from the pre-order

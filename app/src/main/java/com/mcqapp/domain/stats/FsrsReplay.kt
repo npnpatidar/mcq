@@ -49,8 +49,12 @@ object FsrsReplay {
         scheduler: FsrsScheduler
     ): List<ReplayReview> {
         if (reviews.isEmpty()) return emptyList()
-        val predicted = HashMap<Long, Double?>()
-        val intervalBefore = HashMap<Long, Int?>()
+        // Keyed by (questionId, id): RawReview's contract only requires id
+        // uniqueness WITHIN a question's history, and global keying let two
+        // cards' colliding ids overwrite each other's predictions
+        // (consolidated_bugs.md I2).
+        val predicted = HashMap<Pair<String, Long>, Double?>()
+        val intervalBefore = HashMap<Pair<String, Long>, Int?>()
         reviews.groupBy { it.questionId }.forEach { (_, rows) ->
             val ordered = rows.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             // A seeded history's first row has no knowable pre-state: it is the
@@ -63,13 +67,13 @@ object FsrsReplay {
                 val pre = state
                 // Only a graduated card carries a knowable recall prediction:
                 // learning-step rows have short-term memory, not a schedule.
-                predicted[row.id] = pre
+                predicted[row.questionId to row.id] = pre
                     ?.takeIf {
                         it.state == CardStateKind.REVIEW || it.state == CardStateKind.RELEARNING
                     }
                     ?.takeIf { it.stability > 0.0 }
                     ?.let { scheduler.retention(it, row.reviewedAt) }
-                intervalBefore[row.id] = previousInterval
+                intervalBefore[row.questionId to row.id] = previousInterval
                 val post = if (index == 0 && seeded) {
                     seedState(row)
                 } else {
@@ -96,8 +100,8 @@ object FsrsReplay {
                 stabilityAfter = row.stabilityAfter,
                 difficultyAfter = row.difficultyAfter,
                 intervalDaysAfter = row.intervalDaysAfter,
-                predictedRetention = predicted[row.id],
-                intervalBeforeDays = intervalBefore[row.id]
+                predictedRetention = predicted[row.questionId to row.id],
+                intervalBeforeDays = intervalBefore[row.questionId to row.id]
             )
         }
     }
@@ -183,6 +187,9 @@ object FsrsReplay {
         reviewCount = 1
     )
 
+    // An out-of-range rating (corrupt or hand-edited rows only) folds into
+    // GOOD rather than dropping the row: the log stays total
+    // (consolidated_bugs.md E11).
     private fun gradeOf(rating: Int): ReviewGrade =
         ReviewGrade.entries.getOrElse(rating - 1) { ReviewGrade.GOOD }
 }

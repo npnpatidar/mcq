@@ -32,8 +32,11 @@ import java.util.Locale
 
 /**
  * GitHub-style calendar of reviews per study day, Anki's Calendar graph.
- * Columns are weeks, rows Monday..Sunday; intensity ramps to the strongest
- * colour at four or more reviews. Tap a cell for the day's exact count.
+ * Columns are weeks, oldest first; each row is a fixed offset from the
+ * window's first weekday (`index % 7`), so rows do not track Monday..Sunday
+ * and there is deliberately no weekday header. Intensity ramps to the
+ * strongest colour at four or more reviews. Tap a cell for the day's exact
+ * count (consolidated_bugs.md E5: the old doc claimed weekday rows).
  */
 @Composable
 internal fun HeatmapChart(

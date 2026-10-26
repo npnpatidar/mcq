@@ -38,6 +38,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -431,19 +432,32 @@ fun TestSessionScreen(
 
             val question = state.currentQuestion
             if (question == null) {
+                // An empty order really is empty; a null card over a non-empty
+                // order is the first resolve still in flight — `loading` is
+                // already false here, so showing the empty text flashed for a
+                // frame at session start (consolidated_bugs.md F19).
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(stringResource(R.string.no_questions_in_this_selection))
+                    if (state.questionCount == 0) {
+                        Text(stringResource(R.string.no_questions_in_this_selection))
+                    } else {
+                        CircularProgressIndicator()
+                    }
                 }
                 return@Scaffold
             }
 
+            // The question body scrolls; the scroll state must not outlive the
+            // question it belongs to, or question N+1 opens at question N's
+            // offset (consolidated_bugs.md F8).
+            val scrollState = rememberScrollState()
+            LaunchedEffect(question.id) { scrollState.scrollTo(0) }
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .padding(16.dp)
             ) {
                 // Own composable, and it reads the dwell clock from its own

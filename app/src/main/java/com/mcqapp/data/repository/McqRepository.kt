@@ -264,6 +264,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val raw = when (scope) {
             com.mcqapp.domain.QuestionSearch.Scope.QUESTION ->
                 db.questionDao().search(like, fragment, limit, offset)
+            // Options only: the union query walks every text/tag candidate
+            // the authority rejects for this scope (consolidated_bugs.md B2).
+            com.mcqapp.domain.QuestionSearch.Scope.OPTIONS ->
+                db.questionDao().searchOptionsOnly(like, fragment, limit, offset)
             else ->
                 db.questionDao().searchIncludingOptions(like, fragment, limit, offset)
         }
@@ -274,7 +278,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         val passageBodies = db.passageDao().getByIdsChunked(
             raw.mapNotNull { it.passageId }.distinct()
         ).associate { passage ->
-            passage.id to (passage.title + "\n" + passage.text.parseContentElements(mapper.json).searchableText)
+            // The STORED column (passageSearchText: title + " " + body,
+            // trimmed), not a rebuilt "title + newline + body": the SQL
+            // prefilter matches the stored shape, and a phrase straddling
+            // the title-to-body boundary ("cycle rain") was vetoed here by
+            // a separator the stored column never had
+            // (consolidated_bugs.md B1).
+            passage.id to passage.searchText
         }
         val questions = com.mcqapp.domain.QuestionSearch.filter(
             mapper.toDomainBulk(raw),
@@ -731,6 +741,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** How many bookmarks there are, for the header count and the empty state. */
     fun observeBookmarkCount(): Flow<Int> = historyStore.observeBookmarkCount()
     suspend fun toggleBookmark(questionId: String) = historyStore.toggleBookmark(questionId)
+    /** Idempotent: removing an already-removed bookmark is a no-op. */
+    suspend fun deleteBookmark(questionId: String) = historyStore.deleteBookmark(questionId)
     suspend fun isBookmarked(questionId: String): Boolean = historyStore.isBookmarked(questionId)
 
     /**
@@ -789,7 +801,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun resultPagingSource(
         attemptId: Long,
         filter: String,
-        bookmarked: Set<String>
+        bookmarked: () -> Set<String>
     ): androidx.paging.PagingSource<ResultPageKey, com.mcqapp.domain.NumberedResult> =
         historyStore.resultPagingSource(attemptId, filter, bookmarked)
     suspend fun getResultAggregates(attemptId: Long) =
@@ -803,6 +815,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getWeakestCategories(limit: Int = 5): List<com.mcqapp.domain.Mastery.CategoryMastery> =
         historyStore.getWeakestCategories(limit)
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
+    /** Wall-clock finish of the paper's latest attempt, or null when it has none. */
+    suspend fun latestAttemptFinishedAt(paperId: String): Long? =
+        db.attemptDao().getLatestFinishedAt(paperId)
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
     /** Mistaken questions as a session order: content is fetched when one is opened. */
     suspend fun getMistakenQuestionOrder(paperId: String): SessionOrder =

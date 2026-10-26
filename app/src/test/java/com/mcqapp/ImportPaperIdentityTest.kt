@@ -9,6 +9,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
+import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.AppDatabase
 import kotlinx.coroutines.runBlocking
@@ -103,5 +104,116 @@ class ImportPaperIdentityTest {
             "bare-array paper id must carry the ephemeral prefix: ${paper.id}",
             paper.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX)
         )
+    }
+
+    /**
+     * Question ids are global (the row's primary key), but a foreign file is
+     * free to reuse an id the library already uses for a *different*
+     * question under another paper. The import must not move the stored row:
+     * the `REPLACE` upsert rewrites its `categoryId`, so paper A silently
+     * loses the question and its options/answer key are overwritten.
+     */
+    @Test
+    fun aQuestionIdOwnedByAnotherPaperIsNotMoved() = runBlocking {
+        Importer(db).import(file("paper-a", "Paper A", "Alpha"))
+        val sharedId = "q-paper-a"
+        assertEquals("c-paper-a", db.questionDao().getById(sharedId)!!.categoryId)
+
+        val paperB = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-b",
+                    title = "Paper B",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c-paper-b",
+                            title = "Cat",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = sharedId,
+                                    text = "Beta",
+                                    options = listOf(OptionDto("a", "6"), OptionDto("b", "seven")),
+                                    correctOptionIds = listOf("b")
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        Importer(db).import(paperB)
+
+        // Paper A's question is still there, unchanged.
+        assertEquals("c-paper-a", db.questionDao().getById(sharedId)?.categoryId)
+        // The text column stores the elements JSON, not the flat string.
+        assertEquals("Alpha", db.questionDao().getById(sharedId)?.searchText)
+        assertEquals(1, db.questionDao().getByCategory("c-paper-a").size)
+    }
+
+    /**
+     * Same collision for a passage id: the passage is upserted with the
+     * importing paper's category, and the stray-folding pass then moves every
+     * stored member whose category differs into that category. A reused
+     * passage id therefore drags another paper's questions along with it.
+     */
+    @Test
+    fun aPassageIdOwnedByAnotherPaperDoesNotDragMembers() = runBlocking {
+        val paperA = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-a",
+                    title = "Paper A",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c-paper-a",
+                            title = "Cat",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qa",
+                                    text = "Alpha",
+                                    options = listOf(OptionDto("a", "1"), OptionDto("b", "2")),
+                                    correctOptionIds = listOf("a"),
+                                    passageId = "ps"
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+            passages = listOf(PassageDto(id = "ps", title = "Read", categoryId = "c-paper-a"))
+        )
+        Importer(db).import(paperA)
+        assertEquals(1, db.questionDao().getByCategory("c-paper-a").size)
+
+        val paperB = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-b",
+                    title = "Paper B",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c-paper-b",
+                            title = "Cat",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qb",
+                                    text = "Beta",
+                                    options = listOf(OptionDto("a", "3"), OptionDto("b", "4")),
+                                    correctOptionIds = listOf("b"),
+                                    passageId = "ps"
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+            passages = listOf(PassageDto(id = "ps", title = "Other read", categoryId = "c-paper-b"))
+        )
+        Importer(db).import(paperB)
+
+        assertEquals(1, db.questionDao().getByCategory("c-paper-a").size)
     }
 }

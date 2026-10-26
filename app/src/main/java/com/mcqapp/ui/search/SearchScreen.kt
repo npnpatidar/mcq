@@ -38,14 +38,14 @@ import androidx.navigation.NavController
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
-import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.previewText
 import com.mcqapp.R
+import com.mcqapp.ui.common.PagingAppendErrorItem
+import com.mcqapp.ui.common.PagingErrorRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
-    repository: McqRepository,
     navController: NavController,
     viewModel: SearchViewModel = viewModel()
 ) {
@@ -111,6 +111,15 @@ fun SearchScreen(
                     )
             }
             Spacer(Modifier.height(8.dp))
+            // A failed refresh used to fall through every branch and leave a
+            // blank list with no way back (consolidated_bugs.md F6).
+            if (refresh is LoadState.Error) {
+                PagingErrorRow(
+                    messageRes = R.string.paging_refresh_failed,
+                    onRetry = { hits.retry() }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -151,7 +160,6 @@ fun SearchScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            Spacer(Modifier.width(8.dp))
                         }
                     }
                 }
@@ -168,6 +176,11 @@ fun SearchScreen(
                                 modifier = Modifier.width(20.dp).height(20.dp)
                             )
                         }
+                    }
+                }
+                if (hits.loadState.append is LoadState.Error) {
+                    item(key = "search-append-error", contentType = "append-error") {
+                        PagingAppendErrorItem(hits)
                     }
                 }
             }

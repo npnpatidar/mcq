@@ -48,11 +48,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
 
-    private val committed: Flow<SearchRequest> = combine(
-        _state.map { it.query }.debounce(SEARCH_DEBOUNCE_MS),
-        _state.map { it.scope }
-    ) { query, scope -> SearchRequest(query.trim(), scope) }
+    // The WHOLE request is debounced, not the query alone: a scope tap used
+    // to re-emit immediately with the last DEBOUNCED query, painting stale
+    // results for 300 ms while the pending debounce kept running
+    // (consolidated_bugs.md B3). With the request as the unit, a scope change
+    // and a keystroke both restart the same window and commit together.
+    private val committed: Flow<SearchRequest> = _state
+        .map { SearchRequest(it.query.trim(), it.scope) }
         .distinctUntilChanged()
+        .debounce(SEARCH_DEBOUNCE_MS)
 
     val debouncing: StateFlow<Boolean> = combine(
         _state.map { it.query.trim() },

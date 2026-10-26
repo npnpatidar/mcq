@@ -77,7 +77,7 @@ data class TestUiState(
     val autoAdvance: Boolean = false,
     val mistakesOnly: Boolean = false,
     val isDrill: Boolean = false,
-    /** The requested drill count; a passage block may push [questions] past it. */
+    /** The requested drill count; a passage block may push [order] past it. */
     val drillRequested: Int = 0,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
@@ -178,8 +178,12 @@ class TestViewModel(
         /** Questions resolved per review-sheet page. */
         const val REVIEW_PAGE = 100
     }
-    private var startTimestamp: Long = 0
-    private var lastNavMillis: Long = 0
+    // Monotonic anchors (consolidated_bugs.md D10): the countdown already
+    // ran on elapsedRealtime; dwell and the untimed duration join it, so an
+    // NTP or manual clock change cannot distort either or store a negative
+    // duration. Wall time is kept only for `finishedAt`.
+    private var startElapsedMs: Long = 0
+    private var lastNavElapsedMs: Long = 0
 
     /**
      * Dwell banked per question as of the last navigation. The published
@@ -305,8 +309,8 @@ class TestViewModel(
                     )
                 }
                 checkResumeOffer(order)
-                startTimestamp = System.currentTimeMillis()
-                lastNavMillis = startTimestamp
+                startElapsedMs = SystemClock.elapsedRealtime()
+                lastNavElapsedMs = startElapsedMs
                 dwellCommitted.clear()
                 _state.update { it.copy(dwellActive = !drilled.isEmpty) }
                 resolveCurrent()
@@ -398,14 +402,14 @@ class TestViewModel(
                 delay(1000)
                 if (!_state.value.dwellActive) continue
                 if (_state.value.submitted) break
-                publishDwell(System.currentTimeMillis())
+                publishDwell(SystemClock.elapsedRealtime())
             }
         }
     }
 
     /**
      * Publishes banked dwell plus the time since the current question was
-     * reached, without moving [lastNavMillis] — the anchor stays where
+     * reached, without moving [lastNavElapsedMs] — the anchor stays where
      * navigation put it so ticks cannot lose a sub-second remainder.
      */
     /**
@@ -420,7 +424,7 @@ class TestViewModel(
         val current = _state.value
         val question = current.currentQuestion ?: return
         val segment =
-            if (current.dwellActive) (now - lastNavMillis).coerceAtLeast(0L) / 1000 else 0L
+            if (current.dwellActive) (now - lastNavElapsedMs).coerceAtLeast(0L) / 1000 else 0L
         val total = (dwellCommitted[question.id] ?: 0L) + segment
         if (_liveDwell.value != total) _liveDwell.value = total
     }
@@ -436,12 +440,12 @@ class TestViewModel(
     private fun flushDwell() {
         val current = _state.value
         val question = current.currentQuestion ?: return
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val segment =
-            if (current.dwellActive) (now - lastNavMillis).coerceAtLeast(0L) / 1000 else 0L
+            if (current.dwellActive) (now - lastNavElapsedMs).coerceAtLeast(0L) / 1000 else 0L
         val banked = (dwellCommitted[question.id] ?: 0L) + segment
         dwellCommitted[question.id] = banked
-        lastNavMillis = now
+        lastNavElapsedMs = now
         if (_liveDwell.value != banked) _liveDwell.value = banked
         _state.update { it.copy(dwellSeconds = it.dwellSeconds + (question.id to banked)) }
     }
@@ -455,14 +459,14 @@ class TestViewModel(
         if (active == current.dwellActive) return
         if (active) {
             if (!dwellShouldRun(current)) return
-            val now = System.currentTimeMillis()
-            lastNavMillis = now
+            val now = SystemClock.elapsedRealtime()
+            lastNavElapsedMs = now
             _state.update { it.copy(dwellActive = true) }
             publishDwell(now)
         } else {
             if (current.dwellActive) flushDwell()
             _state.update { it.copy(dwellActive = false) }
-            publishDwell(System.currentTimeMillis())
+            publishDwell(SystemClock.elapsedRealtime())
         }
     }
 
@@ -476,6 +480,10 @@ class TestViewModel(
     /** Backgrounding pauses dwell but never turns a deliberate pause off. */
     fun onAppBackgrounded() {
         setDwellActive(false)
+        // Banking the dwell alone does not reach disk: without this write a
+        // kill after the last answer restored the older remainingSeconds and
+        // dropped the unbanked dwell (consolidated_bugs.md D6).
+        persistProgress()
     }
 
     /** The gate decides: a covered card or a deliberate pause stays paused. */
@@ -576,7 +584,7 @@ class TestViewModel(
             _state.update { it.copy(currentIndex = index) }
             // The header reads the live value, so it has to follow the
             // question rather than keep showing the one just left.
-            publishDwell(System.currentTimeMillis())
+            publishDwell(SystemClock.elapsedRealtime())
             resolveCurrent()
             persistProgress(questionId = leaving)
         }
@@ -626,7 +634,7 @@ class TestViewModel(
 
     private fun publishCurrent(loaded: LoadedCard?) {
         _state.update { it.copy(current = loaded?.question, currentPassage = loaded?.passage) }
-        publishDwell(System.currentTimeMillis())
+        publishDwell(SystemClock.elapsedRealtime())
     }
 
     /**
@@ -703,7 +711,7 @@ class TestViewModel(
         val durationSeconds = if (current.totalSeconds > 0) {
             (current.totalSeconds - current.remainingSeconds).toLong()
         } else {
-            ((System.currentTimeMillis() - startTimestamp) / 1000)
+            ((SystemClock.elapsedRealtime() - startElapsedMs) / 1000)
         }
         _state.update {
             it.copy(
@@ -749,6 +757,14 @@ class TestViewModel(
                             saveError = "Could not save your result: ${outcome.message}"
                         )
                     }
+                    // submit() cancelled both timers up front; without this the
+                    // countdown froze and auto-submit stayed dead while the
+                    // user kept answering, and the recorded duration stopped
+                    // with it (consolidated_bugs.md F3).
+                    startDwellTicker()
+                    setDwellActive(true)
+                    val after = _state.value
+                    if (after.totalSeconds > 0 && after.remainingSeconds > 0) startTimer()
                 }
             }
         }
@@ -773,7 +789,7 @@ class TestViewModel(
             repository.clearStaleTestAnswers(paperId)
             return
         }
-        if (!document.matches(paperId, categoryIds)) return
+        if (!document.matches(paperId, categoryIds, drillCount > 0, mistakesOnly, drillCount)) return
         // A document written before the answers moved to rows still carries
         // them inline; writing them as rows now is what keeps the next answer
         // from dropping everything answered before it. A row-based document has
@@ -783,6 +799,19 @@ class TestViewModel(
         if (!saved.hasAnswers && saved.currentIndex <= 0) {
             repository.clearTestProgress()
             return
+        }
+        // A snapshot whose post-submit clear failed still looks resumable, but
+        // the attempt it belongs to is already stored: resuming and submitting
+        // would write a second attempt and re-apply the per-question stats.
+        // An attempt finished after this document was written means the
+        // session already ended, so the stale snapshot is cleared instead of
+        // offered (consolidated_bugs.md D8).
+        if (saved.savedAt > 0) {
+            val latestFinishedAt = repository.latestAttemptFinishedAt(paperId)
+            if (latestFinishedAt != null && latestFinishedAt >= saved.savedAt) {
+                repository.clearTestProgress()
+                return
+            }
         }
         // Rebuilding a seeded order replays the whole-paper shuffle, so it runs
         // off the main thread like the load-time shuffle does.
@@ -816,36 +845,77 @@ class TestViewModel(
         // Carry the saved seeds forward so later autosaves rewrite the same
         // tiny snapshot instead of falling back to an id list.
         saved.questionSeed?.let { sessionSeed = it }
-        saved.drillSeed?.let { drillSampleSeed = it }
+        if (saved.isDrill) {
+            saved.drillSeed?.let { drillSampleSeed = it }
+        } else {
+            // A non-drill snapshot must not inherit a fresh drill's seed, or
+            // the persisted header pairs a seed with a count never applied
+            // (consolidated_bugs.md D1).
+            drillSampleSeed = 0L
+        }
         // A seed-less snapshot has no seed to replay; keep its id list (and a
         // null seed) so the next autosave does not stamp the fresh random seed
         // over the order the user resumed into.
         legacyResumedIds = if (saved.questionSeed == null) saved.questionIds else null
         questionShuffleEnabled = saved.questionShuffle
         optionShuffleSeed = saved.optionShuffleSeed
+        // The saved answers may name questions outside the rebuilt order (the
+        // library changed since the snapshot was written): counting them makes
+        // the header read "5 of 3 answered" and pushes the submit summary
+        // negative, so they are dropped here (consolidated_bugs.md D5).
+        val orderIds = ordered.idsInOrder().toHashSet()
+        val savedSelections = saved.selections.filterKeys { it in orderIds }
+        val savedRevealed = saved.revealed.filterTo(LinkedHashSet()) { it in orderIds }
+        val savedFlagged = saved.flagged.filterTo(LinkedHashSet()) { it in orderIds }
+        val savedDwell = saved.dwellSeconds.filterKeys { it in orderIds }
         Logger.i("TESTVM", "Resuming saved progress: index=${saved.currentIndex}, " +
-            "answered=${saved.selections.size}")
+            "answered=${savedSelections.size}")
         _state.update {
             it.copy(
                 order = ordered,
-                selections = saved.selections.mapValues { e -> e.value.toSet() },
-                revealed = saved.revealed,
-                flagged = saved.flagged,
+                selections = savedSelections.mapValues { e -> e.value.toSet() },
+                revealed = savedRevealed,
+                flagged = savedFlagged,
                 currentIndex = saved.currentIndex.coerceIn(0, ordered.size - 1),
                 remainingSeconds = saved.remainingSeconds,
                 totalSeconds = saved.totalSeconds,
-                dwellSeconds = saved.dwellSeconds,
+                dwellSeconds = savedDwell,
+                // The session shape travels with the snapshot: resume() kept the
+                // new session's isDrill/mistakesOnly, so the header and the next
+                // autosave described a session the saved order was never built
+                // for (consolidated_bugs.md D1/D4).
+                isDrill = saved.isDrill,
+                mistakesOnly = saved.mistakesOnly,
+                drillRequested = saved.drillRequested,
                 timeWarning = null,
                 resumeOffer = null
             )
         }
         warnedThresholds.clear()
-        startTimestamp = System.currentTimeMillis()
-        lastNavMillis = startTimestamp
+        // Untimed attempts bank their elapsed seconds on every autosave, so a
+        // kill does not shrink the recorded duration (consolidated_bugs.md D7).
+        startElapsedMs = SystemClock.elapsedRealtime() - saved.elapsedSeconds * 1000L
+        lastNavElapsedMs = SystemClock.elapsedRealtime()
         // The snapshot's map becomes the new baseline, so time already spent
         // on a question is not counted again from this visit onwards.
         dwellCommitted.clear()
-        dwellCommitted.putAll(saved.dwellSeconds)
+        dwellCommitted.putAll(savedDwell)
+        // The read-ahead holds the previous session's card, resolved with the
+        // pre-resume option shuffle; resolveCurrent would publish it as the
+        // first resumed card (consolidated_bugs.md D9).
+        prefetched = null
+        if (saved.isDrill || saved.mistakesOnly) {
+            // ungradedTotal was computed for the freshly loaded order; the
+            // resumed order is the saved cut, so the count follows it.
+            viewModelScope.launch {
+                try {
+                    val ungraded = repository.countUngraded(ordered.idsInOrder())
+                    _state.update { it.copy(ungradedTotal = ungraded) }
+                } catch (e: Exception) {
+                    Logger.w("TESTVM", "ungradedTotal recount failed: ${e.message}")
+                }
+            }
+        }
         startDwellTicker()
         resolveCurrent()
         if (saved.totalSeconds > 0 && saved.remainingSeconds > 0) startTimer()
@@ -889,7 +959,17 @@ class TestViewModel(
             questionShuffle = questionShuffleEnabled,
             optionShuffleSeed = optionShuffleSeed,
             drillSeed = if (drillSampleSeed != 0L) drillSampleSeed else null,
-            drillRequested = current.drillRequested
+            drillRequested = current.drillRequested,
+            isDrill = current.isDrill,
+            mistakesOnly = current.mistakesOnly,
+            // Untimed sessions bank their elapsed time so a resume neither
+            // restarts the clock nor counts the dead interval (D7).
+            elapsedSeconds = if (current.totalSeconds > 0) {
+                0
+            } else {
+                ((SystemClock.elapsedRealtime() - startElapsedMs) / 1000).toInt().coerceAtLeast(0)
+            },
+            savedAt = System.currentTimeMillis()
         )
         val id = questionId ?: current.order.idAtOrNull(current.currentIndex)
         val changed = if (id == null) emptyList() else listOf(

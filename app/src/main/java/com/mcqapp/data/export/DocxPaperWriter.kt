@@ -587,9 +587,14 @@ object DocxPaperWriter {
             for (c in 0 until cols) {
                 val cell = row.getOrElse(c) { "" }
                 sb.append("<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>")
-                sb.append("<w:p><w:r><w:t xml:space=\"preserve\">")
-                sb.append(escapeXmlText(cell))
-                sb.append("</w:t></w:r></w:p></w:tc>")
+                // Cells carry the same inline markup as body text: one
+                // escaped <w:t> rendered every tag literally in Word. Pictures
+                // and formulas collapse to a marker — the cell model is text
+                // runs only (consolidated_bugs.md G6).
+                val builder = ParaBuilder()
+                builder.add(inlineRuns(com.mcqapp.util.sanitizeTableCell(cell)))
+                sb.append(builder.build() ?: "<w:p/>")
+                sb.append("</w:tc>")
             }
             sb.append("</w:tr>")
         }
@@ -666,7 +671,14 @@ object DocxPaperWriter {
             val flag = inlineFlagTags[tag]
             when {
                 flag != null -> flags = if (closing) flags.clear(flag) else flags.set(flag)
-                tag in breakTags -> out.add(RunSpec("", flags, isBreak = true))
+                tag in breakTags -> {
+                    // Consecutive breaks collapse, as on screen and in PDF: a
+                    // double <br> used to gain a blank line in Word only
+                    // (consolidated_bugs.md G11).
+                    if (out.lastOrNull()?.isBreak != true) {
+                        out.add(RunSpec("", flags, isBreak = true))
+                    }
+                }
                 // Unknown tag shapes are literal text in legacy questions
                 // and must stay visible rather than vanish.
                 else -> out.add(RunSpec(decodeXmlEntities(match.value), flags))

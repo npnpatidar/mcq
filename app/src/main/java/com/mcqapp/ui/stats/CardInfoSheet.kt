@@ -73,7 +73,9 @@ internal fun CardInfoSheet(detail: StatsViewModel.CardDetail, onDismiss: () -> U
                 )
                 StatLine(
                     R.string.stats_predicted,
-                    detail.retrievability?.let { "${(it * 100).toInt()}%" } ?: "—"
+                    // Rounded: 0.999 truncated to "99%", unlike every other
+                    // percentage in the app (consolidated_bugs.md E13).
+                    detail.retrievability?.let { "${Math.round(it * 100)}%" } ?: "—"
                 )
                 StatLine(R.string.stats_lapses, state.lapses.toString())
                 StatLine(R.string.stats_reviews_label, state.reviewCount.toString())

@@ -64,7 +64,15 @@ data class EditorUiState(
     val passages: List<com.mcqapp.domain.Passage> = emptyList(),
     val isNew: Boolean = true,
     /** The passage this question belongs to, editable in the picker. */
-    val passageId: String? = null
+    val passageId: String? = null,
+    /** Set when the initial load failed; the screen offers the message
+     *  instead of an eternal "Loading…" (consolidated_bugs.md J5). */
+    val loadError: String? = null,
+    /** A save/delete is in flight; buttons gate on it (J7). */
+    val saving: Boolean = false,
+    /** Set when a save or delete failed, so the failure is visible instead
+     *  of a crash (consolidated_bugs.md J7). */
+    val saveError: String? = null
 ) {
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
@@ -83,9 +91,14 @@ data class EditorUiState(
      * still loading and never again — the Save button never enabled.
      */
     val canSave: Boolean
-        get() = elements.any { it.isSignificant() } &&
+        get() = (elements.any { it.isSignificant() } || image.isNotBlank()) &&
             options.size >= 2 &&
-            options.all { o -> o.elements.any { it.isSignificant() } }
+            options.all { o ->
+                // A legacy image-only option loads as one empty text element
+                // plus the scalar image; the image is its content
+                // (consolidated_bugs.md J8).
+                o.elements.any { it.isSignificant() } || o.image.isNotBlank()
+            }
 }
 
 data class OptionEditorState(
@@ -222,8 +235,15 @@ class EditorViewModel(
                     return@launch
                 }
             }
+            // A restored editor whose question no longer exists (process
+            // death during an import edit, a concurrently deleted row) must
+            // not keep the stale id: save() would upsert a fresh row under it
+            // with categoryId = "" and die on the FK (consolidated_bugs.md
+            // J6). It becomes a new question instead.
             _state.value = _state.value.copy(
                 loading = false,
+                questionId = "",
+                isNew = true,
                 categories = categories,
                 passages = if (paperId.isNotBlank()) repository.getPassagesForPaper(paperId) else emptyList(),
                 elements = listOf(ContentElement.TextElement("")),
@@ -236,7 +256,13 @@ class EditorViewModel(
             val readyMsg = if (_state.value.isNew) "new question" else "editing $questionId"
             Logger.i("EDITORVM", "Editor ready: $readyMsg, ${categories.size} categories available")
         } catch (e: Exception) {
+            // Without clearing `loading` the editor sat on "Loading…" forever
+            // with no way forward (consolidated_bugs.md J5).
             Logger.e("EDITORVM", "Failed to initialize editor", e)
+            _state.value = _state.value.copy(
+                loading = false,
+                loadError = "Could not load this question: ${e.message}"
+            )
         }
         }
         }
@@ -534,6 +560,10 @@ class EditorViewModel(
 
     fun save(onDone: () -> Unit) {
         val s = _state.value
+        // A double-tap on Save used to run buildDto() twice while a new
+        // question's id was still blank, minting two ids and two identical
+        // rows (consolidated_bugs.md J7). One save at a time.
+        if (s.saving) return
         Logger.d("EDITORVM", "save() called: questionId='${s.questionId}', valid=${canProceed()}, " +
             "options=${s.options.size}, " +
             "correctCount=${s.options.count { it.isCorrect }}, editingFromImport=" +
@@ -562,10 +592,25 @@ class EditorViewModel(
             return
         }
         val question = domainFrom(dto, s.categoryId)
+        _state.update { it.copy(saving = true) }
         viewModelScope.launch {
-            repository.saveQuestion(question)
-            cleanSignature = savedSig
-            onDone()
+            try {
+                repository.saveQuestion(question)
+                cleanSignature = savedSig
+                // A new question's minted id is written back, so a second tap
+                // updates the same row instead of minting another (J7).
+                if (s.questionId.isBlank()) {
+                    _state.update { it.copy(questionId = dto.id, isNew = false) }
+                }
+                onDone()
+            } catch (e: Exception) {
+                // Any Room failure used to crash here with onDone() never run
+                // (consolidated_bugs.md J7).
+                Logger.e("EDITORVM", "save() failed", e)
+                _state.update { it.copy(saveError = "Could not save: ${e.message}") }
+            } finally {
+                _state.update { it.copy(saving = false) }
+            }
         }
     }
 
@@ -702,10 +747,37 @@ class EditorViewModel(
         }
     }
 
+    /** Whether this editor instance edits an import preview's in-memory copy
+     *  rather than a stored row (the Delete button hides for it — J2). */
+    val editingFromImport: Boolean get() = fromImportSession
+
     fun delete(onDone: () -> Unit) {
+        // Delete has no import-session branch: on the preview screen it used
+        // to delete the STORED row the preview question was imported from
+        // (consolidated_bugs.md J2).
+        if (fromImportSession) {
+            Logger.w("EDITORVM", "delete() refused: editing an import preview, not a stored row")
+            return
+        }
+        val current = _state.value
+        if (current.saving) return
+        // Prev/Next retarget this same ViewModel via state.questionId; delete
+        // read the constructor's immutable id, so it removed the question the
+        // editor was opened with, not the one on screen (consolidated_bugs.md
+        // J1).
+        val targetId = current.questionId
+        if (targetId.isBlank()) return
+        _state.update { it.copy(saving = true) }
         viewModelScope.launch {
-            repository.deleteQuestion(questionId)
-            onDone()
+            try {
+                repository.deleteQuestion(targetId)
+                onDone()
+            } catch (e: Exception) {
+                Logger.e("EDITORVM", "delete($targetId) failed", e)
+                _state.update { it.copy(saveError = "Could not delete: ${e.message}") }
+            } finally {
+                _state.update { it.copy(saving = false) }
+            }
         }
     }
 }

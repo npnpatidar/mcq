@@ -49,7 +49,6 @@ class BrowseRowMoveStateTest {
 
         refs.forEachIndexed { index, item ->
             val state = moves.getValue(item.id)
-            assertEquals("index of ${item.id}", index, state.indexInCategory)
             assertEquals(
                 "up of ${item.id}",
                 PassageReorder.canMove(refs, index, up = true) { it.passageId },

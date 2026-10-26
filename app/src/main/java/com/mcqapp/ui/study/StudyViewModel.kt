@@ -173,6 +173,10 @@ class StudyViewModel(
      */
     private var questionInView = true
 
+    /** Set by [stop]; an in-flight grade honours it instead of reopening the
+     *  session. Reset when a new session loads. */
+    private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
+
     init {
         load()
         startDwellTicker()
@@ -196,13 +200,16 @@ class StudyViewModel(
     private var drillCards: List<StudyCard>? = null
     private var drillIndex = 0
 
-    /** Set by [stop]; an in-flight grade honours it instead of reopening the
-     *  session. Reset when a new session loads. */
-    private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** The load in flight; a retry cancels it rather than awaiting it — a
+     *  stuck load (a closed database parks its query) must not block the
+     *  retry the user asked for (consolidated_bugs.md I6). */
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     private fun load() {
         stopped.set(false)
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             try {
                 val paper = repository.getPaper(paperId)
                 config = repository.schedulerConfigNow()
@@ -275,9 +282,9 @@ class StudyViewModel(
     /** Re-runs a failed load after the user asks for it. */
     fun retry() {
         // A double-tap ran two loads, both ending in pullCard, and the
-        // new-card counter climbed twice (consolidated_bugs.md I6).
-        if (_state.value.loading) return
-        _state.update { it.copy(loading = true, loadError = null) }
+        // new-card counter climbed twice (consolidated_bugs.md I6). The
+        // in-flight load is cancelled, so the double-load cannot happen and
+        // a stuck one cannot block the retry.
         load()
     }
 

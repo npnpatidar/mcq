@@ -50,7 +50,6 @@ data class CategoryContext(
  * the main thread.
  */
 data class RowMoveState(
-    val indexInCategory: Int,
     val canMoveUp: Boolean,
     val canMoveDown: Boolean,
     val passageCanMoveUp: Boolean,
@@ -304,6 +303,12 @@ class BrowseViewModel(
         }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             val moves = rowMoveStates(window, _state.value.categoryContexts)
+            // The generation check is deliberately not a lock: a write that
+            // lands between this read and the update bumps the counter and
+            // this stale result is discarded. A pre-invalidation state can
+            // still flash for a frame or two (computed before the bump,
+            // published after); that is cosmetic and cheaper than
+            // synchronising every refresh (consolidated_bugs.md K3).
             if (generation != rowMovesGeneration) return@launch
             _state.update { it.copy(rowMoves = moves) }
         }
@@ -568,13 +573,6 @@ class BrowseViewModel(
         }
     }
 
-    fun swapQuestions(firstId: String, secondId: String) {
-        viewModelScope.launch {
-            repository.swapQuestionOrder(firstId, secondId)
-            invalidateContexts()
-        }
-    }
-
     /**
      * Applies a computed category order (a block-aware move from
      * PassageReorder: a row jump over a passage group, or a whole group
@@ -713,8 +711,12 @@ class BrowseViewModel(
                 return@launch
             }
             _bulkError.value = null
+            // The gate is on the FILTERED list: `" ,"` passed the raw-text
+            // check, the filtered list came out empty, and the write deleted
+            // every tag although the dialog says blank fields keep existing
+            // values (consolidated_bugs.md K2).
             val tags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                .takeIf { tagsText.isNotBlank() }
+                .takeIf { it.isNotEmpty() }
             repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
             invalidateContexts()
             Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
@@ -825,7 +827,6 @@ internal fun rowMoveStatesOf(
             val first = runStart[index]
             val last = runEnd[index]
             out[ref.id] = RowMoveState(
-                indexInCategory = index,
                 // Same predicates as PassageReorder.canMove / movePassageBlock:
                 // a member may swap within its run, a standalone row with a
                 // neighbour, and only a non-blank passage id moves as a block.

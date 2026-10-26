@@ -174,8 +174,8 @@ fun BrowseScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (selectionMode) "${selectedIds.size} selected"
-                        else state.paper?.title ?: "Browse questions"
+                        if (selectionMode) stringResource(R.string.n_selected, selectedIds.size)
+                        else state.paper?.title ?: stringResource(R.string.browse_title)
                     )
                 },
                 navigationIcon = {
@@ -298,7 +298,16 @@ fun BrowseScreen(
         // Delayed spinner: fast loads show blank instead of flashing text.
         val refreshing = items.loadState.refresh is LoadState.Loading
         val showLoading = com.mcqapp.util.rememberDelayedVisibility(refreshing && items.itemCount == 0)
-        if (showLoading) {
+        // The whole-screen early return is the FIRST load's business only:
+        // the same condition is true during every filter-change refresh, and
+        // returning here unmounted the search field, the chips and the
+        // dialogs for as long as a big paper took to refresh
+        // (consolidated_bugs.md K1).
+        var firstLoadDone by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(items.loadState.refresh) {
+            if (items.loadState.refresh is LoadState.NotLoading) firstLoadDone = true
+        }
+        if (showLoading && !firstLoadDone) {
             Text(
                 stringResource(R.string.loading),
                 modifier = Modifier
@@ -376,6 +385,17 @@ fun BrowseScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // A later refresh keeps the controls composed and notes the load
+            // above the list instead of replacing the screen (K1).
+            if (showLoading) {
+                item(key = "browse-loading", contentType = "loading") {
+                    Text(
+                        stringResource(R.string.loading),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             item(key = "browse-controls") {
                 androidx.compose.material3.OutlinedTextField(
                     // The field shows what was typed; the list follows 300 ms
@@ -618,7 +638,7 @@ fun BrowseScreen(
                 parseNonNegativeDecimal(bulkMarks) == null
             AlertDialog(
                 onDismissRequest = { showBulkDialog = false },
-                title = { Text("Edit ${selectedIds.size} questions") },
+                title = { Text(stringResource(R.string.edit_n_questions, selectedIds.size)) },
                 text = {
                     Column {
                         Text(
@@ -687,7 +707,7 @@ fun BrowseScreen(
         if (showDeleteConfirm) {
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
-                title = { Text("Delete ${selectedIds.size} questions?") },
+                title = { Text(stringResource(R.string.delete_n_questions, selectedIds.size)) },
                 text = { Text(stringResource(R.string.this_cannot_be_undone)) },
                 confirmButton = {
                     TextButton(onClick = {
@@ -818,7 +838,7 @@ fun BrowseScreen(
                             onExpandedChange = { paperMenuOpen = it }
                         ) {
                             OutlinedTextField(
-                                value = movePaper?.title ?: "Select paper",
+                                value = movePaper?.title ?: stringResource(R.string.select_paper),
                                 onValueChange = {},
                                 readOnly = true,
                                 singleLine = true,
@@ -1107,29 +1127,6 @@ private fun PassageHeaderCard(
         }
     }
 }
-
-/**
- * The browse screen's single-category filter: with a set of category ids, only
- * those categories' questions remain; null (or empty) keeps the list whole.
- */
-internal fun applyCategoryFilter(
-    questions: List<com.mcqapp.domain.Question>,
-    categoryIds: Set<String>?
-): List<com.mcqapp.domain.Question> =
-    applyCategoryFilter(questions, categoryIds) { it.categoryId }
-
-/**
- * The browse screen's single-category filter over any item that knows its
- * category: with a set of category ids, only those categories' items remain;
- * null (or empty) keeps the list whole.
- */
-internal fun <T> applyCategoryFilter(
-    questions: List<T>,
-    categoryIds: Set<String>?,
-    categoryIdOf: (T) -> String
-): List<T> =
-    if (categoryIds.isNullOrEmpty()) questions
-    else questions.filter { categoryIdOf(it) in categoryIds }
 
 /**
  * The ids of [rootId] plus every descendant, read from the pre-order

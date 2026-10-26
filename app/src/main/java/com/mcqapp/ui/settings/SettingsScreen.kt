@@ -96,15 +96,13 @@ fun SettingsScreen(
     // H1). H6: a busy flag keeps a second export/backup/restore from queuing
     // behind (and wiping) the first.
     var exportError by rememberSaveable { mutableStateOf<String?>(null) }
-    var exportErrorTitle by rememberSaveable { mutableStateOf("") }
+    // The failure's title as a resource id, resolved inside the dialog's
+    // Text: the callbacks are not composable scopes (consolidated_bugs.md
+    // H1).
+    var exportErrorTitleRes by rememberSaveable { mutableStateOf(0) }
     var busy by rememberSaveable { mutableStateOf(false) }
-    // Resolved in composition: the callbacks are not composable scopes.
-    val exportFailedTitle = stringResource(R.string.export_failed)
-    val backupFailedTitle = stringResource(R.string.backup_failed)
-    val restoreFailedTitle = stringResource(R.string.restore_failed)
-    val exportLogsTitle = stringResource(R.string.export_logs)
-    fun fail(title: String) = { error: String ->
-        exportErrorTitle = title
+    fun fail(titleRes: Int) = { error: String ->
+        exportErrorTitleRes = titleRes
         exportError = error
     }
 
@@ -113,7 +111,7 @@ fun SettingsScreen(
     ) { uri: Uri? ->
         uri?.let {
             busy = true
-            viewModel.exportAll(it, onError = fail(exportFailedTitle)) { busy = false }
+            viewModel.exportAll(it, onError = fail(R.string.export_failed)) { busy = false }
         }
     }
     val backupLauncher = rememberLauncherForActivityResult(
@@ -121,7 +119,7 @@ fun SettingsScreen(
     ) { uri: Uri? ->
         uri?.let {
             busy = true
-            viewModel.backupAll(it, onError = fail(backupFailedTitle)) { busy = false }
+            viewModel.backupAll(it, onError = fail(R.string.backup_failed)) { busy = false }
         }
     }
     var showRestoreConfirm by rememberSaveable { mutableStateOf(false) }
@@ -508,7 +506,7 @@ fun SettingsScreen(
                             // (consolidated_bugs.md H9).
                             val path = com.mcqapp.util.Logger.logFilePath()
                             if (path == null) {
-                                exportErrorTitle = exportLogsTitle
+                                exportErrorTitleRes = R.string.export_logs
                                 exportError = "No log file exists yet."
                                 return@Button
                             }
@@ -528,7 +526,7 @@ fun SettingsScreen(
                                     android.content.Intent.createChooser(intent, "Export Logs")
                                 )
                             } catch (e: ActivityNotFoundException) {
-                                exportErrorTitle = exportLogsTitle
+                                exportErrorTitleRes = R.string.export_logs
                                 exportError = "No app can handle this share."
                             }
                         },
@@ -580,7 +578,7 @@ fun SettingsScreen(
                         busy = true
                         viewModel.restoreBackup(
                             uri,
-                            onError = fail(restoreFailedTitle),
+                            onError = fail(R.string.restore_failed),
                             onDone = { report ->
                                 busy = false
                                 restoreDone = report

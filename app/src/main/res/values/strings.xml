@@ -90,6 +90,11 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="backup_failed">Backup failed</string>
+    <string name="browse_title">Browse questions</string>
+    <string name="n_selected">%1$d selected</string>
+    <string name="edit_n_questions">Edit %1$d questions</string>
+    <string name="delete_n_questions">Delete %1$d questions?</string>
+    <string name="select_paper">Select paper</string>
     <string name="restore_failed">Restore failed</string>
     <string name="export_logs">Export Logs</string>
     <string name="flag_question">Flag question</string>

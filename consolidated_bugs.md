@@ -151,11 +151,11 @@ adjudication.
 | J7 | Low-Med | BUG | Editor | Unguarded save/delete; double-tap Save duplicates a new question | — **FIXED**
 | J8 | Low | BUG | Editor | Legacy image-only option makes a question permanently unsavable | — **FIXED**
 | J9 | Low | BUG | Editor | A question with no correct answer saves silently (import warns) | — **FIXED**
-| K1 | Low-Med | BUG | Browse | A slow refresh blanks the whole screen (controls unmounted) |
-| K2 | Low | BUG | Browse | Punctuation-only tags field clears all tags on bulk edit |
-| K3 | Low | NIT | Browse | Transient stale-rowMoves race after a write |
-| K4 | Low | CLEANUP | Browse | Dead filter overloads / `swapQuestions` / `indexInCategory` |
-| K5 | Nit | NIT | Browse | Hardcoded English strings in browse dialogs |
+| K1 | Low-Med | BUG | Browse | A slow refresh blanks the whole screen (controls unmounted) | — **FIXED**
+| K2 | Low | BUG | Browse | Punctuation-only tags field clears all tags on bulk edit | — **FIXED**
+| K3 | Low | NIT | Browse | Transient stale-rowMoves race after a write | — **FIXED**
+| K4 | Low | CLEANUP | Browse | Dead filter overloads / `swapQuestions` / `indexInCategory` | — **FIXED**
+| K5 | Nit | NIT | Browse | Hardcoded English strings in browse dialogs | — **FIXED**
 
 ---
 
@@ -848,30 +848,30 @@ deliberately tolerates the state, so a hard block would diverge — see Part 4).
 
 ### K. Browse extras — from `browse_bug.md`
 
-**K1 · Low-Med · BUG — a slow refresh blanks the whole screen.**
+**K1 · Low-Med · BUG — a slow refresh blanks the whole screen.** *FIXED: the whole-screen early return is the first load's only; later refreshes keep the controls composed and note the load above the list.*
 `BrowseScreen.kt:273-281` early-returns to a "Loading" text when `refreshing && itemCount == 0`,
 which is also true during every filter-change refresh; on a big paper a >300 ms search replaces
 the entire Scaffold (search field, chips, dialogs) and unmounts the window effects. *Fix:* keep
 the controls composed and overlay the loading state, or restrict the early return to the initial
 load.
 
-**K2 · Low · BUG — a punctuation-only tags field clears all tags.**
+**K2 · Low · BUG — a punctuation-only tags field clears all tags.** *FIXED: the gate is on the filtered list.*
 `BrowseViewModel.kt:688-689` does `takeIf { tagsText.isNotBlank() }` on the *unfiltered* text;
 `" ,"` passes, the filtered list is empty, and `updateBulkFieldsChunked` writes an empty CSV —
 deleting every tag — although the dialog says blank fields keep existing values. *Fix:*
 `takeIf { it.isNotEmpty() }` on the filtered list.
 
-**K3 · Low · NIT — transient stale `rowMoves` race.**
+**K3 · Low · NIT — transient stale `rowMoves` race.** *FIXED (doc): the generation check is documented as deliberately lock-free, with the cosmetic flash named.*
 `refreshRowMoves` (`:300,307-308`) check-then-acts across `Dispatchers.Default` while
 `invalidateContexts` (`:471-482`) bumps the generation and clears the map; pre-invalidation states
 can flash for a frame or two. Cosmetic; the report itself says not worth a lock.
 
-**K4 · Low · CLEANUP — dead browse surface.**
+**K4 · Low · CLEANUP — dead browse surface.** *FIXED: `swapQuestions` (and its unused repository chain), `RowMoveState.indexInCategory` and the test-only `applyCategoryFilter` overloads are deleted, with their tests.*
 Both `applyCategoryFilter` overloads are test-only (`BrowseScreen.kt:1075-1092`); `swapQuestions`
 has no caller (`BrowseViewModel.kt:561-566`); `RowMoveState.indexInCategory` is read only by
 `BrowseRowMoveStateTest` (`:53`). Deleting them means slimming the corresponding tests.
 
-**K5 · Nit · NIT — hardcoded browse dialog strings.**
+**K5 · Nit · NIT — hardcoded browse dialog strings.** *FIXED: the bulk-edit/delete dialog titles, the selection count, the empty paper title and the paper picker placeholder are resources. The VM's "Nothing selected" exception message stays a literal (it guards a state the UI prevents). The stale-rowMoves flash (K3) is documented as accepted.*
 `BrowseScreen.kt:581,650,695,759` ("Edit N questions", "Delete N questions?", …) and
 `BrowseViewModel.kt:624` ("Nothing selected") are literals among `stringResource` neighbours.
 (Verification: also `:781` "Select paper" and the top bar `:170-171`, not in the original list.)

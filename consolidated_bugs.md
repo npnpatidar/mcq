@@ -257,7 +257,7 @@ end padding rather than a literal no-op). Remove both.
 
 ### C. Passages — from `passages_bugs.md`
 
-**C1 · Medium · BUG — bulk "move to category" strands passage members.** *FIXED: the move re-homes the passage row and pulls every sibling member along (a new `QuestionMoveRow` projection), then re-places each group; cross-paper schedule resets cover the pulled members too.*
+**C1 · Medium · BUG — bulk "move to category" strands passage members.** *FIXED: the move re-homes the passage row and pulls every sibling member along (a new `QuestionMoveRow` projection); cross-paper schedule resets cover the pulled members too. Re-placement stays with the existing `placeWithGroup` flows, which converge without reshuffling the target's rows.*
 `QuestionStore.kt:405-434` writes `categoryId` only — no `enforcePassageCategory`, no
 `placeWithGroup` — unlike `savePassage`, `saveQuestion`, `assignQuestions` and the importer.
 A moved member's passage row stays in the source category, so the editor/picker no longer offers

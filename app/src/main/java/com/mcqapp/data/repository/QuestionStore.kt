@@ -447,15 +447,10 @@ internal class QuestionStore(
                     db.reviewLogDao().deleteByQuestionsChunked(crossPaperIds)
                 }
             }
-            // Re-place each moved group: members keep their old sortOrders,
-            // which collide with the target's rows and interleave the group.
-            for (passageId in affectedPassages) {
-                if (db.passageDao().getById(passageId) == null) continue
-                val members = db.passageDao().memberIds(passageId)
-                for (i in 1 until members.size) {
-                    moveAfterAnchor(members[i], members[i - 1])
-                }
-            }
+            // Re-placement is deliberately NOT done here: placeWithGroup (run
+            // by the assign/save flows that land here) anchors within the
+            // category and converges, while a whole-group reorder here would
+            // shuffle unrelated rows of the target around the group.
         }
     }
 

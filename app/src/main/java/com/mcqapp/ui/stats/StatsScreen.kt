@@ -122,11 +122,18 @@ fun StatsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        stringResource(R.string.stats_load_error),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    // Retryable: a bare error text left a dead page until the
+                    // user left and came back (consolidated_bugs.md E8).
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            stringResource(R.string.stats_load_error),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        androidx.compose.material3.Button(onClick = viewModel::refresh) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
                 }
                 !state.visibleSliceLoaded -> Box(
                     modifier = Modifier.fillMaxSize(),

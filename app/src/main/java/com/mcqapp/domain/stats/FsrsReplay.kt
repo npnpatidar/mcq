@@ -183,6 +183,9 @@ object FsrsReplay {
         reviewCount = 1
     )
 
+    // An out-of-range rating (corrupt or hand-edited rows only) folds into
+    // GOOD rather than dropping the row: the log stays total
+    // (consolidated_bugs.md E11).
     private fun gradeOf(rating: Int): ReviewGrade =
         ReviewGrade.entries.getOrElse(rating - 1) { ReviewGrade.GOOD }
 }

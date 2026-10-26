@@ -17,7 +17,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,10 +85,17 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private var sectionsStale = false
 
     init {
-        refresh()
+        // No refresh() here: the screen's ON_RESUME observer fires on first
+        // composition (the destination composes while the activity is
+        // RESUMED), and the old init call started a second full-log replay
+        // whose result the generation check then discarded
+        // (consolidated_bugs.md E1).
         viewModelScope.launch {
-            val papers = runCatching { repository.observePapers().first() }.getOrDefault(emptyList())
-            _state.update { it.copy(papers = papers) }
+            // E14: observed, not read once — a paper created while this
+            // screen lives joins the scope selector without a restart.
+            repository.observePapers().collect { papers ->
+                _state.update { it.copy(papers = papers) }
+            }
         }
     }
 
@@ -142,7 +148,12 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Shows a tab, building its slice if this selection hasn't been built. */
     fun selectTab(tab: Tab) {
-        if (_state.value.tab == tab) return
+        if (_state.value.tab == tab) {
+            // A failed build has nothing on screen; re-selecting it retries
+            // (consolidated_bugs.md E8).
+            if (_state.value.loadError != null) refresh()
+            return
+        }
         _state.update { it.copy(tab = tab) }
         loadVisible()
     }
@@ -191,6 +202,9 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         sectionsStale = true
     }
 
+    /** The build in flight; a superseding load cancels it (E2). */
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     /** Builds the visible tab unless its slice is already loaded and current. */
     private fun loadVisible() {
         val current = _state.value
@@ -198,12 +212,16 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(loading = false, loadError = null) }
             return
         }
+        // Rapid tab/range changes used to leave several concurrent full-log
+        // passes running, each discarded on completion (consolidated_bugs.md
+        // E2). The generation check stays as a second guard.
+        loadJob?.cancel()
         val gen = ++generation
         _state.update { it.copy(loading = true, loadError = null) }
         val tab = current.tab
         val scope = current.scopePaperId
         val range = current.range
-        viewModelScope.launch(Dispatchers.Default) {
+        loadJob = viewModelScope.launch(Dispatchers.Default) {
             try {
                 val now = System.currentTimeMillis()
                 val built = when (tab) {

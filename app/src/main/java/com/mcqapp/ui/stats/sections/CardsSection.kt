@@ -40,6 +40,9 @@ import java.util.Locale
  * Tab 5: the collection's current shape — the state donut with its legend and
  * the flagged leeches.
  */
+/** Rows shown in the per-paper counts table before it is capped (E9). */
+private const val PAPER_TABLE_CAP = 50
+
 @Composable
 internal fun CardsSection(
     bundle: CardsData,
@@ -197,8 +200,18 @@ private fun PaperCountsCard(counts: List<PaperCardCounts>) {
             return@ChartCard
         }
         val maxTotal = counts.maxOf { it.total }.coerceAtLeast(1)
-        counts.forEach { paper ->
+        // One LazyColumn item composing every row never recycled: at the
+        // documented 1000-paper ceiling that is 1000 rows in one frame (the
+        // other ranked lists cap at 15) (consolidated_bugs.md E9).
+        counts.take(PAPER_TABLE_CAP).forEach { paper ->
             PaperCountRow(paper, maxTotal)
+        }
+        if (counts.size > PAPER_TABLE_CAP) {
+            Text(
+                stringResource(R.string.stats_paper_table_capped, counts.size - PAPER_TABLE_CAP),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

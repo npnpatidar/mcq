@@ -79,6 +79,12 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             range = range,
             now = now,
             cfg = config,
+            // One offset per load (the visit's own), not per historical
+            // instant: re-bucketing history through travel/DST shifts would
+            // move rows between visits. Within an hour of the 04:00 boundary
+            // a zone change mis-buckets until the next load — unobservable
+            // where the 04:00 day start sits far from a DST jump
+            // (consolidated_bugs.md E12).
             zone = DayBoundary.zoneOffset(now),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
             // Only the scoped breakdown labels by category, and the map holds
@@ -108,6 +114,12 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             range = range,
             now = now,
             cfg = config,
+            // One offset per load (the visit's own), not per historical
+            // instant: re-bucketing history through travel/DST shifts would
+            // move rows between visits. Within an hour of the 04:00 boundary
+            // a zone change mis-buckets until the next load — unobservable
+            // where the 04:00 day start sits far from a DST jump
+            // (consolidated_bugs.md E12).
             zone = DayBoundary.zoneOffset(now),
             scheduler = scheduler
         )

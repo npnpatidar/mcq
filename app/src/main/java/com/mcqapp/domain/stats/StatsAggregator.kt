@@ -555,6 +555,9 @@ object StatsAggregator {
     /** A group whose label the breakdown could not resolve. */
     private const val UNKNOWN_GROUP = "—"
 
+    /** Label for a paper that no longer exists (its reviews still count). */
+    private const val UNKNOWN_PAPER = "Unknown paper"
+
     /**
      * The retention tab as one bounded pass.
      *
@@ -733,7 +736,7 @@ object StatsAggregator {
 
         private fun groupRetention(): List<GroupRetention> = groups.map { (key, counts) ->
             val label = if (scopePaperId == null) {
-                paperTitleOf[key] ?: key
+                paperTitleOf[key] ?: UNKNOWN_PAPER
             } else {
                 categoryOfQuestion[key] ?: UNKNOWN_GROUP
             }
@@ -974,6 +977,8 @@ object StatsAggregator {
                 1 -> counts[0]++
                 2 -> counts[1]++
                 3 -> counts[2]++
+                // Anything else (Easy) — corrupt ratings fold here rather
+                // than vanishing from the total (E11).
                 else -> counts[3]++
             }
         }
@@ -1392,7 +1397,7 @@ object StatsAggregator {
         private fun paperCounts(): List<PaperCardCounts> = perPaper.map { (paperId, c) ->
             PaperCardCounts(
                 paperId = paperId,
-                label = paperTitleOf[paperId] ?: paperId,
+                label = paperTitleOf[paperId] ?: UNKNOWN_PAPER,
                 total = c[0],
                 fresh = c[1],
                 learning = c[2],

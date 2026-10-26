@@ -361,9 +361,10 @@
     <string name="stats_introduced">Introduced</string>
     <string name="stats_due_now">Due</string>
     <string name="stats_backlog">Backlog</string>
+    <string name="stats_backlog_help">Cards whose due time has passed (counted live, not per day).</string>
     <string name="stats_today_kinds">Learning %1$d · Review %2$d · Relearning %3$d</string>
     <string name="stats_overview">Overview</string>
-    <string name="stats_retention">Retention</string>
+    <string name="stats_retention">Retention (first of day)</string>
     <string name="stats_desired_retention">Desired retention</string>
     <string name="stats_desired_retention_value">Desired retention: %1$s</string>
     <string name="stats_mature_retention">Mature retention</string>
@@ -412,7 +413,7 @@
     <string name="weekday_sat">Sat</string>
     <string name="weekday_sun">Sun</string>
     <string name="stats_forecast">Forecast</string>
-    <string name="stats_forecast_help">Scheduled reviews for the next 30 days. The line is the total outstanding if you skip every day.</string>
+    <string name="stats_forecast_help">Scheduled reviews for the next 30 days, bucketed by day (the first bar is everything due before today). The line is the total outstanding if you skip every day.</string>
     <string name="stats_cumulative_if_skipped">If skipped</string>
     <string name="stats_overdue_value">Overdue: %1$d</string>
     <string name="stats_due_today_value">Due today: %1$d</string>
@@ -449,6 +450,7 @@
     <string name="stats_card_counts">Card counts</string>
     <string name="stats_total">Total</string>
     <string name="stats_overdue_age">Overdue age</string>
+    <string name="stats_paper_table_capped">%1$d more papers not shown.</string>
     <string name="stats_overdue_age_help">How long the scheduled cards have already been past due.</string>
     <string name="stats_overdue_mean">Mean age %1$s d</string>
     <string name="stats_overdue_oldest">Oldest %1$d d</string>

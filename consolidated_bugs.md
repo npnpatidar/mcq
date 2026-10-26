@@ -79,21 +79,21 @@ adjudication.
 | D10 | Low | BUG | Timing | Dwell/untimed duration use wall clock; countdown uses monotonic clock — **FIXED** |
 | D11 | Low | BUG | Scoring | Imported `negativeMarking` is unvalidated → negative makes wrong answers gain marks — **FIXED** |
 | D12 | Nit | NIT | Routes | A category id containing `,` cannot round-trip through `test?categories=` — **FIXED** |
-| E1 | Medium | BUG | Stats | Every Stats entry replays the whole log twice; first result discarded |
-| E2 | Medium | BUG | Stats | Superseded builds are never cancelled → concurrent full-log replays |
-| E3 | Low | BUG | Charts | StackedBarChart overlay bridges null gaps the LineChart breaks |
-| E4 | Low | BUG | Charts | `niceMax` violates its contract for values in (0, 1) |
-| E5 | Low | NIT | Charts | Heatmap rows claim Monday..Sunday but are `index % 7` from an arbitrary weekday |
-| E6 | Low | BUG | Stats | Three "overdue" boundaries on one page (backlog/forecast/overdueAge) |
-| E7 | Low | NIT | Workload | Time-per-day tooltip prints raw seconds under an "1h" axis |
-| E8 | Low | BUG | Stats | A failed stats load has no retry |
-| E9 | Low | BUG | Stats | Per-paper table is one LazyColumn item (no recycling) |
-| E10 | Nit | NIT | Stats | Deleted papers fall back to raw ids in labels |
-| E11 | Nit | NIT | Replay | Junk ratings silently fold into GOOD/EASY |
-| E12 | Nit | NIT | Stats | One fixed zone offset buckets all history (DST/travel) |
-| E13 | Nit | NIT | Sheet | Predicted retention truncates instead of rounding |
-| E14 | Nit | NIT | Stats | Scope selector's paper list read once in `init` |
-| E15 | Nit | NIT | Stats | KPI pairs retention (subset) with reviews (all) without a qualifier |
+| E1 | Medium | BUG | Stats | Every Stats entry replays the whole log twice; first result discarded | — **FIXED**
+| E2 | Medium | BUG | Stats | Superseded builds are never cancelled → concurrent full-log replays | — **FIXED**
+| E3 | Low | BUG | Charts | StackedBarChart overlay bridges null gaps the LineChart breaks | — **FIXED**
+| E4 | Low | BUG | Charts | `niceMax` violates its contract for values in (0, 1) | — **FIXED**
+| E5 | Low | NIT | Charts | Heatmap rows claim Monday..Sunday but are `index % 7` from an arbitrary weekday | — **FIXED**
+| E6 | Low | BUG | Stats | Three "overdue" boundaries on one page (backlog/forecast/overdueAge) | — **FIXED**
+| E7 | Low | NIT | Workload | Time-per-day tooltip prints raw seconds under an "1h" axis | — **FIXED**
+| E8 | Low | BUG | Stats | A failed stats load has no retry | — **FIXED**
+| E9 | Low | BUG | Stats | Per-paper table is one LazyColumn item (no recycling) | — **FIXED**
+| E10 | Nit | NIT | Stats | Deleted papers fall back to raw ids in labels | — **FIXED**
+| E11 | Nit | NIT | Replay | Junk ratings silently fold into GOOD/EASY | — **FIXED**
+| E12 | Nit | NIT | Stats | One fixed zone offset buckets all history (DST/travel) | — **FIXED**
+| E13 | Nit | NIT | Sheet | Predicted retention truncates instead of rounding | — **FIXED**
+| E14 | Nit | NIT | Stats | Scope selector's paper list read once in `init` | — **FIXED**
+| E15 | Nit | NIT | Stats | KPI pairs retention (subset) with reviews (all) without a qualifier | — **FIXED**
 | F1 | High | BUG | Import UI | Process-death guard fires on every recreation → destroys a live import | — **FIXED**
 | F2 | High | BUG | Library | Stale export scope falls through to `exportAll` (whole library) | — **FIXED**
 | F3 | High | BUG | Test | Countdown never restarts after a failed save (auto-submit dead) | — **FIXED**
@@ -406,75 +406,75 @@ only. Same shape exists for the browse route.
 
 ### E. Statistics — from `stats_bugs.md`
 
-**E1 · Medium · BUG — the whole review log is replayed twice on every Stats visit.**
+**E1 · Medium · BUG — the whole review log is replayed twice on every Stats visit.** *FIXED: the init refresh is gone; the ON_RESUME observer covers the first composition.*
 `StatsViewModel.init` calls `refresh()` (`:88-89`), and `StatsScreen`'s ON_RESUME observer
 (`:66-74`) fires immediately because the destination composes while the activity is RESUMED.
 `refresh()` has no in-flight guard, so two full replays start and the first result is discarded
 by the generation check. *Fix:* drop the `init { refresh() }` (observer covers first resume) or
 guard with a fired-once flag.
 
-**E2 · Medium · BUG — superseded builds keep running.**
+**E2 · Medium · BUG — superseded builds keep running.** *FIXED: the in-flight build job is cancelled by a superseding load; the generation check stays as a second guard.*
 `loadVisible` launches on `Dispatchers.Default` and keeps no Job; staleness is checked only after
 completion (`:229,242,252`), and `dropSections()` (`:189-192`) only bumps the counter. Rapid
 tab/range changes leave several concurrent full-log passes. *Fix:* keep and cancel the current
 Job (or bail inside `replayInto`'s consume loop).
 
-**E3 · Low · BUG — the stacked-bar overlay bridges gaps the line chart breaks.**
+**E3 · Low · BUG — the stacked-bar overlay bridges gaps the line chart breaks.** *FIXED: a null hour resets the path, as in LineChart.*
 `StackedBarChart.kt:147` `?: return@forEach` leaves `started` true, so a null `passRate` hour is
 connected straight to the next non-null point; `LineChart.kt:131-132` correctly resets. The
 chart's own comment promises gap handling. *Fix:* mirror LineChart (`started = false` on null).
 
-**E4 · Low · BUG (latent) — `niceMax` breaks its contract below 1.0.**
+**E4 · Low · BUG (latent) — `niceMax` breaks its contract below 1.0.** *FIXED: `floor(log10(value))`.*
 `ChartKit.kt:151` uses `log10(value).toInt()` (truncates toward zero), so `niceMax(0.5)` → 1.0
 instead of 0.5. Every current caller coerces ≥ 1.0, so no live chart is wrong. *Fix:*
 `floor(log10(value))`.
 
-**E5 · Low · NIT — heatmap rows are not weekdays.**
+**E5 · Low · NIT — heatmap rows are not weekdays.** *FIXED (doc): the KDoc now describes the actual `index % 7` grid and why there is no weekday header.*
 KDoc says "rows Monday..Sunday" (`HeatmapChart.kt:35-36`) but the grid uses `row = index % 7`
 from `todayStart − 364 days` (`:97`; `StatsAggregator.kt:499`). 364 ≡ 0 (mod 7), so row 0 is
 always *today's* weekday and the mapping shifts one row per day; there is no weekday header.
 *Fix:* pad the first column to true weekdays, or drop the claim.
 
-**E6 · Low · BUG — three "overdue" boundaries on one page.**
+**E6 · Low · BUG — three "overdue" boundaries on one page.** *FIXED (doc): each chart's help names its window (backlog is live, the forecast is day-bucketed with the first bar carrying pre-today).*
 Overview `backlog` = `dueAt < now` (`StatsAggregator.kt:399`); workload `forecast.overdue` =
 `dayIndex < 0` (dueAt < todayStart, `:938-940`); cards `overdueAge` = `dueAt < now` (`:1348`). A
 card due 09:00 and undone at 15:00 is backlog + overdueAge but "due today" in the forecast.
 *Fix:* document the per-chart windows in help text, or align the forecast.
 
-**E7 · Low · NIT — time-per-day tooltip prints raw seconds.**
+**E7 · Low · NIT — time-per-day tooltip prints raw seconds.** *FIXED: an optional `totalLabel`; the time-per-day card passes `formatDuration`.*
 `StackedBarChart.kt:198` prints `total.roundToInt()`; `TimePerDayCard` feeds seconds while the
 axis uses `formatDuration`. A 1-hour day reads "3600" under an "1h" axis. *Fix:* an optional
 tooltip-total formatter.
 
-**E8 · Low · BUG — a failed stats load has no retry.**
+**E8 · Low · BUG — a failed stats load has no retry.** *FIXED: a Retry button on the error branch, and re-selecting the failed tab retries.*
 `StatsScreen.kt:121-130` renders a bare error Text with no button, and `selectTab` no-ops on the
 already-selected tab (`StatsViewModel.kt:145`). *Fix:* a Retry button calling `refresh()`, and/or
 re-run on `selectTab` when `loadError != null`.
 
-**E9 · Low · BUG (latent) — the per-paper table never recycles.**
+**E9 · Low · BUG (latent) — the per-paper table never recycles.** *FIXED: the table is capped at 50 rows with a "%1$d more" note.*
 `CardsSection.kt:56-58` emits `PaperCountsCard` as one LazyColumn item and `:200-202` composes
 every paper's row; at the documented 1000-paper ceiling that is 1000 rows in one frame (other
 ranked lists cap at 15). *Fix:* cap the table or make each paper an item.
 
-**E10 · Nit · NIT — deleted papers show raw ids.** `StatsAggregator.kt:736,1395` fall back to the
+**E10 · Nit · NIT — deleted papers show raw ids.** *FIXED: the fallback label is "Unknown paper".* `StatsAggregator.kt:736,1395` fall back to the
 key, so orphaned reviews surface as `paper-1698…` rows.
 
-**E11 · Nit · NIT — junk ratings fold silently.** `FsrsReplay.gradeOf` → GOOD for out-of-range
+**E11 · Nit · NIT — junk ratings fold silently.** *FIXED (doc): the folds are documented as deliberate at each site.* `FsrsReplay.gradeOf` → GOOD for out-of-range
 (`:186-187`), the answer-buttons `when` → Easy (`StatsAggregator.kt:973-977`), and rating 0
 counts as a pass (`StatsModels.kt:42`). Corrupt/hand-edited rows only.
 
-**E12 · Nit · NIT — one zone offset buckets all history.** Every `load*` passes
+**E12 · Nit · NIT — one zone offset buckets all history.** *FIXED (doc): the choice is documented at the bind site (re-bucketing per instant would move rows between visits).* Every `load*` passes
 `DayBoundary.zoneOffset(now)` (`StatsStore.kt:82,111,137,156`), so a DST/travel shift mis-buckets
 reviews within an hour of the 04:00 boundary for days on the other side. Unobservable in IST;
 not documented as deliberate. *Fix:* per-instant offsets or a comment.
 
-**E13 · Nit · NIT — predicted retention truncates.** `CardInfoSheet.kt:76` uses
+**E13 · Nit · NIT — predicted retention truncates.** *FIXED: rounded.* `CardInfoSheet.kt:76` uses
 `(it * 100).toInt()` (0.999 → "99%"); the rest of the app rounds.
 
-**E14 · Nit · NIT — the scope selector's paper list never refreshes.** `StatsViewModel.kt:90-93`
+**E14 · Nit · NIT — the scope selector's paper list never refreshes.** *FIXED: `observePapers` is collected, not read once.* `StatsViewModel.kt:90-93`
 reads `observePapers().first()` once in `init`; a new paper is missing until the VM dies.
 
-**E15 · Nit · NIT — KPI semantics need a qualifier.** The KPI pairs "Retention" (first-of-day
+**E15 · Nit · NIT — KPI semantics need a qualifier.** *FIXED (doc): the Retention KPI is labelled "Retention (first of day)" so the reviews pairing cannot misread.* The KPI pairs "Retention" (first-of-day
 subset, `StatsAggregator.kt:375-379`) with "Reviews in range" (all, `:382`); the distinction is
 only in the true-retention help string, so "92% · 148 reviews" can read as "92% of 148".
 

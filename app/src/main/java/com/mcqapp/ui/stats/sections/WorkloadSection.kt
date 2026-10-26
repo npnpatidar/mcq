@@ -166,6 +166,8 @@ private fun TimePerDayCard(bundle: WorkloadData) {
             },
             segmentCount = 1,
             yLabel = { formatDuration(it) },
+            // The tooltip speaks the axis's language, not raw seconds (E7).
+            totalLabel = { formatDuration(it) },
             emptyText = { ChartEmpty(R.string.stats_no_data) }
         )
     }

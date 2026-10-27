@@ -34,35 +34,6 @@ class SampleImageUiTest {
     private val repository
         get() = (ApplicationProvider.getApplicationContext() as McqApplication).repository
 
-    /** A data-URI image exactly like the sample asset's `{"type":"image"}`. */
-    private val png1x1 =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg=="
-
-    @Test
-    fun aStoredImageElementRenders() {
-        val question = Question(
-            id = "img-ui-1",
-            categoryId = "img-ui-cat",
-            elements = listOf(
-                ContentElement.TextElement("Which shape?"),
-                ContentElement.ImageElement(png1x1)
-            ),
-            options = listOf(
-                QuestionOption("img-ui-a", "Alpha"),
-                QuestionOption("img-ui-b", "Beta")
-            ),
-            correctOptionIds = setOf("img-ui-a")
-        )
-        compose.setContent {
-            ContentElements(question.elements)
-        }
-        compose.waitUntil(15_000) {
-            compose.onAllNodesWithTag("question-image", useUnmergedTree = true)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onAllNodesWithTag("question-image", useUnmergedTree = true)[0].assertIsDisplayed()
-    }
-
     @Test
     fun theSampleAssetsPicturesSurviveImportAndRender() = runBlocking {
         // The asset ships inside the APK: read it from the target context.

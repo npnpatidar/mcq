@@ -84,8 +84,9 @@ class BookmarksPagingTest {
     }
 
     /**
-     * The screen reads a number, not the ids: a count is one `COUNT(*)` and a
-     * refresh needs only to know that the table moved.
+     * The screen reads a number, not the ids: a count is one `COUNT(*)`, and
+     * the change signal fires per write — the signal the view models wire to
+     * the live paging source's invalidation (consolidated_bugs.md F14).
      */
     @Test
     fun theCountIsOneNumberAndTheChangeSignalIsPerWrite() = runBlocking {

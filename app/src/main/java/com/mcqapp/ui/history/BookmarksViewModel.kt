@@ -28,12 +28,15 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     val state: StateFlow<BookmarksUiState> = _state.asStateFlow()
 
     /**
-     * One Pager generation: the paging source invalidates itself when the
-     * bookmarks table changes (see [McqRepository.bookmarkedPagingSource]), so
-     * removing (or adding) a bookmark from anywhere refreshes the visible list
-     * in place. The old `flatMapLatest` rebuilt the whole pager — and reset
-     * its scroll to the top — on every toggle (consolidated_bugs.md F14).
+     * One Pager generation: the bookmarks change signal invalidates the live
+     * paging source, so removing (or adding) a bookmark from anywhere
+     * refreshes the visible list in place, with [getRefreshKey] keeping the
+     * reader's position. The old `flatMapLatest` rebuilt the whole pager —
+     * and reset its scroll to the top — on every toggle
+     * (consolidated_bugs.md F14).
      */
+    private var liveSource: androidx.paging.PagingSource<com.mcqapp.data.repository.BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion>? = null
+
     val pagingData: Flow<PagingData<com.mcqapp.domain.BookmarkedQuestion>> =
         Pager(
             PagingConfig(
@@ -42,7 +45,7 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
                 enablePlaceholders = false
             )
         ) {
-            repository.bookmarkedPagingSource()
+            repository.bookmarkedPagingSource().also { liveSource = it }
         }.flow
             .cachedIn(viewModelScope)
 
@@ -52,6 +55,12 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
             repository.observeBookmarkCount().collect { count ->
                 _state.value = BookmarksUiState(count = count)
             }
+        }
+        // One generation, invalidated in place: a source cannot observe the
+        // tracker itself reliably (the observer needs the tracker's refresh
+        // cycle), but the change flow demonstrably fires per write.
+        viewModelScope.launch {
+            repository.observeBookmarkChanges().collect { liveSource?.invalidate() }
         }
     }
 

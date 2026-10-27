@@ -878,6 +878,36 @@ has no caller (`BrowseViewModel.kt:561-566`); `RowMoveState.indexInCategory` is 
 
 ---
 
+### L. Found during the fix pass
+
+**L1 · Low · BUG — the F14 invalidation needed the proven change flow.**
+The first F14 implementation had each paging source register a tracker
+observer itself; under test the observer never fired (the tracker's refresh
+cycle is not pumped the way `createFlow`'s is), which would have frozen the
+bookmark and Saved lists after a toggle. The sources are now invalidated by
+the view models from `observeBookmarkChanges` (`createFlow`, which
+demonstrably fires per write), keeping one Pager generation and the
+anchor-preserving refresh. *FIXED (rewired).*
+
+**L2 · Low · BUG — the results Saved chip's refresh restarts at the top.**
+`ResultsPagingSource.getRefreshKey` returns null (the Bookmarks source has the
+anchor-preserving implementation; this one never did). With F14's in-place
+invalidation the chip now refreshes within one generation, but the viewport
+still restarts from the initial key. *OPEN (cosmetic; fix = port the
+getRefreshKey walk).*
+
+**L3 · Low · BUG (latent) — content hashes of rows written before the A3 remap.**
+A question whose passage id was remapped stores a hash computed over the
+effective passageId. Rows written by pre-fix code store raw-id hashes, so a
+re-import of the same bank after a cross-passage collision misses the hash
+prefilter and can duplicate in that rare case. *OPEN (edge-of-edge).*
+
+**L4 · Nit · NIT — other `catch (CancellationException) { throw }` chains.**
+Room surfaces a closed-database failure as cancellation; the three study
+paths now handle it (I-batch follow-up). Other VMs' catch chains were not
+audited for the same frozen-state hazard. *OPEN (audit).*
+
+
 ## Part 2 — Verified fixed (history; do not re-chase)
 
 All rows below were re-verified against the current tree. Line numbers are the verified current

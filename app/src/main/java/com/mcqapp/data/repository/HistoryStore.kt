@@ -60,6 +60,12 @@ internal class HistoryStore(
      * table's invalidation — not the ids themselves, which a "bookmark
      * everything" bank would hand back in full on every change.
      */
+    /**
+     * The bookmarks table's change signal: a refresh needs only to know the
+     * table moved, not the ids. The paging sources invalidate through this
+     * (one Pager generation per screen; see [bookmarkedPagingSource]'s
+     * contract in the view models).
+     */
     fun observeBookmarkChanges(): Flow<Unit> =
         db.invalidationTracker.createFlow("bookmarks").map { Unit }
 

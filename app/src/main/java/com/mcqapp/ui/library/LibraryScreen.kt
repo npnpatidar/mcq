@@ -416,6 +416,17 @@ fun LibraryScreen(
                                     viewModel.promoteCategory(categoryId)
                                 },
                                 onEditCategory = { node -> editingCategory = node },
+                                // Tapping a category name opens it in Browse,
+                                // scoped to that branch: editing moved into the
+                                // row's ⋮ menu, browsing is the common tap.
+                                onOpenCategory = { node ->
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.browseRoute(
+                                            paper.id,
+                                            categoryIds = listOf(node.id)
+                                        )
+                                    )
+                                },
                                 onDeleteCategory = { categoryId ->
                                     viewModel.deleteCategory(categoryId)
                                 }

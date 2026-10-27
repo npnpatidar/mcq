@@ -188,6 +188,9 @@
     <string name="nest_category">Nest into the category above</string>
     <string name="promote_category">Move out of the parent category</string>
     <string name="edit_category">Edit category</string>
+    <string name="expand_category">Expand subcategories</string>
+    <string name="collapse_category">Collapse subcategories</string>
+    <string name="category_actions">More actions for %1$s</string>
     <string name="move_category_down">Move the whole category down</string>
     <string name="move_passage_down">Move the passage and its questions down</string>
     <string name="passages_empty">No passages yet</string>

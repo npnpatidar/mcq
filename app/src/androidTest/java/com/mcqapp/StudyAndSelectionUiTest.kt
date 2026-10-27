@@ -405,6 +405,76 @@ class StudyAndSelectionUiTest {
         assertTrue(runBlocking { repository.getPaper("ui-sel") != null })
     }
 
+    /**
+     * Manage mode keeps one line per category — chevron, title, `⋮` — and the
+     * tree-order actions live in the menu with the enable rules the four arrows
+     * had. A collapsed branch must hide its subtree and come back.
+     */
+    @Test
+    fun manageModePutsEachCategoryOnOneLineWithItsActionsInTheMenu() {
+        seedNestedPaper("ui-manage", "UIManage Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        waitForTag("paper-manage-ui-manage")
+        compose.onNodeWithTag("paper-manage-ui-manage").performScrollTo().performClick()
+        waitForTag("cat-actions-ui-manage-p")
+        compose.waitForIdle()
+
+        // Chevron + title + ⋮. The arrows are menu items now, so none of them
+        // is a control of its own any more.
+        compose.onNodeWithTag("cat-expand-ui-manage-p").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Move up").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Move down").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Nest into the category above").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Move out of the parent category").assertDoesNotExist()
+
+        // Collapsing a branch hides its children; the chevron brings them back.
+        compose.onNodeWithTag("cat-title-ui-manage-ca").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("cat-expand-ui-manage-p").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("cat-title-ui-manage-ca").assertDoesNotExist()
+        compose.onNodeWithTag("cat-expand-ui-manage-p").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("cat-title-ui-manage-ca").assertIsDisplayed()
+
+        // The only top-level category can neither move nor leave a parent.
+        compose.onNodeWithTag("cat-actions-ui-manage-p").performScrollTo().performClick()
+        waitForTag("cat-promote-ui-manage-p")
+        compose.onNodeWithTag("cat-move-up-ui-manage-p").assertIsNotEnabled()
+        compose.onNodeWithTag("cat-move-down-ui-manage-p").assertIsNotEnabled()
+        compose.onNodeWithTag("cat-promote-ui-manage-p").assertIsNotEnabled()
+        // Edit category is in the menu too, and cancelling must change nothing.
+        compose.onNodeWithTag("cat-edit-ui-manage-p").performClick()
+        waitFor("Edit category")
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+
+        // First child: nothing above it to nest into, but a sibling to move
+        // past and a parent to leave.
+        compose.onNodeWithTag("cat-actions-ui-manage-ca").performScrollTo().performClick()
+        waitForTag("cat-move-down-ui-manage-ca")
+        compose.onNodeWithTag("cat-move-up-ui-manage-ca").assertIsNotEnabled()
+        compose.onNodeWithTag("cat-nest-ui-manage-ca").assertIsNotEnabled()
+        compose.onNodeWithTag("cat-move-down-ui-manage-ca").assertIsEnabled()
+        compose.onNodeWithTag("cat-promote-ui-manage-ca").assertIsEnabled()
+        compose.onNodeWithTag("cat-edit-ui-manage-ca").performClick()
+        waitFor("Edit category")
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+
+        // The name itself opens Browse scoped to that branch: the child's
+        // question is the only place its stem can come from.
+        compose.onNodeWithTag("cat-title-ui-manage-ca").performScrollTo().performClick()
+        waitFor("UITest ui-manage-qa")
+
+        // Back must land where the tap happened: the card still open in Manage
+        // mode, not collapsed to the top of the list.
+        compose.onNodeWithContentDescription("Back").performClick()
+        waitForTag("cat-actions-ui-manage-p")
+        compose.waitForIdle()
+        compose.onNodeWithTag("cat-title-ui-manage-ca").assertExists()
+    }
+
     // ---- the pull-based session surface ----
 
     /**

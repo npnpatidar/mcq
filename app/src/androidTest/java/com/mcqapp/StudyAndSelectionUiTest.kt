@@ -460,6 +460,12 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("cat-edit-ui-manage-ca").performClick()
         waitFor("Edit category")
         compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+
+        // The name itself opens Browse scoped to that branch: the child's
+        // question is the only place its stem can come from.
+        compose.onNodeWithTag("cat-title-ui-manage-ca").performScrollTo().performClick()
+        waitFor("UITest ui-manage-qa")
     }
 
     // ---- the pull-based session surface ----

@@ -98,6 +98,7 @@ internal fun PaperCard(
     onNestCategory: (String) -> Unit = {},
     onPromoteCategory: (String) -> Unit = {},
     onEditCategory: (CategoryNode) -> Unit = {},
+    onOpenCategory: (CategoryNode) -> Unit = {},
     onDeleteCategory: (String) -> Unit = {},
     onPracticeMistakes: () -> Unit = {},
     onDrill: (count: Int, minutes: Int, tickedIds: List<String>) -> Unit = { _, _, _ -> },
@@ -431,6 +432,7 @@ internal fun PaperCard(
                                 onNestCategory = onNestCategory,
                                 onPromoteCategory = onPromoteCategory,
                                 onEditCategory = onEditCategory,
+                                onOpenCategory = onOpenCategory,
                                 onDeleteCategory = onDeleteCategory,
                                 onEditQuestion = onEditQuestion,
                                 onAddQuestion = onAddQuestion,
@@ -511,6 +513,7 @@ private fun ManageCategoryBlock(
     onNestCategory: (String) -> Unit,
     onPromoteCategory: (String) -> Unit,
     onEditCategory: (CategoryNode) -> Unit,
+    onOpenCategory: (CategoryNode) -> Unit,
     onDeleteCategory: (String) -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
@@ -535,6 +538,7 @@ private fun ManageCategoryBlock(
                 onNestCategory = onNestCategory,
                 onPromoteCategory = onPromoteCategory,
                 onEditCategory = onEditCategory,
+                onOpenCategory = onOpenCategory,
                 onDeleteCategory = onDeleteCategory,
                 onEditQuestion = onEditQuestion,
                 onAddQuestion = onAddQuestion
@@ -567,7 +571,7 @@ private fun ManageCategoryBlock(
 }
 
 /**
- * One category line: chevron, title (opens Edit category), `⋮`.
+ * One category line: chevron, title (opens the category in Browse), `⋮`.
  *
  * The row used to split over two lines because seven 48dp controls do not fit
  * a phone: on a 360dp screen the card leaves 296dp, the arrows took 192dp and
@@ -588,6 +592,7 @@ private fun ManageCategoryRow(
     onNestCategory: (String) -> Unit = {},
     onPromoteCategory: (String) -> Unit = {},
     onEditCategory: (CategoryNode) -> Unit = {},
+    onOpenCategory: (CategoryNode) -> Unit = {},
     onDeleteCategory: (String) -> Unit = {},
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit
@@ -627,7 +632,7 @@ private fun ManageCategoryRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { onEditCategory(node) }
+                    .clickable { onOpenCategory(node) }
                     .padding(vertical = 12.dp)
                     .testTag("cat-title-${node.id}")
             )
@@ -731,6 +736,7 @@ private fun ManageCategoryRow(
                     onNestCategory = onNestCategory,
                     onPromoteCategory = onPromoteCategory,
                     onEditCategory = onEditCategory,
+                    onOpenCategory = onOpenCategory,
                     onDeleteCategory = onDeleteCategory,
                     onEditQuestion = onEditQuestion,
                     onAddQuestion = onAddQuestion

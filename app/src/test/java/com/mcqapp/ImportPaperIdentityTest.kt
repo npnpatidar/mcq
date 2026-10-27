@@ -11,10 +11,14 @@ import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.PaperEntity
+import java.io.ByteArrayInputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -23,10 +27,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Paper identity: match by id first; title fallback only for ephemeral
- * parser-generated ids. Two genuinely different papers that share a title
- * must not merge, while bare-array re-imports (fresh random id per parse)
- * must still merge by title.
+ * Paper identity: match by id first, then by title. The import preview's title
+ * field is the destination the user picks — selecting an existing title fills
+ * that paper, and a title the library has never seen becomes a new paper. An
+ * empty same-title paper is a hand-made container and keeps its exam settings.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -72,15 +76,110 @@ class ImportPaperIdentityTest {
     )
 
     @Test
-    fun sameTitleDifferentStableIdsStayDistinct() = runBlocking {
+    fun sameTitleDifferentStableIdsFillTheSamePaper() = runBlocking {
         Importer(db).import(file("paper-abc", "Deck", "2 + 2?"))
-        // Different content, so the global paper-skip cannot fire: the only
-        // thing the two papers share is the title.
+        // Different content, so nothing is deduplicated: the two files are
+        // attached to one paper because the title names the destination.
         val report = Importer(db).import(file("paper-def", "Deck", "3 + 3?"))
 
-        assertEquals(1, report.newPapers)
+        assertEquals(0, report.newPapers)
+        assertEquals(1, report.updatedPapers)
+        assertEquals(1, db.paperDao().getAll().size)
+        // The paper the first import created keeps its id.
+        assertEquals("paper-abc", db.paperDao().getAll().single().id)
+        assertEquals(2, db.questionDao().countByPaper("paper-abc"))
+    }
+
+    /**
+     * The reported flow: a paper added by hand in the library is empty, the
+     * user picks its title in the import preview, and the file's paper id is a
+     * stable one this device has never seen. The import must fill that paper
+     * instead of adding a same-named twin — and must not overwrite the exam
+     * settings typed when creating it.
+     */
+    @Test
+    fun fillingAnEmptyPaperKeepsItsExamSettings() = runBlocking {
+        db.paperDao().insertIgnore(
+            PaperEntity(
+                id = "paper-mvqe96a0",
+                title = "EO",
+                description = "my notes",
+                durationMinutes = 120,
+                negativeMarking = 0.33
+            )
+        )
+
+        val report = Importer(db)
+            .import(file("sci-tech-top-200-en", "EO", "2 + 2?"))
+
+        assertEquals(0, report.newPapers)
+        assertEquals(1, report.updatedPapers)
+        val paper = db.paperDao().getById("paper-mvqe96a0")!!
+        assertEquals(120, paper.durationMinutes)
+        assertEquals(0.33, paper.negativeMarking, 0.0001)
+        // The file carries no description, so the typed one survives.
+        assertEquals("my notes", paper.description)
+        assertEquals(1, db.questionDao().countByPaper("paper-mvqe96a0"))
+        assertNull(db.paperDao().getById("sci-tech-top-200-en"))
+    }
+
+    @Test
+    fun theStreamingPathFillsAnEmptyPaperTheSameWay() = runBlocking {
+        db.paperDao().insertIgnore(
+            PaperEntity(
+                id = "paper-stub",
+                title = "EO",
+                durationMinutes = 90,
+                negativeMarking = 0.25
+            )
+        )
+        val json = """{"papers":[{"id":"sci-tech-top-200-en","title":"EO",
+            "categories":[{"id":"c1","title":"Cat","questions":[
+            {"id":"q1","text":"2 + 2?","options":["4","five"],
+            "correctOptionIds":["a"]}]}]}]}"""
+
+        val report = StreamingImporter(db)
+            .import(source = { ByteArrayInputStream(json.toByteArray()) })
+
+        assertEquals(0, report.newPapers)
+        assertEquals(1, report.updatedPapers)
+        assertEquals(90, db.paperDao().getById("paper-stub")!!.durationMinutes)
+        assertEquals(1, db.questionDao().countByPaper("paper-stub"))
+        assertNull(db.paperDao().getById("sci-tech-top-200-en"))
+    }
+
+    @Test
+    fun aPopulatedTwinWinsOverAnEmptyOne() = runBlocking {
+        // The state the old rule left behind: a deck imported beside an empty
+        // hand-made "EO" it never matched, the stub older than the deck.
+        Importer(db).import(file("deck-eo", "EO", "2 + 2?"))
+        db.paperDao().insertIgnore(
+            PaperEntity(id = "paper-stub", title = "EO", createdAt = 1_000)
+        )
+
+        val report = Importer(db).import(file("deck-eo-2", "EO", "3 + 3?"))
+
+        assertEquals(0, report.newPapers)
+        assertEquals(1, report.updatedPapers)
+        // The deck the questions live in gets the new question; the empty
+        // twin stays an empty shell the user can delete.
+        assertEquals(2, db.questionDao().countByPaper("deck-eo"))
+        assertEquals(0, db.questionDao().countByPaper("paper-stub"))
+    }
+
+    @Test
+    fun aStableIdBeatsAnotherPapersTitle() = runBlocking {
+        Importer(db).import(file("paper-a", "Deck A", "Alpha"))
+        Importer(db).import(file("paper-b", "Deck B", "Beta"))
+
+        // Same id as the second paper, title of the first: the id wins, so
+        // paper-b is updated and Deck A keeps its own question.
+        val report = Importer(db).import(file("paper-b", "Deck A", "Beta"))
+
+        assertEquals(0, report.newPapers)
+        assertEquals(1, report.updatedPapers)
         assertEquals(2, db.paperDao().getAll().size)
-        assertTrue(db.paperDao().getById("paper-def") != null)
+        assertEquals(1, db.questionDao().countByPaper("paper-a"))
     }
 
     @Test

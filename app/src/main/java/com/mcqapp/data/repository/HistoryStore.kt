@@ -60,9 +60,6 @@ internal class HistoryStore(
      * table's invalidation — not the ids themselves, which a "bookmark
      * everything" bank would hand back in full on every change.
      */
-    fun observeBookmarkChanges(): Flow<Unit> =
-        db.invalidationTracker.createFlow("bookmarks").map { Unit }
-
     /** How many bookmarks there are, for the header count and empty state. */
     fun observeBookmarkCount(): Flow<Int> = db.bookmarkDao().observeCount()
 

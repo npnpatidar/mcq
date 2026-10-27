@@ -15,7 +15,6 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -84,35 +83,33 @@ class BookmarksPagingTest {
     }
 
     /**
-     * The screen reads a number, not the ids: a count is one `COUNT(*)` and a
-     * refresh needs only to know that the table moved.
+     * The screen reads a number, not the ids: a count is one `COUNT(*)`, and
+     * the paging source invalidates itself on bookmark writes — one Pager
+     * generation serves the screen, and a refresh follows every write
+     * (consolidated_bugs.md F14, L1).
      */
     @Test
-    fun theCountIsOneNumberAndTheChangeSignalIsPerWrite() = runBlocking {
+    fun theCountIsOneNumberAndTheSourceSelfInvalidates() = runBlocking {
         saveQuestion("q1"); saveQuestion("q2")
         assertEquals(0, repository.observeBookmarkCount().first())
 
+        val source = repository.bookmarkedPagingSource()
         val signals = java.util.concurrent.atomic.AtomicInteger()
-        val collector = launch {
-            repository.observeBookmarkChanges().collect { signals.incrementAndGet() }
-        }
+        val callback = { signals.incrementAndGet(); Unit }
+        source.registerInvalidatedCallback(callback)
         try {
-            delay(100)
+            assertEquals(0, signals.get())
 
             bookmark("q1", 1L)
             awaitAtLeast(signals, 1)
             assertEquals(1, repository.observeBookmarkCount().first())
 
-            bookmark("q2", 2L)
-            awaitAtLeast(signals, 2)
-            assertEquals(2, repository.observeBookmarkCount().first())
-
             // Toggling back off is a write too, and the number follows.
             repository.toggleBookmark("q1")
-            awaitAtLeast(signals, 3)
+            awaitAtLeast(signals, 2)
             assertEquals(1, repository.observeBookmarkCount().first())
         } finally {
-            collector.cancel()
+            source.unregisterInvalidatedCallback(callback)
         }
     }
 

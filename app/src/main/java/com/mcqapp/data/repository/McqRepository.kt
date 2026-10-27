@@ -736,7 +736,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun observeBookmarks(): Flow<List<String>> = historyStore.observeBookmarks()
 
     /** A signal that the bookmark set changed, for paging the bookmarks screen. */
-    fun observeBookmarkChanges(): Flow<Unit> = historyStore.observeBookmarkChanges()
 
     /** How many bookmarks there are, for the header count and the empty state. */
     fun observeBookmarkCount(): Flow<Int> = historyStore.observeBookmarkCount()

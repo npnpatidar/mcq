@@ -466,6 +466,13 @@ class StudyAndSelectionUiTest {
         // question is the only place its stem can come from.
         compose.onNodeWithTag("cat-title-ui-manage-ca").performScrollTo().performClick()
         waitFor("UITest ui-manage-qa")
+
+        // Back must land where the tap happened: the card still open in Manage
+        // mode, not collapsed to the top of the list.
+        compose.onNodeWithContentDescription("Back").performClick()
+        waitForTag("cat-actions-ui-manage-p")
+        compose.waitForIdle()
+        compose.onNodeWithTag("cat-title-ui-manage-ca").assertExists()
     }
 
     // ---- the pull-based session surface ----

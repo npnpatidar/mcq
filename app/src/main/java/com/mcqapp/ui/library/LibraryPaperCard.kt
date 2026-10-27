@@ -39,9 +39,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,6 +64,16 @@ import com.mcqapp.util.Logger
 
 /** How a paper card's category area is presented (D1): one state, not two booleans. */
 private enum class CardExpansion { Collapsed, Show, Manage }
+
+/**
+ * Saves the card's mode by name. An enum is Serializable, but spelling the
+ * saver out keeps a future non-Serializable member from silently dropping the
+ * state that makes Back from Browse land where the tap happened.
+ */
+private val CardExpansionSaver = Saver<CardExpansion, String>(
+    save = { it.name },
+    restore = { CardExpansion.valueOf(it) }
+)
 
 /**
  * The compact per-row count line the card and the drawer share: non-zero
@@ -149,7 +159,15 @@ internal fun PaperCard(
     val drillCountValid = countCheck is com.mcqapp.domain.Drill.CountCheck.Ok
     // One state with a mode (D1): two booleans allowed Show and Manage at
     // once, and two animated sections competed for the space.
-    var expansion by remember { mutableStateOf(CardExpansion.Collapsed) }
+    //
+    // Saved, not plain `remember`: leaving the library for Browse and coming
+    // back must land on the same card in the same mode — the tap that left was
+    // inside this expanded section, so returning to a collapsed card loses the
+    // place as well as the scroll offset (the section's height is what the
+    // list was scrolled past).
+    var expansion by rememberSaveable(stateSaver = CardExpansionSaver) {
+        mutableStateOf(CardExpansion.Collapsed)
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -521,9 +539,12 @@ private fun ManageCategoryBlock(
     onEditPaper: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val collapsedIds = remember { mutableStateListOf<String>() }
+    // Collapsed branches by category id. Saved for the same reason as the
+    // card's mode: Browse is one tap away from a row, and Back must not re-open
+    // every branch the user had folded away.
+    var collapsedIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val onToggleCollapsed: (String) -> Unit = { id ->
-        if (!collapsedIds.remove(id)) collapsedIds.add(id)
+        collapsedIds = if (id in collapsedIds) collapsedIds - id else collapsedIds + id
     }
     Column {
         paper.categories.forEachIndexed { index, node ->

@@ -1,7 +1,9 @@
 package com.mcqapp.ui.library
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -12,19 +14,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -490,7 +495,15 @@ private fun ShowCategoryRow(
     }
 }
 
-/** Manage mode's block: today's category rows plus Add category / Edit paper / Delete paper. */
+/**
+ * Manage mode's block: the category rows plus Add category / Edit paper /
+ * Delete paper.
+ *
+ * Expanded is the default and a collapsed branch is remembered per category id
+ * for as long as the card stays on screen: Manage is about rearranging the
+ * tree, so hiding a branch has to be a deliberate act. It is not saved across
+ * rotation, matching the card's own expansion state.
+ */
 @Composable
 private fun ManageCategoryBlock(
     paper: Paper,
@@ -505,13 +518,19 @@ private fun ManageCategoryBlock(
     onEditPaper: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val collapsedIds = remember { mutableStateListOf<String>() }
+    val onToggleCollapsed: (String) -> Unit = { id ->
+        if (!collapsedIds.remove(id)) collapsedIds.add(id)
+    }
     Column {
         paper.categories.forEachIndexed { index, node ->
-            CategoryRow(
+            ManageCategoryRow(
                 node = node,
                 depth = 0,
                 canMoveUp = index > 0,
                 canMoveDown = index < paper.categories.lastIndex,
+                isCollapsed = { it in collapsedIds },
+                onToggleCollapsed = onToggleCollapsed,
                 onMoveCategory = onMoveCategory,
                 onNestCategory = onNestCategory,
                 onPromoteCategory = onPromoteCategory,
@@ -547,12 +566,24 @@ private fun ManageCategoryBlock(
     }
 }
 
+/**
+ * One category line: chevron, title (opens Edit category), `⋮`.
+ *
+ * The row used to split over two lines because seven 48dp controls do not fit
+ * a phone: on a 360dp screen the card leaves 296dp, the arrows took 192dp and
+ * the name got ~104dp, i.e. fourteen characters before the ellipsis. One line
+ * of chevron + title + `⋮` gives the name ~200dp, and the actions that left the
+ * row are labelled menu items rather than four unlabelled arrows — easier to
+ * hit, and possible to hear. 48dp stays: UiAccessibilityTest rejects less.
+ */
 @Composable
-private fun CategoryRow(
+private fun ManageCategoryRow(
     node: CategoryNode,
     depth: Int,
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
+    isCollapsed: (String) -> Boolean = { false },
+    onToggleCollapsed: (String) -> Unit = {},
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onNestCategory: (String) -> Unit = {},
     onPromoteCategory: (String) -> Unit = {},
@@ -561,61 +592,150 @@ private fun CategoryRow(
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit
 ) {
+    val collapsed = isCollapsed(node.id)
+    var menuOpen by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
-        // Eight 48dp actions do not fit one line on a phone, so the row
-        // splits: movement gestures beside the title (line 1) and the
-        // management set on their own line (line 2). Sub-48dp buttons are
-        // rejected by UiAccessibilityTest for good reason.
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (node.children.isNotEmpty()) {
+                IconButton(
+                    onClick = { onToggleCollapsed(node.id) },
+                    modifier = Modifier.testTag("cat-expand-${node.id}")
+                ) {
+                    Icon(
+                        if (collapsed) {
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight
+                        } else {
+                            Icons.Default.KeyboardArrowDown
+                        },
+                        contentDescription = stringResource(
+                            if (collapsed) R.string.expand_category else R.string.collapse_category
+                        )
+                    )
+                }
+            } else {
+                // A leaf holds the chevron's width so sibling titles line up.
+                // A spacer, not a disabled button: there is nothing to expand,
+                // and a control that reads out but never acts is worse.
+                Spacer(Modifier.width(48.dp))
+            }
             Text(
                 node.title + if (node.totalQuestionCount > 0) " (${node.totalQuestionCount})" else "",
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
+                // Two lines only when the name needs them; the tree indents
+                // another 16dp per level.
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onEditCategory(node) }
+                    .padding(vertical = 12.dp)
+                    .testTag("cat-title-${node.id}")
             )
-            if (canMoveUp || canMoveDown) {
-                IconButton(onClick = { onMoveCategory(node.id, -1) }, enabled = canMoveUp) {
-                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = stringResource(R.string.move_up))
+            Box {
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.testTag("cat-actions-${node.id}")
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = stringResource(R.string.category_actions, node.title)
+                    )
                 }
-                IconButton(onClick = { onMoveCategory(node.id, +1) }, enabled = canMoveDown) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.move_down))
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.edit_category)) },
+                        onClick = {
+                            menuOpen = false
+                            onEditCategory(node)
+                        },
+                        modifier = Modifier.testTag("cat-edit-${node.id}")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.add_question)) },
+                        onClick = {
+                            menuOpen = false
+                            onAddQuestion(node.id)
+                        },
+                        modifier = Modifier.testTag("cat-add-question-${node.id}")
+                    )
+                    HorizontalDivider()
+                    // The four moves keep the tree-order rules the arrows had:
+                    // up/down need a sibling, nesting needs a row above, and
+                    // promoting needs a parent.
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.move_up)) },
+                        onClick = {
+                            menuOpen = false
+                            onMoveCategory(node.id, -1)
+                        },
+                        enabled = canMoveUp,
+                        modifier = Modifier.testTag("cat-move-up-${node.id}")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.move_down)) },
+                        onClick = {
+                            menuOpen = false
+                            onMoveCategory(node.id, +1)
+                        },
+                        enabled = canMoveDown,
+                        modifier = Modifier.testTag("cat-move-down-${node.id}")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.nest_category)) },
+                        onClick = {
+                            menuOpen = false
+                            onNestCategory(node.id)
+                        },
+                        enabled = canMoveUp,
+                        modifier = Modifier.testTag("cat-nest-${node.id}")
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.promote_category)) },
+                        onClick = {
+                            menuOpen = false
+                            onPromoteCategory(node.id)
+                        },
+                        enabled = depth > 0,
+                        modifier = Modifier.testTag("cat-promote-${node.id}")
+                    )
+                    HorizontalDivider()
+                    // Last, behind a divider, in the error colour: category
+                    // deletion is immediate (no dialog), so it must not sit
+                    // next to Move by muscle memory.
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(R.string.delete_category),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onDeleteCategory(node.id)
+                        },
+                        modifier = Modifier.testTag("cat-delete-${node.id}")
+                    )
                 }
-            }
-            // Outline gestures: -> nests into the category above (nothing
-            // moves visually), <- promotes out of the parent.
-            IconButton(onClick = { onNestCategory(node.id) }, enabled = canMoveUp) {
-                Icon(Icons.Default.KeyboardArrowRight, contentDescription = stringResource(R.string.nest_category))
-            }
-            IconButton(onClick = { onPromoteCategory(node.id) }, enabled = depth > 0) {
-                Icon(Icons.Default.KeyboardArrowLeft, contentDescription = stringResource(R.string.promote_category))
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onEditCategory(node) }) {
-                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_category))
+        if (!collapsed) {
+            node.children.forEachIndexed { index, child ->
+                ManageCategoryRow(
+                    node = child,
+                    depth = depth + 1,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < node.children.lastIndex,
+                    isCollapsed = isCollapsed,
+                    onToggleCollapsed = onToggleCollapsed,
+                    onMoveCategory = onMoveCategory,
+                    onNestCategory = onNestCategory,
+                    onPromoteCategory = onPromoteCategory,
+                    onEditCategory = onEditCategory,
+                    onDeleteCategory = onDeleteCategory,
+                    onEditQuestion = onEditQuestion,
+                    onAddQuestion = onAddQuestion
+                )
             }
-            IconButton(onClick = { onAddQuestion(node.id) }) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_question))
-            }
-            IconButton(onClick = { onDeleteCategory(node.id) }) {
-                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_category))
-            }
-        }
-        node.children.forEachIndexed { index, child ->
-            CategoryRow(
-                node = child,
-                depth = depth + 1,
-                canMoveUp = index > 0,
-                canMoveDown = index < node.children.lastIndex,
-                onMoveCategory = onMoveCategory,
-                onNestCategory = onNestCategory,
-                onPromoteCategory = onPromoteCategory,
-                onEditCategory = onEditCategory,
-                onDeleteCategory = onDeleteCategory,
-                onEditQuestion = onEditQuestion,
-                onAddQuestion = onAddQuestion
-            )
         }
     }
 }

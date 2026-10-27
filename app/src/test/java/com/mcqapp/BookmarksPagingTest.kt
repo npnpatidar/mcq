@@ -104,9 +104,13 @@ class BookmarksPagingTest {
             awaitAtLeast(signals, 1)
             assertEquals(1, repository.observeBookmarkCount().first())
 
+            bookmark("q2", 2L)
+            awaitAtLeast(signals, 2)
+            assertEquals(2, repository.observeBookmarkCount().first())
+
             // Toggling back off is a write too, and the number follows.
             repository.toggleBookmark("q1")
-            awaitAtLeast(signals, 2)
+            awaitAtLeast(signals, 3)
             assertEquals(1, repository.observeBookmarkCount().first())
         } finally {
             collector.cancel()

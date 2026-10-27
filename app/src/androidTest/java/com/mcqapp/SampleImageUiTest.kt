@@ -2,6 +2,7 @@ package com.mcqapp
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -56,14 +57,17 @@ class SampleImageUiTest {
             ContentElements(question.elements)
         }
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithTag("question-image").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("question-image", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onAllNodesWithTag("question-image")[0].assertIsDisplayed()
+        compose.onAllNodesWithTag("question-image", useUnmergedTree = true)[0].assertIsDisplayed()
     }
 
     @Test
     fun theSampleAssetsPicturesSurviveImportAndRender() = runBlocking {
-        val text = java.io.File("src/main/assets/sample_paper.json").readText()
+        // The asset ships inside the APK: read it from the target context.
+        val text = InstrumentationRegistry.getInstrumentation().targetContext.assets
+            .open("sample_paper.json").bufferedReader().use { it.readText() }
         val file = LegacyParser.parse(text.byteInputStream())
         val db = repository.db()
         val withImages = file.papers.flatMap { it.categories }.flatMap { it.questions }
@@ -85,9 +89,10 @@ class SampleImageUiTest {
             ContentElements(elements)
         }
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithTag("question-image").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("question-image", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onAllNodesWithTag("question-image")[0].assertIsDisplayed()
+        compose.onAllNodesWithTag("question-image", useUnmergedTree = true)[0].assertIsDisplayed()
         // Cleanup: drop the imported sample paper so other tests stay isolated.
         repository.deletePaper(paper.id)
     }

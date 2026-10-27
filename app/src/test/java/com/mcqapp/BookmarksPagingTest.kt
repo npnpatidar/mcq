@@ -15,6 +15,7 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -84,21 +85,20 @@ class BookmarksPagingTest {
 
     /**
      * The screen reads a number, not the ids: a count is one `COUNT(*)`, and
-     * the paging source invalidates itself on bookmark writes — one Pager
-     * generation serves the screen, and a refresh follows every write
-     * (consolidated_bugs.md F14, L1).
+     * the change signal fires per write — the signal the view models wire to
+     * the live paging source's invalidation (consolidated_bugs.md F14).
      */
     @Test
-    fun theCountIsOneNumberAndTheSourceSelfInvalidates() = runBlocking {
+    fun theCountIsOneNumberAndTheChangeSignalIsPerWrite() = runBlocking {
         saveQuestion("q1"); saveQuestion("q2")
         assertEquals(0, repository.observeBookmarkCount().first())
 
-        val source = repository.bookmarkedPagingSource()
         val signals = java.util.concurrent.atomic.AtomicInteger()
-        val callback = { signals.incrementAndGet(); Unit }
-        source.registerInvalidatedCallback(callback)
+        val collector = launch {
+            repository.observeBookmarkChanges().collect { signals.incrementAndGet() }
+        }
         try {
-            assertEquals(0, signals.get())
+            delay(100)
 
             bookmark("q1", 1L)
             awaitAtLeast(signals, 1)
@@ -109,7 +109,7 @@ class BookmarksPagingTest {
             awaitAtLeast(signals, 2)
             assertEquals(1, repository.observeBookmarkCount().first())
         } finally {
-            source.unregisterInvalidatedCallback(callback)
+            collector.cancel()
         }
     }
 

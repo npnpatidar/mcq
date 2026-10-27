@@ -54,11 +54,14 @@ class ResultsViewModel(
 
     private val request = MutableStateFlow(ResultsRequest(ReviewFilters.ALL))
 
+    /** The live paging source; bookmark writes invalidate it in place (F14). */
+    private var liveSource: androidx.paging.PagingSource<com.mcqapp.data.repository.ResultPageKey, NumberedResult>? = null
+
     val pagingData: Flow<PagingData<NumberedResult>> = request
         .flatMapLatest { req ->
             // The pager is keyed on the filter alone: the saved set is read at
-            // load time and the source invalidates itself on bookmark writes,
-            // so a toggle refreshes the Saved chip in place instead of
+            // load time, and the bookmarks change signal invalidates the live
+            // source, so a toggle refreshes the Saved chip in place instead of
             // rebuilding the pager and its scroll (consolidated_bugs.md F14).
             Pager(
                 PagingConfig(
@@ -68,6 +71,7 @@ class ResultsViewModel(
                 )
             ) {
                 repository.resultPagingSource(attemptId, req.filter) { _state.value.bookmarked }
+                    .also { liveSource = it }
             }.flow
         }
         .cachedIn(viewModelScope)
@@ -77,6 +81,9 @@ class ResultsViewModel(
 
     init {
         reload()
+        viewModelScope.launch {
+            repository.observeBookmarkChanges().collect { liveSource?.invalidate() }
+        }
         viewModelScope.launch {
             repository.observeBookmarks().collect { ids ->
                 val saved = ids.toSet()

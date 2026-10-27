@@ -880,11 +880,14 @@ has no caller (`BrowseViewModel.kt:561-566`); `RowMoveState.indexInCategory` is 
 
 ### L. Found during the fix pass
 
-**L1 · Low · CLEANUP — `observeBookmarkChanges` lost its production caller.**
-The F14 fix (self-invalidating paging sources) removed the flow's only caller;
-it is deleted and `BookmarksPagingTest` now pins the source's
-self-invalidation through `registerInvalidatedCallback` directly.
-*FIXED.*
+**L1 · Low · BUG — the F14 invalidation needed the proven change flow.**
+The first F14 implementation had each paging source register a tracker
+observer itself; under test the observer never fired (the tracker's refresh
+cycle is not pumped the way `createFlow`'s is), which would have frozen the
+bookmark and Saved lists after a toggle. The sources are now invalidated by
+the view models from `observeBookmarkChanges` (`createFlow`, which
+demonstrably fires per write), keeping one Pager generation and the
+anchor-preserving refresh. *FIXED (rewired).*
 
 **L2 · Low · BUG — the results Saved chip's refresh restarts at the top.**
 `ResultsPagingSource.getRefreshKey` returns null (the Bookmarks source has the

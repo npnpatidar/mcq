@@ -739,6 +739,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** How many bookmarks there are, for the header count and the empty state. */
     fun observeBookmarkCount(): Flow<Int> = historyStore.observeBookmarkCount()
+    fun observeBookmarkChanges(): Flow<Unit> = historyStore.observeBookmarkChanges()
     suspend fun toggleBookmark(questionId: String) = historyStore.toggleBookmark(questionId)
     /** Idempotent: removing an already-removed bookmark is a no-op. */
     suspend fun deleteBookmark(questionId: String) = historyStore.deleteBookmark(questionId)

@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -65,7 +66,8 @@ fun QuestionImage(
                 contentDescription = contentDescription,
                 modifier = modifier
                     .fillMaxWidth()
-                    .heightIn(max = 240.dp),
+                    .heightIn(max = 240.dp)
+                    .testTag("question-image"),
                 contentScale = ContentScale.Fit
             )
         } else if (decoded is DecodeResult.Failed) {
@@ -88,6 +90,7 @@ fun QuestionImage(
             contentDescription = contentDescription,
             modifier = modifier
                 .fillMaxWidth()
+                .testTag("question-image")
                 .heightIn(max = 240.dp),
             contentScale = ContentScale.Fit
         )

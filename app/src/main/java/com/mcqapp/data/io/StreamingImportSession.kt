@@ -270,17 +270,15 @@ internal class StreamingImportSession(
         } else {
             header
         }
-        val existingById = db.paperDao().getById(editedHeader.id)
-        val existingByTitle = if (existingById == null &&
-            editedHeader.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX) &&
-            editedHeader.title.isNotBlank()
-        ) {
-            db.paperDao().getByTitle(editedHeader.title)
-        } else {
-            null
+        val paperMatch = matchImportedPaper(db, editedHeader.id, editedHeader.title)
+        effectivePaperId = paperMatch?.paper?.id ?: editedHeader.id
+        isNewPaper = paperMatch == null
+        if (paperMatch != null) {
+            Logger.d("IMPORT", "Paper '${editedHeader.title}' (${editedHeader.id} -> " +
+                "$effectivePaperId): UPDATE" +
+                (if (paperMatch.byTitle) " (matched by title)" else "") +
+                (if (paperMatch.keepStoredTiming) ", keeping its exam settings" else ""))
         }
-        effectivePaperId = existingById?.id ?: existingByTitle?.id ?: editedHeader.id
-        isNewPaper = existingById == null && existingByTitle == null
         if (isNewPaper) {
             db.paperDao().insertIgnore(
                 PaperEntity(
@@ -290,6 +288,15 @@ internal class StreamingImportSession(
                     durationMinutes = editedHeader.durationMinutes,
                     negativeMarking = sanitizedNegativeMarking(editedHeader.negativeMarking)
                 )
+            )
+        } else if (paperMatch != null && paperMatch.keepStoredTiming) {
+            // An empty paper the user made: fill it, but do not rewrite the
+            // exam settings they typed. A blank file description must not wipe
+            // theirs either.
+            db.paperDao().updateTitleAndDescription(
+                id = effectivePaperId,
+                title = editedHeader.title,
+                description = editedHeader.description.ifBlank { paperMatch.paper.description }
             )
         } else {
             db.paperDao().updateFields(

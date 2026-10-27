@@ -110,28 +110,20 @@ class Importer(
             // bank over the heap; one paper at a time keeps the peak flat.
             for (paperDto in file.papers) {
                 val scaledPaper = paperDto.withDownscaledImages()
-                // Paper identity: match by id first. The title fallback is
-                // only for ephemeral parser-generated ids (bare-array or
-                // id-less files mint a fresh id on every parse, so without it
-                // every re-import would create a same-named stub). A stable
-                // id that merely shares a title with another paper is a
-                // distinct paper and keeps its incoming id.
-                val existingById = db.paperDao().getById(paperDto.id)
-                val existingByTitle = if (existingById == null &&
-                    paperDto.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX) &&
-                    paperDto.title.isNotBlank()
-                ) {
-                    db.paperDao().getByTitle(paperDto.title)
-                } else {
-                    null
-                }
-                val effectivePaperId = existingById?.id ?: existingByTitle?.id ?: paperDto.id
-                val isNewPaper = existingById == null && existingByTitle == null
+                // Paper identity: match by id first, then by title — the title
+                // is the destination the user picks in the import preview
+                // ("fill that paper, or make a new one"). See
+                // [matchImportedPaper] for why an empty same-title paper keeps
+                // its exam settings.
+                val paperMatch = matchImportedPaper(db, paperDto.id, paperDto.title)
+                val effectivePaperId = paperMatch?.paper?.id ?: paperDto.id
+                val isNewPaper = paperMatch == null
                 if (isNewPaper) newPapers++ else updatedPapers++
                 Logger.d("IMPORT", "Paper '${paperDto.title}' (${paperDto.id} -> $effectivePaperId): " +
                     "${if (isNewPaper) "NEW" else "UPDATE"}" +
-                    (if (existingByTitle != null) " (matched by title)" else "") + ", " +
-                    "${paperDto.categories.size} categories")
+                    (if (paperMatch?.byTitle == true) " (matched by title)" else "") +
+                    (if (paperMatch?.keepStoredTiming == true) ", keeping its exam settings" else "") +
+                    ", ${paperDto.categories.size} categories")
 
                 // Per paper: the passage id a question's `passageId` resolves to
                 // for THIS paper. A remap decided for one paper must not leak
@@ -149,6 +141,15 @@ class Importer(
                             durationMinutes = paperDto.durationMinutes,
                             negativeMarking = sanitizedNegativeMarking(paperDto.negativeMarking)
                         )
+                    )
+                } else if (paperMatch.keepStoredTiming) {
+                    // An empty paper the user made: fill it, but do not
+                    // rewrite the exam settings they typed. A blank file
+                    // description must not wipe theirs either.
+                    db.paperDao().updateTitleAndDescription(
+                        id = effectivePaperId,
+                        title = paperDto.title,
+                        description = paperDto.description.ifBlank { paperMatch.paper.description }
                     )
                 } else {
                     db.paperDao().updateFields(

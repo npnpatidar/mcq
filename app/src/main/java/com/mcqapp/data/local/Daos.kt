@@ -29,6 +29,20 @@ interface PaperDao {
     @Query("SELECT * FROM papers WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
     suspend fun getByTitle(title: String): PaperEntity?
 
+    /**
+     * The import's title match. Two papers can share a title (this bug used to
+     * create such twins), so prefer the one that already holds questions: a
+     * re-import belongs with the real deck, not with an empty shell left
+     * beside it. Falls back to the oldest of the empty ones.
+     */
+    @Query(
+        "SELECT * FROM papers AS p WHERE p.title = :title " +
+            "ORDER BY (SELECT COUNT(*) FROM questions q " +
+            "INNER JOIN categories c ON q.categoryId = c.id " +
+            "WHERE c.paperId = p.id) = 0 ASC, p.createdAt ASC LIMIT 1"
+    )
+    suspend fun getByTitleForImport(title: String): PaperEntity?
+
     // Papers have NO INSERT-OR-REPLACE upsert — REPLACE deletes the row and
     // fires the foreign-key cascades over every category, question, schedule
     // and attempt under it (renameCategory was rebuilt with targeted updates
@@ -41,6 +55,14 @@ interface PaperDao {
 
     @Query("UPDATE papers SET title = :title, description = :description, durationMinutes = :durationMinutes, negativeMarking = :negativeMarking WHERE id = :id")
     suspend fun updateFields(id: String, title: String, description: String, durationMinutes: Int, negativeMarking: Double)
+
+    /**
+     * The import case of an empty hand-made paper being filled: the content
+     * comes from the file, but the exam settings the user typed (duration,
+     * negative marking) must survive.
+     */
+    @Query("UPDATE papers SET title = :title, description = :description WHERE id = :id")
+    suspend fun updateTitleAndDescription(id: String, title: String, description: String)
 
     /** Backup restore: creation time rides outside the import format. */
     @Query("UPDATE papers SET createdAt = :createdAt WHERE id = :id")

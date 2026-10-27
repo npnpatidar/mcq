@@ -414,6 +414,71 @@ class StudyViewModelPullTest {
     }
 
     /**
+     * The settings toggle is honest for Study too: the cards arrive with their
+     * options reordered, the answer key still grades the same option, the
+     * reveal keeps the order (a re-shuffle would move the option under the
+     * finger), and "Study again" is a new sitting with a new order.
+     */
+    @Test
+    fun shuffledOptionsGradeByOptionIdAndKeepTheirOrderAcrossReveal() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            for (n in 1..6) {
+                repository.saveQuestion(
+                    com.mcqapp.domain.Question(
+                        id = "q$n",
+                        categoryId = "c1",
+                        text = "Q $n?",
+                        options = ('a'..'f').map {
+                            com.mcqapp.domain.QuestionOption("q$n-$it", it.uppercase())
+                        },
+                        correctOptionIds = setOf("q$n-a")
+                    )
+                )
+            }
+            repository.setShuffleOptions(true)
+        }
+        try {
+            val authored = listOf("a", "b", "c", "d", "e", "f")
+            val viewModel = StudyViewModel(app, "p1")
+            assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+
+            var sawReordered = false
+            val visited = mutableSetOf<String>()
+            while (viewModel.state.value.current != null) {
+                val card = viewModel.state.value.question!!
+                visited += card.id
+                // Same options, answer key untouched.
+                val order = card.options.map { it.id.removePrefix("${card.id}-") }
+                assertEquals(authored.toSet(), order.toSet())
+                assertEquals(setOf("${card.id}-a"), card.correctOptionIds)
+                if (order != authored) sawReordered = true
+
+                // Grading is by id: the authored correct option still wins.
+                viewModel.toggleOption("${card.id}-a")
+                viewModel.check()
+                assertTrue("card ${card.id} not revealed", viewModel.state.value.revealed)
+                assertEquals(ReviewGrade.GOOD, viewModel.state.value.pendingGrade)
+                // The reveal must not rearrange what the selection was made in.
+                assertEquals(card.options.map { it.id }, viewModel.state.value.question!!.options.map { it.id })
+
+                val before = card.id
+                viewModel.next()
+                assertTrue("state=${viewModel.state.value}", awaitCondition {
+                    viewModel.state.value.finished || viewModel.state.value.current?.questionId != before
+                })
+            }
+            assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
+            assertEquals(setOf("q1", "q2", "q3", "q4", "q5", "q6"), visited)
+            // Six questions, six options each: a pull that forgot the setting
+            // would keep every authored order (1 in 720^6 sessions would too).
+            assertTrue("options were never reordered", sawReordered)
+        } finally {
+            runBlocking { repository.setShuffleOptions(false) }
+        }
+    }
+
+    /**
      * The pull runs only over the selected categories (§9.4): a scoped session
      * must stop on its own scope and never touch another category's schedule.
      * A route carries the ticked ids; the ViewModel expands them from the

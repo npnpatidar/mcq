@@ -150,12 +150,12 @@ class ImportPaperIdentityTest {
 
     @Test
     fun aPopulatedTwinWinsOverAnEmptyOne() = runBlocking {
-        // The state the old rule left behind: an empty hand-made "EO" and an
-        // imported "EO" beside it, the stub older than the deck.
+        // The state the old rule left behind: a deck imported beside an empty
+        // hand-made "EO" it never matched, the stub older than the deck.
+        Importer(db).import(file("deck-eo", "EO", "2 + 2?"))
         db.paperDao().insertIgnore(
             PaperEntity(id = "paper-stub", title = "EO", createdAt = 1_000)
         )
-        Importer(db).import(file("deck-eo", "EO", "2 + 2?"))
 
         val report = Importer(db).import(file("deck-eo-2", "EO", "3 + 3?"))
 

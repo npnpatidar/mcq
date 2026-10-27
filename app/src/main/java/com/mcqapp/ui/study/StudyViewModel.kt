@@ -10,6 +10,7 @@ import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.util.IntervalFormat
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 /**
  * What an automatic check decided, for the result card.
@@ -188,6 +190,19 @@ class StudyViewModel(
     private var config: SchedulerConfig? = null
 
     /**
+     * Whether this sitting shuffles options, and the seed its order derives
+     * from (0 when the setting is off).
+     *
+     * Read when the session loads, never in [pullCard]: the pull path has a
+     * query budget (StudyPullQueryCountTest), and a per-card read would also
+     * let a settings change rearrange a card already on screen. Per-question
+     * and seed-stable (see [Shuffle.optionsFor]), so a revealed card keeps the
+     * order its selection was made in.
+     */
+    private var optionShuffleEnabled = false
+    private var optionShuffleSeed = 0L
+
+    /**
      * The route's ticked ids expanded to the served scope (§6.4). The route
      * keeps the ticked ids because that is what the progress snapshot compares;
      * every query takes this expanded list, and empty still means whole paper.
@@ -264,6 +279,12 @@ class StudyViewModel(
                         introduceNewCards = config?.introduceNewCards ?: true,
                         scopeLabel = label
                     )
+                }
+                // One read per sitting, before the first pull: see the field.
+                optionShuffleEnabled = repository.shuffleOptions().first()
+                optionShuffleSeed = if (optionShuffleEnabled) Random.nextLong() else 0L
+                if (optionShuffleEnabled) {
+                    Logger.i("STUDY", "Shuffled study options: seed=$optionShuffleSeed")
                 }
                 pullCard()
             } catch (e: Exception) {
@@ -342,6 +363,7 @@ class StudyViewModel(
                 return
             }
             val question = repository.getQuestion(card.questionId)
+                ?.let { Shuffle.optionsFor(it, optionShuffleSeed) }
             if (question == null) {
                 // The question vanished between the pull's SQL read and this
                 // fetch. The scheduler path re-pulls the very same card, so
@@ -870,6 +892,9 @@ class StudyViewModel(
                     )
                 }
                 drillIndex = 0
+                // "Study again" is a new sitting, so it draws a new option
+                // order even though the cards are the same ones.
+                optionShuffleSeed = if (optionShuffleEnabled) Random.nextLong() else 0L
                 _state.update {
                     it.copy(
                         reviewed = 0,

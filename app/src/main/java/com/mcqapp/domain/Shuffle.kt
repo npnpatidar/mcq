@@ -24,4 +24,25 @@ object Shuffle {
         if (!shuffleOptions) return ordered
         return ordered.map { q -> q.copy(options = q.options.shuffled(random)) }
     }
+
+    /**
+     * One question's options in a session's order, derived from the question
+     * id rather than from a position in a stream.
+     *
+     * Study pulls its cards one at a time, so there is no stable position to
+     * count from; hashing the id gives every question its own order that the
+     * same [sessionSeed] reproduces. A card revealed, left and pulled again
+     * must not rearrange its options under the reader's selection.
+     *
+     * Seed 0 means the setting is off; a real seed is drawn per sitting, never
+     * 0, so "off" needs no separate flag here.
+     */
+    fun optionsFor(question: Question, sessionSeed: Long): Question {
+        if (sessionSeed == 0L || question.options.size <= 1) return question
+        return question.copy(
+            options = question.options.shuffled(
+                Random(sessionSeed xor question.id.hashCode().toLong())
+            )
+        )
+    }
 }

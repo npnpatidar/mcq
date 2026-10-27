@@ -659,14 +659,9 @@ class TestViewModel(
         }
     }
 
-    /** Per-question, seed-stable option order (the old one-stream shuffle). */
-    private fun applyOptionShuffle(question: Question): Question {
-        val seed = optionShuffleSeed
-        if (seed == 0L) return question
-        return question.copy(
-            options = question.options.shuffled(Random(seed xor question.id.hashCode().toLong()))
-        )
-    }
+    /** Per-question, seed-stable option order (shared with Study). */
+    private fun applyOptionShuffle(question: Question): Question =
+        Shuffle.optionsFor(question, optionShuffleSeed)
 
     fun next() = goTo(_state.value.currentIndex + 1)
     fun previous() = goTo(_state.value.currentIndex - 1)

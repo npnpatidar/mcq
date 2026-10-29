@@ -94,13 +94,16 @@ writes an attempt: it only schedules *when you should see a question again*.
     explanation, then self-grade with **Again / Hard / Good / Easy**. Grading is
     self-reported because you see the answer first — that is what makes the four
     buttons meaningful.
-- **Guessing (Simplified mode).** A "Guessing" toggle sits above the options. Turn it
-  on *before* answering when the pick is a guess; it locks once the answer is shown,
-  so it can never be claimed retroactively, and resets on every question. A guessed
-  answer that happens to be right is graded **Hard** — the interval stays short —
-  while reps still advance and no lapse is counted, because producing the right
-  answer is not a failure. Deliberation time on a random pick carries no
-  information, so the dwell ladder is bypassed for guesses.
+- **Guessing (Simplified mode).** A "Guessing" switch sits in the fixed footer under
+  the card. Turn it on *before* answering when the pick is a guess; it locks once the
+  answer is shown, so it can never be claimed retroactively, and resets on every
+  question. A guessed answer that happens to be right is graded **Again**: the
+  learner did not recall it, even though the chosen option matched, so a graduated
+  card lapses and returns in the same sitting, and repeated guesses move it toward
+  the leech threshold. Reps still advance. Only the grade reaches the review log —
+  the declared guess itself is not stored, so no statistic can be derived from it.
+  Deliberation time on a random pick carries no information, so the dwell ladder is
+  bypassed for guesses; "Change grade" can still override the proposal before Next.
 - **Changing a grade (Simplified mode).** Check proposes the grade and Next persists
   it. Between the two, a "Change grade" affordance edits the proposal — for the
   "knew it but misclicked" case — without writing twice. Leaving without Next loses

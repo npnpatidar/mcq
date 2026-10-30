@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
@@ -191,7 +192,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_14_15,
         AppDatabase.MIGRATION_15_16,
         AppDatabase.MIGRATION_16_17,
-        AppDatabase.MIGRATION_17_18
+        AppDatabase.MIGRATION_17_18,
+        AppDatabase.MIGRATION_18_19
     )
 
     private fun openMigrated(): AppDatabase =
@@ -799,6 +801,68 @@ class MigrationTest {
                 // The answers belong to the paper: deleting it takes them with it.
                 db.paperDao().deleteById("p1")
                 assertTrue(db.testProgressDao().getForPaper("p1").isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * Builds a genuine v18 file by replaying 6->18, then seeds one review-log
+     * row. The row is what the 18->19 test must preserve: a migration that
+     * rebuilt the table would silently drop history.
+     */
+    private fun createV18WithReview() {
+        createV15WithSeed()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(15) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_15_16.migrate(raw)
+            AppDatabase.MIGRATION_16_17.migrate(raw)
+            AppDatabase.MIGRATION_17_18.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO review_log (paperId,questionId,rating,reviewedAt," +
+                    "elapsedSeconds,stateBefore,stabilityAfter,difficultyAfter," +
+                    "intervalDaysAfter) VALUES ('p1','q1',3,2000,12,'REVIEW',5.0,5.0,3)"
+            )
+            raw.version = 18
+        }
+    }
+
+    @Test
+    fun `migration 18 to 19 adds nullable guess flags and keeps the log`() {
+        runBlocking {
+            createV18WithReview()
+            val db = openMigrated()
+            try {
+                // Opening ran 18->19; Room's identity check on open is what
+                // proves the migrated schema matches the entities.
+                val old = db.reviewLogDao().getAll().single()
+                assertEquals(3, old.rating)
+                assertEquals(2000L, old.reviewedAt)
+                // Pre-v19 history carries no flag: null, never false.
+                assertNull(old.wasGuess)
+                assertNull(old.wasCorrect)
+
+                db.reviewLogDao().insert(
+                    ReviewLogEntity(
+                        paperId = "p1",
+                        questionId = "q1",
+                        rating = 1,
+                        reviewedAt = 3000L,
+                        wasGuess = true,
+                        wasCorrect = false
+                    )
+                )
+                val flagged = db.reviewLogDao().getAll().last()
+                assertEquals(true, flagged.wasGuess)
+                assertEquals(false, flagged.wasCorrect)
             } finally {
                 db.close()
             }

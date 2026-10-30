@@ -36,7 +36,21 @@ data class ReplayReview(
      * first review. Drives the young/mature split (mature = 21 days or more,
      * Anki's rule).
      */
-    val intervalBeforeDays: Int?
+    val intervalBeforeDays: Int?,
+    /**
+     * Whether the learner declared this attempt a guess before answering.
+     * Null for log rows written before v19: they carry no flag, and the
+     * guessing statistics deliberately exclude them rather than assume.
+     */
+    val wasGuess: Boolean? = null,
+    /** Whether the chosen options matched the key, recorded at answer time. */
+    val wasCorrect: Boolean? = null,
+    /**
+     * The interval Good would have produced from the same pre-answer state.
+     * Only computed for guessed-correct rows (the counterfactual the guessing
+     * dashboard prices); null everywhere else.
+     */
+    val wouldBeGoodIntervalDays: Int? = null
 ) {
     /** Again is the only failing grade; Hard, Good and Easy are passes. */
     val passed: Boolean get() = rating != ReviewGrade.AGAIN.ordinal + 1
@@ -284,6 +298,141 @@ data class WeakCard(
     val leech: Boolean
 )
 
+/** The maturity band a review happened in, for the guessing breakdown. */
+enum class GuessBand { FRESH, LEARNING, RELEARNING, YOUNG, MATURE }
+
+/**
+ * Guess and hit counts for one slice of the log — a trend bucket, a sitting
+ * position, a topic. Counts rather than percentages, so slices pool correctly
+ * and a two-review bucket cannot outweigh a forty-review one.
+ */
+data class GuessSlice(
+    val label: String,
+    val reviews: Int,
+    val guessed: Int,
+    val guessedCorrect: Int
+) {
+    val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
+    val hitRate: Double? get() = if (guessed == 0) null else guessedCorrect.toDouble() / guessed
+}
+
+/** One maturity band's guess/hit counts; the UI resolves [band] to a label. */
+data class GuessBandSlice(
+    val band: GuessBand,
+    val reviews: Int,
+    val guessed: Int,
+    val guessedCorrect: Int
+) {
+    val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
+    val hitRate: Double? get() = if (guessed == 0) null else guessedCorrect.toDouble() / guessed
+}
+
+/** Guess counts for one hour of the local day (0..23). */
+data class HourlyGuess(
+    val hour: Int,
+    val reviews: Int,
+    val guessed: Int,
+    val guessedCorrect: Int
+) {
+    val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
+}
+
+/** Mean answer seconds on flagged rows: declared guesses versus earned answers. */
+data class GuessDwell(
+    val guessedReviews: Int,
+    val guessedAvgSeconds: Double?,
+    val earnedReviews: Int,
+    val earnedAvgSeconds: Double?
+)
+
+/**
+ * What the lucky picks cost the schedule: the interval Good would have given
+ * minus the interval the card actually received, summed over guessed-correct
+ * reviews that could be replayed.
+ */
+data class GuessCost(
+    val reviews: Int,
+    val extraDays: Int,
+    val avgActualDays: Double?,
+    val avgGoodDays: Double?
+)
+
+/** One paper's or category's guess record, for the fragile-topic ranking. */
+data class GuessTopic(
+    val label: String,
+    val reviews: Int,
+    val guessed: Int,
+    val guessedCorrect: Int
+) {
+    val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
+    val hitRate: Double? get() = if (guessed == 0) null else guessedCorrect.toDouble() / guessed
+}
+
+/** A card that is guessed often, ranked for the shaky list. */
+data class ShakyCard(
+    val paperId: String,
+    val questionId: String,
+    val reviews: Int,
+    val guessed: Int,
+    val guessedCorrect: Int,
+    val lastReviewedAt: Long
+) {
+    val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
+    val hitRate: Double? get() = if (guessed == 0) null else guessedCorrect.toDouble() / guessed
+}
+
+/**
+ * The guessing dashboard's payload. Only reviews that carry the flag are
+ * classified; [allReviews] says how much of the in-range history that leaves
+ * out, so the screen can state it rather than silently shrink the sample.
+ *
+ * The four outcomes are the 2×2 of declared guess × correctness: [earned]
+ * (knew it), [lucky] (guessed right), [lapse] (knew it was wrong / didn't know
+ * and said so), [didntKnow] (guessed wrong). [earned] is what the scheduler's
+ * grade can honestly claim; [lucky] is what raw accuracy adds on top.
+ */
+data class GuessingData(
+    val allReviews: Int,
+    val reviews: Int,
+    val guessed: Int,
+    val earned: Int,
+    val lucky: Int,
+    val lapse: Int,
+    val didntKnow: Int,
+    /** Mean chance a uniform random pick would have been right, over guesses. */
+    val chanceBaseline: Double?,
+    val trend: List<GuessSlice>,
+    val maturity: List<GuessBandSlice>,
+    val positions: List<GuessSlice>,
+    val hourly: List<HourlyGuess>,
+    val dwell: GuessDwell,
+    val cost: GuessCost,
+    val topics: List<GuessTopic>,
+    val shaky: List<ShakyCard>
+) {
+    /** Share of flagged reviews where the learner declared a guess. */
+    val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
+
+    /** Share of guesses that happened to be right. */
+    val hitRate: Double? get() = if (guessed == 0) null else lucky.toDouble() / guessed
+
+    /** Every right answer, lucky or earned. */
+    val rawAccuracy: Double?
+        get() = if (reviews == 0) null else (earned + lucky).toDouble() / reviews
+
+    /** Only the answers the learner actually knew. */
+    val gradedPassRate: Double?
+        get() = if (reviews == 0) null else earned.toDouble() / reviews
+
+    /** Hit rate above (or below) random picking, in percentage points. */
+    val lift: Double? get() = hitRate?.let { hit -> chanceBaseline?.let { hit - it } }
+
+    val hasData: Boolean get() = reviews > 0
+
+    /** False when some in-range history predates the v19 flag columns. */
+    val isComplete: Boolean get() = allReviews == reviews
+}
+
 /** The "Today" strip, Anki-style: one answering of a card is one review. */
 data class TodayStats(
     val reviews: Int,
@@ -370,7 +519,8 @@ data class StatsBundle(
     /** Per-paper card counts; empty when the view is scoped to one paper. */
     val paperCounts: List<PaperCardCounts>,
     val weakest: List<WeakCard>,
-    val leeches: List<WeakCard>
+    val leeches: List<WeakCard>,
+    val guessing: GuessingData
 )
 
 /**
@@ -433,7 +583,8 @@ data class StatsSections(
     val retention: RetentionData,
     val workload: WorkloadData,
     val memory: MemoryData,
-    val cards: CardsData
+    val cards: CardsData,
+    val guessing: GuessingData
 )
 
 /** Flattens the per-tab slices back into the whole-page payload. */
@@ -462,5 +613,6 @@ fun StatsSections.toBundle(): StatsBundle = StatsBundle(
     overdueAge = cards.overdueAge,
     paperCounts = cards.paperCounts,
     weakest = overview.weakest,
-    leeches = cards.leeches
+    leeches = cards.leeches,
+    guessing = guessing
 )

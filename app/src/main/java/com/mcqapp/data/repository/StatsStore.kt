@@ -3,6 +3,7 @@ package com.mcqapp.data.repository
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
@@ -11,6 +12,7 @@ import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
 import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.FsrsReplay
+import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
@@ -216,6 +218,64 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         return accumulator.toData()
     }
 
+    /**
+     * The guessing tab, streamed. Every figure is a count over flagged reviews,
+     * so the pass keeps only per-band/per-hour/per-card counters. The chance
+     * baseline needs each guessed question's option and key counts, which are
+     * read afterwards for those ids only — never for the whole bank.
+     */
+    suspend fun loadGuessing(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): GuessingData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.GuessingAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now),
+            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
+            categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
+        )
+        replayInto(scheduler, accumulator::add)
+        return accumulator.toData(chanceOfQuestion(accumulator.guessedQuestionIds()))
+    }
+
+    /**
+     * questionId → chance a uniform random pick would be exactly right:
+     * 1 / C(options, correct). Null when the key is missing or inconsistent
+     * (a question with no options, or more keys than options), because a
+     * baseline invented from bad data is worse than no baseline.
+     */
+    private suspend fun chanceOfQuestion(ids: Set<String>): Map<String, Double> {
+        if (ids.isEmpty()) return emptyMap()
+        val questionIds = ids.toList()
+        val options = db.optionDao().getForQuestionsChunked(questionIds)
+            .groupingBy { it.questionId }.eachCount()
+        val keys = db.correctAnswerDao().getForQuestionsChunked(questionIds)
+            .groupingBy { it.questionId }.eachCount()
+        return options.mapNotNull { (questionId, optionCount) ->
+            val correctCount = keys[questionId] ?: return@mapNotNull null
+            if (optionCount <= 0 || correctCount <= 0 || correctCount > optionCount) {
+                return@mapNotNull null
+            }
+            questionId to 1.0 / binomial(optionCount, correctCount)
+        }.toMap()
+    }
+
+    /** C(n, k), in doubles: option counts are small but the product can be large. */
+    private fun binomial(n: Int, k: Int): Double {
+        val kk = minOf(k, n - k)
+        var result = 1.0
+        for (i in 1..kk) {
+            result = result * (n - kk + i) / i
+        }
+        return result
+    }
+
     /** Replays the log a page at a time into [consume]; it is never listed. */
     private suspend fun replayInto(scheduler: FsrsScheduler, consume: (ReplayReview) -> Unit) {
         val stream = FsrsReplay.Stream(scheduler)
@@ -299,7 +359,9 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         stateBefore = stateBefore.toCardStateKind(),
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
-        intervalDaysAfter = intervalDaysAfter
+        intervalDaysAfter = intervalDaysAfter,
+        wasGuess = wasGuess,
+        wasCorrect = wasCorrect
     )
 
     private fun ReviewLogEntity.toHistoryEntry() = ReviewHistoryEntry(

@@ -7,6 +7,7 @@ import com.mcqapp.McqApplication
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.RetentionData
@@ -34,7 +35,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as McqApplication).repository
 
     /** One tab of the statistics screen; each owns a slice of the payload. */
-    enum class Tab { OVERVIEW, RETENTION, WORKLOAD, MEMORY, CARDS }
+    enum class Tab { OVERVIEW, RETENTION, WORKLOAD, MEMORY, CARDS, GUESSING }
 
     data class UiState(
         val tab: Tab = Tab.OVERVIEW,
@@ -45,6 +46,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         val workload: WorkloadData? = null,
         val memory: MemoryData? = null,
         val cards: CardsData? = null,
+        val guessing: GuessingData? = null,
         /** questionId → plain text, for the ranked lists. */
         val questionText: Map<String, String> = emptyMap(),
         val range: StatsAggregator.Range = StatsAggregator.Range.D30,
@@ -60,6 +62,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 Tab.WORKLOAD -> workload != null
                 Tab.MEMORY -> memory != null
                 Tab.CARDS -> cards != null
+                Tab.GUESSING -> guessing != null
             }
     }
 
@@ -242,6 +245,9 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                     Tab.CARDS -> current.copy(
                         cards = repository.statsCards(scope, range, now)
                     )
+                    Tab.GUESSING -> current.copy(
+                        guessing = repository.statsGuessing(scope, range, now)
+                    )
                 }
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
@@ -277,11 +283,12 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     /** The question ids whose text the freshly built tab displays. */
     private fun rankedIds(built: UiState, tab: Tab): List<String> = when (tab) {
-        Tab.OVERVIEW -> built.overview?.weakest
-        Tab.WORKLOAD -> built.workload?.responseTime?.slowest
-        Tab.CARDS -> built.cards?.leeches
+        Tab.OVERVIEW -> built.overview?.weakest?.map { it.questionId }
+        Tab.WORKLOAD -> built.workload?.responseTime?.slowest?.map { it.questionId }
+        Tab.CARDS -> built.cards?.leeches?.map { it.questionId }
+        Tab.GUESSING -> built.guessing?.shaky?.map { it.questionId }
         Tab.RETENTION, Tab.MEMORY -> null
-    }.orEmpty().map { it.questionId }.distinct()
+    }.orEmpty().distinct()
 
     /**
      * Keeps the tab just built and drops the rest: they were built for the same
@@ -289,19 +296,28 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun UiState.onlyFresh(tab: Tab, built: UiState): UiState = when (tab) {
         Tab.OVERVIEW -> copy(
-            overview = built.overview, retention = null, workload = null, memory = null, cards = null
+            overview = built.overview, retention = null, workload = null, memory = null,
+            cards = null, guessing = null
         )
         Tab.RETENTION -> copy(
-            overview = null, retention = built.retention, workload = null, memory = null, cards = null
+            overview = null, retention = built.retention, workload = null, memory = null,
+            cards = null, guessing = null
         )
         Tab.WORKLOAD -> copy(
-            overview = null, retention = null, workload = built.workload, memory = null, cards = null
+            overview = null, retention = null, workload = built.workload, memory = null,
+            cards = null, guessing = null
         )
         Tab.MEMORY -> copy(
-            overview = null, retention = null, workload = null, memory = built.memory, cards = null
+            overview = null, retention = null, workload = null, memory = built.memory,
+            cards = null, guessing = null
         )
         Tab.CARDS -> copy(
-            overview = null, retention = null, workload = null, memory = null, cards = built.cards
+            overview = null, retention = null, workload = null, memory = null,
+            cards = built.cards, guessing = null
+        )
+        Tab.GUESSING -> copy(
+            overview = null, retention = null, workload = null, memory = null,
+            cards = null, guessing = built.guessing
         )
     }.copy(loading = false, loadError = null)
 }

@@ -17,7 +17,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -42,6 +42,7 @@ import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.ui.stats.sections.CardsSection
+import com.mcqapp.ui.stats.sections.GuessingSection
 import com.mcqapp.ui.stats.sections.MemorySection
 import com.mcqapp.ui.stats.sections.OverviewSection
 import com.mcqapp.ui.stats.sections.RetentionSection
@@ -100,13 +101,17 @@ fun StatsScreen(
                     onSelect = viewModel::setScope
                 )
             }
-            PrimaryTabRow(selectedTabIndex = state.tab.ordinal) {
+            PrimaryScrollableTabRow(
+                selectedTabIndex = state.tab.ordinal,
+                edgePadding = 0.dp
+            ) {
                 listOf(
                     R.string.tab_overview,
                     R.string.tab_retention,
                     R.string.tab_workload,
                     R.string.tab_memory,
-                    R.string.tab_cards
+                    R.string.tab_cards,
+                    R.string.tab_guessing
                 ).forEachIndexed { index, titleRes ->
                     val section = StatsViewModel.Tab.entries[index]
                     Tab(
@@ -167,6 +172,13 @@ fun StatsScreen(
                             StatsViewModel.Tab.MEMORY -> state.memory?.let { MemorySection(it) }
                             StatsViewModel.Tab.CARDS -> state.cards?.let { data ->
                                 CardsSection(
+                                    bundle = data,
+                                    questionText = questionText,
+                                    onOpenCard = { openCard(it.paperId, it.questionId) }
+                                )
+                            }
+                            StatsViewModel.Tab.GUESSING -> state.guessing?.let { data ->
+                                GuessingSection(
                                     bundle = data,
                                     questionText = questionText,
                                     onOpenCard = { openCard(it.paperId, it.questionId) }

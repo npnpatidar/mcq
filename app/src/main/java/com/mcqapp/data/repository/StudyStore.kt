@@ -510,7 +510,14 @@ internal class StudyStore(
         questionId: String,
         grade: com.mcqapp.domain.ReviewGrade,
         dwellSeconds: Long? = null,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /**
+         * The declared guess, stored only when the caller knows it (the
+         * simplified switch). Null means "not recorded", never "not a guess".
+         */
+        wasGuess: Boolean? = null,
+        /** Whether the chosen options matched the key at answer time. */
+        wasCorrect: Boolean? = null
     ): com.mcqapp.domain.CardState {
         val question = questions.getQuestion(questionId)
         val scheduler = fsrs(settings.schedulerConfigNow())
@@ -530,7 +537,9 @@ internal class StudyStore(
                     stateBefore = existing?.state?.name,
                     stabilityAfter = next.stability,
                     difficultyAfter = next.difficulty,
-                    intervalDaysAfter = next.intervalDays
+                    intervalDaysAfter = next.intervalDays,
+                    wasGuess = wasGuess,
+                    wasCorrect = wasCorrect
                 )
             )
         }

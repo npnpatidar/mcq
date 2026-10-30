@@ -26,7 +26,7 @@ import com.mcqapp.domain.searchableText
         PassageEntity::class,
         TestProgressEntity::class
     ],
-    version = 18,
+    version = 19,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -454,6 +454,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Nullable, no default: pre-v19 rows have no flag to copy, and
+                // an INTEGER default of 0 would claim every old answer was
+                // earned. The guessing statistics count flagged rows only.
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `wasGuess` INTEGER")
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `wasCorrect` INTEGER")
+            }
+        }
+
         private const val FOLDED_BACKFILL_BATCH = 4000
 
         /**
@@ -600,7 +610,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
-                    MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18
+                    MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19
                 )
                 // WAL keeps readers (the browsed list, an open test session,
                 // the search screen) non-blocking while an import or bulk

@@ -100,10 +100,9 @@ writes an attempt: it only schedules *when you should see a question again*.
   question. A guessed answer that happens to be right is graded **Again**: the
   learner did not recall it, even though the chosen option matched, so a graduated
   card lapses and returns in the same sitting, and repeated guesses move it toward
-  the leech threshold. Reps still advance. Only the grade reaches the review log —
-  the declared guess itself is not stored, so no statistic can be derived from it.
-  Deliberation time on a random pick carries no information, so the dwell ladder is
-  bypassed for guesses; "Change grade" can still override the proposal before Next.
+  the leech threshold. Reps still advance. Deliberation time on a random pick
+  carries no information, so the dwell ladder is bypassed for guesses; "Change
+  grade" can still override the proposal before Next.
 - **Changing a grade (Simplified mode).** Check proposes the grade and Next persists
   it. Between the two, a "Change grade" affordance edits the proposal — for the
   "knew it but misclicked" case — without writing twice. Leaving without Next loses

@@ -307,6 +307,41 @@ class StudyAndSelectionUiTest {
     }
 
     /**
+     * Declaring a guess and then overriding the proposal must rewrite the result
+     * line. It used to keep claiming "marked Again" while the footer showed the
+     * Good interval and Next persisted Good — the card narrated a review that
+     * was never written.
+     */
+    @Test
+    fun overridingAGuessedGradeRewritesTheResultLine() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper(
+            "ui-guess", "UIGuess Paper", "ui-guess-cat",
+            single("ui-guess-q1", "ui-guess-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-title-ui-guess").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-guess").performClick()
+        waitFor("UITest ui-guess-q1?")
+
+        // The guess is declared before the answer, as the switch requires.
+        compose.onNodeWithTag("study-guess").performClick()
+        compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
+        compose.onNodeWithTag("study-check").performClick()
+
+        compose.onNodeWithTag("study-result").performScrollTo()
+        compose.onNodeWithText("marked Again", substring = true).assertIsDisplayed()
+
+        // Change grade edits the proposal, so the line has to follow it.
+        compose.onNodeWithText("Change grade", substring = false).performClick()
+        compose.onNodeWithText("Good", substring = false).performClick()
+
+        compose.onNodeWithText("marked Again", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("marked Good", substring = true).assertIsDisplayed()
+    }
+
+    /**
      * A drill larger than the paper cannot be run, and the dialog says why
      * instead of quietly handing back a smaller drill.
      */

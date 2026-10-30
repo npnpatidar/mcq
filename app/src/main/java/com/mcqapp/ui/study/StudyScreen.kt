@@ -318,7 +318,8 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 }
                 Switch(
                     checked = state.isGuess,
-                    onCheckedChange = { viewModel.setGuess(it) }
+                    onCheckedChange = { viewModel.setGuess(it) },
+                    modifier = Modifier.testTag("study-guess")
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -392,20 +393,32 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
             Spacer(Modifier.height(4.dp))
             // One Text per branch: the string-usage test requires each
             // stringResource to render directly inside a Text.
-            if (!result.correct) {
-                Text(
+            //
+            // The line follows the grade Next will persist, not the grade Check
+            // proposed. Change grade rewrites the proposal, and a line still
+            // claiming "marked Again" contradicted the "Next in ..." interval
+            // under it and the review that was actually written.
+            val gradeLabel = result.grade.name.lowercase().replaceFirstChar { it.uppercase() }
+            when {
+                !result.correct && result.grade == ReviewGrade.AGAIN -> Text(
                     stringResource(R.string.incorrect_answer_review_soon),
                     style = MaterialTheme.typography.bodySmall
                 )
-            } else if (result.wasGuess) {
-                Text(
+                !result.correct -> Text(
+                    stringResource(R.string.marked_x, gradeLabel),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                result.wasGuess && result.grade == ReviewGrade.AGAIN -> Text(
                     stringResource(R.string.guessed_right_marked_again),
                     style = MaterialTheme.typography.bodySmall
                 )
-            } else {
-                Text(
+                result.wasGuess -> Text(
+                    stringResource(R.string.guessed_right_marked_x, gradeLabel),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                else -> Text(
                     stringResource(R.string.answered_in_xs, result.dwellSeconds) + " — " +
-                        result.grade.name.lowercase().replaceFirstChar { it.uppercase() },
+                        gradeLabel,
                     style = MaterialTheme.typography.bodySmall
                 )
             }

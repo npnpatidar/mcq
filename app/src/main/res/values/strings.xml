@@ -148,6 +148,8 @@
     <string name="incorrect">Incorrect</string>
     <string name="incorrect_answer_review_soon">Incorrect answer — back soon for another try.</string>
     <string name="guessed_right_marked_again">Guessed right — marked Again, back soon.</string>
+    <string name="guessed_right_marked_x">Guessed right — marked %1$s.</string>
+    <string name="marked_x">Marked %1$s.</string>
     <string name="answered_in_xs">Answered in %1$d s</string>
     <string name="next">Next</string>
     <string name="no_attempts_yet">No attempts yet</string>

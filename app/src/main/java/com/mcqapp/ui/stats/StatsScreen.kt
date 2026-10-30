@@ -49,7 +49,7 @@ import com.mcqapp.ui.stats.sections.RetentionSection
 import com.mcqapp.ui.stats.sections.WorkloadSection
 
 /**
- * The statistics page: scope and range selectors on top, five tabs of graphs
+ * The statistics page: scope and range selectors on top, six tabs of graphs
  * below, and a per-card drill-down sheet reachable from every ranked list.
  */
 @OptIn(ExperimentalMaterial3Api::class)

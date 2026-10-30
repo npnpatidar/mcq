@@ -29,6 +29,7 @@ format (papers, categories, bookmarks, history) and is documented in
 | Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. FSRS-6 schedules the next review (see below); a passage member shows its passage above the question |
 | Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
+| Statistics | All papers or one, over a 7/30/90/365-day or all-time range, in six tabs — Overview, Retention, Workload, Memory, Cards, Guessing; every ranked list opens the card it names |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
 | Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
 | Import | Import a **Word** bank or **JSON** → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups). See [Word](#import-word-documents-docx) / [JSON](#import-json-reference) |
@@ -103,6 +104,14 @@ writes an attempt: it only schedules *when you should see a question again*.
   the leech threshold. Reps still advance. Deliberation time on a random pick
   carries no information, so the dwell ladder is bypassed for guesses; "Change
   grade" can still override the proposal before Next.
+- **The guess is recorded (database v19).** A review keeps the declared guess and
+  whether the pick was right, which is what **Statistics → Guessing** reads: guess
+  rate overall and over time, by maturity, by hour and by sitting position; dwell on
+  guessed versus earned answers; hit rate against the chance baseline, with its lift;
+  the earned / lucky / lapse / didn't-know split; retention of earned answers beside
+  raw accuracy; the schedule cost of guessing; and the categories, papers and cards
+  that lean on guesses. Reviews logged before v19 have no flag, so they count as
+  reviews but never as guesses — the tab reports how many it could not classify.
 - **Changing a grade (Simplified mode).** Check proposes the grade and Next persists
   it. Between the two, a "Change grade" affordance edits the proposal — for the
   "knew it but misclicked" case — without writing twice. Leaving without Next loses
@@ -796,14 +805,15 @@ Re-loading merges by stable ids — never duplicates.
 
 ## Data & storage
 
-Room database `mcq.db`, **version 8** (`MIGRATION_3_4` adds `explanationImage` to
+Room database `mcq.db`, **version 19** (`MIGRATION_3_4` adds `explanationImage` to
 `questions` and `question_results`; `MIGRATION_4_5` adds `marks` to `questions`,
 default `1.0`; `MIGRATION_5_6` adds `dwellSeconds` to `question_results`, default
 `0`; `MIGRATION_6_7` adds the `card_state` table used by Study, starting empty so the
 first session rebuilds schedules from attempt history; `MIGRATION_7_8` cascades
 `correct_answers` off their question and drops already-orphaned answer-key rows;
-existing installs migrate in place, and the 3→8 chain is covered by a migration
-test). Deleting a paper deletes its categories; deleting a category deletes its
+`MIGRATION_18_19` adds the nullable `wasGuess` and `wasCorrect` flags to `review_log`;
+existing installs migrate in place, and the chain is covered by migration tests).
+Deleting a paper deletes its categories; deleting a category deletes its
 questions (FK cascades) — options and answer keys go with their question. Anything that
 reached the paper only by id is deleted explicitly in the same transaction, because no
 foreign key covers it: **bookmarks** for those questions, **history** (`attempts` for

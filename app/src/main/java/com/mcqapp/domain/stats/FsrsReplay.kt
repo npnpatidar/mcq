@@ -37,7 +37,11 @@ object FsrsReplay {
         val stateBefore: CardStateKind?,
         val stabilityAfter: Double?,
         val difficultyAfter: Double?,
-        val intervalDaysAfter: Int?
+        val intervalDaysAfter: Int?,
+        /** Declared guess; null for rows that predate v19. */
+        val wasGuess: Boolean? = null,
+        /** Chosen options matched the key; null for rows that predate v19. */
+        val wasCorrect: Boolean? = null
     )
 
     /**
@@ -55,6 +59,7 @@ object FsrsReplay {
         // (consolidated_bugs.md I2).
         val predicted = HashMap<Pair<String, Long>, Double?>()
         val intervalBefore = HashMap<Pair<String, Long>, Int?>()
+        val counterfactual = HashMap<Pair<String, Long>, Int?>()
         reviews.groupBy { it.questionId }.forEach { (_, rows) ->
             val ordered = rows.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             // A seeded history's first row has no knowable pre-state: it is the
@@ -74,6 +79,14 @@ object FsrsReplay {
                     ?.takeIf { it.stability > 0.0 }
                     ?.let { scheduler.retention(it, row.reviewedAt) }
                 intervalBefore[row.questionId to row.id] = previousInterval
+                counterfactual[row.questionId to row.id] = wouldBeGoodInterval(
+                    row = row,
+                    pre = pre,
+                    // A seeded first row's pre-state is unknowable, so the
+                    // counterfactual would be a guess about a guess.
+                    knownPreState = !(index == 0 && seeded),
+                    scheduler = scheduler
+                )
                 val post = if (index == 0 && seeded) {
                     seedState(row)
                 } else {
@@ -101,7 +114,10 @@ object FsrsReplay {
                 difficultyAfter = row.difficultyAfter,
                 intervalDaysAfter = row.intervalDaysAfter,
                 predictedRetention = predicted[row.questionId to row.id],
-                intervalBeforeDays = intervalBefore[row.questionId to row.id]
+                intervalBeforeDays = intervalBefore[row.questionId to row.id],
+                wasGuess = row.wasGuess,
+                wasCorrect = row.wasCorrect,
+                wouldBeGoodIntervalDays = counterfactual[row.questionId to row.id]
             )
         }
     }
@@ -143,7 +159,14 @@ object FsrsReplay {
             // A seeded history's first row has no knowable pre-state: it is the
             // record of memory that predates the log. Its post-state, which the
             // row itself carries, seeds everything after it.
-            val post = if (pre == null && isSeeded(row)) {
+            val seededFirst = pre == null && isSeeded(row)
+            val wouldBeGood = wouldBeGoodInterval(
+                row = row,
+                pre = pre,
+                knownPreState = !seededFirst,
+                scheduler = scheduler
+            )
+            val post = if (seededFirst) {
                 seedState(row)
             } else {
                 scheduler.next(
@@ -165,9 +188,31 @@ object FsrsReplay {
                 difficultyAfter = row.difficultyAfter,
                 intervalDaysAfter = row.intervalDaysAfter,
                 predictedRetention = predicted,
-                intervalBeforeDays = intervalBefore
+                intervalBeforeDays = intervalBefore,
+                wasGuess = row.wasGuess,
+                wasCorrect = row.wasCorrect,
+                wouldBeGoodIntervalDays = wouldBeGood
             )
         }
+    }
+
+    /**
+     * The interval Good would have given from [pre], for a guessed-correct row
+     * only. This is the dashboard's counterfactual: the schedule the card would
+     * be carrying if the lucky pick had been treated as a recall.
+     */
+    private fun wouldBeGoodInterval(
+        row: RawReview,
+        pre: CardState?,
+        knownPreState: Boolean,
+        scheduler: FsrsScheduler
+    ): Int? {
+        if (row.wasGuess != true || row.wasCorrect != true || !knownPreState) return null
+        return scheduler.next(
+            pre ?: scheduler.initial(row.questionId),
+            ReviewGrade.GOOD,
+            row.reviewedAt
+        ).intervalDays
     }
 
     private fun isSeeded(row: RawReview): Boolean =

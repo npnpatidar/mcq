@@ -16,6 +16,7 @@ import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
@@ -181,6 +182,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         range: StatsAggregator.Range,
         now: Long
     ): CardsData = statsStore.loadCards(scopePaperId, range, now)
+
+    /**
+     * The guessing tab alone, streamed: flagged reviews into counters, then the
+     * option/key counts of the guessed questions for the chance baseline.
+     */
+    internal suspend fun statsGuessing(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): GuessingData = statsStore.loadGuessing(scopePaperId, range, now)
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =
@@ -727,9 +738,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionId: String,
         grade: com.mcqapp.domain.ReviewGrade,
         dwellSeconds: Long? = null,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        wasGuess: Boolean? = null,
+        wasCorrect: Boolean? = null
     ): com.mcqapp.domain.CardState =
-        studyStore.recordStudyReview(paperId, questionId, grade, dwellSeconds, now)
+        studyStore.recordStudyReview(
+            paperId, questionId, grade, dwellSeconds, now, wasGuess, wasCorrect
+        )
 
     // --- bookmarks, attempts, mistakes ---
 

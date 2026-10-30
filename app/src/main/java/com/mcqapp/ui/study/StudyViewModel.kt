@@ -639,13 +639,21 @@ class StudyViewModel(
         val delay = com.mcqapp.domain.Study
             .previewDelays(scheduler, card, now)[grade] ?: return null
         return StudyResult(
-            correct = selection.isNotEmpty() && selection == question.correctOptionIds,
+            correct = isCorrect(question, selection),
             grade = grade,
             wasGuess = wasGuess,
             dwellSeconds = dwellSeconds,
             nextIn = IntervalFormat.format(delay)
         )
     }
+
+    /**
+     * One definition of "right" for the log and the result card, so the stored
+     * flag can never disagree with what the learner was told. An empty
+     * selection is not correct: nothing was answered.
+     */
+    private fun isCorrect(question: Question, selection: Set<String>): Boolean =
+        selection.isNotEmpty() && selection == question.correctOptionIds
 
     /** Replaces the proposed grade before it is persisted. */
     fun changeGrade(grade: ReviewGrade) {
@@ -687,7 +695,12 @@ class StudyViewModel(
             var persisted = false
             try {
                 val next = repository.recordStudyReview(
-                    paperId, question.id, proposed, dwellSeconds
+                    paperId = paperId,
+                    questionId = question.id,
+                    grade = proposed,
+                    dwellSeconds = dwellSeconds,
+                    wasGuess = current.isGuess,
+                    wasCorrect = isCorrect(question, current.selection)
                 )
                 persisted = true
                 Logger.i(
@@ -753,7 +766,15 @@ class StudyViewModel(
             var persisted = false
             try {
                 val next = repository.recordStudyReview(
-                    paperId, question.id, grade, dwellSeconds
+                    paperId = paperId,
+                    questionId = question.id,
+                    grade = grade,
+                    dwellSeconds = dwellSeconds,
+                    // The four-button flow has no guess switch: the learner is
+                    // self-grading a revealed answer, which is the "earned"
+                    // side of the dashboard by construction.
+                    wasGuess = false,
+                    wasCorrect = isCorrect(question, current.selection)
                 )
                 persisted = true
                 Logger.i(

@@ -255,7 +255,15 @@ data class ReviewLogEntity(
     val stateBefore: String? = null,
     val stabilityAfter: Double? = null,
     val difficultyAfter: Double? = null,
-    val intervalDaysAfter: Int? = null
+    val intervalDaysAfter: Int? = null,
+    /**
+     * Whether the learner declared the attempt a guess before answering.
+     * Null for rows written before v19: those reviews genuinely carry no flag,
+     * and defaulting them to false would claim every old answer was earned.
+     */
+    val wasGuess: Boolean? = null,
+    /** Whether the chosen options matched the key, at answer time. Null pre-v19. */
+    val wasCorrect: Boolean? = null
 )
 
 /**

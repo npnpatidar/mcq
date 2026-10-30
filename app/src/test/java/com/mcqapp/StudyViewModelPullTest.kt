@@ -207,8 +207,12 @@ class StudyViewModelPullTest {
             viewModel.state.value.current?.questionId == "q2"
         })
         runBlocking {
-            assertEquals(ReviewGrade.AGAIN.ordinal + 1, repository.db().reviewLogDao()
-                .historyForQuestion("q1").last().rating)
+            val row = repository.db().reviewLogDao().getAll().last { it.questionId == "q1" }
+            assertEquals(ReviewGrade.AGAIN.ordinal + 1, row.rating)
+            // The declared guess and the actual correctness are both stored,
+            // so the dashboard can tell a lucky pick from an earned one.
+            assertEquals(true, row.wasGuess)
+            assertEquals(true, row.wasCorrect)
         }
 
         // The same path unchanged for a plain correct answer: GOOD is what
@@ -224,8 +228,10 @@ class StudyViewModelPullTest {
         viewModel.next()
         assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 2 })
         runBlocking {
-            assertEquals(4, repository.db().reviewLogDao()
-                .historyForQuestion("q2").last().rating)
+            val row = repository.db().reviewLogDao().getAll().last { it.questionId == "q2" }
+            assertEquals(4, row.rating)
+            assertEquals(false, row.wasGuess)
+            assertEquals(true, row.wasCorrect)
         }
     }
 

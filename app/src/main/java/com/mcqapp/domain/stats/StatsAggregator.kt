@@ -60,7 +60,13 @@ object StatsAggregator {
         val config: SchedulerConfig,
         val now: Long,
         /** The device's UTC offset at [now], in ms. */
-        val zoneOffsetMillis: Long
+        val zoneOffsetMillis: Long,
+        /**
+         * questionId → chance a uniform random pick is exactly right, for the
+         * guessed questions only. The guessing tab's baseline reads it; every
+         * other section may pass an empty map.
+         */
+        val chanceOfQuestion: Map<String, Double> = emptyMap()
     )
 
     /**
@@ -106,7 +112,8 @@ object StatsAggregator {
             retention = retentionOf(ctx),
             workload = workloadOf(ctx),
             memory = memoryOf(ctx, overview.kpis()),
-            cards = cardsOf(ctx)
+            cards = cardsOf(ctx),
+            guessing = guessingOf(ctx)
         )
     }
 
@@ -1434,6 +1441,321 @@ object StatsAggregator {
                 Triple("1–2w", 7, 14),
                 Triple("2w+", 14, null)
             )
+        }
+    }
+
+    // --- guessing ------------------------------------------------------------
+
+    /**
+     * The guessing tab on its own. Only the log is read: every figure is a
+     * count over flagged reviews, and the chance baseline is supplied by the
+     * caller (the store resolves option/key counts for guessed questions).
+     */
+    fun buildGuessing(input: Input, scopePaperId: String?, range: Range): GuessingData {
+        val ctx = Context.of(input, scopePaperId, range)
+        val accumulator = GuessingAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone,
+            paperTitleOf = input.paperTitleOf,
+            categoryOfQuestion = input.categoryOfQuestion
+        )
+        ctx.inScope.forEach(accumulator::add)
+        return accumulator.toData(input.chanceOfQuestion)
+    }
+
+    private fun guessingOf(ctx: Context): GuessingData {
+        val accumulator = GuessingAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone,
+            paperTitleOf = ctx.input.paperTitleOf,
+            categoryOfQuestion = ctx.input.categoryOfQuestion
+        )
+        ctx.inScope.forEach(accumulator::add)
+        return accumulator.toData(ctx.input.chanceOfQuestion)
+    }
+
+    /**
+     * Counts the guessing dashboard in one pass over the in-scope log.
+     *
+     * Only rows that carry both flags are classified. Rows written before v19
+     * have no flag and are counted in [allReviews] only, so the screen can say
+     * how much history the figures leave out instead of pretending it was
+     * earned.
+     *
+     * Sitting position uses a 30-minute gap to start a new sitting. The log is
+     * fed in append order (the order the app wrote it), which is also how the
+     * rest of the replay treats it; a clock rollback therefore starts a new
+     * sitting rather than producing a negative gap.
+     */
+    class GuessingAccumulator(
+        private val scopePaperId: String?,
+        private val range: Range,
+        now: Long,
+        private val cfg: SchedulerConfig,
+        private val zone: Long,
+        private val paperTitleOf: Map<String, String>,
+        private val categoryOfQuestion: Map<String, String>
+    ) {
+        private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
+        private val todayDay = studyEpochDay(todayStart, cfg, zone)
+        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+
+        private var allReviews = 0
+        private var reviews = 0
+        private var guessed = 0
+        private var earned = 0
+        private var lucky = 0
+        private var lapse = 0
+        private var didntKnow = 0
+
+        /** Guessed rows per question, so the chance baseline can be weighted. */
+        private val guessedByQuestion = HashMap<String, Int>()
+
+        /** day → [reviews, guessed, guessedCorrect]. */
+        private val days = HashMap<Long, IntArray>()
+        /** [reviews, guessed, guessedCorrect] per band, in [GuessBand] order. */
+        private val bands = HashMap<GuessBand, IntArray>()
+        /** [reviews, guessed, guessedCorrect] per sitting position 1..5+ (index 0..4). */
+        private val positions = Array(5) { IntArray(3) }
+        /** [reviews, guessed, guessedCorrect] per hour. */
+        private val hourly = Array(24) { IntArray(3) }
+        /** label → [reviews, guessed, guessedCorrect]. */
+        private val topics = HashMap<String, IntArray>()
+        /** questionId → [reviews, guessed, guessedCorrect, paperId, lastReviewedAt]. */
+        private val cards = HashMap<String, CardGuess>()
+
+        private var guessedDwellSum = 0.0
+        private var guessedDwellCount = 0
+        private var earnedDwellSum = 0.0
+        private var earnedDwellCount = 0
+
+        private var costReviews = 0
+        private var costExtraDays = 0
+        private var costActualSum = 0.0
+        private var costGoodSum = 0.0
+
+        private var earliest: Long? = null
+        private var lastReviewAt = Long.MIN_VALUE
+        private var sittingPosition = 0
+
+        fun add(review: ReplayReview) {
+            if (scopePaperId != null && review.paperId != scopePaperId) return
+            if (rangeStart != null && review.reviewedAt < rangeStart) return
+            allReviews++
+            earliest = earliest?.let { minOf(it, review.reviewedAt) } ?: review.reviewedAt
+
+            // A gap of 30 minutes or more starts a new sitting; a timestamp
+            // that moved backwards does too (a clock rollback, not a pause).
+            val gap = review.reviewedAt - lastReviewAt
+            sittingPosition = if (lastReviewAt == Long.MIN_VALUE || gap < 0 || gap > SITTING_GAP_MS) {
+                1
+            } else {
+                sittingPosition + 1
+            }
+            lastReviewAt = review.reviewedAt
+
+            val wasGuess = review.wasGuess
+            val wasCorrect = review.wasCorrect
+            if (wasGuess == null || wasCorrect == null) return
+
+            reviews++
+            val hit = if (wasCorrect) 1 else 0
+            val band = bandOf(review)
+            val topic = topicOf(review)
+            val position = sittingPosition.coerceAtMost(5) - 1
+            val hour = (Math.floorMod(review.reviewedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
+            val day = studyEpochDay(review.reviewedAt, cfg, zone)
+
+            fun IntArray.bump() {
+                this[0]++
+                if (wasGuess) {
+                    this[1]++
+                    this[2] += hit
+                }
+            }
+            days.getOrPut(day) { IntArray(3) }.bump()
+            bands.getOrPut(band) { IntArray(3) }.bump()
+            positions[position].bump()
+            hourly[hour].bump()
+            topics.getOrPut(topic) { IntArray(3) }.bump()
+
+            val card = cards.getOrPut(review.questionId) {
+                CardGuess(review.paperId, review.questionId)
+            }
+            card.reviews++
+            if (wasGuess) {
+                card.guessed++
+                card.guessedCorrect += hit
+            }
+            card.lastReviewedAt = maxOf(card.lastReviewedAt, review.reviewedAt)
+
+            review.elapsedSeconds?.let { seconds ->
+                if (wasGuess) {
+                    guessedDwellSum += seconds
+                    guessedDwellCount++
+                } else {
+                    earnedDwellSum += seconds
+                    earnedDwellCount++
+                }
+            }
+
+            if (wasGuess) {
+                guessed++
+                guessedByQuestion[review.questionId] =
+                    (guessedByQuestion[review.questionId] ?: 0) + 1
+                if (wasCorrect) lucky++ else didntKnow++
+            } else {
+                if (wasCorrect) earned++ else lapse++
+            }
+
+            val good = review.wouldBeGoodIntervalDays
+            val actual = review.intervalDaysAfter
+            if (wasGuess && wasCorrect && good != null && actual != null) {
+                costReviews++
+                costExtraDays += (good - actual).coerceAtLeast(0)
+                costActualSum += actual
+                costGoodSum += good
+            }
+        }
+
+        /** The question ids whose chance baseline the caller must resolve. */
+        fun guessedQuestionIds(): Set<String> = guessedByQuestion.keys
+
+        fun toData(chanceOfQuestion: Map<String, Double>): GuessingData {
+            var chanceSum = 0.0
+            var chanceCount = 0
+            guessedByQuestion.forEach { (questionId, count) ->
+                chanceOfQuestion[questionId]?.let { chance ->
+                    chanceSum += chance * count
+                    chanceCount += count
+                }
+            }
+            return GuessingData(
+                allReviews = allReviews,
+                reviews = reviews,
+                guessed = guessed,
+                earned = earned,
+                lucky = lucky,
+                lapse = lapse,
+                didntKnow = didntKnow,
+                chanceBaseline = if (chanceCount == 0) null else chanceSum / chanceCount,
+                trend = trend(),
+                maturity = GuessBand.entries.map { band ->
+                    val counts = bands[band] ?: IntArray(3)
+                    GuessBandSlice(band, counts[0], counts[1], counts[2])
+                },
+                positions = positions.mapIndexed { index, counts ->
+                    GuessSlice(
+                        label = if (index == 4) "5+" else (index + 1).toString(),
+                        reviews = counts[0],
+                        guessed = counts[1],
+                        guessedCorrect = counts[2]
+                    )
+                },
+                hourly = (0 until 24).map { hour ->
+                    val counts = hourly[hour]
+                    HourlyGuess(hour, counts[0], counts[1], counts[2])
+                },
+                dwell = GuessDwell(
+                    guessedReviews = guessedDwellCount,
+                    guessedAvgSeconds = if (guessedDwellCount == 0) {
+                        null
+                    } else {
+                        guessedDwellSum / guessedDwellCount
+                    },
+                    earnedReviews = earnedDwellCount,
+                    earnedAvgSeconds = if (earnedDwellCount == 0) {
+                        null
+                    } else {
+                        earnedDwellSum / earnedDwellCount
+                    }
+                ),
+                cost = GuessCost(
+                    reviews = costReviews,
+                    extraDays = costExtraDays,
+                    avgActualDays = if (costReviews == 0) null else costActualSum / costReviews,
+                    avgGoodDays = if (costReviews == 0) null else costGoodSum / costReviews
+                ),
+                topics = topics.map { (label, counts) ->
+                    GuessTopic(label, counts[0], counts[1], counts[2])
+                }.filter { it.guessed > 0 }
+                    .sortedWith(
+                        compareByDescending<GuessTopic> { it.guessed }
+                            .thenBy { it.hitRate ?: 1.0 }
+                            .thenBy { it.label }
+                    )
+                    .take(8),
+                shaky = cards.values.map { card ->
+                    ShakyCard(
+                        paperId = card.paperId,
+                        questionId = card.questionId,
+                        reviews = card.reviews,
+                        guessed = card.guessed,
+                        guessedCorrect = card.guessedCorrect,
+                        lastReviewedAt = card.lastReviewedAt
+                    )
+                }.filter { it.guessed >= SHAKY_MIN_GUESSES }
+                    .sortedWith(
+                        compareByDescending<ShakyCard> { it.guessed }
+                            .thenBy { it.hitRate ?: 1.0 }
+                            .thenByDescending { it.lastReviewedAt }
+                    )
+                    .take(10)
+            )
+        }
+
+        private fun trend(): List<GuessSlice> {
+            val start = rangeStart ?: earliest ?: return emptyList()
+            val granularity = granularityFor(start, todayDay, cfg, zone)
+            val buckets = bucketList(
+                studyEpochDay(start, cfg, zone), todayDay, granularity, cfg, zone
+            )
+            val byBucket = HashMap<Long, IntArray>()
+            days.forEach { (day, counts) ->
+                val key = bucketKeyOf(day, granularity)
+                val into = byBucket.getOrPut(key) { IntArray(3) }
+                for (i in 0 until 3) into[i] += counts[i]
+            }
+            return buckets.map { bucket ->
+                val counts = byBucket[bucket.key] ?: IntArray(3)
+                GuessSlice(bucket.label, counts[0], counts[1], counts[2])
+            }
+        }
+
+        private fun bandOf(review: ReplayReview): GuessBand = when (review.stateBefore) {
+            CardStateKind.NEW -> GuessBand.FRESH
+            CardStateKind.LEARNING -> GuessBand.LEARNING
+            CardStateKind.RELEARNING -> GuessBand.RELEARNING
+            CardStateKind.REVIEW ->
+                if (review.matureAtReview) GuessBand.MATURE else GuessBand.YOUNG
+            // Seeded history: the pre-state was never recorded, so the
+            // freshest band is the honest default — its label says "unknown".
+            null -> GuessBand.FRESH
+        }
+
+        private fun topicOf(review: ReplayReview): String =
+            categoryOfQuestion[review.questionId]
+                ?: paperTitleOf[review.paperId]
+                ?: review.paperId
+
+        private class CardGuess(val paperId: String, val questionId: String) {
+            var reviews = 0
+            var guessed = 0
+            var guessedCorrect = 0
+            var lastReviewedAt = Long.MIN_VALUE
+        }
+
+        private companion object {
+            /** A pause this long between reviews starts a new sitting. */
+            const val SITTING_GAP_MS = 30 * 60 * 1000L
+            /** Below this many guesses a card's hit rate is noise. */
+            const val SHAKY_MIN_GUESSES = 2
         }
     }
 

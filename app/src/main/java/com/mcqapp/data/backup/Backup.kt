@@ -149,7 +149,11 @@ object McqBackupFormat {
         val stateBefore: String? = null,
         val stabilityAfter: Double? = null,
         val difficultyAfter: Double? = null,
-        val intervalDaysAfter: Int? = null
+        val intervalDaysAfter: Int? = null,
+        // Added with the v19 columns. Defaults keep older backups readable;
+        // null means the row predates guess tracking.
+        val wasGuess: Boolean? = null,
+        val wasCorrect: Boolean? = null
     )
 
     @Serializable
@@ -449,7 +453,9 @@ object McqBackupFormat {
         stateBefore = entity.stateBefore,
         stabilityAfter = entity.stabilityAfter,
         difficultyAfter = entity.difficultyAfter,
-        intervalDaysAfter = entity.intervalDaysAfter
+        intervalDaysAfter = entity.intervalDaysAfter,
+        wasGuess = entity.wasGuess,
+        wasCorrect = entity.wasCorrect
     )
 
     /**
@@ -699,7 +705,9 @@ class BackupSource(private val db: AppDatabase) {
         stateBefore = stateBefore,
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
-        intervalDaysAfter = intervalDaysAfter
+        intervalDaysAfter = intervalDaysAfter,
+        wasGuess = wasGuess,
+        wasCorrect = wasCorrect
     )
 
     private companion object {
@@ -983,7 +991,9 @@ class BackupRestorer(private val db: AppDatabase) {
         stateBefore = stateBefore,
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
-        intervalDaysAfter = intervalDaysAfter
+        intervalDaysAfter = intervalDaysAfter,
+        wasGuess = wasGuess,
+        wasCorrect = wasCorrect
     )
 
     private companion object {

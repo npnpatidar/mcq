@@ -44,6 +44,37 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         context.dataStore.edit { it[themeKey] = mode }
     }
 
+    private val themePaletteKey = stringPreferencesKey("theme_palette")
+
+    fun themePalette(): Flow<String> =
+        context.dataStore.data.map { it[themePaletteKey] ?: "material" }
+
+    suspend fun setThemePalette(key: String) {
+        context.dataStore.edit { it[themePaletteKey] = key }
+    }
+
+    private val customThemesKey = stringPreferencesKey("custom_themes")
+
+    /**
+     * Imported themes, as the JSON blob the UI encodes. The store owns the
+     * preference (and its backup round-trip); the theme package owns the
+     * format, so this layer never needs to know a colour from a name.
+     */
+    fun customThemesJson(): Flow<String?> =
+        context.dataStore.data.map { it[customThemesKey] }
+
+    /**
+     * Read-modify-write of the imported themes in one DataStore edit. [update]
+     * runs on DataStore's IO dispatcher and returns the new blob; throwing
+     * from it aborts the write, which is how "too many themes" and a bad file
+     * leave the stored list untouched.
+     */
+    suspend fun updateCustomThemesJson(update: (String?) -> String) {
+        context.dataStore.edit { prefs ->
+            prefs[customThemesKey] = update(prefs[customThemesKey])
+        }
+    }
+
     private val shuffleQuestionsKey = booleanPreferencesKey("shuffle_questions")
     private val shuffleOptionsKey = booleanPreferencesKey("shuffle_options")
     private val simplifiedStudyKey = booleanPreferencesKey("simplified_study")

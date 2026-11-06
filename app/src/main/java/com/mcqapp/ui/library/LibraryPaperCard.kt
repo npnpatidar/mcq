@@ -334,7 +334,10 @@ internal fun PaperCard(
                         )
                     }
                 }
-                IconButton(onClick = { onExport(ticked) }) {
+                IconButton(
+                    onClick = { onExport(ticked) },
+                    modifier = Modifier.testTag("paper-export-${paper.id}")
+                ) {
                     Icon(
                         Icons.Default.FileDownload,
                         contentDescription = stringResource(R.string.export)
@@ -417,7 +420,7 @@ internal fun PaperCard(
                 ) {
                     Icon(
                         Icons.Default.KeyboardArrowUp,
-                        contentDescription = stringResource(R.string.move_up)
+                        contentDescription = stringResource(R.string.move_paper_up)
                     )
                 }
                 IconButton(
@@ -427,7 +430,7 @@ internal fun PaperCard(
                 ) {
                     Icon(
                         Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(R.string.move_down)
+                        contentDescription = stringResource(R.string.move_paper_down)
                     )
                 }
             }

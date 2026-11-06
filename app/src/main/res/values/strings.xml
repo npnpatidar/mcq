@@ -136,6 +136,11 @@
     <string name="move_block_up">Move block up</string>
     <string name="move_down">Move down</string>
     <string name="move_up">Move up</string>
+    <!-- The paper cards' library reorder, distinct from a category's tree
+         moves: the same "Move up" on a card and in a category menu made the
+         two ambiguous to both screen readers and UI tests. -->
+    <string name="move_paper_down">Move paper down</string>
+    <string name="move_paper_up">Move paper up</string>
     <string name="negative_marking">Negative marking</string>
     <string name="negative_marking_e_g_0_33">Negative marking (e.g. 0.33)</string>
     <string name="new_category">New category</string>

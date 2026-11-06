@@ -11,6 +11,12 @@ import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.FsrsFitResult
+import com.mcqapp.ui.theme.AppTheme
+import com.mcqapp.ui.theme.CustomTheme
+import com.mcqapp.ui.theme.CustomThemeCodec
+import com.mcqapp.ui.theme.InvalidThemeException
+import com.mcqapp.ui.theme.MAX_CUSTOM_THEMES
+import com.mcqapp.ui.theme.MAX_THEME_FILE_BYTES
 import com.mcqapp.util.Logger
 import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
@@ -49,6 +55,122 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setThemeMode(mode: String) {
         viewModelScope.launch { repository.setThemeMode(mode) }
+    }
+
+    private val _themePalette = MutableStateFlow(AppTheme.MATERIAL.key)
+    val themePalette: StateFlow<String> = _themePalette.asStateFlow()
+
+    private val _customThemes = MutableStateFlow<List<CustomTheme>>(emptyList())
+    internal val customThemes: StateFlow<List<CustomTheme>> = _customThemes.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.themePalette().collect { _themePalette.value = it }
+        }
+        viewModelScope.launch {
+            repository.customThemesJson().collect {
+                _customThemes.value = CustomThemeCodec.decodeAll(it)
+            }
+        }
+    }
+
+    fun setThemePalette(key: String) {
+        viewModelScope.launch { repository.setThemePalette(key) }
+    }
+
+    /**
+     * Imports a theme file picked by the user and selects it. The read is
+     * capped at [MAX_THEME_FILE_BYTES]: the picker also
+     * offers "any file" on some devices, and a bank or a backup must fail
+     * with a sentence, not fill the heap.
+     */
+    fun importTheme(uri: Uri, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val source = withContext(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    val stream = app.contentResolver.openInputStream(uri)
+                        ?: throw InvalidThemeException(
+                            "Could not open the theme file."
+                        )
+                    stream.use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8 * 1024)
+                        var total = 0
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            if (total > MAX_THEME_FILE_BYTES) {
+                                throw InvalidThemeException(
+                                    "That file is too large for a theme " +
+                                        "(over ${MAX_THEME_FILE_BYTES / 1024} KB)."
+                                )
+                            }
+                            out.write(buffer, 0, read)
+                        }
+                        out.toString(Charsets.UTF_8.name())
+                    }
+                }
+                importThemeText(source)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: InvalidThemeException) {
+                onError(e.message ?: "Invalid theme file.")
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Theme import failed", e)
+                onError(e.message ?: "Could not import the theme.")
+            }
+        }
+    }
+
+    /**
+     * Validates and stores [source], then selects it. Same-name imports
+     * replace the old theme instead of stacking duplicates, and the cap is
+     * checked inside the edit so a failed import writes nothing.
+     */
+    internal suspend fun importThemeText(source: String): String {
+        val parsed = CustomThemeCodec.parse(source)
+        var imported: CustomTheme? = null
+        repository.updateCustomThemesJson { raw ->
+            val existing = CustomThemeCodec.decodeAll(raw)
+            val key = existing.firstOrNull { it.name.equals(parsed.name, ignoreCase = true) }?.key
+                ?: "custom-" + System.currentTimeMillis().toString(36)
+            if (existing.none { it.key == key } &&
+                existing.size >= MAX_CUSTOM_THEMES
+            ) {
+                throw InvalidThemeException(
+                    "You can keep up to ${MAX_CUSTOM_THEMES} imported themes."
+                )
+            }
+            val theme = CustomTheme(key, parsed.name, parsed.spec)
+            imported = theme
+            CustomThemeCodec.encodeAll(
+                existing.filterNot { it.key == key } + theme
+            )
+        }
+        val theme = imported
+            ?: throw InvalidThemeException("The theme was not stored.")
+        repository.setThemePalette(theme.key)
+        return theme.name
+    }
+
+    fun removeCustomTheme(key: String) {
+        viewModelScope.launch {
+            try {
+                repository.updateCustomThemesJson { raw ->
+                    CustomThemeCodec.encodeAll(
+                        CustomThemeCodec.decodeAll(raw)
+                            .filterNot { it.key == key }
+                    )
+                }
+                if (_themePalette.value == key) {
+                    repository.setThemePalette(AppTheme.MATERIAL.key)
+                }
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Removing an imported theme failed", e)
+            }
+        }
     }
 
     private val _updateAnswersOnDuplicate = MutableStateFlow(false)

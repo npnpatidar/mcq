@@ -60,6 +60,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     fun themeMode(): Flow<String> = settings.themeMode()
     suspend fun setThemeMode(mode: String) = settings.setThemeMode(mode)
+    fun themePalette(): Flow<String> = settings.themePalette()
+    suspend fun setThemePalette(key: String) = settings.setThemePalette(key)
+    fun customThemesJson(): Flow<String?> = settings.customThemesJson()
+    suspend fun updateCustomThemesJson(update: (String?) -> String) =
+        settings.updateCustomThemesJson(update)
 
     fun shuffleQuestions(): Flow<Boolean> = settings.shuffleQuestions()
     suspend fun setShuffleQuestions(enabled: Boolean) = settings.setShuffleQuestions(enabled)

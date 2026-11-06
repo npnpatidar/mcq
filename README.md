@@ -33,7 +33,7 @@ format (papers, categories, bookmarks, history) and is documented in
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
 | Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
 | Import | Import a **Word** bank or **JSON** → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups). See [Word](#import-word-documents-docx) / [JSON](#import-json-reference) |
-| Settings | Theme; Test options (shuffle, practice, strict, auto-advance); full backup; Storage breakdown; export diagnostic logs; about |
+| Settings | Theme (system/light/dark plus 15 colour palettes, custom theme import); Test options (shuffle, practice, strict, auto-advance); full backup; Storage breakdown; export diagnostic logs; about |
 
 ## Question model
 
@@ -803,6 +803,50 @@ python3 tools/gen_sample_paper.py
 
 Re-loading merges by stable ids — never duplicates.
 
+## Color themes
+
+Settings → **Theme** keeps the system/light/dark choice and adds a **Color theme** picker:
+Material (the app's original look and the default), Nord, Dracula, Tokyo Night, Catppuccin,
+Gruvbox, One Dark Pro, Monokai, Solarized, Everforest, Rosé Pine, Ayu, Night Owl, Kanagawa
+and GitHub. Each theme ships both a light and a dark variant, so the mode choice still
+decides which one you see. Every palette is derived from a handful of seed colours and the
+derivation adjusts any foreground that would fall below WCAG AA contrast, so a dim theme
+cannot make body text unreadable.
+
+### Importing a theme
+
+**Import theme…** accepts a `.json` file and adds it to the picker (and selects it). The
+format uses six-digit hex colours; `#` is optional and case does not matter:
+
+```json
+{
+  "name": "Midnight",
+  "primary": "#7aa2f7",
+  "secondary": "#bb9af7",
+  "tertiary": "#7dcfff",
+  "error": "#f7768e",
+  "light": {
+    "background": "#e6e7ed",
+    "surface": "#ffffff",
+    "surfaceVariant": "#c4c8da",
+    "onBackground": "#3760bf"
+  },
+  "dark": {
+    "background": "#1a1b26",
+    "surface": "#16161e",
+    "surfaceVariant": "#292e42",
+    "onBackground": "#c0caf5"
+  }
+}
+```
+
+The four accents are shared between modes; only the surface colours differ. Importing a
+file with an existing name replaces that imported theme instead of adding a duplicate, up
+to 20 imported themes. The file is capped at 64 KB, and a malformed file is rejected with a
+message rather than stored. Imported themes live in DataStore under `custom_themes`, so
+they travel in backups; **Remove this theme** deletes the selected imported theme and falls
+back to Material. A selected key that no longer exists also falls back to Material.
+
 ## Data & storage
 
 Room database `mcq.db`, **version 19** (`MIGRATION_3_4` adds `explanationImage` to
@@ -825,8 +869,10 @@ paper's resumable session survives. Deleting attempts, bookmarks, or papers neve
 orphans history snapshots (attempts embed their own copies).
 
 Test progress snapshots live in DataStore (single `in_progress_test` key, cleared on
-submit); test display options (shuffle, practice, strict, auto-advance) and theme are
-DataStore preferences.
+submit); test display options (shuffle, practice, strict, auto-advance), the theme mode
+(`theme_mode`), the selected palette (`theme_palette`) and imported theme definitions
+(`custom_themes`, a JSON list) are DataStore preferences, so they are included in a full
+backup.
 
 Card schedules live in Room, not DataStore, because they need to survive a paper edit,
 be deleted along with the paper, and be rebuilt from attempt history. See

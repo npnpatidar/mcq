@@ -4,7 +4,10 @@ import android.content.ActivityNotFoundException
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,18 +20,26 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +62,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,6 +74,9 @@ import com.mcqapp.data.io.Exporter
 import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.BuildConfig
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.ui.theme.AppTheme
+import com.mcqapp.ui.theme.CustomTheme
+import com.mcqapp.ui.theme.isDarkMode
 import com.mcqapp.util.Logger
 import com.mcqapp.R
 import java.util.Locale
@@ -73,6 +89,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val themePalette by viewModel.themePalette.collectAsStateWithLifecycle()
+    val customThemes by viewModel.customThemes.collectAsStateWithLifecycle()
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
     val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
@@ -135,6 +153,42 @@ fun SettingsScreen(
         }
     }
 
+    var themeMenuExpanded by remember { mutableStateOf(false) }
+    var themePendingRemoval by remember { mutableStateOf<CustomTheme?>(null) }
+    val themeImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            // JSON is the advertised type; text/plain and octet-stream are
+            // there for pickers that do not label .json files.
+            viewModel.importTheme(
+                it,
+                onError = fail(R.string.theme_import_failed)
+            )
+        }
+    }
+
+    themePendingRemoval?.let { theme ->
+        AlertDialog(
+            onDismissRequest = { themePendingRemoval = null },
+            title = { Text(stringResource(R.string.remove_imported_theme)) },
+            text = { Text(theme.name) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.removeCustomTheme(theme.key)
+                        themePendingRemoval = null
+                    }
+                ) { Text(stringResource(R.string.delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { themePendingRemoval = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -181,6 +235,148 @@ fun SettingsScreen(
                             Text(label, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
+
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        stringResource(R.string.color_theme),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // The actual mode, so the swatches match what the app
+                    // will paint right now instead of always showing dark.
+                    val darkPreview = isDarkMode(themeMode)
+                    val selectedCustom = customThemes.firstOrNull { it.key == themePalette }
+                    val selectedBuiltIn = AppTheme.fromKey(themePalette)
+                    val selectedName = selectedCustom?.name
+                        ?: stringResource(selectedBuiltIn.labelRes)
+                    val selectedColors = if (selectedCustom != null) {
+                        selectedCustom.previewColors(darkPreview)
+                    } else {
+                        selectedBuiltIn.previewColors(darkPreview)
+                    }
+                    ExposedDropdownMenuBox(
+                        expanded = themeMenuExpanded,
+                        onExpandedChange = { themeMenuExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedName,
+                            onValueChange = {},
+                            readOnly = true,
+                            singleLine = true,
+                            label = { Text(stringResource(R.string.color_theme)) },
+                            leadingIcon = { ThemeSwatches(selectedColors) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(
+                                    expanded = themeMenuExpanded
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("theme-picker")
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = themeMenuExpanded,
+                            onDismissRequest = { themeMenuExpanded = false }
+                        ) {
+                            AppTheme.entries.forEach { theme ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(stringResource(theme.labelRes))
+                                            Text(
+                                                stringResource(theme.summaryRes),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        ThemeSwatches(theme.previewColors(darkPreview))
+                                    },
+                                    trailingIcon = {
+                                        if (theme.key == themePalette) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.setThemePalette(theme.key)
+                                        themeMenuExpanded = false
+                                    }
+                                )
+                            }
+                            customThemes.forEach { theme ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(theme.name)
+                                            Text(
+                                                stringResource(R.string.imported_theme),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        ThemeSwatches(theme.previewColors(darkPreview))
+                                    },
+                                    trailingIcon = {
+                                        if (theme.key == themePalette) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = null
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.setThemePalette(theme.key)
+                                        themeMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(
+                            if (selectedCustom != null) R.string.imported_theme
+                            else selectedBuiltIn.summaryRes
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = {
+                            themeImportLauncher.launch(
+                                arrayOf(
+                                    "application/json",
+                                    "text/plain",
+                                    "application/octet-stream"
+                                )
+                            )
+                        },
+                        modifier = Modifier.testTag("theme-import")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.import_theme))
+                    }
+                    if (selectedCustom != null) {
+                        TextButton(onClick = { themePendingRemoval = selectedCustom }) {
+                            Icon(Icons.Default.Delete, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.remove_imported_theme))
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.theme_import_help),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -1036,4 +1232,24 @@ internal fun formatValue(value: Double, step: Double): String {
     // comma ("10,5") would fail its own validity check.
     return if (decimals == 0) value.toInt().toString()
     else String.format(Locale.ROOT, "%.${decimals}f", value)
+}
+
+/**
+ * A compact preview of a theme: background, input surface, then the three
+ * accents. The border keeps a pale swatch (Solarized, Catppuccin) from
+ * disappearing into the row behind it.
+ */
+@Composable
+private fun ThemeSwatches(colors: List<Color>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        colors.forEach { color ->
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(color)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            )
+        }
+    }
 }

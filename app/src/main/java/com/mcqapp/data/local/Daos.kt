@@ -10,11 +10,22 @@ import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
 @Dao
 interface PaperDao {
-    @Query("SELECT * FROM papers ORDER BY createdAt DESC")
+    @Query("SELECT * FROM papers ORDER BY sortOrder ASC, createdAt DESC")
     fun observeAll(): Flow<List<PaperEntity>>
 
-    @Query("SELECT * FROM papers ORDER BY createdAt DESC")
+    /**
+     * Papers in the library's display order. Backup restore applies
+     * `paperCreated` by id, so the order change is invisible there.
+     */
+    @Query("SELECT * FROM papers ORDER BY sortOrder ASC, createdAt DESC")
     suspend fun getAll(): List<PaperEntity>
+
+    /** The top slot, so an insert can take `min - 1` and appear first. */
+    @Query("SELECT MIN(sortOrder) FROM papers")
+    suspend fun minSortOrder(): Long?
+
+    @Query("UPDATE papers SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Long)
 
     @Query("SELECT * FROM papers WHERE id = :id")
     suspend fun getById(id: String): PaperEntity?
@@ -887,6 +898,45 @@ interface QuestionDao {
         categoryFilter: Int,
         categoryFilterRowIdCsv: String
     ): String?
+
+    /**
+     * Every in-scope id in browse order, for the selection bar's Select all.
+     * Same WHERE and ORDER BY as [pagingRefsByCategories]: the ids a user gets
+     * are exactly the rows the list shows, in the same order. Id-only, so the
+     * cost is one column per row rather than the paged projection with its
+     * per-row answer-key count.
+     */
+    @Query(
+        "SELECT questions.id FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
+            "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
+            "OR questions.passageId IN (SELECT id FROM passages " +
+            "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
+            "AND (:noAnswer = 0 OR NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
+            "OR TRIM(questions.explanation) IN " +
+            "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
+            "AND (:uncategorized = 0 OR questions.categoryId = '' " +
+            "OR categories.title = 'Uncategorized') " +
+            "AND (:categoryFilter = 0 OR " +
+            "INSTR(:categoryFilterRowIdCsv, ',' || CAST(categories.rowid AS TEXT) || ',') > 0) " +
+            "ORDER BY categories.sortOrder, categories.title, " +
+            "questions.sortOrder, questions.rowid"
+    )
+    suspend fun browseIdsByCategories(
+        paperId: String,
+        query: String,
+        noAnswer: Int,
+        noExplanation: Int,
+        uncategorized: Int,
+        categoryFilter: Int,
+        categoryFilterRowIdCsv: String
+    ): List<String>
 
     /**
      * How many in-scope rows precede [anchorId] in the browse order: its index,

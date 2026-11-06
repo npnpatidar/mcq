@@ -234,6 +234,27 @@ class BrowseViewModel(
 
     private fun currentScope(): McqRepository.BrowseScope = scopeFor(filters.value.state)
 
+    /**
+     * Select all in the current queue. The scope resolves against the live
+     * filter and the read runs on [kotlinx.coroutines.Dispatchers.IO]: a large
+     * paper can return six figures of ids, and the same query on the main
+     * thread would jank the list it is selecting.
+     */
+    fun selectAllInScope(onResult: (Set<String>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val scope = currentScope()
+                val ids = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    repository.browseFilteredIds(scope)
+                }
+                onResult(ids.toSet())
+            } catch (e: Exception) {
+                Logger.e("BROWSE", "selectAll failed", e)
+                onResult(emptySet())
+            }
+        }
+    }
+
     fun updateQuery(query: String) {
         filters.update { it.copy(state = it.state.copy(query = query)) }
     }

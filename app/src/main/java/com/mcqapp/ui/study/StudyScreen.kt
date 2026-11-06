@@ -24,6 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
@@ -51,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -105,6 +108,7 @@ fun StudyScreen(
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
     val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
+    val sessionSeconds by viewModel.sessionSeconds.collectAsStateWithLifecycle()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -128,10 +132,12 @@ fun StudyScreen(
                 StudyStickyHeader(
                     state = state,
                     liveDwell = liveDwell,
+                    sessionSeconds = sessionSeconds,
                     onBack = { navController.popBackStack() },
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
-                    onToggleClock = { viewModel.toggleQuestionClock() }
+                    onToggleClock = { viewModel.toggleQuestionClock() },
+                    onToggleBookmark = { viewModel.toggleBookmarkCurrent() }
                 )
             } else {
                 BackOnlyBar(onBack = { navController.popBackStack() })
@@ -451,15 +457,19 @@ private fun BackOnlyBar(onBack: () -> Unit) {
 private fun StudyStickyHeader(
     state: StudyUiState,
     liveDwell: Long,
+    sessionSeconds: Long,
     onBack: () -> Unit,
     onStop: () -> Unit,
     onDismissBreak: () -> Unit,
-    onToggleClock: () -> Unit
+    onToggleClock: () -> Unit,
+    onToggleBookmark: () -> Unit
 ) {
     // `semantics {}` is not composable, so the accessibility strings come
     // from Resources (the OverviewSection tooltip pattern); the clock text
     // itself renders via stringResource inside its Text.
     val resources = LocalContext.current.resources
+    val currentBookmarked =
+        state.question?.id?.let { it in state.bookmarked } == true
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -509,6 +519,25 @@ private fun StudyStickyHeader(
                         )
                     }
                 }
+                // The bookmark follows the card on screen: the same toggle as
+                // Test mode's, so a question saved here shows up there and on
+                // the bookmarks screen without leaving the session.
+                IconButton(
+                    onClick = onToggleBookmark,
+                    enabled = state.question != null,
+                    modifier = Modifier.testTag("study-bookmark")
+                ) {
+                    Icon(
+                        if (currentBookmarked) Icons.Default.Bookmark
+                        else Icons.Default.BookmarkBorder,
+                        contentDescription = stringResource(R.string.bookmark_question),
+                        tint = if (currentBookmarked) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
                 TextButton(
                     onClick = onStop,
                     modifier = Modifier.testTag("study-done")
@@ -547,6 +576,18 @@ private fun StudyStickyHeader(
                     )
                 }
             }
+            // Below the reviewed tally, the sitting's wall-clock length: whole
+            // minutes only, so it updates quietly once a minute rather than
+            // competing with the question clock. Background time is excluded.
+            val sessionMinutes = (sessionSeconds / 60L).toInt()
+            Text(
+                pluralStringResource(
+                    R.plurals.session_elapsed_minutes, sessionMinutes, sessionMinutes
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("study-session-minutes")
+            )
             if (state.showBreakStrip) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

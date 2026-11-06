@@ -207,7 +207,13 @@ internal class QuestionStore(
         // deliberately excludes parentId and sortOrder: a replace used to
         // zero the sort order (part of the same bug) and streak the row's
         // parent; those belong to the editor's own calls.
-        db.paperDao().insertIgnore(PaperEntity(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }))
+        db.paperDao().insertIgnore(
+            PaperEntity(
+                id = paperId,
+                title = paperTitle.ifBlank { "Imported Questions" },
+                sortOrder = (db.paperDao().minSortOrder() ?: 0L) - 1L
+            )
+        )
         db.paperDao().updateFields(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }, description = "", durationMinutes = 0, negativeMarking = 0.0)
         db.categoryDao().insertIgnore(
             CategoryEntity(

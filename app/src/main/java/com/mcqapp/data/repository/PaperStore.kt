@@ -114,7 +114,12 @@ internal class PaperStore(
      * explicit restore hook).
      */
     suspend fun upsertPaperKeepingChildren(paper: PaperEntity) {
-        db.paperDao().insertIgnore(paper)
+        // A brand-new row takes the top slot. An existing row keeps the order
+        // the user gave it: updateFields below never touches sortOrder.
+        val existing = db.paperDao().getById(paper.id)
+        db.paperDao().insertIgnore(
+            if (existing == null) paper.copy(sortOrder = nextPaperSortOrder()) else paper
+        )
         db.paperDao().updateFields(
             id = paper.id,
             title = paper.title,
@@ -152,6 +157,37 @@ internal class PaperStore(
             bookmarks = db.bookmarkDao().countByPaper(paperId),
             schedules = db.cardStateDao().countByPaper(paperId)
         )
+    }
+
+    /** The top slot as `min - 1`, so a new paper appears first. */
+    internal suspend fun nextPaperSortOrder(): Long =
+        (db.paperDao().minSortOrder() ?: 0L) - 1L
+
+    /**
+     * Moves a paper one slot up or down in the library, then rewrites the
+     * whole sequence as 0..n-1.
+     *
+     * Reading the list through the same ORDER BY the screen uses makes the
+     * move match what the user sees, ties included. Normalising in the same
+     * transaction keeps later moves deterministic even when pre-v20 rows all
+     * shared sortOrder 0 — without it a swap of two zeros would be a no-op.
+     */
+    suspend fun movePaper(paperId: String, delta: Int): Boolean {
+        return db.withTransaction {
+            val papers = db.paperDao().getAll()
+            val index = papers.indexOfFirst { it.id == paperId }
+            if (index < 0) return@withTransaction false
+            val target = index + delta
+            if (target !in papers.indices || target == index) return@withTransaction false
+            val reordered = papers.toMutableList().apply { add(target, removeAt(index)) }
+            reordered.forEachIndexed { position, paper ->
+                if (paper.sortOrder != position.toLong()) {
+                    db.paperDao().updateSortOrder(paper.id, position.toLong())
+                }
+            }
+            Logger.i("REPO", "movePaper($paperId by $delta)")
+            true
+        }
     }
 
     suspend fun deletePaper(paperId: String) {

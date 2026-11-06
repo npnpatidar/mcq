@@ -444,6 +444,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun savePaper(paper: Paper) = paperStore.savePaper(paper)
     suspend fun deleteImpact(paperId: String): DeleteImpact = paperStore.deleteImpact(paperId)
     suspend fun deletePaper(paperId: String) = paperStore.deletePaper(paperId)
+    suspend fun movePaper(paperId: String, delta: Int): Boolean =
+        paperStore.movePaper(paperId, delta)
     suspend fun addCategory(paperId: String, title: String, parentId: String?): String =
         paperStore.addCategory(paperId, title, parentId)
     suspend fun deleteCategory(categoryId: String) = paperStore.deleteCategory(categoryId)
@@ -650,6 +652,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** The scope's size, for the editor's "N of M" without listing every id. */
     suspend fun browseFilteredCount(scope: BrowseScope): Int =
         db.questionDao().countBrowseIds(
+            scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
+            scope.uncategorized, scope.categoryFilter, categoryRowIdCsv(scope)
+        )
+
+    /**
+     * Every id in the scope, in browse order, for Select all. Same SQL scope
+     * as the paging source, so it cannot drift from what the list shows.
+     */
+    suspend fun browseFilteredIds(scope: BrowseScope): List<String> =
+        db.questionDao().browseIdsByCategories(
             scope.paperId, scope.query, scope.noAnswer, scope.noExplanation,
             scope.uncategorized, scope.categoryFilter, categoryRowIdCsv(scope)
         )

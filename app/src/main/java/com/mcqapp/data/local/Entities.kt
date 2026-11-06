@@ -14,7 +14,15 @@ data class PaperEntity(
     val description: String = "",
     val durationMinutes: Int = 0,
     val negativeMarking: Double = 0.0,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * The library's manual order, ascending; `createdAt DESC` breaks ties.
+     * New papers take the current minimum - 1 so they land at the top without
+     * rewriting every other row, and a reorder normalises the sequence back to
+     * 0..n-1 (see PaperStore.movePaper). Pre-v20 rows share 0 and therefore
+     * keep their old newest-first order until the user moves one.
+     */
+    @ColumnInfo(defaultValue = "0") val sortOrder: Long = 0L
 )
 
 data class CategoryCountEntity(

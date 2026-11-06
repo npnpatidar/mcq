@@ -286,7 +286,10 @@ internal class StreamingImportSession(
                     title = editedHeader.title,
                     description = editedHeader.description,
                     durationMinutes = editedHeader.durationMinutes,
-                    negativeMarking = sanitizedNegativeMarking(editedHeader.negativeMarking)
+                    negativeMarking = sanitizedNegativeMarking(editedHeader.negativeMarking),
+                    // A freshly imported paper joins the library at the top,
+                    // like a hand-made one; a re-import keeps its old slot.
+                    sortOrder = (db.paperDao().minSortOrder() ?: 0L) - 1L
                 )
             )
         } else if (paperMatch != null && paperMatch.keepStoredTiming) {

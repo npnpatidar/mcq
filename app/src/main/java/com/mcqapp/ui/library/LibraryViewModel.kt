@@ -424,6 +424,21 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         _exportError.value = null
     }
 
+    /**
+     * Moves a paper one slot up (-1) or down (+1). The store normalises the
+     * order, so a boundary tap simply returns false.
+     */
+    fun movePaper(paperId: String, delta: Int) {
+        viewModelScope.launch {
+            try {
+                repository.movePaper(paperId, delta)
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Move paper failed", e)
+                _exportError.value = "Could not reorder the paper: ${e.message}"
+            }
+        }
+    }
+
     fun deletePaper(paperId: String) {
         viewModelScope.launch {
             try {

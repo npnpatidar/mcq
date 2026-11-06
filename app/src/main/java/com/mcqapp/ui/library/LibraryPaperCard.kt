@@ -15,13 +15,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,7 +40,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -122,7 +129,10 @@ internal fun PaperCard(
     onToggleCategory: (String) -> Unit = {},
     onStartScopedStudy: (List<String>) -> Unit = {},
     categoryCounts: Map<String, CategoryCounts> = emptyMap(),
-    onExpandCategories: () -> Unit = {}
+    onExpandCategories: () -> Unit = {},
+    canMoveUp: Boolean = false,
+    canMoveDown: Boolean = false,
+    onMovePaper: (Int) -> Unit = {}
 ) {
     // Once per (tree, selection), not per node: state() walks the subtree, so
     // a per-node call is O(n^2) on a large tree — the drawer computes the
@@ -224,7 +234,10 @@ internal fun PaperCard(
                     },
                     modifier = Modifier.testTag("paper-manage-${paper.id}")
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.manage))
+                    // Tune, not a second pencil: Edit paper is now a
+                    // first-class action in the row below, and two identical
+                    // icons for different screens were a coin toss.
+                    Icon(Icons.Default.Tune, contentDescription = stringResource(R.string.manage))
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -293,30 +306,53 @@ internal fun PaperCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
+                // Every action except Study is an icon. The buttons' widths
+                // moved with their labels (and with the due/new counts in
+                // Study), so the row wrapped differently on every card and a
+                // phone showed two or three across. Icons keep one predictable
+                // row and let the destructive and paper-level actions sit on
+                // the card itself instead of behind Manage.
+                IconButton(
                     onClick = { if (ticked.isEmpty()) onStart() else onScopedTest(ticked) },
                     modifier = Modifier.testTag("paper-test-${paper.id}")
                 ) {
-                    Text(stringResource(R.string.test_action))
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = stringResource(R.string.test_action)
+                    )
                 }
                 if (leechCount > 0) {
                     // Used to run the identical handler as "Study", so the
                     // label promised the tricky questions and delivered the
                     // ordinary due+new queue.
-                    TextButton(onClick = onStudyLeeches) {
-                        Text(pluralStringResource(R.plurals.counts_tricky, leechCount, leechCount))
+                    IconButton(onClick = onStudyLeeches) {
+                        Icon(
+                            Icons.Default.BugReport,
+                            contentDescription = pluralStringResource(
+                                R.plurals.counts_tricky, leechCount, leechCount
+                            )
+                        )
                     }
                 }
-                OutlinedButton(onClick = { onExport(ticked) }) {
-                    Text(stringResource(R.string.export))
+                IconButton(
+                    onClick = { onExport(ticked) },
+                    modifier = Modifier.testTag("paper-export-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.FileDownload,
+                        contentDescription = stringResource(R.string.export)
+                    )
                 }
-                OutlinedButton(
+                IconButton(
                     onClick = { onBrowse(ticked) },
                     modifier = Modifier.testTag("paper-browse-${paper.id}")
                 ) {
-                    Text(stringResource(R.string.browse))
+                    Icon(
+                        Icons.AutoMirrored.Filled.List,
+                        contentDescription = stringResource(R.string.browse)
+                    )
                 }
-                OutlinedButton(
+                IconButton(
                     onClick = {
                         // Default to something the scope can actually supply:
                         // ten where there are ten or more, otherwise everything
@@ -329,15 +365,73 @@ internal fun PaperCard(
                     },
                     modifier = Modifier.testTag("paper-drill-${paper.id}")
                 ) {
-                    Text(stringResource(R.string.drill))
+                    Icon(
+                        Icons.Default.Timer,
+                        contentDescription = stringResource(R.string.drill)
+                    )
                 }
                 if (mistakeCount > 0) {
-                    OutlinedButton(onClick = {
+                    IconButton(onClick = {
                         Logger.i("LIB", "Start paper: paperId=${paper.id}")
                         onPracticeMistakes()
                     }) {
-                        Text(stringResource(R.string.paper_mistakes_button, mistakeCount))
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = stringResource(
+                                R.string.paper_mistakes_button, mistakeCount
+                            )
+                        )
                     }
+                }
+                IconButton(
+                    onClick = onAddCategory,
+                    modifier = Modifier.testTag("paper-add-category-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.CreateNewFolder,
+                        contentDescription = stringResource(R.string.add_category)
+                    )
+                }
+                IconButton(
+                    onClick = onEditPaper,
+                    modifier = Modifier.testTag("paper-edit-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = stringResource(R.string.edit_paper)
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.testTag("paper-delete-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = stringResource(R.string.delete_paper)
+                    )
+                }
+                // Library reorder: up/down among the cards themselves. The
+                // store normalises the sequence, so only the edges are
+                // disabled.
+                IconButton(
+                    onClick = { onMovePaper(-1) },
+                    enabled = canMoveUp,
+                    modifier = Modifier.testTag("paper-move-up-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        contentDescription = stringResource(R.string.move_paper_up)
+                    )
+                }
+                IconButton(
+                    onClick = { onMovePaper(+1) },
+                    enabled = canMoveDown,
+                    modifier = Modifier.testTag("paper-move-down-${paper.id}")
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = stringResource(R.string.move_paper_down)
+                    )
                 }
             }
             if (showDrillDialog) {
@@ -453,10 +547,7 @@ internal fun PaperCard(
                                 onOpenCategory = onOpenCategory,
                                 onDeleteCategory = onDeleteCategory,
                                 onEditQuestion = onEditQuestion,
-                                onAddQuestion = onAddQuestion,
-                                onAddCategory = onAddCategory,
-                                onEditPaper = onEditPaper,
-                                onDelete = onDelete
+                                onAddQuestion = onAddQuestion
                             )
                         CardExpansion.Collapsed -> Unit
                     }
@@ -516,8 +607,9 @@ private fun ShowCategoryRow(
 }
 
 /**
- * Manage mode's block: the category rows plus Add category / Edit paper /
- * Delete paper.
+ * Manage mode's block: the category rows. Add category, Edit paper and Delete
+ * paper moved out to the card's always-visible icon row, so managing a paper
+ * no longer starts with opening this expansion.
  *
  * Expanded is the default and a collapsed branch is remembered per category id
  * for as long as the card stays on screen: Manage is about rearranging the
@@ -534,10 +626,7 @@ private fun ManageCategoryBlock(
     onOpenCategory: (CategoryNode) -> Unit,
     onDeleteCategory: (String) -> Unit,
     onEditQuestion: (String, String) -> Unit,
-    onAddQuestion: (String) -> Unit,
-    onAddCategory: () -> Unit,
-    onEditPaper: () -> Unit,
-    onDelete: () -> Unit
+    onAddQuestion: (String) -> Unit
 ) {
     // Collapsed branches by category id. Saved for the same reason as the
     // card's mode: Browse is one tap away from a row, and Back must not re-open
@@ -564,29 +653,6 @@ private fun ManageCategoryBlock(
                 onEditQuestion = onEditQuestion,
                 onAddQuestion = onAddQuestion
             )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onAddCategory, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Default.Add, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.add_category))
-            }
-            TextButton(
-                onClick = onEditPaper,
-                modifier = Modifier.weight(1f).testTag("paper-edit-${paper.id}")
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.edit_paper))
-            }
-            TextButton(
-                onClick = onDelete,
-                modifier = Modifier.weight(1f).testTag("paper-delete-${paper.id}")
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.delete_paper))
-            }
         }
     }
 }

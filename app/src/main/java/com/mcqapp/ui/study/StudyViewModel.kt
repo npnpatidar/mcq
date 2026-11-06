@@ -103,6 +103,8 @@ data class StudyUiState(
     val pendingGrade: ReviewGrade? = null,
     /** What the last check decided, for the result card. */
     val lastResult: StudyResult? = null,
+    /** Every bookmarked question id, so the header can toggle the current one. */
+    val bookmarked: Set<String> = emptySet(),
     // Session stats: a record of what happened, never a target.
     val reviewed: Int = 0,
     val againCount: Int = 0,
@@ -167,6 +169,21 @@ class StudyViewModel(
     private val _liveDwell = MutableStateFlow(0L)
     val liveDwell: StateFlow<Long> = _liveDwell.asStateFlow()
 
+    /**
+     * Active seconds in this sitting, published once per second. Kept out of
+     * [StudyUiState] for the same reason as [liveDwell]: a per-second state
+     * copy would recompose the whole question card.
+     */
+    private val _sessionSeconds = MutableStateFlow(0L)
+    val sessionSeconds: StateFlow<Long> = _sessionSeconds.asStateFlow()
+
+    /** Time already banked before the current foreground segment. */
+    private var sessionBankedSeconds = 0L
+
+    /** When the current foreground segment started. */
+    private var sessionStartedAt = System.currentTimeMillis()
+    private var sessionRunning = true
+
     private var dwellJob: Job? = null
     private var clockPausedByUser = false
 
@@ -184,6 +201,13 @@ class StudyViewModel(
     init {
         load()
         startDwellTicker()
+        // One observer for the session: the header's bookmark icon has to
+        // follow changes made here, in a test, or on the bookmarks screen.
+        viewModelScope.launch {
+            repository.observeBookmarks().collect { ids ->
+                _state.update { it.copy(bookmarked = ids.toSet()) }
+            }
+        }
     }
 
     /** Read once per session, for the button previews. */
@@ -520,14 +544,23 @@ class StudyViewModel(
         }
     }
 
-    /** Backgrounding never turns a deliberate pause into a resume. */
+    /**
+     * Backgrounding never turns a deliberate pause into a resume, and it
+     * stops the sitting's clock: time in another app is not study time.
+     */
     fun onAppBackgrounded() {
         pauseQuestionClock()
+        bankSessionClock()
+        publishSessionSeconds()
     }
 
     /** The gate decides: a hidden card or a deliberate pause stays paused. */
     fun onAppForegrounded() {
         resumeQuestionClock()
+        if (!_state.value.finished) {
+            resumeSessionClock()
+            publishSessionSeconds()
+        }
     }
 
     /**
@@ -557,12 +590,44 @@ class StudyViewModel(
             while (true) {
                 delay(1000L)
                 publishDwell()
+                publishSessionSeconds()
             }
         }
     }
 
     private fun publishDwell() {
         _liveDwell.value = _state.value.dwellSeconds
+    }
+
+    /** Banks the foreground segment and stops the sitting clock. */
+    private fun bankSessionClock(now: Long = System.currentTimeMillis()) {
+        if (!sessionRunning) return
+        sessionBankedSeconds +=
+            ((now - sessionStartedAt).coerceAtLeast(0L) / 1000L)
+        sessionRunning = false
+    }
+
+    private fun resumeSessionClock(now: Long = System.currentTimeMillis()) {
+        if (sessionRunning) return
+        sessionStartedAt = now
+        sessionRunning = true
+    }
+
+    private fun publishSessionSeconds() {
+        val live = if (sessionRunning) {
+            (System.currentTimeMillis() - sessionStartedAt).coerceAtLeast(0L) / 1000L
+        } else {
+            0L
+        }
+        _sessionSeconds.value = sessionBankedSeconds + live
+    }
+
+    /** Resets the sitting clock for a fresh pass. */
+    private fun resetSessionClock() {
+        sessionBankedSeconds = 0L
+        sessionStartedAt = System.currentTimeMillis()
+        sessionRunning = true
+        _sessionSeconds.value = 0L
     }
 
     /**
@@ -837,7 +902,25 @@ class StudyViewModel(
         // session the learner just ended (consolidated_bugs.md I4).
         stopped.set(true)
         pauseQuestionClock()
+        bankSessionClock()
+        publishSessionSeconds()
         _state.update { it.copy(finished = true, emptyReason = EmptyReason.None) }
+    }
+
+    /**
+     * Flips the bookmark on the card on screen. The observer above repaints
+     * the icon; a failure stays off the card because a lost bookmark must not
+     * interrupt a review.
+     */
+    fun toggleBookmarkCurrent() {
+        val question = _state.value.question ?: return
+        viewModelScope.launch {
+            try {
+                repository.toggleBookmark(question.id)
+            } catch (e: Exception) {
+                Logger.e("STUDY", "toggleBookmark(${question.id}) failed", e)
+            }
+        }
     }
 
     fun dismissBreak() {
@@ -948,6 +1031,7 @@ class StudyViewModel(
                 }
                 pullCard()
                 clockPausedByUser = false
+                resetSessionClock()
                 _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
                 // loading was set true before the pull; the screen's `when`

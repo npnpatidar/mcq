@@ -156,8 +156,17 @@ object McqBackupFormat {
         val wasCorrect: Boolean? = null
     )
 
+    /**
+     * [sortOrder] is null in backups written before v20. Restore skips the
+     * column for those instead of stamping every paper with 0, which would
+     * flatten the order the importer just rebuilt.
+     */
     @Serializable
-    data class PaperCreated(val id: String, val createdAt: Long)
+    data class PaperCreated(
+        val id: String,
+        val createdAt: Long,
+        val sortOrder: Long? = null
+    )
 
     @Serializable
     data class StudyFile(
@@ -624,7 +633,9 @@ class BackupSource(private val db: AppDatabase) {
             study = McqBackupFormat.StudyFile(
                 cardState = cardState.map { it.toRow() },
                 reviewLog = reviewLog.map { it.toRow() },
-                paperCreated = paperRows.map { McqBackupFormat.PaperCreated(it.id, it.createdAt) },
+                paperCreated = paperRows.map {
+                    McqBackupFormat.PaperCreated(it.id, it.createdAt, it.sortOrder)
+                },
                 inProgressTest = inProgressTest
             )
             papers = paperRows.size
@@ -763,6 +774,8 @@ class BackupRestorer(private val db: AppDatabase) {
             db.reviewLogDao().insertAll(backup.study.reviewLog.map { it.toEntity() })
             for (paper in backup.study.paperCreated) {
                 db.paperDao().updateCreatedAt(paper.id, paper.createdAt)
+                // Missing on pre-v20 backups: leave the importer's order.
+                paper.sortOrder?.let { db.paperDao().updateSortOrder(paper.id, it) }
             }
         }
         // The database restore above is atomic and has committed by now;
@@ -879,6 +892,7 @@ class BackupRestorer(private val db: AppDatabase) {
 
                     override suspend fun paperCreated(row: McqBackupFormat.PaperCreated) {
                         db.paperDao().updateCreatedAt(row.id, row.createdAt)
+                        row.sortOrder?.let { db.paperDao().updateSortOrder(row.id, it) }
                     }
 
                     override suspend fun inProgressTest(json: String?) {

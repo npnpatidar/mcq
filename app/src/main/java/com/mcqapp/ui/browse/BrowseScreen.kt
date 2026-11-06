@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -196,6 +197,21 @@ fun BrowseScreen(
                 },
                 actions = {
                     if (selectionMode) {
+                        // Select all in the current queue. The button was
+                        // asked for as an icon, alongside the selection
+                        // actions, and it resolves the live filter so a
+                        // selection never includes rows outside the list.
+                        IconButton(
+                            onClick = {
+                                viewModel.selectAllInScope { ids -> selectedIds = ids }
+                            },
+                            modifier = Modifier.testTag("browse-select-all")
+                        ) {
+                            Icon(
+                                Icons.Default.SelectAll,
+                                contentDescription = stringResource(R.string.select_all)
+                            )
+                        }
                         TextButton(
                             onClick = {
                                 bulkMarks = ""

@@ -417,19 +417,12 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        // Delete lives inside the collapsed card, which expands by animation.
-        compose.onNodeWithTag("paper-manage-ui-sel").performClick()
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Delete paper", substring = true)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        // The expanded card's actions can sit below the fold on the small
-        // emulator screen, and the expand animation is still moving them:
-        // settle first, then scroll the button into view, then click.
+        // Delete is an icon on the card itself now; the action row can sit
+        // below the fold on the small emulator screen, so scroll it in.
         compose.waitForIdle()
-        compose.onNodeWithText("Delete paper", substring = true).performScrollTo()
+        compose.onNodeWithTag("paper-delete-ui-sel").performScrollTo()
         compose.waitForIdle()
-        compose.onNodeWithText("Delete paper", substring = true).performClick()
+        compose.onNodeWithTag("paper-delete-ui-sel").performClick()
 
         waitFor("This cannot be undone.")
         compose.onNodeWithText("This also deletes:", substring = false).assertIsDisplayed()
@@ -909,7 +902,8 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("card-cat-ui-cexp-c1").performScrollTo().performClick()
 
         // One ticked branch: the dialog says so, instead of "Export format".
-        compose.onNodeWithText("Export", substring = false).performScrollTo().performClick()
+        // Export is the card's icon now, aimed by its own tag.
+        compose.onNodeWithTag("paper-export-ui-cexp").performScrollTo().performClick()
         compose.onNodeWithText("Export selection (1 categories)", substring = false)
             .assertIsDisplayed()
         compose.onNodeWithText("Cancel", substring = false).performClick()

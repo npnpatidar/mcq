@@ -139,7 +139,11 @@ class Importer(
                             title = paperDto.title,
                             description = paperDto.description,
                             durationMinutes = paperDto.durationMinutes,
-                            negativeMarking = sanitizedNegativeMarking(paperDto.negativeMarking)
+                            negativeMarking = sanitizedNegativeMarking(paperDto.negativeMarking),
+                            // Same top slot the streaming importer gives a
+                            // new paper, so both paths write identical rows
+                            // (the equivalence tests compare whole tables).
+                            sortOrder = (db.paperDao().minSortOrder() ?: 0L) - 1L
                         )
                     )
                 } else if (paperMatch.keepStoredTiming) {

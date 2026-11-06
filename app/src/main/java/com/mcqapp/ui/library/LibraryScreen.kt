@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
@@ -310,10 +310,13 @@ fun LibraryScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(papers, key = { it.id }) { paper ->
+                        itemsIndexed(papers, key = { _, paper -> paper.id }) { index, paper ->
                             val dueCountBadge = studyCounts[paper.id]?.due ?: 0
                             val leechCountBadge = studyCounts[paper.id]?.leeches ?: 0
                             PaperCard(
+                                canMoveUp = index > 0,
+                                canMoveDown = index < papers.lastIndex,
+                                onMovePaper = { delta -> viewModel.movePaper(paper.id, delta) },
                                 paper = paper,
                                 onStart = { pendingTestStart = PendingTestStart(paper, emptyList()) },
                                 onPracticeMistakes = {

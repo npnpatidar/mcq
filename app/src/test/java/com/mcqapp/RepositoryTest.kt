@@ -414,7 +414,7 @@ class RepositoryTest {
         assertEquals(1000L, first.reviewedAt)
         assertEquals(5L, first.elapsedSeconds!!)
         assertEquals(2, first.intervalDaysAfter!!)
-        assertEquals("no state exists before a first review", null, first.stateBefore)
+        assertEquals("a first review leaves a New card", "NEW", first.stateBefore)
         assertEquals("REVIEW", logs[1].stateBefore)
     }
 

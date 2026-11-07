@@ -20,7 +20,13 @@ data class ReplayReview(
     val reviewedAt: Long,
     /** Time spent on the card; null when unmeasured. */
     val elapsedSeconds: Long?,
-    /** The card's kind before this answer; null when history was seeded. */
+    /**
+     * The card's kind before this answer. Null only when the row carries no
+     * usable recorded pre-state: a first review logged before the writer
+     * recorded New explicitly, or a legacy value the current build cannot
+     * read. First reviews still count as introductions through
+     * [intervalBeforeDays]'s null.
+     */
     val stateBefore: CardStateKind?,
     val stabilityAfter: Double?,
     val difficultyAfter: Double?,

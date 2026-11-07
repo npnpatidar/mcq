@@ -10,6 +10,7 @@ import com.mcqapp.data.local.dueForCategoriesChunked
 import com.mcqapp.data.local.firstDueLearningForCategoriesChunked
 import com.mcqapp.data.local.firstNewQuestionForCategoriesChunked
 import com.mcqapp.data.local.newQuestionsForCategoriesChunked
+import com.mcqapp.domain.CardStateKind
 import com.mcqapp.util.Logger
 
 /** Spaced repetition badges for a paper in the library list. */
@@ -534,7 +535,13 @@ internal class StudyStore(
                     rating = grade.ordinal + 1,
                     reviewedAt = now,
                     elapsedSeconds = dwellSeconds,
-                    stateBefore = existing?.state?.name,
+                    // A card with no stored schedule has never been graded, so
+                    // the state it is leaving is New. Writing that down (rather
+                    // than null) keeps the row self-describing: the today strip
+                    // counts it as introduced, and the answer-button and
+                    // review-kind charts can place it in Learning instead of
+                    // dropping it into Unknown.
+                    stateBefore = existing?.state?.name ?: CardStateKind.NEW.name,
                     stabilityAfter = next.stability,
                     difficultyAfter = next.difficulty,
                     intervalDaysAfter = next.intervalDays,

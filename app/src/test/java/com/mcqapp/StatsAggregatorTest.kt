@@ -6,6 +6,7 @@ import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
+import com.mcqapp.domain.stats.FsrsReplay
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.StatsAggregator
 import org.junit.Assert.assertEquals
@@ -127,6 +128,48 @@ class StatsAggregatorTest {
         assertEquals(0, bundle.today.againCount)
         assertEquals(1.0, bundle.today.correctPct!!, 1e-9)
         assertEquals(2, bundle.today.introduced)
+    }
+
+    @Test
+    fun aRealFirstReviewIsCountedAsIntroduced() {
+        // The writer used to log no pre-state for a card's first grade, so
+        // replay keeps stateBefore null. The today strip still has to call
+        // that row an introduction, which is the bug this pins.
+        val row = FsrsReplay.Stream(FsrsScheduler(config = SchedulerConfig())).accept(
+            FsrsReplay.RawReview(
+                id = 1,
+                paperId = "p1",
+                questionId = "q1",
+                rating = 3,
+                reviewedAt = now - hour,
+                elapsedSeconds = 10L,
+                stateBefore = null,
+                stabilityAfter = 3.0,
+                difficultyAfter = 5.0,
+                intervalDaysAfter = 3
+            )
+        )
+        val bundle = StatsAggregator.build(input(listOf(row)), null, StatsAggregator.Range.ALL)
+        assertNull("legacy first rows carry no pre-state", row.stateBefore)
+        assertEquals(1, bundle.today.introduced)
+    }
+
+    @Test
+    fun onlyACardsFirstUnknownRowCountsAsIntroduced() {
+        val reviews = listOf(
+            // A card's first logged row: no pre-state and no carried interval.
+            review("q1", rating = 3, reviewedAt = now - hour,
+                stateBefore = null, intervalBeforeDays = null),
+            // A later row whose pre-state could not be read is not a new card.
+            review("q1", rating = 3, reviewedAt = now - 30 * 60_000L,
+                stateBefore = null, intervalBeforeDays = 3),
+            // A seeded history's first row also has no carried interval, but
+            // its recorded pre-state says the card already existed.
+            review("q2", rating = 3, reviewedAt = now - 10 * 60_000L,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = null)
+        )
+        val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.ALL)
+        assertEquals(1, bundle.today.introduced)
     }
 
     @Test

@@ -484,7 +484,17 @@ object StatsAggregator {
                 null -> todayUnknown++
             }
             todaySeconds += review.elapsedSeconds ?: 0L
-            if (review.stateBefore == CardStateKind.NEW) todayIntroduced++
+            // A card's first-ever review is where it is introduced. New rows
+            // record NEW explicitly; rows written before that fix carry null
+            // instead, and replay leaves intervalBeforeDays null exactly on a
+            // card's first logged row. A seeded history's first row can also
+            // have a null interval, but it carries a recorded pre-state, so
+            // the null-state half of this test cannot claim it.
+            if (review.stateBefore == CardStateKind.NEW ||
+                (review.stateBefore == null && review.intervalBeforeDays == null)
+            ) {
+                todayIntroduced++
+            }
         }
 
         private fun countRoll(review: ReplayReview) {

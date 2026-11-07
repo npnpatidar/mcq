@@ -89,6 +89,102 @@ class SessionOrder private constructor(
     }
 
     /**
+     * Bounded block sample for Test (section 9.6): shuffle the blocks first,
+     * then find an exact fit up to [target] with a 0/1 knapsack over the
+     * shuffled order, and add at most one overshooting block within
+     * `min(max, target + max(1, ceil(0.25 * target)))`.
+     *
+     * The shuffle comes first so exactness does not cost randomness: the DP is
+     * deterministic over a shuffled block order, and the first block to reach a
+     * sum wins, which is the "earlier in shuffled order" tie-break. Passages
+     * stay whole, and the result never exceeds [max].
+     *
+     * Refusal is a value, not an empty order: a caller that cannot render a
+     * reason would otherwise start a session with nothing on screen.
+     */
+    fun sampledBounded(target: Int, max: Int = 150, seed: Long): BoundedSample {
+        require(target > 0) { "target must be positive" }
+        require(max > 0) { "max must be positive" }
+        if (size == 0) return BoundedSample.Refused(BoundedSample.Reason.EMPTY_SCOPE, max)
+
+        val bounds = PassageBlocks.blockBounds(size) { passageOf[order[it]] }
+        val blockCount = bounds.size - 1
+        val slots = PassageBlocks.shuffleBlocks(blockCount, seed)
+
+        // Pass 1: 0/1 knapsack over the shuffled blocks, capacity = target.
+        // Descending sums visit each block at most once; first reach wins.
+        val capacity = minOf(target, max, size)
+        val reachable = BooleanArray(capacity + 1)
+        reachable[0] = true
+        val predSum = IntArray(capacity + 1) { -1 }
+        val predBlock = IntArray(capacity + 1) { -1 }
+        for (slotIndex in slots.indices) {
+            val block = slots[slotIndex]
+            val blockSize = bounds[block + 1] - bounds[block]
+            if (blockSize > capacity) continue
+            for (sum in capacity - blockSize downTo 0) {
+                if (!reachable[sum] || reachable[sum + blockSize]) continue
+                reachable[sum + blockSize] = true
+                predSum[sum + blockSize] = sum
+                predBlock[sum + blockSize] = slotIndex
+            }
+        }
+        var best = capacity
+        while (best > 0 && !reachable[best]) best--
+
+        val chosen = BooleanArray(blockCount)
+        var cursor = best
+        while (cursor > 0) {
+            val slotIndex = predBlock[cursor]
+            chosen[slots[slotIndex]] = true
+            cursor = predSum[cursor]
+        }
+
+        // Pass 2: one overshoot, the smallest remaining block within the limit.
+        if (best < target) {
+            val overshoot = maxOf(1, (target - 1) / 4 + 1)
+            val limit = minOf(max.toLong(), target.toLong() + overshoot).toInt()
+            var pick = -1
+            var pickSize = Int.MAX_VALUE
+            for (slotIndex in slots.indices) {
+                val block = slots[slotIndex]
+                if (chosen[block]) continue
+                val blockSize = bounds[block + 1] - bounds[block]
+                if (best + blockSize > limit || blockSize >= pickSize) continue
+                pick = block
+                pickSize = blockSize
+            }
+            if (pick >= 0) chosen[pick] = true
+        }
+
+        var shown = 0
+        for (block in 0 until blockCount) {
+            if (chosen[block]) shown += bounds[block + 1] - bounds[block]
+        }
+        if (shown == 0) {
+            val anyFits = (0 until blockCount).any { bounds[it + 1] - bounds[it] <= max }
+            val reason = if (anyFits) {
+                BoundedSample.Reason.NO_PASSAGE_FITS
+            } else {
+                BoundedSample.Reason.PASSAGE_TOO_LARGE
+            }
+            return BoundedSample.Refused(reason, max)
+        }
+
+        val out = IntArray(shown)
+        var written = 0
+        for (slotIndex in slots.indices) {
+            val block = slots[slotIndex]
+            if (!chosen[block]) continue
+            for (row in bounds[block] until bounds[block + 1]) out[written++] = order[row]
+        }
+        return BoundedSample.Selected(
+            order = SessionOrder(pool, starts, out, passages, passageOf),
+            short = shown < TestPlan.MIN_LENGTH && size >= TestPlan.MIN_LENGTH
+        )
+    }
+
+    /**
      * Re-presents the saved order, dropping ids that no longer exist. Null
      * means nothing overlapped — the paper changed too much to resume.
      */
@@ -196,5 +292,46 @@ class SessionOrder private constructor(
             for (ref in refs) builder.add(ref.id, ref.passageId)
             return builder.build()
         }
+    }
+}
+
+/**
+ * The outcome of [SessionOrder.sampledBounded].
+ *
+ * A refused sample is a value rather than an empty order so the setup sheet
+ * can render the section 9.6 message and keep Start disabled; an empty
+ * [SessionOrder] would look like a session that had already started.
+ */
+sealed interface BoundedSample {
+
+    data class Selected(
+        val order: SessionOrder,
+        /** A shown count below 20 from a scope of at least 20 (section 16 #1). */
+        val short: Boolean
+    ) : BoundedSample {
+        val shown: Int get() = order.size
+    }
+
+    data class Refused(val reason: Reason, val max: Int) : BoundedSample {
+        val message: String
+            get() = when (reason) {
+                Reason.EMPTY_SCOPE -> TestPlan.EMPTY_SCOPE_MESSAGE
+                Reason.NO_PASSAGE_FITS ->
+                    "No passage fits the requested length and overshoot limit; " +
+                        "choose a longer test or split a passage."
+                Reason.PASSAGE_TOO_LARGE ->
+                    "Every passage is larger than $max; split one or change the scope."
+            }
+    }
+
+    enum class Reason {
+        /** The scope holds no questions at all. */
+        EMPTY_SCOPE,
+
+        /** Blocks exist within the cap, but none fit the overshoot limit. */
+        NO_PASSAGE_FITS,
+
+        /** Every block is larger than the hard cap. */
+        PASSAGE_TOO_LARGE
     }
 }

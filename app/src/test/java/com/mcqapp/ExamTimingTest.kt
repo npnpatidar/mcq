@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.domain.ExamTiming
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -63,5 +64,56 @@ class ExamTimingTest {
         assertEquals(7 * 24 * 60, ExamTiming.MAX_MINUTES)
         assertEquals(ExamTiming.MAX_MINUTES, ExamTiming.minutesFrom(ExamTiming.MAX_MINUTES))
         assertEquals(ExamTiming.MAX_MINUTES, ExamTiming.minutesFrom(ExamTiming.MAX_MINUTES + 1))
+    }
+
+    @Test
+    fun theDefaultPaceIs60Seconds() {
+        assertEquals(60, ExamTiming.DEFAULT_SECONDS_PER_QUESTION)
+        assertEquals(20, ExamTiming.MIN_SECONDS_PER_QUESTION)
+        assertEquals(180, ExamTiming.MAX_SECONDS_PER_QUESTION)
+    }
+
+    @Test
+    fun suggestedMinutesMirrorsTheLengthPresets() {
+        assertEquals(20, ExamTiming.suggestedMinutes(20))
+        assertEquals(50, ExamTiming.suggestedMinutes(50))
+        assertEquals(80, ExamTiming.suggestedMinutes(80))
+        assertEquals(100, ExamTiming.suggestedMinutes(100))
+        assertEquals(120, ExamTiming.suggestedMinutes(120))
+        assertEquals(150, ExamTiming.suggestedMinutes(150))
+    }
+
+    @Test
+    fun suggestedMinutesRoundsUpAndHasAFloor() {
+        // 20 questions at 20 s = 400 s = 6.67 min -> 7.
+        assertEquals(7, ExamTiming.suggestedMinutes(20, secondsPerQuestion = 20))
+        assertEquals(30, ExamTiming.suggestedMinutes(20, secondsPerQuestion = 90))
+        assertEquals(1, ExamTiming.suggestedMinutes(1))
+        assertEquals(1, ExamTiming.suggestedMinutes(0))
+    }
+
+    @Test
+    fun thePaceClampIs20To180() {
+        assertEquals(20, ExamTiming.clampPace(0))
+        assertEquals(20, ExamTiming.clampPace(5))
+        assertEquals(60, ExamTiming.clampPace(60))
+        assertEquals(180, ExamTiming.clampPace(300))
+    }
+
+    @Test
+    fun aPlausiblePaperPaceIsOffered() {
+        // 120 minutes over 100 questions = 72 s/question.
+        assertEquals(72, ExamTiming.paperPaceSeconds(paperMinutes = 120, totalQuestions = 100))
+        assertEquals(20, ExamTiming.paperPaceSeconds(paperMinutes = 10, totalQuestions = 30))
+        assertEquals(180, ExamTiming.paperPaceSeconds(paperMinutes = 30, totalQuestions = 10))
+    }
+
+    @Test
+    fun anImplausiblePaperPaceIsNotOffered() {
+        // 120 minutes over 1,000 questions = 7.2 s/question: absurd as a target.
+        assertNull(ExamTiming.paperPaceSeconds(paperMinutes = 120, totalQuestions = 1_000))
+        assertNull(ExamTiming.paperPaceSeconds(paperMinutes = 600, totalQuestions = 10))
+        assertNull(ExamTiming.paperPaceSeconds(paperMinutes = 0, totalQuestions = 100))
+        assertNull(ExamTiming.paperPaceSeconds(paperMinutes = 120, totalQuestions = 0))
     }
 }

@@ -38,7 +38,6 @@
     <string name="difficulty">Difficulty</string>
     <string name="dismiss">Dismiss</string>
     <string name="done">Done</string>
-    <string name="drill">Drill</string>
     <string name="duplicate_question">Duplicate question</string>
     <string name="duration_min">Duration (min)</string>
     <string name="duration_minutes_0_untimed">Duration (minutes, 0 = untimed)</string>
@@ -150,18 +149,6 @@
     <string name="loading">Loading…</string>
     <string name="manage">Manage</string>
     <string name="show_categories">Show categories</string>
-    <string name="drill_scope_shortfall">This selection has only %1$d question(s). Enter %1$d or fewer.</string>
-    <string name="drill_scope_empty">This selection has no questions to drill.</string>
-    <string name="drill_paper_empty">This paper has no questions yet, so there is nothing to drill.</string>
-    <plurals name="drill_paper_shortfall">
-        <item quantity="one">This paper has only %1$d question. Enter %1$d or fewer.</item>
-        <item quantity="other">This paper has only %1$d questions. Enter %1$d or fewer.</item>
-    </plurals>
-    <plurals name="drill_preview">
-        <item quantity="one">%1$d random question, %2$d:00 on the clock.</item>
-        <item quantity="other">%1$d random questions, %2$d:00 on the clock.</item>
-    </plurals>
-    <string name="drill_enter_positive">Enter positive numbers for both.</string>
     <string name="marks_blank_keep">Marks (blank = keep)</string>
     <string name="marks_must_be_non_negative">Marks must be a non-negative number.</string>
     <string name="marks_default_1">Marks (default 1)</string>
@@ -245,7 +232,6 @@
     <string name="question_image">Question image</string>
     <string name="questions">Questions</string>
     <string name="questions_without_an_answer_key">Questions without an answer key</string>
-    <string name="quick_drill">Quick drill</string>
     <string name="refresh">Refresh</string>
     <string name="refresh_answers_on_re_import">Refresh answers on re-import</string>
     <string name="remove">Remove</string>
@@ -272,13 +258,38 @@
     <string name="shuffle_options">Shuffle options</string>
     <string name="shuffle_question_order">Shuffle question order</string>
     <string name="test_action">Test</string>
-    <string name="start_drill">Start drill</string>
     <string name="start_test">Start test</string>
     <string name="edit_paper">Edit paper</string>
-    <string name="duration_minutes_blank_untimed">Duration in minutes (blank = untimed)</string>
     <string name="start_fresh">Start fresh</string>
     <string name="strict_exam_mode">Strict exam mode</string>
     <string name="study">Study</string>
+
+    <!-- Test setup sheet (phase 1) -->
+    <string name="test_setup_title">Start a test</string>
+    <string name="test_setup_type">Test type</string>
+    <string name="test_setup_type_random">Random</string>
+    <string name="test_setup_type_mistakes">Mistakes</string>
+    <string name="test_setup_type_random_help">A random sample of the chosen scope.</string>
+    <string name="test_setup_type_mistakes_help">Previously missed questions in the chosen scope.</string>
+    <string name="test_setup_more_types">More types will be added in future releases.</string>
+    <string name="test_setup_scope_whole_paper">Whole paper</string>
+    <string name="test_setup_scope_categories">%1$d categories</string>
+    <string name="test_setup_pool_questions">%1$d questions</string>
+    <string name="test_setup_pool_mistakes">%1$d mistakes</string>
+    <string name="test_setup_counting">Counting…</string>
+    <string name="test_setup_length">Length</string>
+    <string name="test_setup_count_label">%1$d questions</string>
+    <string name="test_setup_short_test">Short test — %1$d questions</string>
+    <string name="test_setup_time">Time</string>
+    <string name="test_setup_minutes">Minutes</string>
+    <string name="test_setup_minutes_label">%1$d min</string>
+    <string name="test_setup_untimed">Untimed</string>
+    <string name="test_setup_suggested">Suggested: %1$d min</string>
+    <string name="test_setup_use_suggested">Use suggested</string>
+    <string name="test_preview_comparable">comparable</string>
+    <string name="test_preview_practice">practice · not comparable</string>
+    <string name="test_preview_short">Short test · %1$d questions</string>
+    <string name="test_setup_no_mistakes">No mistakes in this scope.</string>
     <string name="study_again">Study again</string>
     <string name="submit">Submit</string>
     <string name="submit_test">Submit test?</string>

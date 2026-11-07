@@ -545,6 +545,16 @@ internal class HistoryStore(
         // graded. The library recomputes this after every finished test.
         db.attemptDao().countMistakesByPaper().associate { it.paperId to it.count }
 
+    /**
+     * Counts the mistakes inside a scoped selection. The paper-level badge
+     * counts every mistake in the paper, which would overstate a scoped
+     * pool, so the scope needs its own count.
+     */
+    suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int {
+        if (scopeIds.isEmpty()) return 0
+        return db.attemptDao().countMistakesInScope(paperId, scopeIds)
+    }
+
     /** Export DTO of all bookmarked questions, grouped by source paper. */
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? {
         val ids = db.bookmarkDao().getAll()

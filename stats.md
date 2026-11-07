@@ -266,11 +266,10 @@ Test · Polity
 Scope:  Whole paper · 1,000 questions          [Change]
         or: 3 topics · 240 questions
 
-Type:   [Mock: Random]  [Mock: Balanced]
-        [Practice: Weakest topics] [Practice: Toughest questions]
-        [Warm-up: Easiest] [Practice: Mistakes] [Practice: Tricky]
-        [Practice: At risk] [Coverage: Unseen]
-        [Custom: Bookmarked] [Custom: Tag] [Custom: Authored difficulty]
+Type:   [Mock: Random]  [Practice: Mistakes]
+        [Balanced] [Weakest topics] [Toughest questions] [Easiest]
+        [Tricky] [At risk] [Unseen] [Bookmarked] [Tag]
+        [Authored difficulty] [Slowest] [Mixed] — not available yet
 
 Length: [20] [50] [80] [100] [120] [150]      − 20 +
 
@@ -290,13 +289,17 @@ Preview: Random sample · 20 questions · 20 min · comparable
   the ticked categories on the card" and return; phase 1 does not need a new
   category tree inside the sheet.
 - Type cards show a one-line description, the type's available pool, and a
-  **Comparable** or **Practice** badge.
+  **Comparable** or **Practice** badge. Unimplemented types are shown
+  disabled with "not available yet" and never emitted as a route.
 - Length chips are disabled when the scope or type cannot supply that many
   questions.
 - Start is disabled when the scope has no questions, the type pool is empty,
   or the selected length is invalid.
 - The preview line is the contract: it names the type, the requested length,
   the time and the comparability.
+- Phase 1 ships only **Random** and **Mistakes**; the other type cards are
+  present but disabled with "not available yet". The sheet never emits a route
+  that the session's `buildPlan()` would refuse (section 16 C5).
 
 ### 7.3 Length rules
 
@@ -2083,10 +2086,12 @@ banks.
      `exclusion`; keep old `drillCount`/`drillMinutes` parsing for old deep
      links). A missing `type` is legacy, not Random; a present but unknown
      type, or a type with no length, is refused rather than run as legacy.
-   - The setup sheet that supplies `type`/`count`/`exclusion` is a later UI
-     slice. Until it lands, only a deep link or a test can start a bounded
-     plan; the library's Test and Mistakes shortcuts still take the legacy
-     routes, so the two-tap acceptance criterion is not met yet.
+   - The setup sheet (ModalBottomSheet) supplies `type`/`count`/`exclusion`
+     and produces a bounded route. The library's Test and Mistakes shortcuts
+     now open the sheet with `RANDOM` or `MISTAKES` preselected, achieving
+     the two-tap acceptance criterion. Phase 1 ships only `RANDOM` and
+     `MISTAKES`; other types are hidden/disabled with "not available yet" and
+     the sheet never emits a route the session refuses.
    - Expand the scope once with `CategorySelection.orderedIds` before any
      selector or quota calculation; pass the full expanded list (parents
      included) to `getOrderForCategories`, whose query is
@@ -2341,74 +2346,83 @@ banks.
 
 ## 15. Acceptance criteria
 
-- [ ] There is one Test entry point; Quick drill no longer exists as a
+- [x] There is one Test entry point; Quick drill no longer exists as a
       separate icon, dialog or route.
-- [ ] Test always asks for a length; allowed lengths are 20–150 in steps of
+- [x] Test always asks for a length; allowed lengths are 20–150 in steps of
       10; presets are 20/50/80/100/120/150; the default is 20.
 - [ ] A scope smaller than 20 gets a labelled **Short test · N questions**, not
       a disabled Test button; a sampler result below 20 from a larger scope is
-      also labelled **Short test** and gets no margin or trend.
+      also labelled **Short test** and gets no margin or trend. (Phase 1 labels
+      short tests in the preview but the Resume prompt is not yet implemented;
+      see §7.6.)
 - [ ] The sampler never returns an empty session; when no passage fits the
       requested length and overshoot limit, it refuses with a specific message
-      and suggests a longer length.
-- [ ] A 1,000-question paper can start a 20-question test in two taps.
-- [ ] Submitting that test stores `requestedCount = 20` and
+      and suggests a longer length. (Sampler logic done; sheet shows message.)
+- [x] A 1,000-question paper can start a 20-question test in two taps.
+- [x] Submitting that test stores `requestedCount = 20` and
       `totalQuestions = shown` (20, or the passage overshoot), not 1,000.
-- [ ] A test never contains more than 150 questions.
-- [ ] The sampler prefers an exact fit; a 19 + 130 pool does not become 149,
+- [x] A test never contains more than 150 questions.
+- [x] The sampler prefers an exact fit; a 19 + 130 pool does not become 149,
       and a 6 + 5 + 5 pool reaches 10 as 5 + 5.
-- [ ] Unanswered questions within the sample are skipped; questions outside
+- [x] Unanswered questions within the sample are skipped; questions outside
       the sample are not in the attempt at all.
-- [ ] Scope and length are shown separately on the start sheet and the result.
-- [ ] Ticking a parent topic includes its subtree, and ticking a parent plus
+- [x] Scope and length are shown separately on the start sheet and the result.
+- [x] Ticking a parent topic includes its subtree, and ticking a parent plus
       its child does not duplicate questions.
-- [ ] Random and Balanced are labelled comparable; every practice type is
+- [x] Random and Balanced are labelled comparable; every practice type is
       labelled not comparable.
 - [ ] An attempt with "Avoid recently tested questions" on is labelled
-      **Fresh sample** and is never compared to a strict Random attempt.
+      **Fresh sample** and is never compared to a strict Random attempt. (Not
+      implemented in phase 1; `RECENT_3` is refused.)
 - [ ] Weakest topics, Toughest questions and Easiest questions work from
       `question_stats` + `card_state` + authored difficulty, with neutral
-      priors and documented fallbacks.
-- [ ] Mistakes is bounded by the same length and uses the latest graded,
+      priors and documented fallbacks. (Not implemented in phase 1.)
+- [x] Mistakes is bounded by the same length and uses the latest graded,
       answered standing by `finishedAt DESC, id DESC` (skips are not
       mistakes).
 - [ ] A focus type with a short pool fills from its ladder and shows the
-      composition.
+      composition. (Not implemented in phase 1.)
 - [ ] The 40% category cap applies to Toughest/Tricky and relaxes with
-      redistribution when it is infeasible.
-- [ ] Passages stay whole; the header explains any difference between asked
+      redistribution when it is infeasible. (Not implemented in phase 1.)
+- [x] Passages stay whole; the header explains any difference between asked
       and shown.
-- [ ] Sampling is deterministic across resume; focus selections are stored as
+- [x] Sampling is deterministic across resume; focus selections are stored as
       ids and never re-ranked on resume.
-- [ ] Saving a test does not change `card_state` or `review_log`.
-- [ ] Deleting an attempt recomputes the affected `question_stats` rows; a
+- [x] Saving a test does not change `card_state` or `review_log`.
+- [x] Deleting an attempt recomputes the affected `question_stats` rows; a
       skip-only row survives, and a row whose last result is deleted is
       removed.
-- [ ] The partial `question_results` index exists after both a v20 → v21
+- [x] The partial `question_results` index exists after both a v20 → v21
       migration and a fresh create.
-- [ ] Attempts record type, requested count, scope, canonical scope key,
+- [x] Attempts record type, requested count, scope, canonical scope key,
       sampling version, exclusion mode, target topics, seed and composition;
       old attempts and snapshots still load as legacy.
-- [ ] `rep*` counters update only for Random/Balanced attempts with
+- [x] `rep*` counters update only for Random/Balanced attempts with
       `samplingVersion >= 2`; practice and legacy attempts do not touch them.
 - [ ] History/Results show the type; Statistics keeps mock and practice, and
-      strict and fresh, separate.
+      strict and fresh, separate. (Not implemented in phase 1.)
 - [ ] The result page labels the attempt kind and comparability, and shows
       score and accuracy separately with correct/wrong/skipped/ungraded and
-      the negative-marking note (12/4/2/2 at 1/3 marking = 59.3%).
+      the negative-marking note (12/4/2/2 at 1/3 marking = 59.3%). (Not
+      implemented in phase 1.)
 - [ ] Representative tests show the sample size and an approximate margin
-      using the shown count; short and legacy attempts do not.
+      using the shown count; short and legacy attempts do not. (Not
+      implemented in phase 1.)
 - [ ] The page shows weakest topics with sample sizes, as-of-attempt titles,
-      the unresolved count and the topics that were not sampled.
+      the unresolved count and the topics that were not sampled. (Not
+      implemented in phase 1.)
 - [ ] It explains where the marks went with evidence (time, FSRS, skip,
-      guess), using "likely/suggests" language.
+      guess), using "likely/suggests" language. (Not implemented in phase 1.)
 - [ ] It shows time analysis, coverage, repeats, mistakes and due-in-Study
-      where available.
+      where available. (Not implemented in phase 1.)
 - [ ] It gives three to five evidence-backed next actions with working links.
+      (Not implemented in phase 1.)
 - [ ] Practice results never show a mock trend or claim mock comparability;
-      their per-topic trend uses the recorded target set.
-- [ ] The page states that the test did not change the Study schedule.
-- [ ] README matches the behavior.
+      their per-topic trend uses the recorded target set. (Not implemented in
+      phase 1.)
+- [ ] The page states that the test did not change the Study schedule. (Not
+      implemented in phase 1.)
+- [ ] README matches the behavior. (Not implemented in phase 1.)
 
 ## 16. Decisions accepted by the owner
 

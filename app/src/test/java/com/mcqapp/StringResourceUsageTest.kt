@@ -36,7 +36,11 @@ class StringResourceUsageTest {
         // a field's value). Confirm the enclosing expression actually lands
         // somewhere rendered by looking at its receiver: `selectedTitle` in
         // the editor is used as `value = selectedTitle`.
-        if (before.endsWith("?:") || before.endsWith("->")) return true
+        // A fallback branch: the value flows on into a rendered position
+        // (`x ?: stringResource(...)` or the branches of a `when` that feeds
+        // a field's value). Also handles if/else branches: look back for `if (`.
+        if (before.endsWith("?:") || before.endsWith("->") ||
+            Regex("if\\s*\\([^}]*$").find(before.trimEnd()) != null) return true
         return isInsideTextCall(src, offset)
     }
 

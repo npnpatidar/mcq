@@ -106,57 +106,6 @@ internal fun PaperDialog(
 }
 
 
-/**
- * The per-attempt duration picker shown when Test is tapped. [initialMinutes]
- * is the paper's stored duration (0 when untimed), so the field opens ready
- * to start unchanged; blank means untimed for this run only — the paper's
- * stored duration is not rewritten.
- */
-@Composable
-internal fun TestDurationDialog(
-    paperTitle: String,
-    initialMinutes: Int,
-    onDismiss: () -> Unit,
-    onStart: (minutes: Int) -> Unit
-) {
-    var duration by remember(paperTitle, initialMinutes) {
-        mutableStateOf(if (initialMinutes > 0) initialMinutes.toString() else "")
-    }
-    // Clamp through ExamTiming so a typed 10_000_000 lands on the same
-    // ceiling the importer and the ViewModel use.
-    val minutes = com.mcqapp.domain.ExamTiming.minutesFrom(duration.toIntOrNull() ?: 0)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.test_action)) },
-        text = {
-            Column {
-                Text(
-                    paperTitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = duration,
-                    onValueChange = { duration = it.filter { c -> c.isDigit() }.take(6) },
-                    label = { Text(stringResource(R.string.duration_minutes_blank_untimed)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onStart(minutes) }) { Text(stringResource(R.string.start_test)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-        }
-    )
-}
-
-
 @Composable
 internal fun EditCategoryDialog(
     category: CategoryNode,

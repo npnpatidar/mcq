@@ -2082,6 +2082,26 @@ interface AttemptDao {
     )
     suspend fun getMistakenQuestionIdsForPaper(paperId: String): List<String>
 
+    /**
+     * Counts the mistakes inside a scoped selection. Uses the same standing
+     * rule (latest graded, answered row per question) but restricts to the
+     * given category ids. A cheap chunked helper would be needed for large
+     * scopes; phase 1 uses it only when the scope is explicitly ticked.
+     */
+    @Query(
+        "SELECT COUNT(DISTINCT r.questionId) FROM question_results r " +
+            "INNER JOIN attempts ON r.attemptId = attempts.id " +
+            "INNER JOIN questions q ON q.id = r.questionId " +
+            "WHERE attempts.paperId = :paperId AND q.categoryId IN (:scopeIds) " +
+            "AND r.isCorrect = 0 " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId " +
+            "AND r2.selectedOptionIds != '' AND r2.correctOptionIds != '' " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1)"
+    )
+    suspend fun countMistakesInScope(paperId: String, scopeIds: List<String>): Int
+
     @Query("SELECT * FROM question_results WHERE attemptId = :attemptId ORDER BY rowid")
     suspend fun getResults(attemptId: Long): List<QuestionResultEntity>
 

@@ -862,6 +862,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun latestAttemptFinishedAt(paperId: String): Long? =
         db.attemptDao().getLatestFinishedAt(paperId)
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
+    /**
+     * Counts the mistakes inside a scoped selection. The paper-level badge
+     * counts every mistake in the paper, which would overstate a scoped
+     * pool, so the scope needs its own count.
+     */
+    suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int =
+        historyStore.getScopedMistakeCount(paperId, scopeIds)
     /** Mistaken questions as a session order: content is fetched when one is opened. */
     suspend fun getMistakenQuestionOrder(paperId: String): SessionOrder =
         SessionOrder.of(historyStore.getMistakenQuestionRefs(paperId))

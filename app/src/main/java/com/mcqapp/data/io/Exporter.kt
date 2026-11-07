@@ -102,6 +102,15 @@ class Exporter(private val db: AppDatabase) {
                         maxScore = attempt.maxScore,
                         durationSeconds = attempt.durationSeconds,
                         finishedAt = attempt.finishedAt,
+                        testType = attempt.testType,
+                        requestedCount = attempt.requestedCount,
+                        scopeCategoryIds = attempt.scopeCategoryIds,
+                        scopeKey = attempt.scopeKey,
+                        samplingVersion = attempt.samplingVersion,
+                        seed = attempt.seed,
+                        exclusionMode = attempt.exclusionMode,
+                        targetTopicIds = attempt.targetTopicIds,
+                        compositionJson = attempt.compositionJson,
                         results = results.map { r ->
                             AttemptResultDto(
                                 questionId = r.questionId,
@@ -188,6 +197,15 @@ class Exporter(private val db: AppDatabase) {
                 maxScore = attempt.maxScore,
                 durationSeconds = attempt.durationSeconds,
                 finishedAt = attempt.finishedAt,
+                testType = attempt.testType,
+                requestedCount = attempt.requestedCount,
+                scopeCategoryIds = attempt.scopeCategoryIds,
+                scopeKey = attempt.scopeKey,
+                samplingVersion = attempt.samplingVersion,
+                seed = attempt.seed,
+                exclusionMode = attempt.exclusionMode,
+                targetTopicIds = attempt.targetTopicIds,
+                compositionJson = attempt.compositionJson,
                 results = results.map { r ->
                     AttemptResultDto(
                         questionId = r.questionId,

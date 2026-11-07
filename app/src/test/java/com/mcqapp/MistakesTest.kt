@@ -15,7 +15,13 @@ import org.junit.Test
 class MistakesTest {
 
     private fun standing(id: String, paperId: String, isCorrect: Boolean, rowId: Long) =
-        MistakeStanding(questionId = id, paperId = paperId, isCorrect = isCorrect, order = rowId)
+        MistakeStanding(
+            questionId = id,
+            paperId = paperId,
+            isCorrect = isCorrect,
+            finishedAt = rowId,
+            rowId = rowId
+        )
 
     @Test
     fun collectsWrongGroupedByPaperRecentFirst() {
@@ -51,6 +57,35 @@ class MistakesTest {
         )
         assertEquals(
             listOf("still-wrong"),
+            Mistakes.mistakenIdsByPaper(standings)["p1"]
+        )
+    }
+
+    /**
+     * `finishedAt` outranks the result id. A merge import can give an *older*
+     * attempt a larger `question_results.id`, so ordering by id alone would
+     * put the older miss first (the SQL test for that shape is CI-only).
+     */
+    @Test
+    fun finishedAtOutranksTheResultIdInTheMistakeOrder() {
+        val standings = listOf(
+            MistakeStanding(
+                questionId = "older-attempt-newer-result-id",
+                paperId = "p1",
+                isCorrect = false,
+                finishedAt = 100L,
+                rowId = 9L
+            ),
+            MistakeStanding(
+                questionId = "newer-attempt-smaller-result-id",
+                paperId = "p1",
+                isCorrect = false,
+                finishedAt = 200L,
+                rowId = 2L
+            )
+        )
+        assertEquals(
+            listOf("newer-attempt-smaller-result-id", "older-attempt-newer-result-id"),
             Mistakes.mistakenIdsByPaper(standings)["p1"]
         )
     }

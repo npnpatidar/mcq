@@ -2,14 +2,15 @@ package com.mcqapp.domain
 
 /**
  * One question's current standing: the most recent graded, answered result
- * row. [order] is the rowid scan position of that row, standing in for
- * recency exactly as the old rowid-ordered full scan did.
+ * row. Recency is `finishedAt DESC, rowId DESC` — the attempt's finish time,
+ * not the result id, because a merge import can write an older attempt later.
  */
 data class MistakeStanding(
     val questionId: String,
     val paperId: String,
     val isCorrect: Boolean,
-    val order: Long
+    val finishedAt: Long,
+    val rowId: Long
 )
 
 /**
@@ -22,18 +23,21 @@ data class MistakeStanding(
  */
 object Mistakes {
 
+    /** Newest first: the attempt's finish time, then the result id. */
+    private val recency = compareBy<MistakeStanding>({ it.finishedAt }, { it.rowId })
+
     /**
      * The latest standing per question decides: wrong means a mistake,
      * correct clears it. Duplicate standings for a question are tolerated —
-     * the highest [MistakeStanding.order] wins — though the SQL seam
+     * the newest by [recency] wins — though the SQL seam
      * ([com.mcqapp.data.local.AttemptDao.getLatestStandings]) already yields
      * at most one per question.
      */
     fun mistakenIdsByPaper(standings: List<MistakeStanding>): Map<String, List<String>> =
         standings
             .groupBy { it.questionId }
-            .mapNotNull { (_, perQuestion) -> perQuestion.maxByOrNull { it.order } }
+            .mapNotNull { (_, perQuestion) -> perQuestion.maxWithOrNull(recency) }
             .filter { !it.isCorrect }
-            .sortedByDescending { it.order }
+            .sortedWith(recency.reversed())
             .groupBy({ it.paperId }, { it.questionId })
 }

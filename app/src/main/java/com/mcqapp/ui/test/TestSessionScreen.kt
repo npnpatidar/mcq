@@ -105,12 +105,19 @@ fun TestSessionScreen(
     drillCount: Int = 0,
     drillMinutes: Int = 0,
     durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION,
+    /** Bounded-Test selector name, or blank for a legacy deep link. */
+    testType: String = "",
+    /** Requested length, or 0 for a legacy deep link. */
+    requestedCount: Int = 0,
+    /** Exclusion rule name, or blank for NONE. */
+    exclusionMode: String = "",
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
         key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly" +
-            "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes",
+            "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes" +
+            "-type=$testType-count=$requestedCount-exclusion=$exclusionMode",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
@@ -118,7 +125,10 @@ fun TestSessionScreen(
             mistakesOnly,
             drillCount,
             drillMinutes,
-            durationMinutes
+            durationMinutes,
+            testType,
+            requestedCount,
+            exclusionMode
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()

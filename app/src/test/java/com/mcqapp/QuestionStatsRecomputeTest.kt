@@ -328,4 +328,45 @@ class QuestionStatsRecomputeTest {
             after.lastFinishedAt
         )
     }
+
+    // The write-path guard (section 12.3): the last-standing pair follows
+    // `finishedAt DESC, id DESC`. On insert, `>=` is that rule because the new
+    // result always has the largest id.
+
+    @Test
+    fun aNewerAttemptAdvancesTheLastStanding() = runBlocking {
+        save(1000L, listOf(result("q1")), "RANDOM", 2)
+        save(2000L, listOf(result("q1", correct = false)), "RANDOM", 2)
+
+        val after = stats("q1")!!
+        assertEquals(2, after.total)
+        assertFalse("the newer wrong answer is the standing", after.lastCorrect)
+        assertEquals(2000L, after.lastFinishedAt)
+    }
+
+    @Test
+    fun anOlderAttemptSavedLaterDoesNotRegressTheLastStanding() = runBlocking {
+        // A merge import can write an older attempt after a newer one; its
+        // larger result id must not make it the standing.
+        save(2000L, listOf(result("q1", correct = false)), "RANDOM", 2)
+        save(1000L, listOf(result("q1")), "RANDOM", 2)
+
+        val after = stats("q1")!!
+        assertEquals(2, after.total)
+        assertEquals(1, after.correct)
+        assertEquals(1, after.wrong)
+        assertFalse("the earlier correct answer must not win", after.lastCorrect)
+        assertEquals(2000L, after.lastFinishedAt)
+    }
+
+    @Test
+    fun anEqualFinishedAtSavedLaterWinsTheTie() = runBlocking {
+        save(1000L, listOf(result("q1", correct = false)), "RANDOM", 2)
+        save(1000L, listOf(result("q1")), "RANDOM", 2)
+
+        val after = stats("q1")!!
+        assertEquals(2, after.total)
+        assertTrue("the later insert wins an equal finishedAt", after.lastCorrect)
+        assertEquals(1000L, after.lastFinishedAt)
+    }
 }

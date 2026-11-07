@@ -16,6 +16,7 @@ import com.mcqapp.data.local.applyQuestionStats
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.domain.Attempt
+import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.Mastery
 import com.mcqapp.domain.NumberedResult
 import com.mcqapp.domain.Question
@@ -273,7 +274,8 @@ internal class HistoryStore(
         negativeMarking: Double,
         durationSeconds: Long,
         finishedAt: Long,
-        dwellSeconds: Map<String, Long> = emptyMap()
+        dwellSeconds: Map<String, Long> = emptyMap(),
+        metadata: AttemptMetadata = AttemptMetadata()
     ): Long {
         val tally = Tally()
         val results = mutableListOf<QuestionResultEntity>()
@@ -299,7 +301,16 @@ internal class HistoryStore(
                 score = tally.score,
                 maxScore = tally.maxScore,
                 durationSeconds = durationSeconds,
-                finishedAt = finishedAt
+                finishedAt = finishedAt,
+                testType = metadata.testType,
+                requestedCount = metadata.requestedCount,
+                scopeCategoryIds = metadata.scopeCategoryIds,
+                scopeKey = metadata.scopeKey,
+                samplingVersion = metadata.samplingVersion,
+                seed = metadata.seed,
+                exclusionMode = metadata.exclusionMode,
+                targetTopicIds = metadata.targetTopicIds,
+                compositionJson = metadata.compositionJson
             )
             val attemptId = db.attemptDao().insertAttempt(attempt)
             db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
@@ -335,6 +346,7 @@ internal class HistoryStore(
         durationSeconds: Long,
         finishedAt: Long,
         dwellSeconds: Map<String, Long> = emptyMap(),
+        metadata: AttemptMetadata = AttemptMetadata(),
         onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
     ): Long = db.withTransaction {
         val tally = Tally()
@@ -349,7 +361,16 @@ internal class HistoryStore(
             score = 0.0,
             maxScore = 0.0,
             durationSeconds = durationSeconds,
-            finishedAt = finishedAt
+            finishedAt = finishedAt,
+            testType = metadata.testType,
+            requestedCount = metadata.requestedCount,
+            scopeCategoryIds = metadata.scopeCategoryIds,
+            scopeKey = metadata.scopeKey,
+            samplingVersion = metadata.samplingVersion,
+            seed = metadata.seed,
+            exclusionMode = metadata.exclusionMode,
+            targetTopicIds = metadata.targetTopicIds,
+            compositionJson = metadata.compositionJson
         )
         val attemptId = db.attemptDao().insertAttempt(attempt)
         val categoryTitles = HashMap<String, String>()
@@ -417,7 +438,16 @@ internal class HistoryStore(
         score = score,
         maxScore = maxScore,
         durationSeconds = durationSeconds,
-        finishedAt = finishedAt
+        finishedAt = finishedAt,
+        testType = testType,
+        requestedCount = requestedCount,
+        scopeCategoryIds = scopeCategoryIds,
+        scopeKey = scopeKey,
+        samplingVersion = samplingVersion,
+        seed = seed,
+        exclusionMode = exclusionMode,
+        targetTopicIds = targetTopicIds,
+        compositionJson = compositionJson
     )
 
     /**
@@ -561,7 +591,9 @@ internal class HistoryStore(
         // to this paper and preserves the most-recently-missed-first order.
         val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
             db.attemptDao().getLatestStandings().map {
-                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+                com.mcqapp.domain.MistakeStanding(
+                    it.questionId, it.paperId, it.isCorrect, it.finishedAt, it.rowId
+                )
             }
         )[paperId] ?: return emptyList()
         if (ids.isEmpty()) return emptyList()

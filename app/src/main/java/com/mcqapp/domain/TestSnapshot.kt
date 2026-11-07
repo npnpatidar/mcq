@@ -47,6 +47,23 @@ data class TestSnapshot(
      *  inflating the session (consolidated_bugs.md D1/D4). */
     val isDrill: Boolean = false,
     val mistakesOnly: Boolean = false,
+    /**
+     * Canonical expanded scope identity (section 12.2). Empty on legacy
+     * snapshots, which fall back to the raw tick-set comparison.
+     */
+    val scopeKey: String = "",
+    /** The selector that produced the session; null on legacy snapshots. */
+    val testType: String? = null,
+    /** The requested length; 0 on legacy snapshots. */
+    val requestedCount: Int = 0,
+    /** Frozen metric-based selection, in presented order. */
+    val selectedQuestionIds: List<String> = emptyList(),
+    /** Compatibility; new snapshots write 2, legacy snapshots read as 1. */
+    val samplingVersion: Int = 1,
+    /** Resume only the same exclusion rule. */
+    val exclusionMode: String = "NONE",
+    /** Recorded practice targets, sorted and deduplicated. */
+    val targetTopicIds: List<String> = emptyList(),
     /** Seconds already spent in an untimed session, banked on every autosave
      *  so a kill does not shrink the recorded duration (D7). */
     val elapsedSeconds: Int = 0,
@@ -67,11 +84,31 @@ data class TestSnapshot(
         categoryIds: List<String>,
         isDrill: Boolean = false,
         mistakesOnly: Boolean = false,
-        drillRequested: Int = 0
-    ): Boolean =
-        this.paperId == paperId && this.categoryIds.toSet() == categoryIds.toSet() &&
+        drillRequested: Int = 0,
+        testType: String? = null,
+        requestedCount: Int = 0,
+        exclusionMode: String = "NONE",
+        targetTopicIds: List<String> = emptyList(),
+        scopeKey: String = ""
+    ): Boolean {
+        // New snapshots carry the canonical expanded scope; a legacy snapshot
+        // (and a legacy caller) has no key, so it keeps the raw tick-set
+        // comparison it was written with. The two forms never match each
+        // other: a legacy snapshot must not be offered to a new test. A
+        // type-tagged document below sampling version 2 is malformed (only a
+        // legacy writer leaves it at 1), so it is not current either.
+        val scopeMatches = if (this.scopeKey.isNotEmpty() || scopeKey.isNotEmpty()) {
+            this.scopeKey.isNotEmpty() && this.scopeKey == scopeKey && this.samplingVersion >= 2
+        } else {
+            this.categoryIds.toSet() == categoryIds.toSet()
+        }
+        return this.paperId == paperId && scopeMatches &&
             this.isDrill == isDrill && this.mistakesOnly == mistakesOnly &&
-            (!isDrill || this.drillRequested == drillRequested)
+            (!isDrill || this.drillRequested == drillRequested) &&
+            this.testType == testType && this.requestedCount == requestedCount &&
+            this.exclusionMode == exclusionMode &&
+            this.targetTopicIds.toSet() == targetTopicIds.toSet()
+    }
 
     /** Whether any question was actually answered (reaching one is not answering). */
     val hasAnswers: Boolean get() = selections.any { it.value.isNotEmpty() }
@@ -142,6 +179,12 @@ data class TestSnapshot(
          * starts fresh instead of resuming into a session missing questions.
          */
         fun orderOf(base: SessionOrder, saved: TestSnapshot): SessionOrder? {
+            // A bounded Test freezes its sample: replay exactly those ids and
+            // never re-rank. The seed path below cannot reproduce a
+            // metric-based or bounded sample, so it must not run for them.
+            if (saved.selectedQuestionIds.isNotEmpty()) {
+                return base.subsetInOrder(saved.selectedQuestionIds)
+            }
             val seed = saved.questionSeed ?: return base.reorderedTo(saved.questionIds)
             val shuffled = base.shuffled(seed, saved.questionShuffle)
             val drillSeed = saved.drillSeed

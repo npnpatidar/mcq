@@ -2016,22 +2016,27 @@ interface AttemptDao {
     suspend fun getById(id: Long): AttemptEntity?
 
     /**
-     * Each question's most recent graded result across every attempt: the
-     * MAX(id) graded row per question wins, regardless of which attempt
-     * holds it. Rows with no selection or no answer key carry no evidence,
-     * so they are filtered in SQL — the mistake badges used to pull every
-     * attempt and every result row (full option JSON included) into memory
-     * instead of this single aggregate. Explicit `ORDER BY r.id` pins the
-     * scan order the mistake ordering relies on.
+     * Each question's most recent graded result across every attempt, by
+     * `attempts.finishedAt DESC, question_results.id DESC` (section 12.3).
+     * Result ids alone are not recency: a merge import can write an older
+     * attempt later with a larger id. Rows with no selection or no answer key
+     * carry no evidence, so they are filtered in SQL — the mistake badges used
+     * to pull every attempt and every result row (full option JSON included)
+     * into memory instead of this single aggregate.
      */
     @Query(
         "SELECT r.questionId AS questionId, attempts.paperId AS paperId, " +
-            "r.isCorrect AS isCorrect, r.id AS rowId " +
+            "r.isCorrect AS isCorrect, attempts.finishedAt AS finishedAt, " +
+            "r.id AS rowId " +
             "FROM question_results r " +
             "INNER JOIN attempts ON r.attemptId = attempts.id " +
-            "WHERE r.id IN (SELECT MAX(id) FROM question_results " +
-            "WHERE selectedOptionIds != '' AND correctOptionIds != '' GROUP BY questionId) " +
-            "ORDER BY r.id"
+            "WHERE r.selectedOptionIds != '' AND r.correctOptionIds != '' " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId " +
+            "AND r2.selectedOptionIds != '' AND r2.correctOptionIds != '' " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1) " +
+            "ORDER BY attempts.finishedAt DESC, r.id DESC"
     )
     suspend fun getLatestStandings(): List<LatestStanding>
 
@@ -2048,9 +2053,12 @@ interface AttemptDao {
         "SELECT attempts.paperId AS paperId, COUNT(*) AS count " +
             "FROM question_results r " +
             "INNER JOIN attempts ON r.attemptId = attempts.id " +
-            "WHERE r.isCorrect = 0 AND r.id IN (" +
-            "SELECT MAX(id) FROM question_results " +
-            "WHERE selectedOptionIds != '' AND correctOptionIds != '' GROUP BY questionId) " +
+            "WHERE r.isCorrect = 0 " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId " +
+            "AND r2.selectedOptionIds != '' AND r2.correctOptionIds != '' " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1) " +
             "GROUP BY attempts.paperId"
     )
     suspend fun countMistakesByPaper(): List<PaperMistakeCount>
@@ -2064,10 +2072,13 @@ interface AttemptDao {
     @Query(
         "SELECT r.questionId AS questionId FROM question_results r " +
             "INNER JOIN attempts ON r.attemptId = attempts.id " +
-            "WHERE attempts.paperId = :paperId AND r.isCorrect = 0 AND r.id IN (" +
-            "SELECT MAX(id) FROM question_results " +
-            "WHERE selectedOptionIds != '' AND correctOptionIds != '' GROUP BY questionId) " +
-            "ORDER BY r.id DESC"
+            "WHERE attempts.paperId = :paperId AND r.isCorrect = 0 " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId " +
+            "AND r2.selectedOptionIds != '' AND r2.correctOptionIds != '' " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1) " +
+            "ORDER BY attempts.finishedAt DESC, r.id DESC"
     )
     suspend fun getMistakenQuestionIdsForPaper(paperId: String): List<String>
 
@@ -2169,7 +2180,19 @@ interface QuestionStatsDao {
             "COALESCE((SELECT repCorrect FROM question_stats WHERE questionId = :questionId), 0) + :repCorrect, " +
             "COALESCE((SELECT repWrong FROM question_stats WHERE questionId = :questionId), 0) + :repWrong, " +
             "COALESCE((SELECT repSkip FROM question_stats WHERE questionId = :questionId), 0) + :repSkip, " +
-            ":isCorrect, :finishedAt"
+            // The last-standing pair follows `finishedAt DESC, id DESC` (section
+            // 12.3). On this write path the new result always has the largest
+            // result id (autoincrement, serialized writes), so `>=` on
+            // finishedAt is exactly that rule: an equal timestamp must let the
+            // row being inserted win the tie. `-1` means "no stored row yet".
+            "CASE WHEN :finishedAt >= COALESCE(" +
+            "(SELECT lastFinishedAt FROM question_stats WHERE questionId = :questionId), -1) " +
+            "THEN :isCorrect ELSE COALESCE(" +
+            "(SELECT lastResultIsCorrect FROM question_stats WHERE questionId = :questionId), 0) END, " +
+            "CASE WHEN :finishedAt >= COALESCE(" +
+            "(SELECT lastFinishedAt FROM question_stats WHERE questionId = :questionId), -1) " +
+            "THEN :finishedAt ELSE COALESCE(" +
+            "(SELECT lastFinishedAt FROM question_stats WHERE questionId = :questionId), :finishedAt) END"
     )
     suspend fun bumpQuestionStats(
         questionId: String,
@@ -2526,13 +2549,14 @@ data class SessionRefRow(
 
 /**
  * One row of [AttemptDao.getLatestStandings]: a question's latest graded
- * standing. [rowId] orders standings by recency, the same key the old
- * rowid-ordered full scan used.
+ * standing. Recency is `finishedAt DESC, rowId DESC`, not the row id alone,
+ * because a merge import can write an older attempt later.
  */
 data class LatestStanding(
     val questionId: String,
     val paperId: String,
     val isCorrect: Boolean,
+    val finishedAt: Long,
     val rowId: Long
 )
 

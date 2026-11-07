@@ -79,10 +79,23 @@ fun testRoute(
     drillCount: Int = 0,
     drillMinutes: Int = 0,
     /** Per-attempt duration in minutes; -1 = the paper's own duration. */
-    minutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION
+    minutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION,
+    /**
+     * The bounded-Test selector (a [com.mcqapp.domain.TestType] name), or
+     * blank for a legacy deep link. The setup sheet passes this with [count];
+     * the old drill and mistakes links leave it blank and stay legacy.
+     */
+    type: String = "",
+    /** The requested length (20..150 step 10); 0 for a legacy link. */
+    count: Int = 0,
+    /** The exclusion rule name; blank means [com.mcqapp.domain.ExclusionMode.NONE]. */
+    exclusion: String = ""
 ): String = "test?paperId=${encode(paperId)}" +
     "&categories=${encodeCategoryList(categoryIds)}" +
     "&mistakes=$mistakes" +
     "&drillCount=$drillCount" +
     "&drillMinutes=$drillMinutes" +
-    "&minutes=$minutes"
+    "&minutes=$minutes" +
+    "&type=${encode(type)}" +
+    "&count=$count" +
+    "&exclusion=${encode(exclusion)}"

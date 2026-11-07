@@ -387,11 +387,17 @@ On resume:
 - Rebuild the order directly from the saved ids, dropping ids that no longer
   exist. Do not re-rank, re-sample or re-shuffle.
 - If fewer than 20 ids remain, warn and offer "Resume with N questions" or
-  "Start a new test".
+  "Start a new test". **Not yet implemented:** phase 1 resumes the surviving
+  ids without the labelled prompt; it lands with the setup/resume UI slice.
 - A snapshot from an older version (`isDrill`, `drillRequested`, no
   `testType`, `samplingVersion < 2`) is a **legacy snapshot**. Resume it as a
   labelled Short/Legacy session, or offer "Start a new test"; never silently
-  start a 10-question Random test.
+  start a 10-question Random test. **Not yet implemented for a bounded route:**
+  a legacy snapshot is still offered when the route is legacy, but a bounded
+  route does not yet offer it as a labelled legacy session. Starting the new
+  test takes the single resume slot and `TestProgressStore.save` drops the old
+  session's answer rows, so they cannot leak into the new attempt; the labelled
+  legacy resume lands with the setup/resume UI slice.
 - `TestSnapshot.matches` must include the test type and requested count, not
   only paper + categories + drill shape.
 
@@ -1063,14 +1069,15 @@ with a weak-topic head start; label it accordingly.
   store them in presented order.
 - Store `testType` (nullable; `NULL` = legacy), `requestedCount` (0 = legacy),
   `scopeCategoryIds` (ticked ids for display), `scopeKey` (canonical),
-  `samplingVersion` (new attempts write **2**), `seed`, `exclusionMode`,
-  `targetTopicIds` and (for focus fills) `compositionJson`.
+  `samplingVersion` (new **bounded** attempts write **2**; a legacy route
+  keeps 1), `seed`, `exclusionMode`, `targetTopicIds` and (for focus fills)
+  `compositionJson`.
 - The canonical `scopeKey` is the subtree-expanded, deduplicated, sorted
   category id list, joined with a separator and hashed; the whole paper gets a
   distinct constant. Identical scopes must produce the same key.
 - `TestSnapshot` adds `testType` (nullable), `requestedCount`,
-  `selectedQuestionIds`, `samplingVersion`, `exclusionMode` and
-  `targetTopicIds`. Old snapshots have `testType = null` and
+  `selectedQuestionIds`, `samplingVersion`, `exclusionMode`, `targetTopicIds`
+  and `scopeKey`. Old snapshots have `testType = null` and
   `samplingVersion = 1`; they are legacy, not Random.
 - `matches()` includes the type, count, exclusion mode, expanded `scopeKey`
   and target set. A Weakest-topics snapshot must not be offered to a Random
@@ -1831,7 +1838,7 @@ Add:
 | `requestedCount` | INTEGER NOT NULL | 0 | What the learner asked for (20–150). 0 = legacy. |
 | `scopeCategoryIds` | TEXT NOT NULL | `''` | Ticked categories, comma-joined, for display; empty = whole paper. |
 | `scopeKey` | TEXT NOT NULL | `''` | Canonical, subtree-expanded scope key used for comparability. |
-| `samplingVersion` | INTEGER NOT NULL | 1 | Reproducibility. New attempts write **2**. |
+| `samplingVersion` | INTEGER NOT NULL | 1 | Reproducibility. New **bounded** attempts write **2**; a legacy route keeps 1. |
 | `seed` | INTEGER NOT NULL | 0 | Random/balanced seed. |
 | `exclusionMode` | TEXT NOT NULL | `NONE` | `NONE` = strict sample; `RECENT_3` = fresh sample. |
 | `targetTopicIds` | TEXT NOT NULL | `''` | Sorted, deduped, comma-joined Weakest/Mixed targets. |
@@ -1845,6 +1852,13 @@ fields with defaults so old rows and old code keep working.
 comparable and never contributes to `rep*` counters, even though
 `exclusionMode` defaults to `NONE`. Do not infer `RANDOM` for a `NULL` type;
 `NULL` means "unknown design", not "strict random".
+
+The `''` defaults above describe a **pre-v21 row**, not a new write. A legacy
+route (a deep link with no `type`) that finishes after the upgrade still writes
+a real `scopeKey` — `paper:<id>` for the whole paper, the expanded key
+otherwise — alongside `testType = NULL`, `requestedCount = 0` and
+`samplingVersion = 1`, so its scope is identifiable even though it is not
+comparable. Only a migrated pre-v21 row carries the empty key.
 
 **Canonical scope key.** `scopeKey` is built from the ticked scope expanded
 once with `CategorySelection.orderedIds`: each ticked node expands to itself
@@ -1884,15 +1898,18 @@ Add:
 | `testType` | String?, nullable | `null` | Resume only the same type; `null` = legacy snapshot. |
 | `requestedCount` | Int | 0 | Resume only the same length; 0 = legacy. |
 | `selectedQuestionIds` | List<String> | empty | Frozen metric-based selection, in presented order. |
-| `samplingVersion` | Int | 1 | Compatibility; new snapshots write 2. |
+| `samplingVersion` | Int | 1 | Compatibility; new bounded snapshots write 2, a legacy route keeps 1. |
 | `exclusionMode` | String | `NONE` | Resume only the same exclusion rule. |
 | `targetTopicIds` | List<String> | empty | Recorded practice targets. |
+| `scopeKey` | String | `''` | Canonical expanded scope identity; `''` on legacy snapshots. |
 
 Keep `isDrill`, `drillRequested`, `drillSeed` for reading old snapshots; new
 code writes `testType` and `requestedCount`. A snapshot with `testType = null`
 or `samplingVersion < 2` is a **legacy snapshot**: it resumes as a labelled
 Short/Legacy session or offers "Start a new test", and is never silently
-reinterpreted as a 10-question Random test.
+reinterpreted as a 10-question Random test. (A legacy route still does this; a
+bounded route's labelled legacy resume is not implemented yet — see section
+7.6.)
 
 `matches()` includes the type, count, exclusion mode, target set and the
 expanded `scopeKey` (not the raw tick order). A Weakest-topics snapshot must
@@ -1930,12 +1947,14 @@ result. It also updates `lastResultIsCorrect` / `lastFinishedAt` when the new
 result is later by `finishedAt DESC, id DESC`. This happens in the same
 transaction as the result insert.
 
-**Write-rule guard is deferred.** The shipped write path still overwrites
-`lastResultIsCorrect` / `lastFinishedAt` unconditionally; the
-`finishedAt DESC, id DESC` guard lands with the attempt-metadata slice, which
-must also decide the tie-break input — the result id is not available before
-the insert, so it needs the inserted id or a stored last-result id. Do not add
-a `lastResultId` column in the schema slice.
+**Last-standing guard.** The write path updates `lastResultIsCorrect` /
+`lastFinishedAt` only when the new result is at least as recent: `>=` on
+`finishedAt`, keeping the stored pair otherwise. That is the full
+`finishedAt DESC, id DESC` rule on this path because the result being inserted
+always has the largest `question_results.id` (autoincrement, serialized
+writes), so an equal `finishedAt` must let the new row win the tie. No
+`lastResultId` column is needed. The delete recompute implements the full
+`ORDER BY finishedAt DESC, id DESC` directly.
 
 **Delete rule: `question_stats` means "currently stored".** The current
 `QuestionStatsEntity` comment says deleting an attempt intentionally leaves the
@@ -2044,22 +2063,30 @@ banks.
      ad-hoc scoring logic.
 2. **Data**
    - Migration v20 → v21 for the `attempts` columns and the three `rep*`
-     columns on `question_stats`; new attempts write `samplingVersion = 2`.
+     columns on `question_stats`; new bounded attempts write
+     `samplingVersion = 2` (a legacy route keeps 1).
    - Create the partial `question_results` index in **both** the v20 → v21
      migration and a `RoomDatabase.Callback.onCreate` for fresh installs.
    - Update `Attempt`, `AttemptEntity`, `AttemptDto`, `Exporter`, `Importer`,
      `StreamingImportSession`.
    - Add the new `TestSnapshot` fields with defaults.
    - Add the indexes listed in sections 9.10 and 12.3.
-   - Fix `getLatestStandings` and `countMistakesByPaper` to order by
-     `finishedAt DESC, id DESC`; this is a query rewrite, not an index.
+   - Fix `getLatestStandings`, `countMistakesByPaper` and
+     `getMistakenQuestionIdsForPaper` to order by `finishedAt DESC, id DESC`;
+     this is a query rewrite (correlated subquery, not a window function —
+     `minSdk = 26` means SQLite 3.18), not an index.
    - Implement the `question_stats` recompute on delete (all-attempt and
      `rep*` counters, last-standing fields, delete only at
      `totalAttempts == 0`).
 3. **Repository/VM**
    - `TestViewModel` accepts a `TestPlan` (route: `type`, `count`, `minutes`,
      `exclusion`; keep old `drillCount`/`drillMinutes` parsing for old deep
-     links). A missing `type` is legacy, not Random.
+     links). A missing `type` is legacy, not Random; a present but unknown
+     type, or a type with no length, is refused rather than run as legacy.
+   - The setup sheet that supplies `type`/`count`/`exclusion` is a later UI
+     slice. Until it lands, only a deep link or a test can start a bounded
+     plan; the library's Test and Mistakes shortcuts still take the legacy
+     routes, so the two-tap acceptance criterion is not met yet.
    - Expand the scope once with `CategorySelection.orderedIds` before any
      selector or quota calculation; pass the full expanded list (parents
      included) to `getOrderForCategories`, whose query is
@@ -2236,7 +2263,8 @@ banks.
 - New DAO queries return the expected counts and order.
 - Indexes are used (query plan assertions where practical).
 - Migration v20 → v21 preserves old attempts with nullable `testType` and
-  `samplingVersion = 1`; new attempts write `samplingVersion = 2`.
+  `samplingVersion = 1`; new bounded attempts write `samplingVersion = 2`, and
+  a legacy route keeps 1 while still recording a real `scopeKey`.
 - The partial `question_results` index exists after **both** a v20 → v21
   migration and a fresh create (the `RoomDatabase.Callback.onCreate` path).
 - Backup/export/import round-trips the new attempt fields.
@@ -2253,7 +2281,8 @@ banks.
   not by blind decrement; deleting a practice attempt leaves `rep*` unchanged.
 - Paper, category, question and restore paths leave no orphaned
   `question_stats` rows.
-- `getLatestStandings` and `countMistakesByPaper` pick the result by
+- `getLatestStandings`, `countMistakesByPaper` and
+  `getMistakenQuestionIdsForPaper` pick the result by
   `finishedAt DESC, id DESC`, including after a merge import.
 - Comparable-attempt query matches the full key, including exclusion mode.
 - A 1,000-question paper with a 20-question plan saves
@@ -2407,7 +2436,7 @@ settle points the plan left open, and they are binding on the implementation:
 | C2 | Pre-v21 attempts | **Out of scope.** No backfill and no pre-v21 exclusion. Legacy full-scope attempts inflate `skipCount`, so `skip(q)` and Tricky are weak until bounded attempts exist; this is documented wherever they appear. |
 | C3 | `targetTopicIds` | Sorted, deduped, comma-joined Weakest/Mixed targets; **outside** the comparability key; empty for other types. The per-topic practice trend compares the recorded set, and an empty-target run cannot contribute. |
 | C4 | Partial index creation | Created in **both** the v20 → v21 migration and `RoomDatabase.Callback.onCreate`; tested on a migrated database and a fresh create. |
-| C5 | Sampling version and legacy count | New attempts write `samplingVersion = 2`; legacy attempts read as `samplingVersion = 1` and `requestedCount = 0`; a legacy snapshot is never resumed as a Random test. |
+| C5 | Sampling version and legacy count | New **bounded** attempts write `samplingVersion = 2`; a legacy route keeps `samplingVersion = 1` and `requestedCount = 0`; a legacy snapshot is never resumed as a Random test. |
 | C6 | Margin denominator | The margin uses the **shown** count; comparability uses the **requested** count. A passage overshoot makes the margin approximate and the label says so. |
 
 **FSRS difficulty (accepted as guidance).** Use `card_state.difficulty` as a

@@ -16,11 +16,17 @@ class TestViewModelFactory(
     private val mistakesOnly: Boolean = false,
     private val drillCount: Int = 0,
     private val drillMinutes: Int = 0,
-    private val durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION
+    private val durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION,
+    private val testType: String = "",
+    private val requestedCount: Int = 0,
+    private val exclusionMode: String = ""
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return TestViewModel(application, paperId, categoryIds, mistakesOnly, drillCount, drillMinutes, durationMinutes) as T
+        return TestViewModel(
+            application, paperId, categoryIds, mistakesOnly, drillCount, drillMinutes,
+            durationMinutes, testType, requestedCount, exclusionMode
+        ) as T
     }
 }
 

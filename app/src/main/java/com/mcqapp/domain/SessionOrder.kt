@@ -209,6 +209,30 @@ class SessionOrder private constructor(
         return SessionOrder(pool, starts, out, passages, passageOf)
     }
 
+    /**
+     * The exact sub-order named by [savedIds], in that order, dropping ids the
+     * base no longer holds. Unlike [reorderedTo], the rest of the base is not
+     * appended: a frozen bounded sample is exactly its saved ids, and adding
+     * the unselected questions would silently turn a 20-question test into the
+     * whole scope.
+     */
+    fun subsetInOrder(savedIds: List<String>): SessionOrder? {
+        if (savedIds.isEmpty()) return this
+        val rowById = HashMap<String, Int>(size * 2)
+        for (row in 0 until size) rowById[idOfRow(row)] = row
+        val out = IntArray(savedIds.size)
+        var written = 0
+        val seen = java.util.BitSet(size)
+        for (id in savedIds) {
+            val row = rowById[id] ?: continue
+            if (seen.get(row)) continue
+            out[written++] = row
+            seen.set(row)
+        }
+        if (written == 0) return null
+        return SessionOrder(pool, starts, out.copyOf(written), passages, passageOf)
+    }
+
     private fun idOfRow(row: Int): String =
         String(pool, starts[row], starts[row + 1] - starts[row], Charsets.UTF_8)
 

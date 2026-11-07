@@ -156,6 +156,20 @@ data class AttemptDto(
     val maxScore: Double = 0.0,
     val durationSeconds: Long = 0,
     val finishedAt: Long = 0,
+    /**
+     * Bounded-Test metadata (section 12.1). Defaults are the legacy values, so
+     * an old backup imports as `testType = null`, `requestedCount = 0` and
+     * `samplingVersion = 1`; a null type is never inferred as RANDOM.
+     */
+    val testType: String? = null,
+    val requestedCount: Int = 0,
+    val scopeCategoryIds: String = "",
+    val scopeKey: String = "",
+    val samplingVersion: Int = 1,
+    val seed: Long = 0,
+    val exclusionMode: String = "NONE",
+    val targetTopicIds: String = "",
+    val compositionJson: String = "",
     val results: List<AttemptResultDto> = emptyList()
 )
 

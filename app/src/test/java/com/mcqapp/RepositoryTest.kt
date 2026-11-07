@@ -588,12 +588,71 @@ class RepositoryTest {
         repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 2000L)
         val before = db.cardStateDao().get("p1", "q1")!!
         assertTrue(before.reps >= 2)
-        // Change the text, so the stored hash no longer matches.
+        // Change the text: the card is now a question nobody has studied, so
+        // its schedule row disappears rather than being rewritten as NEW.
         repository.saveQuestion(question("q1", setOf("q1-a")).copy(elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Rewritten"))))
         repository.getStudyQueue("p1")
-        val after = db.cardStateDao().get("p1", "q1")!!
-        assertEquals(0, after.reps)
-        assertEquals(0, after.lapses)
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
+        // The old answers are still history, and the card is served as new.
+        assertEquals(2, db.reviewLogDao().historyForQuestion("q1").size)
+        assertEquals(
+            com.mcqapp.domain.StudyReason.NEW,
+            repository.getStudyQueue("p1").first { it.questionId == "q1" }.reason
+        )
+    }
+
+    @Test
+    fun editingTheAnswerKeyResetsItsSchedule() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        assertTrue(db.cardStateDao().get("p1", "q1")!!.reps >= 1)
+        // The key is part of what the card tested, even though it never enters
+        // the dedup hash.
+        repository.saveQuestion(question("q1", setOf("q1-b")))
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
+    fun editingOnlyTheExplanationOrMetadataKeepsItsSchedule() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        val before = db.cardStateDao().get("p1", "q1")!!
+        repository.saveQuestion(
+            question("q1", setOf("q1-a"), marks = 3.0).copy(
+                explanationElements = listOf(com.mcqapp.domain.ContentElement.TextElement("Because.")),
+                tags = listOf("arithmetic")
+            )
+        )
+        assertEquals(before, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
+    fun editingAQuestionTableResetsItsSchedule() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        val table = com.mcqapp.domain.ContentElement.TableElement(listOf(listOf("1", "2")))
+        repository.saveQuestion(
+            question("q1", setOf("q1-a")).copy(
+                elements = listOf(
+                    com.mcqapp.domain.ContentElement.TextElement("Q q1"),
+                    table
+                )
+            )
+        )
+        repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
+        assertTrue(db.cardStateDao().get("p1", "q1")!!.reps >= 1)
+        // Only the table changes: the text hash is blind to it, the content
+        // fingerprint is not.
+        repository.saveQuestion(
+            question("q1", setOf("q1-a")).copy(
+                elements = listOf(
+                    com.mcqapp.domain.ContentElement.TextElement("Q q1"),
+                    com.mcqapp.domain.ContentElement.TableElement(listOf(listOf("1", "3")))
+                )
+            )
+        )
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
     }
 
     @Test
@@ -602,8 +661,9 @@ class RepositoryTest {
         repository.saveQuestion(question("q1", setOf("q1-a")))
         repository.saveQuestion(question("q1", setOf("q1-a")).copy(elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Rewritten"))))
         repository.getStudyQueue("p1")
-        // The reset must store the new hash, otherwise the next load sees a
-        // stale hash again and wipes any progress made since.
+        // The reset leaves no row, so the next review starts that card from
+        // scratch; the new schedule then describes the new text and survives
+        // later loads.
         repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 5000L)
         val progress = db.cardStateDao().get("p1", "q1")!!
         assertTrue(progress.reps >= 1)

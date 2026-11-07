@@ -172,10 +172,12 @@ class ImportSchedulingTest {
     }
 
     @Test
-    fun anEditedQuestionStillTakesThePackagesSchedule() = runBlocking {
+    fun anEditedQuestionDoesNotTakeThePackagesStaleSchedule() = runBlocking {
         Importer(db).import(file(), mapOf("q1" to schedule()))
 
-        // Same id, different text: an update, not a duplicate.
+        // Same id, different text: an update, not a duplicate. The package's
+        // schedule describes the sentence the learner had studied, so it is
+        // not applied to the new text; the card is left unstudied.
         val edited = file().let { f ->
             f.copy(
                 papers = f.papers.map { p ->
@@ -190,8 +192,53 @@ class ImportSchedulingTest {
         val report = Importer(db).import(edited, mapOf("q1" to schedule()))
 
         assertEquals(1, report.updatedQuestions)
-        assertEquals(1, report.restoredSchedules)
+        assertEquals(0, report.restoredSchedules)
         assertTrue(db.questionDao().getById("q1")!!.text.contains("again"))
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
+    fun aChangedAnswerResetsTheSchedule() = runBlocking {
+        Importer(db).import(file(), mapOf("q1" to schedule()))
+
+        val rekeyed = file().let { f ->
+            f.copy(
+                papers = f.papers.map { p ->
+                    p.copy(
+                        categories = p.categories.map { c ->
+                            c.copy(questions = c.questions.map { it.copy(correctOptionIds = listOf("b")) })
+                        }
+                    )
+                }
+            )
+        }
+        val report = Importer(db).import(rekeyed, mapOf("q1" to schedule()))
+
+        assertEquals(1, report.updatedQuestions)
+        assertEquals(0, report.restoredSchedules)
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
+    fun anExplanationEditKeepsTheSchedule() = runBlocking {
+        Importer(db).import(file(), mapOf("q1" to schedule()))
+
+        val explained = file().let { f ->
+            f.copy(
+                papers = f.papers.map { p ->
+                    p.copy(
+                        categories = p.categories.map { c ->
+                            c.copy(questions = c.questions.map { it.copy(explanation = "Two plus two is four.") })
+                        }
+                    )
+                }
+            )
+        }
+        val report = Importer(db).import(explained, mapOf("q1" to schedule()))
+
+        // The explanation is not part of what the card tests, so the old
+        // interval survives (and the file's own schedule is applied).
         assertEquals(5, db.cardStateDao().get("p1", "q1")!!.intervalDays)
+        assertEquals(1, report.restoredSchedules)
     }
 }

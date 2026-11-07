@@ -12,6 +12,7 @@ import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.applyQuestionStats
+import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
@@ -455,6 +456,13 @@ internal class StreamingImportSession(
                     // so this paper's categories must be written.
                     enableWrites()
                     needsWrite = true
+                    if (CardContent.of(candidate.entity, candidate.options, candidate.correctIds) !=
+                        CardContent.of(scaledQuestion)
+                    ) {
+                        // The key or an image changed: the stored schedule
+                        // describes content the learner no longer sees.
+                        db.cardStateDao().deleteByQuestion(sameContentId)
+                    }
                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                     db.correctAnswerDao().upsertAll(
                         dto.correctOptionIds.map { CorrectAnswerEntity(sameContentId, it) }
@@ -515,6 +523,28 @@ internal class StreamingImportSession(
             } else {
                 scaledQuestion.copy(id = effectiveQuestionId)
             }
+            // A changed hash means text, option text/images or the passage
+            // changed — all card content. A matching hash can still hide a
+            // table, a formula, the key or the question image, so only that
+            // case pays for the full comparison.
+            val contentChanged = if (existingQuestion != null && !ownedElsewhere) {
+                if (existingQuestion.contentHash != contentHash) {
+                    true
+                } else {
+                    val storedOptions = db.optionDao().getByQuestion(effectiveQuestionId)
+                    val storedCorrect = db.correctAnswerDao()
+                        .getCorrectIds(effectiveQuestionId).toSet()
+                    CardContent.of(existingQuestion, storedOptions, storedCorrect) !=
+                        CardContent.of(questionForWrite)
+                }
+            } else {
+                false
+            }
+            if (contentChanged) {
+                // Absent is "never studied": delete the schedule rather than
+                // writing a NEW row, and keep the review log.
+                db.cardStateDao().deleteByQuestion(effectiveQuestionId)
+            }
             val resolvedSortOrder = if (existingQuestion == null || ownedElsewhere) {
                 if (!maxSortLoaded) {
                     currentMaxSort = db.questionDao().getMaxSortOrder(currentCategoryId!!) ?: -1
@@ -550,38 +580,43 @@ internal class StreamingImportSession(
                 dto.correctOptionIds.map { CorrectAnswerEntity(effectiveQuestionId, it) }
             )
 
-            // Accepted, so a tail `scheduling` entry naming it applies at
-            // [finish]: remember the paper it landed under, the row id it was
-            // written under, and the hash of its stored bytes.
-            acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, effectiveQuestionId, contentHash))
+            // A content-changed question gets no restored schedule: the file's
+            // progress describes the old content. Its entry is not remembered
+            // either, so a tail `scheduling` page reports it as skipped.
+            if (!contentChanged) {
+                // Accepted, so a tail `scheduling` entry naming it applies at
+                // [finish]: remember the paper it landed under, the row id it was
+                // written under, and the hash of its stored bytes.
+                acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, effectiveQuestionId, contentHash))
 
-            // Review progress is applied only to a question this import
-            // accepted, exactly as the whole-file importer applies the file's
-            // `scheduling` map. The hash is the stored bytes' hash, because
-            // that is what the study session recomputes: a mismatch reads as
-            // edited content and would reset the card on the next load.
-            schedules[dto.id]?.let { schedule ->
-                db.cardStateDao().upsert(
-                    CardStateEntity(
-                        paperId = effectivePaperId,
-                        questionId = effectiveQuestionId,
-                        ease = schedule.ease,
-                        intervalDays = schedule.intervalDays,
-                        dueAt = schedule.dueAt,
-                        reps = schedule.reps,
-                        lapses = schedule.lapses,
-                        leech = schedule.leech,
-                        lastReviewedAt = schedule.lastReviewedAt,
-                        difficulty = schedule.difficulty,
-                        stability = schedule.stability,
-                        cardState = runCatching {
-                            CardStateKind.valueOf(schedule.cardState)
-                        }.getOrDefault(CardStateKind.NEW),
-                        reviewCount = schedule.reviewCount,
-                        contentHash = contentHash
+                // Review progress is applied only to a question this import
+                // accepted, exactly as the whole-file importer applies the file's
+                // `scheduling` map. The hash is the stored bytes' hash, because
+                // that is what the study session recomputes: a mismatch reads as
+                // edited content and would reset the card on the next load.
+                schedules[dto.id]?.let { schedule ->
+                    db.cardStateDao().upsert(
+                        CardStateEntity(
+                            paperId = effectivePaperId,
+                            questionId = effectiveQuestionId,
+                            ease = schedule.ease,
+                            intervalDays = schedule.intervalDays,
+                            dueAt = schedule.dueAt,
+                            reps = schedule.reps,
+                            lapses = schedule.lapses,
+                            leech = schedule.leech,
+                            lastReviewedAt = schedule.lastReviewedAt,
+                            difficulty = schedule.difficulty,
+                            stability = schedule.stability,
+                            cardState = runCatching {
+                                CardStateKind.valueOf(schedule.cardState)
+                            }.getOrDefault(CardStateKind.NEW),
+                            reviewCount = schedule.reviewCount,
+                            contentHash = contentHash
+                        )
                     )
-                )
-                restoredSchedules++
+                    restoredSchedules++
+                }
             }
         }
     }
@@ -680,13 +715,19 @@ internal class StreamingImportSession(
                 continue
             }
             val existing = db.passageDao().getById(passageId)
-            db.passageDao().upsert(
-                passageDto.withDownscaledImages().toPassageEntity(
-                    categoryId = passageCategory.getValue(passageId),
-                    sortOrder = existing?.sortOrder ?: 0,
-                    json = json
-                )
+            val incoming = passageDto.withDownscaledImages().toPassageEntity(
+                categoryId = passageCategory.getValue(passageId),
+                sortOrder = existing?.sortOrder ?: 0,
+                json = json
             )
+            val passageChanged = existing != null && CardContent.passageChanged(existing, incoming)
+            db.passageDao().upsert(incoming)
+            if (passageChanged) {
+                val members = db.passageDao().memberIds(passageId)
+                if (members.isNotEmpty()) {
+                    db.cardStateDao().deleteByQuestionsChunked(members)
+                }
+            }
         }
     }
 

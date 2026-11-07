@@ -226,14 +226,72 @@ class PassageRepositoryTest {
         // because a badge read must not seed a row per question of the paper.
         repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1000L)
         assertEquals(hashAtP, db.cardStateDao().get("p1", "q1")!!.contentHash)
-        // Unassign: the stored hash no longer matches, so the next resolve resets.
+        // Unassign: the stored hash no longer matches and, because the card's
+        // context changed, its schedule row is removed at once.
         repository.unassignQuestionsFromPassage(listOf("q1"))
         assertEquals(null, db.questionDao().getById("q1")!!.passageId)
         assertTrue(db.questionDao().getById("q1")!!.contentHash != hashAtP)
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
         repository.getStudyQueue("p1")
-        val after = db.cardStateDao().get("p1", "q1")!!
-        assertEquals(db.questionDao().getById("q1")!!.contentHash, after.contentHash)
-        assertEquals("the reset drops the progress that described other text", 0, after.reps)
+        assertEquals("a reset card is indistinguishable from an unstudied one",
+            null, db.cardStateDao().get("p1", "q1"))
+    }
+
+    @Test
+    fun editingAPassageBodyResetsEveryMemberCard() = runBlocking {
+        val pid = repository.savePassage(
+            Passage(
+                id = "",
+                categoryId = "c1",
+                title = "P",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Body"))
+            )
+        )
+        repository.assignQuestionsToPassage(listOf("q1", "q2"), pid)
+        repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1000L)
+        repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = 1000L)
+        assertNotNull(db.cardStateDao().get("p1", "q1"))
+        assertNotNull(db.cardStateDao().get("p1", "q2"))
+
+        repository.savePassage(
+            Passage(
+                id = pid,
+                categoryId = "c1",
+                title = "P",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Changed body"))
+            )
+        )
+
+        // Both members learned the old body; one edit clears both schedules,
+        // and the review log stays.
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
+        assertEquals(null, db.cardStateDao().get("p1", "q2"))
+        assertEquals(1, db.reviewLogDao().historyForQuestion("q1").size)
+    }
+
+    @Test
+    fun renamingAPassageResetsEveryMemberCard() = runBlocking {
+        val pid = repository.savePassage(
+            Passage(
+                id = "",
+                categoryId = "c1",
+                title = "First title",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Body"))
+            )
+        )
+        repository.assignQuestionsToPassage(listOf("q1"), pid)
+        repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1000L)
+
+        repository.savePassage(
+            Passage(
+                id = pid,
+                categoryId = "c1",
+                title = "Second title",
+                elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Body"))
+            )
+        )
+
+        assertEquals(null, db.cardStateDao().get("p1", "q1"))
     }
 
     @Test

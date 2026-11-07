@@ -470,7 +470,7 @@ class StatsAggregatorTest {
     // --- card counts and distributions --------------------------------------------
 
     @Test
-    fun cardCountsSplitByStateAndMaturity() {
+    fun cardCountsSkipNewCardsAndSplitByMaturity() {
         val cards = listOf(
             card("q1", state = CardStateKind.NEW),
             card("q2", state = CardStateKind.LEARNING, dueAt = now),
@@ -481,13 +481,14 @@ class StatsAggregatorTest {
         )
         val bundle = StatsAggregator.build(input(cards = cards), null, StatsAggregator.Range.ALL)
         val counts = bundle.cardCounts
-        assertEquals(1, counts.fresh)
+        // A NEW row is not a studied card; the tab has no meaningful bucket
+        // for it, so the never-studied row is skipped entirely.
         assertEquals(1, counts.learning)
         assertEquals(1, counts.relearning)
         assertEquals(1, counts.young)
         assertEquals(2, counts.mature)
         assertEquals(1, counts.leeches)
-        assertEquals(6, counts.total)
+        assertEquals(5, counts.total)
     }
 
     @Test
@@ -524,8 +525,8 @@ class StatsAggregatorTest {
         assertEquals(3, papers[0].total)
         assertEquals(1, papers[0].mature)
         assertEquals(1, papers[0].learning)
-        assertEquals(2, papers[1].total)
-        assertEquals(1, papers[1].fresh)
+        // p1's only studied card is q1; q2 is NEW and therefore not counted.
+        assertEquals(1, papers[1].total)
 
         val scoped = StatsAggregator.build(input(cards = cards), "p1", StatsAggregator.Range.ALL)
         assertTrue(scoped.paperCounts.isEmpty())

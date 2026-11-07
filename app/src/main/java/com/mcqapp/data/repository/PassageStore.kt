@@ -3,7 +3,9 @@ package com.mcqapp.data.repository
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.PassageEntity
+import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.io.CardContent
 import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
@@ -65,7 +67,18 @@ internal class PassageStore(
                 ?: passage.sortOrder.takeIf { it > 0 }
                 ?: (db.passageDao().getMaxSortOrder(passage.categoryId) ?: -1) + 1
             val content = mapper.toEntity(passage.copy(id = id))
+            val contentChanged = existing != null && CardContent.of(existing) != CardContent.of(content)
             db.passageDao().upsert(content.copy(sortOrder = sortOrder))
+            if (contentChanged) {
+                // Members learned the old body. The group is usually <10, so
+                // resetting every one of them is cheaper than tracking which
+                // member read which block.
+                val members = db.passageDao().memberIds(id)
+                if (members.isNotEmpty()) {
+                    db.cardStateDao().deleteByQuestionsChunked(members)
+                    Logger.i("REPO", "savePassage($id): content changed, reset ${members.size} card(s)")
+                }
+            }
             // A passage's members must live in its category (the group is
             // only meaningful together). Moving the passage to another
             // category therefore moves every member with it — otherwise they
@@ -124,8 +137,13 @@ internal class PassageStore(
         // safely.
         db.withTransaction {
             val passage = db.passageDao().getById(passageId)
+            // A member that changes passage learned its content under another
+            // context; its schedule is dropped like any other content change.
+            val before = db.questionDao().getByIdsChunked(questionIds.toList()).associateBy { it.id }
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
             questionIds.forEach { refreshContentHash(it) }
+            val moved = before.values.filter { it.passageId != passageId }.map { it.id }
+            if (moved.isNotEmpty()) db.cardStateDao().deleteByQuestionsChunked(moved)
             // Category first, placement second: placeWithGroup anchors within
             // the (new) category, so it must already be the passage's.
             if (passage != null) {
@@ -148,8 +166,11 @@ internal class PassageStore(
     suspend fun unassignQuestions(questionIds: Collection<String>) {
         if (questionIds.isEmpty()) return
         db.withTransaction {
+            val before = db.questionDao().getByIdsChunked(questionIds.toList())
             questionIds.forEach { db.passageDao().assignToMember(it, null) }
             questionIds.forEach { refreshContentHash(it) }
+            val moved = before.filter { it.passageId != null }.map { it.id }
+            if (moved.isNotEmpty()) db.cardStateDao().deleteByQuestionsChunked(moved)
         }
         Logger.i("REPO", "unassignQuestions(${questionIds.size} ids)")
     }

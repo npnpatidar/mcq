@@ -485,7 +485,7 @@ abstract class AppDatabase : RoomDatabase() {
          * the extra index does not fail schema validation.
          */
         const val PARTIAL_RESULT_INDEX_SQL =
-            "CREATE INDEX IF NOT EXISTS `index_question_results_question_id_graded` " +
+            "CREATE INDEX IF NOT EXISTS `index_question_results_questionId_id` " +
                 "ON `question_results` (`questionId`, `id`) " +
                 "WHERE `selectedOptionIds` != ''"
 

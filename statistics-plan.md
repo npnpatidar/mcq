@@ -1,9 +1,11 @@
 # Comprehensive statistics
 
-Status: implemented on `feature/comprehensive-stats`. This document is the
-design record and the work plan: every metric below states its definition, its
-data source and where it appears. Anything deliberately left out is listed at
-the end with the reason.
+Status: **partially implemented** on `feature/comprehensive-stats`. The six
+existing SRS tabs are implemented; the **Exam**, **Coverage** and **Progress**
+tabs are design-only and depend on the bounded Test work in
+[`stats.md`](stats.md). This document is the design record and the work plan:
+every metric below states its definition, its data source and where it appears.
+Anything deliberately left out is listed at the end with the reason.
 
 ## 1. Goal
 
@@ -71,9 +73,13 @@ The existing design is not optional; new metrics must fit it:
   ignore it.
 - **One offset per load.** Day bucketing uses the visit's UTC offset; history
   is never re-bucketed through travel/DST shifts.
-- **No schema change in the first delivery.** Everything in sections 4–8 is
-  derived from existing columns. Section 10 lists the metrics that would need
-  new logging and why they are deferred.
+- **No schema change in the statistics delivery itself.** Everything in
+  sections 4–8 is derived from existing columns. The bounded-Test prerequisite
+  does add a schema change — `attempts` metadata columns, `question_stats.rep*`
+  counters and a partial `question_results` index (v20 → v21, `stats.md`
+  section 12) — and the Exam tab must not ship before that migration. Section
+  10 lists the metrics that would need further new logging and why they are
+  deferred.
 
 ## 4. New tab: Exam
 
@@ -81,35 +87,87 @@ Source: `attempts` and `question_results` (the same tables History uses).
 Scope and range apply: `attempts.paperId`, `attempts.finishedAt` inside the
 range window (day-boundary based, matching the SRS tabs).
 
+**Only bounded attempts are charted.** A pre-v21 attempt (`testType IS NULL`,
+`requestedCount = 0`, `samplingVersion = 1`) is legacy: it may be listed in
+`recent` with a "Legacy" badge, but it never enters a trend, a best/average
+figure or a comparison. This is a documented limitation, not a hidden filter.
+
+**Comparability.** The Exam tab groups by the same key as the result page:
+`(paperId, testType, scopeKey, requestedCount, samplingVersion,
+exclusionMode)`. A trend line is built only inside one key. In particular:
+
+- **Strict and Fresh sample attempts are separate lines.** `exclusionMode =
+  NONE` is strict; `RECENT_3` is a Fresh sample. A fresh sample is never
+  plotted against a strict attempt, and its confidence band is labelled
+  approximate because each run excludes a different set.
+- **Practice is a separate family.** Weakest topics, Toughest, Easiest,
+  Mistakes and the other focus types never enter a mock trend, even at the same
+  length and scope.
+- **Random and Balanced stay separate**, because their variance differs.
+- **The per-topic practice trend** compares only runs whose recorded
+  `targetTopicIds` are identical; an empty-target run cannot contribute.
+
+**Which counters are read.** Mock accuracy and per-question lifetime accuracy
+in a mock read the representative `rep*` counters (Random/Balanced with
+`samplingVersion >= 2`). Personal and practice views read the all-attempt
+counters. The two must be labelled, because the same question can show two
+different lifetime accuracies.
+
+**`question_stats` means "currently stored".** Deleting an attempt recomputes
+the affected rows, so the "hardest" cards and category weakness change when an
+attempt is deleted. The page says "hardest in stored attempts", not "hardest
+ever". Category rows use the `categoryTitle` stored on `question_results`
+(as-of-attempt); deleted questions are counted in an "N results no longer
+resolvable" line so the totals reconcile. Pre-v21 full-scope attempts inflate
+`skipCount`, so skip-rate and Tricky evidence are weak until bounded attempts
+exist; there is no backfill and no pre-v21 exclusion.
+
 Model `ExamData`:
 
 | Field | Definition |
 |---|---|
-| `attempts` | Number of attempts in range/scope. |
-| `latestPercent` | Score percentage of the most recent attempt. |
-| `bestPercent` | Highest attempt percentage. |
-| `averagePercent` | Mean percentage across attempts, weighted by each attempt's `score / maxScore`. |
+| `attempts` | Number of bounded attempts in the selected family/group; legacy attempts are counted separately and never enter a trend. |
+| `latestPercent` | Score percentage of the most recent attempt in the current comparable group. |
+| `bestPercent` | Highest attempt percentage in the group. |
+| `averagePercent` | Mean percentage across attempts in the group, weighted by each attempt's `score / maxScore`. |
 | `deltaPoints` | Latest minus first percentage, in points (null with one attempt). |
 | `totalMinutes` | Sum of `durationSeconds` / 60. |
 | `correct` / `wrong` / `skipped` | Sums of the attempt tallies. |
 | `averageSecondsPerQuestion` | Total measured `dwellSeconds` ÷ number of timed result rows, from `question_results` in range/scope. |
-| `skipRate` | `skipped` ÷ (`correct + wrong + skipped`). |
-| `trend` | Mean percentage per time bucket (daily ≤31 days, weekly ≤150, monthly beyond). Empty buckets are kept. |
-| `papers` | Per paper: attempts, latest, best, delta points. Empty when scoped to one paper. |
-| `categories` | Per category title: graded, correct, accuracy, ranked weakest first, capped at 15. |
-| `recent` | The five latest attempts (title, percentage, correct/total, finishedAt). |
+| `skipRate` | `skipped` ÷ (`correct + wrong + skipped`); weak before bounded attempts exist (pre-v21 inflation). |
+| `shown` / `requested` | Sum of shown questions and requested counts; the margin uses `shown`, comparability uses `requested`. |
+| `marginPoints` | Approximate 95% margin for the group, from the shown count and finite-population correction; labelled approximate, and absent for practice, short and legacy groups. |
+| `family` | `MOCK_STRICT`, `MOCK_FRESH`, `PRACTICE`, `SHORT` or `LEGACY`. |
+| `comparisonKey` | The full `(paperId, testType, scopeKey, requestedCount, samplingVersion, exclusionMode)` tuple; a trend is only drawn inside one key. |
+| `trend` | Mean percentage per time bucket (daily ≤31 days, weekly ≤150, monthly beyond), inside one comparable key. Empty buckets are kept. |
+| `papers` | Per paper: attempts, latest, best, delta points, split by family. Empty when scoped to one paper. |
+| `categories` | Per **as-of-attempt** category title: graded, correct, accuracy, ranked weakest first, capped at 15, plus the unresolved-question count. |
+| `recent` | The five latest attempts (title, percentage, correct/total, finishedAt, family badge). |
 
 DAO additions (aggregate-only, no full result scans):
 
+- `ExamAttemptGroups(since, paperId)` — group bounded attempts by
+  `(testType, scopeKey, requestedCount, samplingVersion, exclusionMode)` and
+  return count, shown/requested sums, score sums and the latest/best row. This
+  is what makes strict, fresh, practice and length groups separate without
+  loading rows into Kotlin.
 - `ExamCategoryTotals(since, paperId)` — `SUM(graded)`, `SUM(correct)` grouped by
-  `categoryTitle` over results whose attempt finished at/after `since` and
-  matches the paper when given.
+  the **stored** `categoryTitle` over results whose attempt finished at/after
+  `since` and matches the paper when given; join `questions` only to resolve a
+  current `categoryId` for the Study link, and count unresolved rows.
 - `ExamDwellTotals(since, paperId)` — `SUM(dwellSeconds)` and count of timed
   rows.
+- `ExamRepresentativeTotals(since, paperId)` — `SUM(repCorrect)`,
+  `SUM(repWrong)`, `SUM(repSkip)` for mock accuracy; practice views read the
+  all-attempt columns instead.
 
-Placement: a seventh tab **Exam** after Cards. Cards: summary KPI grid, score
-trend line, per-paper list, category accuracy bars, timing/skip footnote, recent
-attempts (tap opens the existing results screen through the nav callback).
+Placement: a seventh tab **Exam** after Cards. Cards: summary KPI grid with a
+family selector (Mock strict / Mock fresh / Practice), score trend line inside
+the selected comparable group, per-paper list split by family, category
+accuracy bars with as-of-attempt titles, timing/skip footnote, and recent
+attempts with a family badge (tap opens the existing results screen through
+the nav callback). Legacy attempts appear only in `recent`, with a "Legacy"
+badge and no trend.
 
 ## 5. Coverage (studied vs never studied)
 
@@ -226,11 +284,18 @@ time” stacked chart; a “Study sessions” summary card.
 
 - Pure-JVM model tests (`ExamStatsTest`, `ProgressStatsTest`,
   `CoverageStatsTest`): definitions, empty inputs, bucketing, deltas, caps,
-  multi-tag attribution, interval-band boundaries.
+  multi-tag attribution, interval-band boundaries, strict-vs-fresh grouping,
+  practice-vs-mock grouping and the fixed-target practice trend.
 - Aggregator tests (`StatsAggregatorTest`, `StatsTabsStreamTest`): the two build
   paths agree for every new slice, and the existing tabs are unchanged.
 - Robolectric/DB tests (`StatsTabsStreamTest` seed) for coverage and exam
-  queries: run on CI (x86_64), documented as such locally.
+  queries: run on CI (x86_64), documented as such locally. Include:
+  - a legacy attempt never enters a trend;
+  - `rep*` totals match only Random/Balanced attempts with
+    `samplingVersion >= 2`;
+  - deleting an attempt changes the stored hardest/per-question figures;
+  - the partial `question_results` index exists after migration and fresh
+    create.
 - UI is covered by the existing stats smoke tests; new tabs reuse existing
   chart widgets (`LineChart`, `StackedBarChart`, `DonutChart`, `MeterBar`,
   `KpiGrid`, `WeakCardRow`).
@@ -239,6 +304,20 @@ time” stacked chart; a “Study sessions” summary card.
 
 - [ ] Exam tab shows real attempts, trends, per-paper and category figures,
       and an empty state before any test exists.
+- [ ] Exam tab separates strict mocks, Fresh samples, practice, short and
+      legacy; no trend mixes families, and a fresh sample is never plotted
+      against a strict attempt.
+- [ ] Exam tab groups by the full comparability key and uses the shown count
+      for the margin and the requested count for comparability.
+- [ ] Mock accuracy reads `rep*`; practice/personal views read all-attempt
+      counters; both are labelled.
+- [ ] Category rows use as-of-attempt titles and report unresolved questions;
+      "hardest" says "in stored attempts".
+- [ ] The practice per-topic trend compares only runs with the same recorded
+      `targetTopicIds`; an empty-target run cannot contribute.
+- [ ] Pre-v21 attempts are labelled legacy, never enter a trend, and the
+      skip-rate/Tricky limitation is stated.
+- [ ] Deleting an attempt updates the stored hardest/per-question figures.
 - [ ] Cards tab shows studied/unseen/bookmarked and per-paper unseen.
 - [ ] Progress tab shows introductions, graduations, relapses, Again rate and
       a previous-period comparison; All range hides the comparison.
@@ -249,4 +328,6 @@ time” stacked chart; a “Study sessions” summary card.
       mean time.
 - [ ] In-memory and streamed builds are equal in tests.
 - [ ] `:app:testDebugUnitTest` and `:app:lintDebug` pass; CI is green.
-- [ ] No schema change, no backfill, no change to scheduling.
+- [ ] The statistics delivery adds no schema change of its own; it depends on
+      the bounded-Test v20 → v21 migration (attempts metadata, `rep*` counters,
+      partial index), and no statistics tab ships before that migration.

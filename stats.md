@@ -151,9 +151,11 @@ Every attempt-delete path must do this:
 | Backup restore (`wipeAllTables` + import) | The table is emptied and rebuilt by `applyQuestionStats` from the imported results. |
 
 When the last surviving result for a question is deleted, delete the inert
-`question_stats` row (`totalAttempts == 0`). A row with `gradedCount = 0` but
-`totalAttempts > 0` is a skip-only row and must be kept: it still records
-exposure. Queries already treat a missing row as "no evidence".
+`question_stats` row (`totalAttempts == 0`). A row with `totalAttempts > 0` but
+no answered result (`correctCount = wrongCount = 0`) is a skip-only row and
+must be kept: it still records exposure. `gradedCount` counts skips as well
+(section 9.2), so it is not zero on such a row. Queries already treat a
+missing row as "no evidence".
 
 Consequence: History's "hardest ever" cards change when an attempt is deleted.
 That is correct: the evidence is gone. The label should say "hardest in stored
@@ -1927,6 +1929,13 @@ result. It also updates `lastResultIsCorrect` / `lastFinishedAt` when the new
 result is later by `finishedAt DESC, id DESC`. This happens in the same
 transaction as the result insert.
 
+**Write-rule guard is deferred.** The shipped write path still overwrites
+`lastResultIsCorrect` / `lastFinishedAt` unconditionally; the
+`finishedAt DESC, id DESC` guard lands with the attempt-metadata slice, which
+must also decide the tie-break input — the result id is not available before
+the insert, so it needs the inserted id or a stored last-result id. Do not add
+a `lastResultId` column in the schema slice.
+
 **Delete rule: `question_stats` means "currently stored".** The current
 `QuestionStatsEntity` comment says deleting an attempt intentionally leaves the
 row untouched; that comment and the behavior change here. Deleting an
@@ -1945,9 +1954,11 @@ attempt recomputes the affected questions from the surviving
    `lastFinishedAt` to the latest surviving result's attempt `finishedAt`.
    Never carry a value forward from the deleted attempt.
 4. Delete the row **only when `totalAttempts == 0`**. A row with
-   `totalAttempts > 0` and `gradedCount == 0` is a skip-only row and must
-   survive: it still records exposure. A row whose last result is deleted but
-   which still has other results is recomputed, never dropped.
+   `totalAttempts > 0` but no answered result (`correctCount = wrongCount = 0`)
+   is a skip-only row and must survive: it still records exposure.
+   `gradedCount` includes skips (section 9.2), so it is not zero here. A row
+   whose last result is deleted but which still has other results is
+   recomputed, never dropped.
 
 Every delete path is enumerated in section 3.1 (History delete, paper delete,
 category delete, question delete, backup restore). The paper, category and
@@ -2180,7 +2191,8 @@ banks.
   - representative rankings read `rep*`, personal rankings read all-attempt
     counters.
 - `TestSelectorTest`
-  - a ticked parent expands to its children before quotas are computed;
+  - a ticked parent expands to itself and its whole subtree, and the parent's
+    own questions enter the quota;
   - a parent plus a child is deduped, so no question is counted twice;
   - largest-remainder allocation with caps and redistribution;
   - min 1 per category when `n >= categories`;
@@ -2230,8 +2242,8 @@ banks.
 - Saving an attempt leaves `card_state` and `review_log` counts unchanged.
 - Deleting one attempt recomputes the affected `question_stats` rows,
   including the `rep*` counters; a skip-only row (`totalAttempts > 0`,
-  `gradedCount = 0`) survives, and a row whose last result is deleted is
-  removed.
+  `correctCount = wrongCount = 0`) survives, and a row whose last result is
+  deleted is removed.
 - A practice attempt increments the all-attempt counters but not `rep*`; a
   representative Random/Balanced attempt with `samplingVersion = 2` increments
   both. A legacy attempt (`testType = NULL` or `samplingVersion = 1`)

@@ -289,22 +289,25 @@ internal class HistoryStore(
         // One transaction: the attempt header and its per-question rows must
         // land together, so history never shows an attempt without results.
         return db.withTransaction {
-            val attemptId = db.attemptDao().insertAttempt(
-                AttemptEntity(
-                    paperId = paperId,
-                    title = paperTitle,
-                    totalQuestions = questions.size,
-                    correctCount = tally.correct,
-                    wrongCount = tally.wrong,
-                    skippedCount = tally.skipped,
-                    score = tally.score,
-                    maxScore = tally.maxScore,
-                    durationSeconds = durationSeconds,
-                    finishedAt = finishedAt
-                )
+            val attempt = AttemptEntity(
+                paperId = paperId,
+                title = paperTitle,
+                totalQuestions = questions.size,
+                correctCount = tally.correct,
+                wrongCount = tally.wrong,
+                skippedCount = tally.skipped,
+                score = tally.score,
+                maxScore = tally.maxScore,
+                durationSeconds = durationSeconds,
+                finishedAt = finishedAt
             )
+            val attemptId = db.attemptDao().insertAttempt(attempt)
             db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
-            db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, results)
+            db.questionStatsDao().applyQuestionStats(
+                paperId, paperTitle, finishedAt, results,
+                testType = attempt.testType,
+                samplingVersion = attempt.samplingVersion
+            )
             Logger.d("REPO", "saveAttempt stored attemptId=$attemptId with ${results.size} results")
             attemptId
         }
@@ -336,20 +339,19 @@ internal class HistoryStore(
     ): Long = db.withTransaction {
         val tally = Tally()
         var stored = 0
-        val attemptId = db.attemptDao().insertAttempt(
-            AttemptEntity(
-                paperId = paperId,
-                title = paperTitle,
-                totalQuestions = order.size,
-                correctCount = 0,
-                wrongCount = 0,
-                skippedCount = 0,
-                score = 0.0,
-                maxScore = 0.0,
-                durationSeconds = durationSeconds,
-                finishedAt = finishedAt
-            )
+        val attempt = AttemptEntity(
+            paperId = paperId,
+            title = paperTitle,
+            totalQuestions = order.size,
+            correctCount = 0,
+            wrongCount = 0,
+            skippedCount = 0,
+            score = 0.0,
+            maxScore = 0.0,
+            durationSeconds = durationSeconds,
+            finishedAt = finishedAt
         )
+        val attemptId = db.attemptDao().insertAttempt(attempt)
         val categoryTitles = HashMap<String, String>()
         val knownCategories = HashSet<String>()
         var start = 0
@@ -370,7 +372,11 @@ internal class HistoryStore(
                 categoryTitles, dwellSeconds, tally, rows
             )
             db.attemptDao().insertResults(rows.map { it.copy(attemptId = attemptId) })
-            db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, rows)
+            db.questionStatsDao().applyQuestionStats(
+                paperId, paperTitle, finishedAt, rows,
+                testType = attempt.testType,
+                samplingVersion = attempt.samplingVersion
+            )
             stored += rows.size
             onProgress(stored, order.size)
             start = end
@@ -591,8 +597,21 @@ internal class HistoryStore(
         )
     }
 
+    /**
+     * Deletes one attempt and repairs `question_stats` in the same
+     * transaction (section 12.3). `question_stats` means "currently stored":
+     * the affected questions are recomputed from the surviving results, and a
+     * row with no surviving result is dropped. The recompute runs before the
+     * delete because the attempt's own result rows are what identify the
+     * affected questions; every aggregate excludes them, so the outcome is
+     * the same as recomputing afterwards.
+     */
     suspend fun deleteAttempt(attemptId: Long) {
-        db.attemptDao().deleteById(attemptId)
+        db.withTransaction {
+            db.questionStatsDao().recomputeFromSurvivingResults(attemptId)
+            db.questionStatsDao().deleteInertForAttempt(attemptId)
+            db.attemptDao().deleteById(attemptId)
+        }
     }
 }
 

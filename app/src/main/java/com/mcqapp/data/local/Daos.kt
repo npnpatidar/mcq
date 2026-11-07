@@ -7,6 +7,7 @@ import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.paging.PagingSource
+import com.mcqapp.domain.TestType
 import kotlinx.coroutines.flow.Flow
 @Dao
 interface PaperDao {
@@ -2156,7 +2157,8 @@ interface QuestionStatsDao {
         "INSERT OR REPLACE INTO question_stats " +
             "(questionId, paperId, paperTitle, categoryTitle, text, " +
             "totalAttempts, gradedCount, correctCount, wrongCount, skipCount, " +
-            "ungradedCount, lastResultIsCorrect, lastFinishedAt) " +
+            "ungradedCount, repCorrect, repWrong, repSkip, " +
+            "lastResultIsCorrect, lastFinishedAt) " +
             "SELECT :questionId, :paperId, :paperTitle, :categoryTitle, :text, " +
             "COALESCE((SELECT totalAttempts FROM question_stats WHERE questionId = :questionId), 0) + :total, " +
             "COALESCE((SELECT gradedCount FROM question_stats WHERE questionId = :questionId), 0) + :graded, " +
@@ -2164,6 +2166,9 @@ interface QuestionStatsDao {
             "COALESCE((SELECT wrongCount FROM question_stats WHERE questionId = :questionId), 0) + :wrong, " +
             "COALESCE((SELECT skipCount FROM question_stats WHERE questionId = :questionId), 0) + :skip, " +
             "COALESCE((SELECT ungradedCount FROM question_stats WHERE questionId = :questionId), 0) + :ungraded, " +
+            "COALESCE((SELECT repCorrect FROM question_stats WHERE questionId = :questionId), 0) + :repCorrect, " +
+            "COALESCE((SELECT repWrong FROM question_stats WHERE questionId = :questionId), 0) + :repWrong, " +
+            "COALESCE((SELECT repSkip FROM question_stats WHERE questionId = :questionId), 0) + :repSkip, " +
             ":isCorrect, :finishedAt"
     )
     suspend fun bumpQuestionStats(
@@ -2178,6 +2183,9 @@ interface QuestionStatsDao {
         wrong: Int,
         skip: Int,
         ungraded: Int,
+        repCorrect: Int,
+        repWrong: Int,
+        repSkip: Int,
         isCorrect: Boolean,
         finishedAt: Long
     )
@@ -2248,20 +2256,128 @@ interface QuestionStatsDao {
             "(SELECT id FROM questions WHERE categoryId = :categoryId)"
     )
     suspend fun deleteAllForCategory(categoryId: String): Int
+
+    /**
+     * Rebuilds the affected `question_stats` rows from the results that
+     * survive [attemptId], which is still present when this runs (section
+     * 12.3). Every aggregate excludes [attemptId]'s own results, so the result
+     * equals a recompute after the delete while the affected ids are still
+     * discoverable from the attempt.
+     *
+     * Runs in the caller's transaction together with
+     * [deleteInertForAttempt] and the attempt delete. The last-standing pair
+     * comes from the latest graded, answered result by
+     * `finishedAt DESC, id DESC`; a skip-only (or ungraded-only) question
+     * falls back to the latest surviving result's `finishedAt` and
+     * `lastResultIsCorrect = false`.
+     */
+    @Query(
+        "INSERT OR REPLACE INTO question_stats " +
+            "(questionId, paperId, paperTitle, categoryTitle, text, " +
+            "totalAttempts, gradedCount, correctCount, wrongCount, skipCount, " +
+            "ungradedCount, repCorrect, repWrong, repSkip, lastResultIsCorrect, " +
+            "lastFinishedAt) " +
+            "SELECT r.questionId, a.paperId, a.title, r.categoryTitle, r.text, " +
+            "c.total, c.graded, c.correct, c.wrong, c.skip, c.ungraded, " +
+            "COALESCE(rep.repCorrect, 0), COALESCE(rep.repWrong, 0), " +
+            "COALESCE(rep.repSkip, 0), COALESCE(lastGraded.isCorrect, 0), " +
+            "COALESCE(lastGraded.finishedAt, lastAny.finishedAt) " +
+            "FROM question_results r " +
+            "INNER JOIN attempts a ON a.id = r.attemptId " +
+            "INNER JOIN (" +
+            "SELECT questionId, COUNT(*) AS total, " +
+            "SUM(CASE WHEN correctOptionIds != '' THEN 1 ELSE 0 END) AS graded, " +
+            "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds != '' " +
+            "AND isCorrect THEN 1 ELSE 0 END) AS correct, " +
+            "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds != '' " +
+            "AND isCorrect = 0 THEN 1 ELSE 0 END) AS wrong, " +
+            "SUM(CASE WHEN correctOptionIds != '' AND selectedOptionIds = '' " +
+            "THEN 1 ELSE 0 END) AS skip, " +
+            "SUM(CASE WHEN correctOptionIds = '' THEN 1 ELSE 0 END) AS ungraded, " +
+            "MAX(rowid) AS maxRow FROM question_results " +
+            "WHERE attemptId != :attemptId AND questionId IN " +
+            "(SELECT questionId FROM question_results WHERE attemptId = :attemptId) " +
+            "GROUP BY questionId" +
+            ") c ON c.questionId = r.questionId AND r.rowid = c.maxRow " +
+            "LEFT JOIN (" +
+            "SELECT r.questionId, " +
+            "SUM(CASE WHEN r.correctOptionIds != '' AND r.selectedOptionIds != '' " +
+            "AND r.isCorrect THEN 1 ELSE 0 END) AS repCorrect, " +
+            "SUM(CASE WHEN r.correctOptionIds != '' AND r.selectedOptionIds != '' " +
+            "AND r.isCorrect = 0 THEN 1 ELSE 0 END) AS repWrong, " +
+            "SUM(CASE WHEN r.correctOptionIds != '' AND r.selectedOptionIds = '' " +
+            "THEN 1 ELSE 0 END) AS repSkip " +
+            "FROM question_results r INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE r.attemptId != :attemptId AND r.questionId IN " +
+            "(SELECT questionId FROM question_results WHERE attemptId = :attemptId) " +
+            "AND a.testType IN ('RANDOM', 'BALANCED') AND a.samplingVersion >= 2 " +
+            "GROUP BY r.questionId" +
+            ") rep ON rep.questionId = r.questionId " +
+            "LEFT JOIN (" +
+            "SELECT r.questionId, r.isCorrect AS isCorrect, " +
+            "a.finishedAt AS finishedAt " +
+            "FROM question_results r INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE r.attemptId != :attemptId AND r.questionId IN " +
+            "(SELECT questionId FROM question_results WHERE attemptId = :attemptId) " +
+            "AND r.correctOptionIds != '' AND r.selectedOptionIds != '' " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId AND r2.attemptId != :attemptId " +
+            "AND r2.correctOptionIds != '' AND r2.selectedOptionIds != '' " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1)" +
+            ") lastGraded ON lastGraded.questionId = r.questionId " +
+            "LEFT JOIN (" +
+            "SELECT r.questionId, a.finishedAt AS finishedAt " +
+            "FROM question_results r INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE r.attemptId != :attemptId AND r.questionId IN " +
+            "(SELECT questionId FROM question_results WHERE attemptId = :attemptId) " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId AND r2.attemptId != :attemptId " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1)" +
+            ") lastAny ON lastAny.questionId = r.questionId"
+    )
+    suspend fun recomputeFromSurvivingResults(attemptId: Long)
+
+    /**
+     * Drops the aggregate rows of [attemptId]'s questions that have no
+     * surviving result. This is the "delete only when `totalAttempts == 0`"
+     * rule: after [recomputeFromSurvivingResults] a row with no surviving
+     * result would be all zeroes, so removing it keeps a skip-only row (which
+     * still has a result) and removes the inert one. Must run before the
+     * attempt delete, while its result rows still identify the questions.
+     */
+    @Query(
+        "DELETE FROM question_stats WHERE questionId IN " +
+            "(SELECT questionId FROM question_results WHERE attemptId = :attemptId) " +
+            "AND NOT EXISTS (SELECT 1 FROM question_results r " +
+            "WHERE r.questionId = question_stats.questionId " +
+            "AND r.attemptId != :attemptId)"
+    )
+    suspend fun deleteInertForAttempt(attemptId: Long): Int
 }
 
 /**
  * Folds a batch of just-written result rows into [QuestionStatsDao], one
  * bump per distinct question. Call inside the same transaction as
  * `insertResults` so the aggregate can never drift from the rows.
+ *
+ * The `rep*` counters move only when [testType] is Random/Balanced and
+ * [samplingVersion] is 2 or later (section 12.3); a practice, legacy or null
+ * type still moves the all-attempt counters. The predicate comes from
+ * [TestType.isRepresentative] so there is one definition of representative.
  */
 suspend fun QuestionStatsDao.applyQuestionStats(
     paperId: String,
     paperTitle: String,
     finishedAt: Long,
-    rows: List<QuestionResultEntity>
+    rows: List<QuestionResultEntity>,
+    testType: String? = null,
+    samplingVersion: Int = 1
 ) {
     if (rows.isEmpty()) return
+    val representative =
+        TestType.fromStorage(testType)?.isRepresentative == true && samplingVersion >= 2
     val grouped = LinkedHashMap<String, MutableList<QuestionResultEntity>>()
     for (row in rows) grouped.getOrPut(row.questionId) { mutableListOf() }.add(row)
     for ((questionId, list) in grouped) {
@@ -2270,15 +2386,27 @@ suspend fun QuestionStatsDao.applyQuestionStats(
         var wrong = 0
         var skip = 0
         var ungraded = 0
+        var repCorrect = 0
+        var repWrong = 0
+        var repSkip = 0
         for (row in list) {
             if (row.correctOptionIds.isEmpty()) {
                 ungraded++
             } else {
                 graded++
                 when {
-                    row.selectedOptionIds.isEmpty() -> skip++
-                    row.isCorrect -> correct++
-                    else -> wrong++
+                    row.selectedOptionIds.isEmpty() -> {
+                        skip++
+                        if (representative) repSkip++
+                    }
+                    row.isCorrect -> {
+                        correct++
+                        if (representative) repCorrect++
+                    }
+                    else -> {
+                        wrong++
+                        if (representative) repWrong++
+                    }
                 }
             }
         }
@@ -2295,6 +2423,9 @@ suspend fun QuestionStatsDao.applyQuestionStats(
             wrong = wrong,
             skip = skip,
             ungraded = ungraded,
+            repCorrect = repCorrect,
+            repWrong = repWrong,
+            repSkip = repSkip,
             isCorrect = last.isCorrect,
             finishedAt = finishedAt
         )

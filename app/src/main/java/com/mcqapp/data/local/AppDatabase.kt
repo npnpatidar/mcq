@@ -26,7 +26,7 @@ import com.mcqapp.domain.searchableText
         PassageEntity::class,
         TestProgressEntity::class
     ],
-    version = 20,
+    version = 21,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -475,6 +475,107 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * The partial index over graded, answered results. Room's `@Index`
+         * cannot express a `WHERE` clause, so it is raw SQL — and it needs
+         * two creation paths: a migration that only ran `ALTER TABLE` would
+         * leave a fresh install without it, and a callback alone would leave
+         * upgraded installs without it. Both paths execute this same
+         * statement. Room validates only the indices declared on entities, so
+         * the extra index does not fail schema validation.
+         */
+        const val PARTIAL_RESULT_INDEX_SQL =
+            "CREATE INDEX IF NOT EXISTS `index_question_results_question_id_graded` " +
+                "ON `question_results` (`questionId`, `id`) " +
+                "WHERE `selectedOptionIds` != ''"
+
+        /**
+         * Adds the bounded-Test attempt metadata, the three representative
+         * counters and the Phase-1 indexes (sections 9.10, 12.1, 12.3).
+         *
+         * Every new attempt column defaults to its legacy value: old rows get
+         * `testType = NULL`, `requestedCount = 0` and `samplingVersion = 1`,
+         * so they are never comparable and never contribute to `rep*`. The
+         * counters start at 0 with no backfill; they describe post-migration
+         * representative attempts only, which is the intended scope.
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `attempts` ADD COLUMN `testType` TEXT")
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `requestedCount` " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `scopeCategoryIds` " +
+                        "TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `scopeKey` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `samplingVersion` " +
+                        "INTEGER NOT NULL DEFAULT 1"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `seed` INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `exclusionMode` " +
+                        "TEXT NOT NULL DEFAULT 'NONE'"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `targetTopicIds` " +
+                        "TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `attempts` ADD COLUMN `compositionJson` " +
+                        "TEXT NOT NULL DEFAULT ''"
+                )
+
+                db.execSQL(
+                    "ALTER TABLE `question_stats` ADD COLUMN `repCorrect` " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE `question_stats` ADD COLUMN `repWrong` " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "ALTER TABLE `question_stats` ADD COLUMN `repSkip` " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_question_stats_paperId` " +
+                        "ON `question_stats` (`paperId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_attempts_paperId_testType_requestedCount_scopeKey_" +
+                        "samplingVersion_exclusionMode_finishedAt` " +
+                        "ON `attempts` (`paperId`, `testType`, `requestedCount`, " +
+                        "`scopeKey`, `samplingVersion`, `exclusionMode`, `finishedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_card_state_paperId_leech_dueAt` " +
+                        "ON `card_state` (`paperId`, `leech`, `dueAt`)"
+                )
+                db.execSQL(PARTIAL_RESULT_INDEX_SQL)
+            }
+        }
+
+        /**
+         * Fresh installs get the raw partial index here, because no migration
+         * runs for them. Kept next to [MIGRATION_20_21], which executes the
+         * same statement for an upgrade.
+         */
+        val CREATE_PARTIAL_RESULT_INDEX = object : RoomDatabase.Callback() {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL(PARTIAL_RESULT_INDEX_SQL)
+            }
+        }
+
         private const val FOLDED_BACKFILL_BATCH = 4000
 
         /**
@@ -611,28 +712,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        fun get(context: Context): AppDatabase =
-            INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "mcq.db"
-                ).addMigrations(
+        /**
+         * The production builder, without the singleton or the journal mode.
+         * Kept separate so a fresh-create test builds the same schema and
+         * callbacks as the app: a test that hand-added
+         * [CREATE_PARTIAL_RESULT_INDEX] would stay green if [get] stopped
+         * registering it, which is exactly the regression the two-path index
+         * exists to prevent.
+         */
+        internal fun builder(
+            context: Context,
+            name: String = "mcq.db"
+        ): RoomDatabase.Builder<AppDatabase> =
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
+                .addMigrations(
                     MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
-                    MIGRATION_19_20
+                    MIGRATION_19_20, MIGRATION_20_21
                 )
-                // WAL keeps readers (the browsed list, an open test session,
-                // the search screen) non-blocking while an import or bulk
-                // write holds the write lock — the screens observe the same
-                // database an import is writing to. Backups and restores read
-                // and write through Room inside transactions, so they see
-                // consistent snapshots either way; nothing copies the raw
-                // file, which is the operation WAL would have broken.
-                .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                .build().also { INSTANCE = it }
+                .addCallback(CREATE_PARTIAL_RESULT_INDEX)
+
+        fun get(context: Context): AppDatabase =
+            INSTANCE ?: synchronized(this) {
+                INSTANCE ?: builder(context)
+                    // WAL keeps readers (the browsed list, an open test session,
+                    // the search screen) non-blocking while an import or bulk
+                    // write holds the write lock — the screens observe the same
+                    // database an import is writing to. Backups and restores read
+                    // and write through Room inside transactions, so they see
+                    // consistent snapshots either way; nothing copies the raw
+                    // file, which is the operation WAL would have broken.
+                    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                    .build().also { INSTANCE = it }
             }
     }
 }

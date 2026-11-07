@@ -6,6 +6,7 @@ import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.chunks
 import com.mcqapp.data.local.countForCategoriesChunked
 import com.mcqapp.data.local.countsForCategoriesChunked
+import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.dueForCategoriesChunked
 import com.mcqapp.data.local.firstDueLearningForCategoriesChunked
 import com.mcqapp.data.local.firstNewQuestionForCategoriesChunked
@@ -98,7 +99,7 @@ internal class StudyStore(
         categoryIds: List<String> = emptyList()
     ): List<com.mcqapp.domain.StudyCard> {
         val config = settings.schedulerConfigNow()
-        resetEdited(paperId, config)
+        resetEdited(paperId)
         val scope = scopeIds(categoryIds)
         val pools = poolsOf(config, dueCards(paperId, now, scope), now)
         if (leechesOnly) {
@@ -146,7 +147,7 @@ internal class StudyStore(
         categoryIds: List<String> = emptyList()
     ): com.mcqapp.domain.StudyCard? {
         val config = settings.schedulerConfigNow()
-        resetEdited(paperId, config)
+        resetEdited(paperId)
         val scheduler = fsrs(config)
         val scope = scopeIds(categoryIds)
         // The pull only ever reads the head of each pool, so each is selected by
@@ -297,31 +298,24 @@ internal class StudyStore(
     }
 
     /**
-     * Writes out the reset for questions edited since they were scheduled, so
-     * the stored row stops describing text the learner never saw and every
-     * reader of it — the statistics, an export, the badge's own count — agrees
-     * with what the session serves. Bounded by how many questions were edited,
-     * which is what makes persisting it affordable.
+     * Drops the schedule of questions edited since they were scheduled.
      *
-     * A question nobody has studied is deliberately *not* seeded a row: that is
-     * one row per question of the paper, which is what made a badge read write
-     * a million rows.
+     * A reset is the *absence* of a card: deleting the row makes the question
+     * indistinguishable from one nobody has studied, which is exactly what it
+     * is now. Writing a NEW row instead left a second meaning for "new" and
+     * made the Cards tab show only the edited subset of unstudied questions.
+     *
+     * This is a backstop for rows written before the write-time fingerprint
+     * existed (and for any path that updates content without going through
+     * one of the writers that compare it). Review history is deliberately
+     * untouched: the old answers still belong to the log, and re-studying
+     * appends to it.
      */
-    private suspend fun resetEdited(
-        paperId: String,
-        config: com.mcqapp.domain.SchedulerConfig
-    ) {
+    private suspend fun resetEdited(paperId: String) {
         val stale = db.cardStateDao().staleForPaper(paperId)
         if (stale.isEmpty()) return
-        val scheduler = fsrs(config)
-        db.withTransaction {
-            stale.forEach {
-                db.cardStateDao().upsert(
-                    scheduler.initial(it.id).toEntity(paperId, it.contentHash)
-                )
-            }
-        }
-        Logger.i("REPO", "resetEdited($paperId): ${stale.size} card(s) scheduled again")
+        db.cardStateDao().deleteByQuestionsChunked(stale.map { it.id })
+        Logger.i("REPO", "resetEdited($paperId): ${stale.size} edited card(s) reset")
     }
 
     /** The learning and review pools of [due], read through the pure pools. */

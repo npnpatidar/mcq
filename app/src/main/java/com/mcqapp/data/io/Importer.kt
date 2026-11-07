@@ -9,6 +9,7 @@ import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.applyQuestionStats
+import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
@@ -330,13 +331,24 @@ class Importer(
                         val existingEffective =
                             if (effectivePassageId == passageId) existing
                             else db.passageDao().getById(effectivePassageId)
-                        db.passageDao().upsert(
-                            passageDto.withDownscaledImages().toPassageEntity(
-                                categoryId = effectiveCatId,
-                                sortOrder = existingEffective?.sortOrder ?: 0,
-                                json = json
-                            )
+                        val incomingPassage = passageDto.withDownscaledImages().toPassageEntity(
+                            categoryId = effectiveCatId,
+                            sortOrder = existingEffective?.sortOrder ?: 0,
+                            json = json
                         )
+                        val passageChanged = existingEffective != null &&
+                            CardContent.passageChanged(existingEffective, incomingPassage)
+                        db.passageDao().upsert(incomingPassage)
+                        if (passageChanged) {
+                            val members = db.passageDao().memberIds(effectivePassageId)
+                            if (members.isNotEmpty()) {
+                                db.cardStateDao().deleteByQuestionsChunked(members)
+                                Logger.i(
+                                    "IMPORT",
+                                    "  Passage $effectivePassageId changed, reset ${members.size} card(s)"
+                                )
+                            }
+                        }
                     }
 
                     categoryDto.questions.forEachIndexed { questionIndex, questionDto ->
@@ -380,6 +392,14 @@ class Importer(
                                 val stored = candidate.entity
                                 val storedCorrect = candidate.correctIds
                                 if (ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, scaledQuestion)) {
+                                    if (CardContent.of(stored, candidate.options, storedCorrect) !=
+                                        CardContent.of(scaledQuestion)
+                                    ) {
+                                        // The refreshed key (or image) invalidates the
+                                        // schedule the stored content earned, even though
+                                        // the question was matched by text.
+                                        db.cardStateDao().deleteByQuestion(sameContentId)
+                                    }
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                                     db.correctAnswerDao().upsertAll(
                                         questionDto.correctOptionIds.map { optionId ->
@@ -474,6 +494,35 @@ class Importer(
                         } else {
                             scaledQuestion.copy(id = effectiveQuestionId)
                         }
+                        // Did the content this card was learned from change?
+                        // A different hash means text, option text/images or
+                        // the passage moved — all card content, so no read-back
+                        // is needed. A matching hash can still hide a table, a
+                        // formula, the key or the question image, so only that
+                        // case pays for the full comparison.
+                        val contentChanged = if (existingQuestion != null && !ownedElsewhere) {
+                            if (existingQuestion.contentHash != contentHash) {
+                                true
+                            } else {
+                                val storedOptions = db.optionDao().getByQuestion(effectiveQuestionId)
+                                val storedCorrect = db.correctAnswerDao()
+                                    .getCorrectIds(effectiveQuestionId).toSet()
+                                CardContent.of(existingQuestion, storedOptions, storedCorrect) !=
+                                    CardContent.of(questionForWrite)
+                            }
+                        } else {
+                            false
+                        }
+                        if (contentChanged) {
+                            // Reset means the schedule row disappears: the
+                            // question is now indistinguishable from one nobody
+                            // has studied. Review history stays.
+                            db.cardStateDao().deleteByQuestion(effectiveQuestionId)
+                            Logger.i(
+                                "IMPORT",
+                                "  Content changed for id=$effectiveQuestionId, schedule reset"
+                            )
+                        }
                         val resolvedSortOrder = if (existingQuestion == null || ownedElsewhere) {
                             newQuestions++
                             (db.questionDao().getMaxSortOrder(effectiveCatId) ?: -1) + 1
@@ -509,8 +558,10 @@ class Importer(
                         // Review progress is applied only to a question this
                         // import accepted. A duplicate is skipped above, so
                         // re-importing a deck does not overwrite a schedule
-                        // the user has since moved on with.
-                        restoreScheduling[questionDto.id]?.let { schedule ->
+                        // the user has since moved on with. A question whose
+                        // content changed gets no schedule either: the file's
+                        // progress describes the old content.
+                        if (!contentChanged) restoreScheduling[questionDto.id]?.let { schedule ->
                             // The hash of the bytes as stored, because that is
                             // what the study session recomputes it from: a
                             // mismatch reads as edited content and would reset

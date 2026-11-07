@@ -19,6 +19,7 @@ import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
+import com.mcqapp.data.io.CardContent
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
@@ -243,6 +244,22 @@ internal class QuestionStore(
                 "existingSortOrder=${existing?.sortOrder}, resolvedSortOrder=$sortOrder")
             val contentHash = mapper.contentHashOf(question)
             Logger.d("REPO", "saveQuestion(id=${question.id}): contentHash=${contentHash.take(12)}")
+            // A schedule describes the content the learner studied. Any change
+            // to a block, an option, the key or the passage makes the card a
+            // never-studied one, so its row is dropped rather than reset to a
+            // NEW flag: absent is what "new" already means everywhere else.
+            // Explanation and metadata are outside the fingerprint, so fixing
+            // those keeps the interval.
+            if (existing != null) {
+                val storedOptions = db.optionDao().getByQuestion(question.id)
+                val storedCorrect = db.correctAnswerDao().getCorrectIds(question.id).toSet()
+                val changed = CardContent.of(existing, storedOptions, storedCorrect) !=
+                    CardContent.of(question)
+                if (changed) {
+                    db.cardStateDao().deleteByQuestion(question.id)
+                    Logger.i("REPO", "saveQuestion(id=${question.id}): content changed, schedule reset")
+                }
+            }
             db.questionDao().upsert(
                 QuestionEntity(
                     id = question.id,

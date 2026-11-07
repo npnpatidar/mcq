@@ -1841,13 +1841,15 @@ comparable and never contributes to `rep*` counters, even though
 `NULL` means "unknown design", not "strict random".
 
 **Canonical scope key.** `scopeKey` is built from the ticked scope expanded
-once with `CategorySelection.orderedIds`: parent categories are replaced by
-their subtree leaves, duplicates are removed, and the leaf ids are sorted,
-joined with a separator and hashed. The whole paper is a distinct constant
-(e.g. `paper:<paperId>`), never the empty string. `scopeCategoryIds` keeps the
-user's ticked ids for display; it is not the comparability key. Two different
-tick sets that expand to the same leaves must produce the same `scopeKey`, and
-reordering ticks must not change it.
+once with `CategorySelection.orderedIds`: each ticked node expands to itself
+and its whole subtree (the node plus its descendants), duplicates are removed,
+and the ids are sorted, joined with a separator and hashed. The UI normalises
+a fully ticked subtree to the maximal parent tick, so a parent tick and its
+fully ticked children expand to the same set. The whole paper is a distinct
+constant (e.g. `paper:<paperId>`), never the empty string. `scopeCategoryIds`
+keeps the user's ticked ids for display; it is not the comparability key. Two
+different tick sets that expand to the same set must produce the same
+`scopeKey`, and reordering ticks must not change it.
 
 **`targetTopicIds`.** Populated only for Weakest topics (and later Mixed):
 sorted, deduped, comma-joined leaf ids. It is **outside** the comparability

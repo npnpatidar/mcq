@@ -49,7 +49,7 @@ class MigrationTest {
         "CREATE INDEX IF NOT EXISTS `index_categories_parentId` ON `categories` (`parentId`)",
         "CREATE TABLE IF NOT EXISTS `questions` (`id` TEXT NOT NULL, `categoryId` TEXT NOT NULL, " +
             "`text` TEXT NOT NULL, `image` TEXT, `explanation` TEXT NOT NULL, " +
-            "`explanationImage` TEXT, `difficulty` TEXT NOT NULL, `marks` REAL NOT NULL, " +
+            "`explanationImage` TEXT, `difficulty` TEXT NOT NULL, `marks` REAL NOT NULL DEFAULT 1.0, " +
             "`tags` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, " +
             "PRIMARY KEY(`id`), FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) " +
             "ON UPDATE NO ACTION ON DELETE CASCADE )",
@@ -76,7 +76,7 @@ class MigrationTest {
             "`optionsJson` TEXT NOT NULL, `correctOptionIds` TEXT NOT NULL, " +
             "`selectedOptionIds` TEXT NOT NULL, `isCorrect` INTEGER NOT NULL, " +
             "`explanation` TEXT NOT NULL, `explanationImage` TEXT, " +
-            "`dwellSeconds` INTEGER NOT NULL, FOREIGN KEY(`attemptId`) REFERENCES `attempts`(`id`) " +
+            "`dwellSeconds` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`attemptId`) REFERENCES `attempts`(`id`) " +
             "ON UPDATE NO ACTION ON DELETE CASCADE )",
         "CREATE INDEX IF NOT EXISTS `index_question_results_attemptId` " +
             "ON `question_results` (`attemptId`)",

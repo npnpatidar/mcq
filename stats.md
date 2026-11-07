@@ -1871,8 +1871,9 @@ above; `testType` is added without `NOT NULL`. Update `AttemptDto`, `Exporter`,
 `Importer`, `StreamingImportSession` and the backup/restore round-trip tests.
 Unknown fields in an old backup are fine because the DTO fields have defaults.
 
-Add `attempts(paperId, finishedAt)` for per-paper trends and the comparable-key
-index from section 12.3.
+Add the comparable-key index from section 12.3. Its leading `paperId` filters a
+paper's attempts; the per-paper result set is small and is sorted in memory, so
+there is no separate `attempts(paperId, finishedAt)` index in phase 1.
 
 ### 12.2 `TestSnapshot`
 

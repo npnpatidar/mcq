@@ -1321,7 +1321,6 @@ object StatsAggregator {
         private val now: Long,
         private val paperTitleOf: Map<String, String>
     ) {
-        private var fresh = 0
         private var learning = 0
         private var relearning = 0
         private var young = 0
@@ -1333,7 +1332,7 @@ object StatsAggregator {
         private var ageSum = 0.0
         private var oldest = 0
 
-        /** paperId → [total, fresh, learning, relearning, young, mature], first-seen order. */
+        /** paperId → [total, learning, relearning, young, mature], first-seen order. */
         private val perPaper = LinkedHashMap<String, IntArray>()
 
         /** The flagged cards' question → paper, in card order. */
@@ -1344,18 +1343,21 @@ object StatsAggregator {
         fun addCard(snapshot: CardSnapshot) {
             if (scopePaperId != null && snapshot.paperId != scopePaperId) return
             val state = snapshot.state
+            // A never-studied card has no schedule row at all, so a NEW row is
+            // either a leftover from an old reset or an import that carried an
+            // empty schedule. Counting it would invent a category the tab has
+            // no meaningful number for; skip it.
+            if (state.state == CardStateKind.NEW) return
             val bucket = when {
-                state.state == CardStateKind.NEW -> 0
-                state.state == CardStateKind.LEARNING -> 1
-                state.state == CardStateKind.RELEARNING -> 2
-                state.intervalDays >= ReplayReview.MATURE_DAYS -> 4
-                else -> 3
+                state.state == CardStateKind.LEARNING -> 0
+                state.state == CardStateKind.RELEARNING -> 1
+                state.intervalDays >= ReplayReview.MATURE_DAYS -> 3
+                else -> 2
             }
             when (bucket) {
-                0 -> fresh++
-                1 -> learning++
-                2 -> relearning++
-                3 -> young++
+                0 -> learning++
+                1 -> relearning++
+                2 -> young++
                 else -> mature++
             }
             if (state.leech) {
@@ -1363,11 +1365,11 @@ object StatsAggregator {
                 leechPaperOf[state.questionId] = snapshot.paperId
             }
             if (scopePaperId == null) {
-                val counts = perPaper.getOrPut(snapshot.paperId) { IntArray(6) }
+                val counts = perPaper.getOrPut(snapshot.paperId) { IntArray(5) }
                 counts[0]++
                 counts[bucket + 1]++
             }
-            if (state.dueAt != 0L && state.state != CardStateKind.NEW && state.dueAt < now) {
+            if (state.dueAt != 0L && state.dueAt < now) {
                 val age = floor((now - state.dueAt).toDouble() / DayBoundary.DAY_MS).toInt()
                     .coerceAtLeast(0)
                 overdue++
@@ -1396,7 +1398,7 @@ object StatsAggregator {
 
         /** The cards tab's slice. */
         fun toData(): CardsData = CardsData(
-            cardCounts = CardCountsData(fresh, learning, relearning, young, mature, leechCount),
+            cardCounts = CardCountsData(learning, relearning, young, mature, leechCount),
             overdueAge = overdueAge(),
             paperCounts = if (scopePaperId == null) paperCounts() else emptyList(),
             leeches = leeches()
@@ -1416,11 +1418,10 @@ object StatsAggregator {
                 paperId = paperId,
                 label = paperTitleOf[paperId] ?: UNKNOWN_PAPER,
                 total = c[0],
-                fresh = c[1],
-                learning = c[2],
-                relearning = c[3],
-                young = c[4],
-                mature = c[5]
+                learning = c[1],
+                relearning = c[2],
+                young = c[3],
+                mature = c[4]
             )
         }.sortedWith(compareByDescending<PaperCardCounts> { it.total }.thenBy { it.label })
 

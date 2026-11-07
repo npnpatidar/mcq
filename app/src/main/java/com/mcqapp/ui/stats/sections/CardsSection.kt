@@ -79,11 +79,10 @@ private fun CardCountsCard(counts: CardCountsData) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             DonutChart(
                 slices = listOf(
-                    counts.fresh.toDouble() to colors[0],
-                    counts.learning.toDouble() to colors[1],
-                    counts.relearning.toDouble() to colors[2],
-                    counts.young.toDouble() to colors[3],
-                    counts.mature.toDouble() to colors[4]
+                    counts.learning.toDouble() to colors[0],
+                    counts.relearning.toDouble() to colors[1],
+                    counts.young.toDouble() to colors[2],
+                    counts.mature.toDouble() to colors[3]
                 ),
                 center = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -104,11 +103,10 @@ private fun CardCountsCard(counts: CardCountsData) {
                 modifier = Modifier.padding(start = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                CountLegendRow(colors[0], R.string.stats_new_cards, counts.fresh)
-                CountLegendRow(colors[1], R.string.stats_learning, counts.learning)
-                CountLegendRow(colors[2], R.string.stats_relearning, counts.relearning)
-                CountLegendRow(colors[3], R.string.stats_young, counts.young)
-                CountLegendRow(colors[4], R.string.stats_mature, counts.mature)
+                CountLegendRow(colors[0], R.string.stats_learning, counts.learning)
+                CountLegendRow(colors[1], R.string.stats_relearning, counts.relearning)
+                CountLegendRow(colors[2], R.string.stats_young, counts.young)
+                CountLegendRow(colors[3], R.string.stats_mature, counts.mature)
             }
         }
         if (counts.leeches > 0) {

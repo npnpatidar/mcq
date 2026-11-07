@@ -249,7 +249,8 @@ class StatsTabsStreamTest {
             assertEquals("scope=$scope range=$range", inMemory, streamed)
         }
         val everyPaper = repository.statsCards(null, StatsAggregator.Range.ALL, now)
-        assertEquals(7, everyPaper.cardCounts.total)
+        // Seven rows are seeded but q3 is NEW, which the cards tab does not count.
+        assertEquals(6, everyPaper.cardCounts.total)
         assertEquals(1, everyPaper.cardCounts.leeches)
         assertEquals(listOf("Paper One", "Paper Two"), everyPaper.paperCounts.map { it.label }.sorted())
         // q4 is the one flagged card, and its four reviews are in the log.

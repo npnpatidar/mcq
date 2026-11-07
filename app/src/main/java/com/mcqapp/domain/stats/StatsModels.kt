@@ -258,23 +258,28 @@ data class PaperCardCounts(
     val paperId: String,
     val label: String,
     val total: Int,
-    val fresh: Int,
     val learning: Int,
     val relearning: Int,
     val young: Int,
     val mature: Int
 )
 
-/** The current shape of the collection, Anki's Card Counts. */
+/**
+ * The current shape of the collection, Anki's Card Counts.
+ *
+ * A card with no schedule is not a card this tab can describe: it has never
+ * been studied, so it has no state, interval or maturity to count. Those rows
+ * are excluded rather than shown as "New"; [total] is the four states that
+ * actually exist.
+ */
 data class CardCountsData(
-    val fresh: Int,
     val learning: Int,
     val relearning: Int,
     val young: Int,
     val mature: Int,
     val leeches: Int
 ) {
-    val total: Int get() = fresh + learning + relearning + young + mature
+    val total: Int get() = learning + relearning + young + mature
 }
 
 /** Retention for one group (paper or category), for a ranked bar list. */

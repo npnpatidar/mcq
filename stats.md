@@ -841,9 +841,11 @@ Show this as a quadrant/scatter in Statistics, labelled "Study estimate" vs
 
 Before scoring, expand the scope once with `CategorySelection.orderedIds`: a
 ticked parent includes its whole subtree, and a parent plus its child is
-deduped to the parent. Compute quotas on the expanded **leaf** categories;
-never pass a parent and a child to `getOrderForCategories` separately, or the
-child's questions are counted twice.
+deduped to the parent. Compute quotas on **every node in the expanded set**,
+parents included, each with its own questions. The DAO matches
+`questions.categoryId IN (...)`, and a question has exactly one `categoryId`,
+so passing a parent together with its child matches each question once;
+dropping the parent id would lose the questions attached directly to it.
 
 For **Weakest topics**:
 
@@ -910,11 +912,13 @@ categories gives `cap = 8` each (16), so relax to 10 each.
 
 ### 9.5 Within-stratum sampling
 
-- Expand the scope once with `CategorySelection.orderedIds` and use the
-  resulting **leaf** category ids. `getOrderForCategories` does not expand
-  subtrees; passing a ticked parent alone would miss its children, and passing
-  parent and child would double-count. Build one `SessionOrder` per leaf, or a
-  category-aware builder that carries the category index per row.
+- Expand the scope once with `CategorySelection.orderedIds` and use the full
+  resulting set. `getOrderForCategories` does not expand subtrees, so pass the
+  whole expanded list; the query is `categoryId IN (...)`, a question has one
+  `categoryId`, and a parent plus its child therefore matches each question
+  once. Build one `SessionOrder` per node in the expanded set, parents
+  included, or a category-aware builder that carries the category index per
+  row.
 - Derive a per-category seed from `(sessionSeed, categoryId)` so the sample is
   deterministic and independent across categories.
 - Sample `assigned_i` questions inside the category with the block-aware
@@ -1851,11 +1855,14 @@ keeps the user's ticked ids for display; it is not the comparability key. Two
 different tick sets that expand to the same set must produce the same
 `scopeKey`, and reordering ticks must not change it.
 
-**`targetTopicIds`.** Populated only for Weakest topics (and later Mixed):
-sorted, deduped, comma-joined leaf ids. It is **outside** the comparability
-key, so a Weakest-topics run remains a practice run whatever it targeted; the
-per-topic trend compares the recorded set separately (section 11.5). Empty for
-every other type and for a run with no target.
+**`targetTopicIds`.** Populated only for Weakest topics (and later Mixed): the
+ids the weakest-topic ranking selected, sorted, deduped and comma-joined. A
+target may be a non-leaf category with its own questions; if the product later
+wants leaf-only targets, the ranking rule must say so explicitly. It is
+**outside** the comparability key, so a Weakest-topics run remains a practice
+run whatever it targeted; the per-topic trend compares the recorded set
+separately (section 11.5). Empty for every other type and for a run with no
+target.
 
 Migration `v20 → v21`: `ALTER TABLE attempts ADD COLUMN ...` with the defaults
 above; `testType` is added without `NOT NULL`. Update `AttemptDto`, `Exporter`,
@@ -2042,8 +2049,9 @@ banks.
      `exclusion`; keep old `drillCount`/`drillMinutes` parsing for old deep
      links). A missing `type` is legacy, not Random.
    - Expand the scope once with `CategorySelection.orderedIds` before any
-     selector or quota calculation; pass only leaf ids to
-     `getOrderForCategories`.
+     selector or quota calculation; pass the full expanded list (parents
+     included) to `getOrderForCategories`, whose query is
+     `categoryId IN (...)` so each question matches once.
    - Always use `sampledBounded` for the session order, including Mistakes.
    - `countUngraded` always uses the bounded id list.
    - Save the attempt metadata (`testType`, `requestedCount`,
@@ -2461,8 +2469,9 @@ The score is a stratified estimate of the whole paper; the margin is about
 Category weakness ranks Polity's topics; the top 3 are, say, Fundamental
 Rights (42%), Parliament (48%) and Judiciary (51%). Twenty questions are
 allocated across the three (roughly proportional, at least one each), and the
-sheet shows the three topics and their rates. The attempt stores those three
-leaf ids as `targetTopicIds` (sorted, deduped, outside the comparability key).
+sheet shows the three topics and their rates. The attempt stores the three
+selected category ids as `targetTopicIds` (sorted, deduped, outside the
+comparability key).
 The result is a Practice score, not a mock; progress is read from the three
 topics' accuracy over time, and only runs with the same recorded target set
 are compared.
@@ -2490,7 +2499,7 @@ negative marking on wrong answers only, score `(12 − 4/3) / 18 = 59.3%`;
 accuracy on answered `12/18 = 67%`; median 48 s/question; 3 wrong answers took
 over 90 s; one topic had 5 of 12 and scored 42%; 6 questions had no valid FSRS
 state; 4 of the 20 are due in Study. The attempt stores the three targeted
-leaf ids as `targetTopicIds`.
+category ids as `targetTopicIds`.
 
 The page then says, in order:
 

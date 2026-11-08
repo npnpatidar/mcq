@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
+import com.mcqapp.data.local.getMistakeOrderRowsInScopeChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
@@ -1180,5 +1181,87 @@ class RepositoryTest {
         assertEquals(1, paper.totalQuestions)
         assertEquals(1, paper.categories.single().questionCount)
         assertEquals("the other paper keeps its own count", 2, repository.getPaper("p2")!!.totalQuestions)
+    }
+
+    /**
+     * Test and Study are separate (section 3): finishing a test must not move
+     * the FSRS schedule or append to the review log. `card_state` and
+     * `review_log` belong to Study alone, so a save that touched them would
+     * silently rewrite the learner's due dates.
+     */
+    @Test
+    fun savingATestLeavesTheStudyScheduleUntouched() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L
+        )
+        val cardBefore = db.cardStateDao().get("p1", "q1")!!
+        val logBefore = db.reviewLogDao().historyForQuestion("q1")
+
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = listOf(question("q1", setOf("q1-a"))),
+            selections = mapOf("q1" to setOf("q1-a")),
+            negativeMarking = 0.0,
+            durationSeconds = 30,
+            finishedAt = 2000L
+        )
+
+        assertEquals(
+            "a test must not move the study schedule",
+            cardBefore,
+            db.cardStateDao().get("p1", "q1")
+        )
+        assertEquals(
+            "a test must not append to the review log",
+            logBefore,
+            db.reviewLogDao().historyForQuestion("q1")
+        )
+    }
+
+    /**
+     * A ticked scope can hold more than SQLite's 999 bind variables, so the
+     * scoped mistake query runs per chunk. The merge must equal one unchunked
+     * query: same rows, same `finishedAt DESC, rowId DESC` order. The fake ids
+     * push `c1` and `c2` into different chunks without seeding 500 categories.
+     */
+    @Test
+    fun theChunkedScopedMistakeQueryMatchesTheUnchunkedOrder() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.ensurePaperAndCategory("p1", "Paper", "c2", "Cat2")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        repository.saveQuestion(question("q2", setOf("q2-a"), categoryId = "c2"))
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = listOf(question("q1", setOf("q1-a"))),
+            selections = mapOf("q1" to setOf("q1-b")),
+            negativeMarking = 0.0,
+            durationSeconds = 10,
+            finishedAt = 1000L
+        )
+        repository.saveAttempt(
+            paperId = "p1",
+            paperTitle = "Paper",
+            questions = listOf(question("q2", setOf("q2-a"), categoryId = "c2")),
+            selections = mapOf("q2" to setOf("q2-b")),
+            negativeMarking = 0.0,
+            durationSeconds = 10,
+            finishedAt = 2000L
+        )
+
+        val scope = listOf("c1") +
+            (1..499).map { "fake$it" } +
+            listOf("c2") +
+            (1..2).map { "fake2$it" }
+        val chunked = db.attemptDao()
+            .getMistakeOrderRowsInScopeChunked("p1", scope)
+        val direct = db.attemptDao()
+            .getMistakeOrderRowsInScope("p1", listOf("c1", "c2"))
+
+        assertEquals(direct, chunked)
+        assertEquals(listOf("q2", "q1"), chunked.map { it.questionId })
     }
 }

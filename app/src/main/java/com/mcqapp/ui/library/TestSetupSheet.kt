@@ -31,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -124,6 +125,11 @@ internal fun TestSetupSheet(
             ?: TestTime.Suggested,
         available = available
     )
+    // The largest length this pool can actually supply. Chips above it are
+    // disabled rather than left to the clamp message (§7.2, §14); the message
+    // still covers a length carried over from a larger scope or type.
+    val maxSelectable = TestPlan.maxAllowedFor(available)
+    val maxLengthIndex = TestPlan.LENGTHS.indexOf(maxSelectable).coerceAtLeast(0)
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -215,26 +221,37 @@ internal fun TestSetupSheet(
                     style = MaterialTheme.typography.labelLarge
                 )
                 Text(
-                    stringResource(R.string.test_setup_count_label, requestedCount),
+                    if (requestedCount > maxSelectable) {
+                        stringResource(
+                            R.string.test_setup_asked_run,
+                            requestedCount,
+                            setup.resolvedCount()
+                        )
+                    } else {
+                        stringResource(R.string.test_setup_count_label, requestedCount)
+                    },
                     style = MaterialTheme.typography.bodySmall
                 )
-                Slider(
-                    value = TestPlan.LENGTHS.indexOf(requestedCount)
-                        .coerceAtLeast(0)
-                        .toFloat(),
-                    onValueChange = {
-                        val index = it.roundToInt().coerceIn(0, TestPlan.LENGTHS.lastIndex)
-                        requestedCount = TestPlan.LENGTHS[index]
-                    },
-                    valueRange = 0f..TestPlan.LENGTHS.lastIndex.toFloat(),
-                    // One stop between the selectable lengths: the slider
-                    // lands on a length, never between two.
-                    steps = TestPlan.LENGTHS.size - 2
-                )
+                if (maxLengthIndex > 0) {
+                    Slider(
+                        value = TestPlan.LENGTHS.indexOf(requestedCount)
+                            .coerceIn(0, maxLengthIndex)
+                            .toFloat(),
+                        onValueChange = {
+                            val index = it.roundToInt().coerceIn(0, maxLengthIndex)
+                            requestedCount = TestPlan.LENGTHS[index]
+                        },
+                        valueRange = 0f..maxLengthIndex.toFloat(),
+                        // One stop between the selectable lengths: the slider
+                        // lands on a length, never between two.
+                        steps = maxLengthIndex - 1
+                    )
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TestPlan.PRESETS.forEach { preset ->
                         FilterChip(
                             selected = requestedCount == preset,
+                            enabled = preset <= maxSelectable,
                             onClick = { requestedCount = preset },
                             label = { Text(preset.toString()) }
                         )
@@ -317,9 +334,23 @@ internal fun TestSetupSheet(
             Button(
                 onClick = { onStart(type, requestedCount, setup.minutes()) },
                 enabled = setup.startable() && !poolLoading,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("test-setup-start")
             ) {
-                Text(stringResource(R.string.start_test))
+                Text(
+                    when {
+                        !setup.startable() -> stringResource(R.string.start_test)
+                        setup.minutes() <= 0 -> stringResource(
+                            R.string.test_setup_start_untimed, setup.resolvedCount()
+                        )
+                        else -> stringResource(
+                            R.string.test_setup_start,
+                            setup.resolvedCount(),
+                            setup.minutes()
+                        )
+                    }
+                )
             }
             TextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.cancel))

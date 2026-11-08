@@ -13,7 +13,9 @@ import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.local.ResultScan
 import com.mcqapp.data.local.applyQuestionStats
+import com.mcqapp.data.local.countMistakesInScopeChunked
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getMistakeOrderRowsInScopeChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.AttemptMetadata
@@ -552,7 +554,7 @@ internal class HistoryStore(
      */
     suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int {
         if (scopeIds.isEmpty()) return 0
-        return db.attemptDao().countMistakesInScope(paperId, scopeIds)
+        return db.attemptDao().countMistakesInScopeChunked(paperId, scopeIds)
     }
 
     /** Export DTO of all bookmarked questions, grouped by source paper. */
@@ -587,7 +589,9 @@ internal class HistoryStore(
     ): List<com.mcqapp.data.local.SessionRef> {
         if (scopeIds.isEmpty()) return emptyList()
         return refsFor(
-            db.attemptDao().getMistakenQuestionIdsForPaperInScope(paperId, scopeIds)
+            db.attemptDao()
+                .getMistakeOrderRowsInScopeChunked(paperId, scopeIds)
+                .map { it.questionId }
         )
     }
 

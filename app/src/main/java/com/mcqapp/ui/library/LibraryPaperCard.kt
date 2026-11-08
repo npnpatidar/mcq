@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -108,6 +109,8 @@ internal fun PaperCard(
     onAddQuestion: (String) -> Unit,
     onEditPaper: () -> Unit = {},
     onScopedTest: (List<String>) -> Unit = {},
+    /** Opens the setup sheet with Mistakes preselected (§7.1); empty scope = whole paper. */
+    onPracticeMistakes: (List<String>) -> Unit = {},
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onNestCategory: (String) -> Unit = {},
     onPromoteCategory: (String) -> Unit = {},
@@ -296,6 +299,22 @@ internal fun PaperCard(
                         Icons.Default.CheckCircle,
                         contentDescription = stringResource(R.string.test_action)
                     )
+                }
+                if (mistakeCount > 0) {
+                    // The old Mistakes button started a legacy session; it is
+                    // now a shortcut into the same setup sheet with Mistakes
+                    // preselected (§7.1). It keeps the ticked scope.
+                    IconButton(
+                        onClick = { onPracticeMistakes(ticked) },
+                        modifier = Modifier.testTag("paper-mistakes-${paper.id}")
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = stringResource(
+                                R.string.paper_mistakes_button, mistakeCount
+                            )
+                        )
+                    }
                 }
                 if (leechCount > 0) {
                     // Used to run the identical handler as "Study", so the

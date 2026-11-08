@@ -358,6 +358,10 @@ fun LibraryScreen(
                                     Logger.i("LIB", "Card test: paperId=${paper.id}, categories=${ids.size}")
                                     pendingTestSetup = PendingTestSetup(paper, ids, com.mcqapp.domain.TestType.RANDOM)
                                 },
+                                onPracticeMistakes = { ids ->
+                                    Logger.i("LIB", "Card mistakes: paperId=${paper.id}, categories=${ids.size}")
+                                    pendingTestSetup = PendingTestSetup(paper, ids, com.mcqapp.domain.TestType.MISTAKES)
+                                },
                                 onExport = { tickedIds ->
                                     // Nothing ticked → the whole paper; a
                                     // selection → exactly its branches (E1).

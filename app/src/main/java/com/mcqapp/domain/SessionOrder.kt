@@ -322,8 +322,8 @@ class SessionOrder private constructor(
 /**
  * The outcome of [SessionOrder.sampledBounded].
  *
- * A refused sample is a value rather than an empty order so the setup sheet
- * can render the section 9.6 message and keep Start disabled; an empty
+ * A refused sample is a value rather than an empty order so the session can
+ * report the section 9.6 message instead of starting an empty run; an empty
  * [SessionOrder] would look like a session that had already started.
  */
 sealed interface BoundedSample {

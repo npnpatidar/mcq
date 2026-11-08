@@ -2083,14 +2083,16 @@ interface AttemptDao {
     suspend fun getMistakenQuestionIdsForPaper(paperId: String): List<String>
 
     /**
-     * The same mistake ids, restricted to [scopeIds] by the question's
-     * category. The filter has to run in SQL: a session order holds question
-     * ids only, so intersecting it with category ids in Kotlin would drop
-     * every mistake. Like [countMistakesInScope], phase 1 calls this only for
-     * an explicitly ticked scope.
+     * The same mistakes, restricted to [scopeIds] by the question's category,
+     * with the recency keys needed to merge chunked scopes back into one
+     * global order. The filter has to run in SQL: a session order holds
+     * question ids only, so intersecting it with category ids in Kotlin would
+     * drop every mistake. [ChunkedQueries] calls this per bind-safe chunk and
+     * sorts the concatenation by `finishedAt DESC, rowId DESC`.
      */
     @Query(
-        "SELECT r.questionId AS questionId FROM question_results r " +
+        "SELECT r.questionId AS questionId, attempts.finishedAt AS finishedAt, " +
+            "r.id AS rowId FROM question_results r " +
             "INNER JOIN attempts ON r.attemptId = attempts.id " +
             "INNER JOIN questions q ON q.id = r.questionId " +
             "WHERE attempts.paperId = :paperId AND q.categoryId IN (:scopeIds) " +
@@ -2102,16 +2104,15 @@ interface AttemptDao {
             "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1) " +
             "ORDER BY attempts.finishedAt DESC, r.id DESC"
     )
-    suspend fun getMistakenQuestionIdsForPaperInScope(
+    suspend fun getMistakeOrderRowsInScope(
         paperId: String,
         scopeIds: List<String>
-    ): List<String>
+    ): List<MistakeOrderRow>
 
     /**
      * Counts the mistakes inside a scoped selection. Uses the same standing
      * rule (latest graded, answered row per question) but restricts to the
-     * given category ids. A cheap chunked helper would be needed for large
-     * scopes; phase 1 uses it only when the scope is explicitly ticked.
+     * given category ids. [ChunkedQueries] sums it over bind-safe chunks.
      */
     @Query(
         "SELECT COUNT(DISTINCT r.questionId) FROM question_results r " +
@@ -2609,6 +2610,18 @@ data class LatestStanding(
 data class PaperMistakeCount(
     val paperId: String,
     val count: Int
+)
+
+/**
+ * One row of [AttemptDao.getMistakeOrderRowsInScope]: a mistaken question and
+ * the recency keys of its deciding result. Chunked scope queries concatenate
+ * these and re-sort by `finishedAt DESC, rowId DESC` so the merged order is the
+ * same as one unchunked query.
+ */
+data class MistakeOrderRow(
+    val questionId: String,
+    val finishedAt: Long,
+    val rowId: Long
 )
 
 /**

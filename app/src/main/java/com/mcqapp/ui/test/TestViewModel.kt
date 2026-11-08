@@ -28,6 +28,7 @@ import com.mcqapp.domain.SessionReviewPagingSource
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestPlan
+import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.TestType
 import com.mcqapp.domain.TimerWarnings
@@ -471,7 +472,7 @@ class TestViewModel(
             ?: throw IllegalStateException("Unknown test type '$routeTestType'.")
         // The support check comes before the length check: `type=BALANCED&count=0`
         // must report the unimplemented selector, not fall back to a legacy run.
-        if (type != TestType.RANDOM && type != TestType.MISTAKES) {
+        if (!TestSetup.isStartableType(type)) {
             throw IllegalStateException("This test type is not available yet.")
         }
         if (routeRequestedCount <= 0) {
@@ -1194,21 +1195,57 @@ class TestViewModel(
             savedAt = System.currentTimeMillis()
         )
         val id = questionId ?: current.order.idAtOrNull(current.currentIndex)
-        val changed = if (id == null) emptyList() else listOf(
-            TestAnswer(
-                questionId = id,
-                selection = current.selections[id] ?: emptySet(),
-                revealed = id in current.revealed,
-                flagged = id in current.flagged,
-                dwellSeconds = dwellOf(current, id)
-            )
-        )
         val takeOver = dropStaleAnswersOnSave
-        dropStaleAnswersOnSave = false
+        val changed = if (takeOver) {
+            // A takeover deletes every row of this paper, so it must rewrite
+            // every question with progress — not just the one that changed.
+            // Two saves can overlap (answer, then auto-advance) and both read
+            // the flag; a delta-only rewrite would let the second delete the
+            // first's row and lose the answer.
+            current.order.idsInOrder().mapNotNull { qid ->
+                val selection = current.selections[qid].orEmpty()
+                val revealed = qid in current.revealed
+                val flagged = qid in current.flagged
+                if (selection.isEmpty() && !revealed && !flagged &&
+                    dwellOf(current, qid) <= 0
+                ) {
+                    null
+                } else {
+                    TestAnswer(
+                        questionId = qid,
+                        selection = selection,
+                        revealed = revealed,
+                        flagged = flagged,
+                        dwellSeconds = dwellOf(current, qid)
+                    )
+                }
+            }
+        } else if (id == null) {
+            emptyList()
+        } else {
+            listOf(
+                TestAnswer(
+                    questionId = id,
+                    selection = current.selections[id] ?: emptySet(),
+                    revealed = id in current.revealed,
+                    flagged = id in current.flagged,
+                    dwellSeconds = dwellOf(current, id)
+                )
+            )
+        }
         viewModelScope.launch {
             try {
                 repository.saveTestProgress(snapshot, changed, takeOver)
+                // Clear only after the save landed: a failed save keeps the
+                // takeover pending, so the next autosave still replaces the
+                // stale rows instead of appending beside them.
+                if (takeOver) dropStaleAnswersOnSave = false
             } catch (e: Exception) {
+                // A failed takeover may have deleted the rows before it
+                // failed; keep the flag armed so the next save replaces the
+                // full set. A takeover always rewrites every answered row, so
+                // re-arming is safe.
+                if (takeOver) dropStaleAnswersOnSave = true
                 Logger.w("TESTVM", "persistProgress failed: ${e.message}")
             }
         }

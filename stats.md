@@ -282,30 +282,38 @@ Preview: Random sample · 20 questions · 20 min · comparable
 [Start test]
 ```
 
+*This sketch is the phase-2 target. Phase 1 renders only the Random and
+Mistakes chips plus a "more types will be added" note; the other type cards are
+not shown.*
+
 - The sheet is the single entry point for Test and Mistakes.
 - A ticked category selection is shown as the scope. If nothing is ticked, the
   scope is the whole paper.
 - "Change" reuses the card's category picker. The sheet may also say "Change
   the ticked categories on the card" and return; phase 1 does not need a new
   category tree inside the sheet.
-- Type cards show a one-line description, the type's available pool, and a
-  **Comparable** or **Practice** badge. Unimplemented types are shown
-  disabled with "not available yet" and never emitted as a route.
+- The phase-2 type cards show a one-line description, the type's available
+  pool, and a **Comparable** or **Practice** badge. Phase 1 shows only
+  **Random** and **Mistakes** chips plus a "more types will be added" note;
+  the preview line carries the comparable/practice label. The other types
+  exist in the model but are neither rendered nor emitted as a route.
 - Length chips are disabled when the scope or type cannot supply that many
   questions.
 - Start is disabled when the scope has no questions, the type pool is empty,
   or the selected length is invalid.
 - The preview line is the contract: it names the type, the requested length,
   the time and the comparability.
-- Phase 1 ships only **Random** and **Mistakes**; the other type cards are
-  present but disabled with "not available yet". The sheet never emits a route
-  that the session's `buildPlan()` would refuse (section 16 C5).
+- Phase 1 ships only **Random** and **Mistakes**; the other types exist in
+  `TestType` for phase 2 but are not rendered, and the sheet shows a "more
+  types will be added" note. The sheet never emits a route that the session's
+  `buildPlan()` would refuse (section 16 C5).
 
 ### 7.3 Length rules
 
 - Allowed requested lengths: `20, 30, 40, …, 150`.
 - Presets: `20, 50, 80, 100, 120, 150`.
-- Custom control: a stepper that moves by 10, clamped to the allowed range.
+- Custom control: a slider with stops every 10 questions, clamped to the
+  allowed range.
 - Default: **20** (section 16 #2). The last-used length may be remembered
   later; it is still clamped.
 - `available` is the number of questions the **scope and type** can supply.
@@ -2054,6 +2062,13 @@ banks.
 
 ### Phase 1 — unified bounded Test (the core fix)
 
+> **As shipped, phase 1 offers only `RANDOM` and `MISTAKES`.** The other
+> selectors exist in `TestType` for phase 2, but no entry point emits them and
+> the session refuses them. The results report (§11), its `TestReport` model
+> and the Results/History type badges are **deferred** to a follow-up slice;
+> the result page still shows the existing score breakdown. Every deferral is
+> marked inline below and left unticked in §15.
+
 1. **Domain**
    - Add `TestType` (`RANDOM`, `BALANCED`, `WEAKEST_TOPICS`,
      `TOUGHEST_QUESTIONS`, `EASIEST_QUESTIONS`, `MISTAKES`, `TRICKY`,
@@ -2077,7 +2092,7 @@ banks.
      tie-break. Keep `sampled` for legacy snapshots or fold it in with tests.
    - Add the pure report model and builders: `TestReport`, `TestReportBuilder`
      and `RecommendationEngine` (section 11.14), so the result page has no
-     ad-hoc scoring logic.
+     ad-hoc scoring logic. **Deferred** to the results-report follow-up.
 2. **Data**
    - Migration v20 → v21 for the `attempts` columns and the three `rep*`
      columns on `question_stats`; new bounded attempts write
@@ -2104,8 +2119,9 @@ banks.
      and produces a bounded route. The library's Test and Mistakes shortcuts
      now open the sheet with `RANDOM` or `MISTAKES` preselected, achieving
      the two-tap acceptance criterion. Phase 1 ships only `RANDOM` and
-     `MISTAKES`; other types are hidden/disabled with "not available yet" and
-     the sheet never emits a route the session refuses.
+     `MISTAKES`; the other types are not rendered (the sheet shows a "more
+     types will be added" note) and the sheet never emits a route the session
+     refuses.
    - Expand the scope once with `CategorySelection.orderedIds` before any
      selector or quota calculation; pass the full expanded list (parents
      included) to `getOrderForCategories`, whose query is
@@ -2114,7 +2130,8 @@ banks.
    - `countUngraded` always uses the bounded id list.
    - Save the attempt metadata (`testType`, `requestedCount`,
      `scopeCategoryIds`, `scopeKey`, `samplingVersion = 2`, `seed`,
-     `exclusionMode`, `targetTopicIds`, `compositionJson`).
+     `exclusionMode`, `targetTopicIds`). `compositionJson` stays empty in
+     phase 1: it describes the phase-2 focus fills, which do not exist yet.
    - Resume builds the order from `selectedQuestionIds`; never re-ranks. A
      legacy snapshot (`testType = null` or `samplingVersion < 2`) resumes as a
      labelled Short/Legacy session or offers a new test.
@@ -2124,31 +2141,38 @@ banks.
      rows, card states and prior standings; the screen renders the model
      instead of recomputing in Compose. `TestReport.plan` is nullable and a
      legacy/short attempt gets a display plan derived from the attempt.
+     **Deferred** to the results-report follow-up.
    - Add the boundary regression test: `card_state` and `review_log` counts
-     are unchanged after a save.
+     are unchanged after a save. **Done:** `RepositoryTest
+     .savingATestLeavesTheStudyScheduleUntouched`.
 4. **UI**
    - Replace `TestDurationDialog` with `TestSetupSheet`.
    - Remove the separate drill icon/dialog and the `quick_drill`/
      `start_drill` strings.
    - The Mistakes shortcut opens the sheet with `MISTAKES` preselected.
-   - Length chips and stepper, type cards, scope summary, time, preview,
-     validation, short-test label, and the "Avoid recently tested questions"
-     setting.
+   - Length chips and slider, type chips, scope summary, time, preview,
+     validation and the short-test label. **Deferred:** the "Avoid recently
+     tested questions" setting (phase 2; `RECENT_3` is refused).
    - Test session header: "Random · 20 questions" or "Practice · Weakest
      topics · 20 questions"; keep the "N asked, M shown" passage note.
    - Results and History: show the type badge, the composition and the Fresh
-     sample badge when `exclusionMode = RECENT_3`.
+     sample badge when `exclusionMode = RECENT_3`. **Deferred** to the
+     results-report follow-up.
    - **Results report (phase 1, section 11):** header (type, scope,
      requested/shown, score, accuracy, counts, time), comparability badge,
      approximate margin, topic breakdown with small-sample, as-of-attempt
      titles and not-sampled notes, basic error mix, time summary and time
      sinks, three evidence-backed actions, "Study schedule unchanged" note,
      extended question filters, and legacy/short/full-scope labels.
+     **Deferred** to the results-report follow-up.
    - Replace the current `ResultsScreen` header and category tally with the
-     report sections; keep the paged question review underneath.
+     report sections; keep the paged question review underneath. **Deferred**
+     to the results-report follow-up.
 5. **Docs**
    - Fix the README's drill claims; document the unified Test, the length
-     rules and the type families.
+     rules and the type families. **Done:** the README now describes the
+     setup sheet, the Mistakes shortcut, the bounded lengths and the
+     Random/Mistakes phase-1 scope.
 
 ### Phase 2 — study-informed focus types
 
@@ -2361,9 +2385,11 @@ banks.
 ## 15. Acceptance criteria
 
 - [x] There is one Test entry point; Quick drill no longer exists as a
-      separate icon, dialog or route.
-- [x] Test always asks for a length; allowed lengths are 20–150 in steps of
-      10; presets are 20/50/80/100/120/150; the default is 20.
+      separate icon, dialog or UI. Old `drillCount`/`drillMinutes` links still
+      parse as legacy, but no new route emits them.
+- [x] Test asks for a length unless the whole scope is below 20 (then it is a
+      labelled short test); allowed lengths are 20–150 in steps of 10; presets
+      are 20/50/80/100/120/150; the default is 20.
 - [ ] A scope smaller than 20 gets a labelled **Short test · N questions**, not
       a disabled Test button; a sampler result below 20 from a larger scope is
       also labelled **Short test** and gets no margin or trend. (Phase 1 labels
@@ -2371,7 +2397,9 @@ banks.
       see §7.6.)
 - [ ] The sampler never returns an empty session; when no passage fits the
       requested length and overshoot limit, it refuses with a specific message
-      and suggests a longer length. (Sampler logic done; sheet shows message.)
+      and suggests a longer length. (Sampler logic done; the session refuses at
+      load with the message, but the setup sheet does not pre-check the sampler
+      yet, so Start can lead to that load error.)
 - [x] A 1,000-question paper can start a 20-question test in two taps.
 - [x] Submitting that test stores `requestedCount = 20` and
       `totalQuestions = shown` (20, or the passage overshoot), not 1,000.
@@ -2380,11 +2408,13 @@ banks.
       and a 6 + 5 + 5 pool reaches 10 as 5 + 5.
 - [x] Unanswered questions within the sample are skipped; questions outside
       the sample are not in the attempt at all.
-- [x] Scope and length are shown separately on the start sheet and the result.
+- [ ] Scope and length are shown separately on the start sheet and the result.
+      (The start sheet shows both; the result page still shows only the score
+      breakdown, so this stays unticked until the report lands.)
 - [x] Ticking a parent topic includes its subtree, and ticking a parent plus
       its child does not duplicate questions.
-- [x] Random and Balanced are labelled comparable; every practice type is
-      labelled not comparable.
+- [x] Random is labelled comparable; every practice type is labelled not
+      comparable. (Balanced is phase 2 and is not rendered.)
 - [ ] An attempt with "Avoid recently tested questions" on is labelled
       **Fresh sample** and is never compared to a strict Random attempt. (Not
       implemented in phase 1; `RECENT_3` is refused.)
@@ -2408,9 +2438,10 @@ banks.
       removed.
 - [x] The partial `question_results` index exists after both a v20 → v21
       migration and a fresh create.
-- [x] Attempts record type, requested count, scope, canonical scope key,
-      sampling version, exclusion mode, target topics, seed and composition;
-      old attempts and snapshots still load as legacy.
+- [ ] Attempts record type, requested count, scope, canonical scope key,
+      sampling version, exclusion mode, target topics and seed; old attempts
+      and snapshots still load as legacy. (Composition is deferred with the
+      phase-2 focus types; `compositionJson` is empty in phase 1.)
 - [x] `rep*` counters update only for Random/Balanced attempts with
       `samplingVersion >= 2`; practice and legacy attempts do not touch them.
 - [ ] History/Results show the type; Statistics keeps mock and practice, and
@@ -2436,7 +2467,7 @@ banks.
       phase 1.)
 - [ ] The page states that the test did not change the Study schedule. (Not
       implemented in phase 1.)
-- [ ] README matches the behavior. (Not implemented in phase 1.)
+- [x] README matches the behavior.
 
 ## 16. Decisions accepted by the owner
 

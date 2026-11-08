@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -114,7 +115,8 @@ class StudyAndSelectionUiTest {
      */
     private fun confirmTestStart() {
         waitFor("Start a test")
-        compose.onNodeWithText("Start test", substring = false).performClick()
+        waitForTag("test-setup-start")
+        compose.onNodeWithTag("test-setup-start").performClick()
     }
 
     /** Scrolls the drawer's list until [tag] is on screen, and returns it. */
@@ -900,6 +902,31 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("UITest ui-ctest-q1?", substring = true)
                 .fetchSemanticsNodes().isEmpty()
         )
+    }
+
+    @Test
+    fun theMistakesShortcutOpensTheSheetWithMistakesSelected() {
+        // A saved wrong answer gives the paper a mistake, so the card shows
+        // the Mistakes shortcut. Tapping it must preselect Mistakes in the
+        // same setup sheet, not start a legacy session.
+        seedTwoRoots("ui-cmist", "UICMistakes Paper")
+        runBlocking {
+            repository.saveAttempt(
+                paperId = "ui-cmist",
+                paperTitle = "UICMistakes Paper",
+                questions = listOf(single("ui-cmist-q1", "ui-cmist-c1")),
+                selections = mapOf("ui-cmist-q1" to setOf("ui-cmist-q1-b")),
+                negativeMarking = 0.0,
+                durationSeconds = 10,
+                finishedAt = System.currentTimeMillis()
+            )
+        }
+        compose.setContent { McqNavHost(repository = repository) }
+
+        waitForTag("paper-mistakes-ui-cmist")
+        compose.onNodeWithTag("paper-mistakes-ui-cmist").performScrollTo().performClick()
+        waitFor("Start a test")
+        compose.onNodeWithText("Mistakes", substring = false).assertIsSelected()
     }
 
     @Test

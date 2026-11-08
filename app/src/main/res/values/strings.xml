@@ -279,6 +279,7 @@
     <string name="test_setup_counting">Counting…</string>
     <string name="test_setup_length">Length</string>
     <string name="test_setup_count_label">%1$d questions</string>
+    <string name="test_setup_asked_run">%1$d asked · %2$d will run</string>
     <string name="test_setup_short_test">Short test — %1$d questions</string>
     <string name="test_setup_time">Time</string>
     <string name="test_setup_minutes">Minutes</string>
@@ -290,6 +291,12 @@
     <string name="test_preview_practice">practice · not comparable</string>
     <string name="test_preview_short">Short test · %1$d questions</string>
     <string name="test_setup_no_mistakes">No mistakes in this scope.</string>
+    <string name="test_setup_start">Start %1$d-question test · %2$d min</string>
+    <string name="test_setup_start_untimed">Start %1$d-question test · untimed</string>
+    <string name="test_banner_random">Random · %1$d questions</string>
+    <string name="test_banner_mistakes">Practice · Mistakes · %1$d questions</string>
+    <string name="test_banner_short">Short test · %1$d questions</string>
+    <string name="test_asked_shown">%1$d asked, %2$d shown</string>
     <string name="study_again">Study again</string>
     <string name="submit">Submit</string>
     <string name="submit_test">Submit test?</string>

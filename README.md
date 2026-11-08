@@ -23,9 +23,9 @@ format (papers, categories, bookmarks, history) and is documented in
 
 | Screen | What it does |
 |---|---|
-| Library | Paper cards with Start / Browse / Export / Manage; **Mistakes (N)**, **Quick drill** and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), **test- and study-by-category**, JSON import |
+| Library | Paper cards with Browse / Export / Manage; **Test**, **Mistakes** (shown when the paper has any) and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), **test- and study-by-category**, JSON import |
 | Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); passage groups render with their shared context above the first member; edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
-| Test | Timed session with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume; passage members always carry their passage above the stem and move as one block |
+| Test | A bounded session of up to 150 questions (20 by default; fewer when the scope is smaller) chosen on a setup sheet (Random or Mistakes in this release), with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume; passage members always carry their passage above the stem and move as one block |
 | Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. FSRS-6 schedules the next review (see below); a passage member shows its passage above the question |
 | Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
@@ -48,8 +48,9 @@ tags, an owning category, and an optional passage (shared reading context — se
 A passage groups several questions that read from the same context. The passage holds the
 title, body and optional image; members are ordinary questions pointing at it. The grouping is
 enforced where it must be: a test keeps members contiguous, shuffling moves the whole block,
-and a drill samples whole blocks (the header shows "N asked, M shown" when a block overshoots
-the requested count). Study and Browse show the passage as context only — each member keeps
+and a bounded test samples whole blocks (the header shows "N asked, M shown" when a block
+overshoots the requested count). Study and Browse show the passage as context only — each
+member keeps
 its own schedule, bookmarks and stats. Edit assignments in the question editor's passage
 picker; create, reorder and delete passages from the drawer's Passages screen.
 
@@ -70,11 +71,14 @@ All default off; they compose, with strict winning contradictions:
   position counter remains); suppresses practice feedback. For a real exam feel.
 - **Auto-advance** — jumps to the next question after answering (single-answer questions
   only; multi-correct needs several taps, the last question stays put).
-- **Practice mistakes** (per-paper Library button) — a round built from questions you
-  previously got wrong, most-recently-missed first. Appears only when mistakes exist.
-- **Quick drills** (per-paper Library button) — a short round of `n` questions with a
-  `m`-minute limit. `n` is capped at 1–50, `m` at 1–180, and both are remembered between
-  openings. Drill results are not saved to History.
+- **Test** (per-paper Library button) — opens a setup sheet for a bounded test of up to 150
+  questions (20 by default; fewer when the scope is smaller): type (Random or Mistakes),
+  ticked-category scope, length in steps of ten, and a time (suggested, overridden or
+  untimed). The default is a 20-question random sample of the whole paper, so Test → Start
+  is two taps. Results are saved to History.
+- **Mistakes** (per-paper Library shortcut, shown when the paper has any) — opens the same
+  sheet with **Mistakes** preselected, drawing only questions you previously got wrong in
+  the chosen scope. It is a shortcut, not a separate engine.
 - **Study** (per-paper Library button) — spaced repetition, see below.
 
 ## Spaced repetition (Study)
@@ -132,7 +136,7 @@ writes an attempt: it only schedules *when you should see a question again*.
   few reviews so a backlog cannot starve new material). "Done for now" closes the
   sitting whenever you like; the schedule never demands a backlog be cleared.
 - **Leeches** are cards failed 8 times or more. They are labelled `tricky` in the
-  library and drilled through their own button; in the main session a due leech is just
+  library and studied through their own button; in the main session a due leech is just
   an ordinary review — the most at-risk one, in fact.
 - **Editing a question resets its schedule.** An interval describes memory of *that*
   text, so changing the question text or options starts the card over. Bookmarks, history
@@ -146,7 +150,7 @@ writes an attempt: it only schedules *when you should see a question again*.
 **Scoped study.** Pick categories in the drawer; a selected parent includes its
 subcategories. Badges stay paper-wide; the scope only decides what the session serves.
 Schedules are still per question, so studying a subtree never changes another category's
-dates. On a paper card, Test, Drill, Export and Browse follow the ticked categories when one
+dates. On a paper card, Test, Mistakes, Export and Browse follow the ticked categories when one
 is selected — with nothing ticked they act on the whole paper. Browse shows the applied scope
 in its category field, and "All categories" clears it.
 
@@ -383,7 +387,7 @@ together.
   paragraph-level.
 
 In the app the passage is shown above each member everywhere the question
-appears — tests keep the whole group as one unbreakable block through shuffling and drills,
+appears — tests keep the whole group as one unbreakable block through shuffling and sampling,
 study shows it whenever a member comes due, and every document export prints it once above
 the group so each question reads in context.
 

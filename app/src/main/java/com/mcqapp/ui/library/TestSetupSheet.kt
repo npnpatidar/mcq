@@ -31,7 +31,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,6 +49,7 @@ import com.mcqapp.domain.signals.Breadth
 import com.mcqapp.domain.signals.Composition
 import com.mcqapp.domain.signals.SelectionPreview
 import com.mcqapp.ui.common.testTypeLabelRes
+import com.mcqapp.ui.common.testTypeLabelText
 import kotlin.math.roundToInt
 
 /**
@@ -406,7 +406,7 @@ internal fun TestSetupSheet(
             // --- preview ---
             Text(
                 buildString {
-                    append(LocalContext.current.getString(testTypeLabelRes(type)))
+                    append(testTypeLabelText(type))
                     append(" · ")
                     append(stringResource(R.string.test_setup_count_label, setup.resolvedCount()))
                     append(" · ")
@@ -486,31 +486,31 @@ private fun breadthLabel(breadth: Breadth): Int = when (breadth) {
 }
 
 /** One recorded segment's short label, e.g. `weakest` or `random`. */
-private fun fillSourceLabel(source: String): Int = when (source.uppercase()) {
-    "WEAKEST_TOPICS" -> R.string.test_setup_fill_weakest
-    "TOUGHEST_QUESTIONS" -> R.string.test_setup_fill_toughest
-    "EASIEST_QUESTIONS" -> R.string.test_setup_fill_easiest
-    "TRICKY" -> R.string.test_setup_fill_tricky
-    "AT_RISK" -> R.string.test_setup_fill_at_risk
-    "UNSEEN" -> R.string.test_setup_fill_unseen
-    "BALANCED" -> R.string.test_setup_fill_balanced
-    "MIXED" -> R.string.test_setup_fill_mixed
+@Composable
+private fun fillSourceLabel(source: String): String = when (source.uppercase()) {
+    "WEAKEST_TOPICS" -> stringResource(R.string.test_setup_fill_weakest)
+    "TOUGHEST_QUESTIONS" -> stringResource(R.string.test_setup_fill_toughest)
+    "EASIEST_QUESTIONS" -> stringResource(R.string.test_setup_fill_easiest)
+    "TRICKY" -> stringResource(R.string.test_setup_fill_tricky)
+    "AT_RISK" -> stringResource(R.string.test_setup_fill_at_risk)
+    "UNSEEN" -> stringResource(R.string.test_setup_fill_unseen)
+    "BALANCED" -> stringResource(R.string.test_setup_fill_balanced)
+    "MIXED" -> stringResource(R.string.test_setup_fill_mixed)
     "LEAST_RECENTLY_REVIEWED", "AUTHORED_HARD", "AUTHORED_MEDIUM" ->
-        R.string.test_setup_fill_recent
-    else -> R.string.test_setup_fill_random
+        stringResource(R.string.test_setup_fill_recent)
+    else -> stringResource(R.string.test_setup_fill_random)
 }
 
 /** `12 weakest + 8 random`, or an em dash when the selection is empty. */
 @Composable
 private fun compositionText(composition: Composition?): String {
     if (composition == null || composition.isEmpty) return "—"
-    val context = LocalContext.current
     val text = StringBuilder()
     for (segment in composition.segments) {
         if (text.isNotEmpty()) text.append(" + ")
         text.append(segment.count)
         text.append(' ')
-        text.append(context.getString(fillSourceLabel(segment.source)))
+        text.append(fillSourceLabel(segment.source))
     }
     return text.toString()
 }

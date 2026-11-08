@@ -39,7 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -1307,21 +1306,17 @@ private fun reviewTagLabel(tag: ReviewTag): Int = when (tag) {
  */
 @Composable
 private fun reviewStudyLine(review: QuestionReview): String {
-    val context = LocalContext.current
-    if (review.inStudy) {
-        val difficulty = String.format(
-            java.util.Locale.getDefault(),
-            "%.1f",
-            review.difficulty ?: 0.0
-        )
-        val recall = ((review.retention ?: 0.0) * 100).roundToInt()
-        return context.getString(
-            if (review.dueNow) R.string.report_study_line_due else R.string.report_study_line,
-            difficulty,
-            recall
-        )
+    // Built by arithmetic, not locale formatting, so the value is stable and
+    // does not read a non-observable Locale inside composition.
+    val difficulty = ((review.difficulty ?: 0.0) * 10).roundToInt() / 10.0
+    val recall = ((review.retention ?: 0.0) * 100).roundToInt()
+    return when {
+        review.inStudy && review.dueNow ->
+            stringResource(R.string.report_study_line_due, difficulty, recall)
+        review.inStudy ->
+            stringResource(R.string.report_study_line, difficulty, recall)
+        review.staleCard -> stringResource(R.string.report_study_stale)
+        review.newCard -> stringResource(R.string.report_study_new)
+        else -> stringResource(R.string.report_no_study)
     }
-    if (review.staleCard) return context.getString(R.string.report_study_stale)
-    if (review.newCard) return context.getString(R.string.report_study_new)
-    return context.getString(R.string.report_no_study)
 }

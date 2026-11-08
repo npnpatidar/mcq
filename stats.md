@@ -2320,9 +2320,12 @@ banks.
 
 ### Phase 3 — custom and advanced
 
+See [`stats-phase3.md`](stats-phase3.md) for the working plan, slices and the
+open decisions.
+
 1. Bookmarked, Tag, Authored difficulty, Slowest.
 2. `question_tags` table (or delimited exact matching).
-3. Mixed practice composition.
+3. Mixed practice composition. **Done in phase 2.**
 4. Exam blueprint (per-paper sections, counts, optional weights/time).
 5. Reliability, item analysis, guessing correction, staged/adaptive tests.
 

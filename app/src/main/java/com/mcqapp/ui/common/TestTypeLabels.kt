@@ -1,6 +1,8 @@
 package com.mcqapp.ui.common
 
 import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import com.mcqapp.R
 import com.mcqapp.domain.TestType
 
@@ -20,4 +22,23 @@ fun testTypeLabelRes(type: TestType?): Int = when (type) {
     TestType.UNSEEN -> R.string.test_setup_type_unseen
     TestType.MIXED -> R.string.test_setup_type_mixed
     else -> R.string.test_setup_type_random
+}
+
+/**
+ * The same label for sinks that take a String (a `buildString` summary). Each
+ * branch calls `stringResource` directly so the label stays configuration-aware
+ * and the string-extraction guard can see where it is rendered.
+ */
+@Composable
+fun testTypeLabelText(type: TestType?): String = when (type) {
+    TestType.MISTAKES -> stringResource(R.string.test_setup_type_mistakes)
+    TestType.WEAKEST_TOPICS -> stringResource(R.string.test_setup_type_weakest)
+    TestType.TOUGHEST_QUESTIONS -> stringResource(R.string.test_setup_type_toughest)
+    TestType.EASIEST_QUESTIONS -> stringResource(R.string.test_setup_type_easiest)
+    TestType.BALANCED -> stringResource(R.string.test_setup_type_balanced)
+    TestType.TRICKY -> stringResource(R.string.test_setup_type_tricky)
+    TestType.AT_RISK -> stringResource(R.string.test_setup_type_at_risk)
+    TestType.UNSEEN -> stringResource(R.string.test_setup_type_unseen)
+    TestType.MIXED -> stringResource(R.string.test_setup_type_mixed)
+    else -> stringResource(R.string.test_setup_type_random)
 }

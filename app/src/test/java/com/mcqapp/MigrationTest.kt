@@ -316,6 +316,53 @@ class MigrationTest {
         }
     }
 
+    /**
+     * Builds a genuine v21 file (6->21) with a tagged question and a pre-v22
+     * attempt, so 21->22 can be verified to backfill [question_tags] and add
+     * the nullable [attempts.variant] column without dropping rows.
+     */
+    private fun createV21WithTaggedQuestion() {
+        createV6(
+            insertPaper(),
+            "INSERT INTO categories (id,paperId,title,parentId,sortOrder) VALUES ('c1','p1','Cat',NULL,0)",
+            "INSERT INTO questions (id,categoryId,text,image,explanation,explanationImage,difficulty,marks,tags,sortOrder,contentHash) " +
+                "VALUES ('q1','c1','Q1',NULL,'',NULL,'MEDIUM',1.0,'Algebra, Fractions',0,'h1')"
+        )
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            AppDatabase.MIGRATION_9_10.migrate(raw)
+            AppDatabase.MIGRATION_10_11.migrate(raw)
+            AppDatabase.MIGRATION_11_12.migrate(raw)
+            AppDatabase.MIGRATION_12_13.migrate(raw)
+            AppDatabase.MIGRATION_13_14.migrate(raw)
+            AppDatabase.MIGRATION_14_15.migrate(raw)
+            AppDatabase.MIGRATION_15_16.migrate(raw)
+            AppDatabase.MIGRATION_16_17.migrate(raw)
+            AppDatabase.MIGRATION_17_18.migrate(raw)
+            AppDatabase.MIGRATION_18_19.migrate(raw)
+            AppDatabase.MIGRATION_19_20.migrate(raw)
+            AppDatabase.MIGRATION_20_21.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO attempts (id,paperId,title,totalQuestions,correctCount," +
+                    "wrongCount,skippedCount,score,maxScore,durationSeconds,finishedAt," +
+                    "testType,requestedCount,scopeCategoryIds,scopeKey,samplingVersion," +
+                    "seed,exclusionMode,targetTopicIds,compositionJson) " +
+                    "VALUES (1,'p1','Paper',1,1,0,0,1.0,1.0,60,2000,'MOCK',1,'','whole:p1',2,0,'NONE','','')"
+            )
+            raw.version = 21
+        }
+    }
+
     @Test
     fun `migration 6 to 7 creates the card_state table`() {
         runBlocking {
@@ -1048,6 +1095,47 @@ class MigrationTest {
         } finally {
             fresh.close()
             context.deleteDatabase("fresh-create.db")
+        }
+    }
+
+    @Test
+    fun `migration 21 to 22 backfills question_tags and adds attempts variant`() {
+        runBlocking {
+            createV21WithTaggedQuestion()
+            val db = openMigrated()
+            try {
+                val attempt = db.attemptDao().getAllAttempts().single()
+                assertNull("a pre-v22 attempt has no variant", attempt.variant)
+            } finally {
+                db.close()
+            }
+
+            val check = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("migration-test.db").path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            val sql = { name: String ->
+                check.rawQuery(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                    arrayOf(name)
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }
+            assertTrue(sql("index_question_tags_tagFolded_questionId") != null)
+            check.rawQuery("SELECT tagFolded FROM question_tags WHERE questionId='q1' ORDER BY tagFolded", null).use { cursor ->
+                val got = mutableListOf<String>()
+                while (cursor.moveToNext()) got += cursor.getString(0)
+                assertEquals(listOf("algebra", "fractions"), got)
+            }
+            check.rawQuery("PRAGMA table_info(attempts)", null).use { cursor ->
+                var hasVariant = false
+                val nameIdx = cursor.getColumnIndexOrThrow("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIdx) == "variant") hasVariant = true
+                }
+                assertTrue("attempts.variant should exist after 21->22", hasVariant)
+            }
+            check.close()
         }
     }
 }

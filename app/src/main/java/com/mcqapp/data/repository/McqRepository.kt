@@ -1124,7 +1124,58 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             atRisk = db.cardStateDao().countAtRisk(paperId, now),
             unseen = db.questionDao().countUnseenInScope(paperId),
             scopeSize = db.questionDao().countQuestionsInScope(paperId),
-            scopeIsWholeLibrary = paperId == null
+            scopeIsWholeLibrary = paperId == null,
+            reliability = computeReliabilitySummary(attempts)
+        )
+    }
+
+    private suspend fun computeReliabilitySummary(
+        attempts: List<com.mcqapp.domain.Attempt>
+    ): com.mcqapp.domain.ReliabilitySummary? {
+        val comparable = attempts.filter {
+            val family = com.mcqapp.domain.TestReportBuilder.familyOf(it)
+            family == com.mcqapp.domain.ReportFamily.MOCK ||
+                family == com.mcqapp.domain.ReportFamily.FRESH_SAMPLE
+        }
+        if (comparable.size < 2) return null
+        val group = comparable
+            .groupBy { listOf(it.paperId, it.testType, it.scopeKey, it.requestedCount.toString()) }
+            .values
+            .maxByOrNull { it.size }
+            ?: return null
+        if (group.size < 2) return null
+        val sample = group.sortedByDescending { it.finishedAt }.take(30)
+        val vectors = sample.map { attempt ->
+            val rows = historyStore.getAttemptResultEntities(attempt.id)
+            val ids = rows.map { it.questionId }
+            val scores = rows.map { if (it.isCorrect) 1.0 else 0.0 }
+            ids to scores
+        }
+        if (vectors.isEmpty()) return null
+        val n = vectors.first().second.size
+        if (n < com.mcqapp.domain.stats.Reliability.MIN_ATTEMPTED) return null
+        val sameForm = vectors.all { it.first == vectors.first().first && it.second.size == n }
+        val scoreMatrix = vectors.map { it.second }
+        val splitRels = scoreMatrix.mapNotNull { scores ->
+            when (val r = com.mcqapp.domain.stats.Reliability.splitHalf(scores)) {
+                is com.mcqapp.domain.stats.Reliability.SplitHalfResult.Value -> r.reliability
+                is com.mcqapp.domain.stats.Reliability.SplitHalfResult.TooSmall -> null
+            }
+        }
+        if (splitRels.isEmpty() && !sameForm) return null
+        val meanRel = if (splitRels.isNotEmpty()) splitRels.average() else 0.0
+        val totals = scoreMatrix.map { it.sum() }
+        val sd = if (totals.size >= 2) {
+            val mean = totals.average()
+            kotlin.math.sqrt(totals.sumOf { (it - mean) * (it - mean) } / totals.size)
+        } else 0.0
+        val sem = com.mcqapp.domain.stats.Reliability.sem(sd, meanRel)?.semPoints ?: 0.0
+        val kr20 = if (sameForm) com.mcqapp.domain.stats.Reliability.kr20(scoreMatrix) else null
+        return com.mcqapp.domain.ReliabilitySummary(
+            reliability = if (meanRel.isFinite()) meanRel else 0.0,
+            semPoints = if (sem.isFinite()) sem else 0.0,
+            kr20 = kr20,
+            attempted = n
         )
     }
     /** Wall-clock finish of the paper's latest attempt, or null when it has none. */

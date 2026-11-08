@@ -118,7 +118,6 @@ data class QuestionEntity(
     val explanation: String = "",
     val explanationImage: String? = null,
     val difficulty: String = "medium",
-    @ColumnInfo(defaultValue = "1.0")
     val marks: Double = 1.0,
     val tags: String = "",
     /**
@@ -350,21 +349,13 @@ data class AttemptEntity(
      * type means "unknown design", never RANDOM.
      */
     val testType: String? = null,
-    @ColumnInfo(defaultValue = "0")
     val requestedCount: Int = 0,
-    @ColumnInfo(defaultValue = "''")
     val scopeCategoryIds: String = "",
-    @ColumnInfo(defaultValue = "''")
     val scopeKey: String = "",
-    @ColumnInfo(defaultValue = "1")
     val samplingVersion: Int = 1,
-    @ColumnInfo(defaultValue = "0")
     val seed: Long = 0,
-    @ColumnInfo(defaultValue = "'NONE'")
     val exclusionMode: String = "NONE",
-    @ColumnInfo(defaultValue = "''")
     val targetTopicIds: String = "",
-    @ColumnInfo(defaultValue = "''")
     val compositionJson: String = ""
 )
 
@@ -380,7 +371,18 @@ data class AttemptEntity(
     ],
     // (attemptId, isCorrect) serves the results-screen tallies; the attemptId
     // prefix replaces the old standalone index.
-    indices = [Index("attemptId", "isCorrect")]
+    //
+    // (questionId, id) is declared here as an ordinary index only because
+    // Room's schema validation compares the complete index set and @Index
+    // cannot express a WHERE clause. The real index in the database is the
+    // partial `... WHERE selectedOptionIds != ''` built by
+    // AppDatabase.PARTIAL_RESULT_INDEX_SQL; SQLite reports the same name and
+    // columns, so validation passes. Keep this name and column list in sync
+    // with that statement.
+    indices = [
+        Index("attemptId", "isCorrect"),
+        Index("questionId", "id")
+    ]
 )
 data class QuestionResultEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -394,7 +396,6 @@ data class QuestionResultEntity(
     val isCorrect: Boolean,
     val explanation: String,
     val explanationImage: String? = null,
-    @ColumnInfo(defaultValue = "0")
     val dwellSeconds: Long = 0
 )
 
@@ -424,10 +425,7 @@ data class QuestionStatsEntity(
     val ungradedCount: Int,
     val lastResultIsCorrect: Boolean,
     val lastFinishedAt: Long,
-    @ColumnInfo(defaultValue = "0")
     val repCorrect: Int = 0,
-    @ColumnInfo(defaultValue = "0")
     val repWrong: Int = 0,
-    @ColumnInfo(defaultValue = "0")
     val repSkip: Int = 0
 )

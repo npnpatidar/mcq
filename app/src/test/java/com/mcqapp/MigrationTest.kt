@@ -49,7 +49,7 @@ class MigrationTest {
         "CREATE INDEX IF NOT EXISTS `index_categories_parentId` ON `categories` (`parentId`)",
         "CREATE TABLE IF NOT EXISTS `questions` (`id` TEXT NOT NULL, `categoryId` TEXT NOT NULL, " +
             "`text` TEXT NOT NULL, `image` TEXT, `explanation` TEXT NOT NULL, " +
-            "`explanationImage` TEXT, `difficulty` TEXT NOT NULL, `marks` REAL NOT NULL DEFAULT 1.0, " +
+            "`explanationImage` TEXT, `difficulty` TEXT NOT NULL, `marks` REAL NOT NULL, " +
             "`tags` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, " +
             "PRIMARY KEY(`id`), FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) " +
             "ON UPDATE NO ACTION ON DELETE CASCADE )",
@@ -76,7 +76,7 @@ class MigrationTest {
             "`optionsJson` TEXT NOT NULL, `correctOptionIds` TEXT NOT NULL, " +
             "`selectedOptionIds` TEXT NOT NULL, `isCorrect` INTEGER NOT NULL, " +
             "`explanation` TEXT NOT NULL, `explanationImage` TEXT, " +
-            "`dwellSeconds` INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(`attemptId`) REFERENCES `attempts`(`id`) " +
+            "`dwellSeconds` INTEGER NOT NULL, FOREIGN KEY(`attemptId`) REFERENCES `attempts`(`id`) " +
             "ON UPDATE NO ACTION ON DELETE CASCADE )",
         "CREATE INDEX IF NOT EXISTS `index_question_results_attemptId` " +
             "ON `question_results` (`attemptId`)",
@@ -574,18 +574,11 @@ class MigrationTest {
             )
             chainFile.close()
 
-            // Only migrations 3->4 through 9->10 (version 3 to 10).
-            val chainMigrations = arrayOf(
-                AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5,
-                AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7,
-                AppDatabase.MIGRATION_7_8, AppDatabase.MIGRATION_8_9,
-                AppDatabase.MIGRATION_9_10
-            )
             val db = Room.databaseBuilder(context, AppDatabase::class.java, "chain-test.db")
-                .addMigrations(*chainMigrations)
+                .addMigrations(*ALL_MIGRATIONS)
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->10; Room validates the final schema.
+            // One open exercises 3->4->...->21; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)

@@ -2011,14 +2011,21 @@ an `onCreate` callback alone would leave upgraded installs without it. Do
 both:
 
 1. The v20 → v21 migration executes
-   `CREATE INDEX IF NOT EXISTS index_question_results_question_id_graded ON question_results(questionId, id) WHERE selectedOptionIds != ''`.
-2. `AppDatabase` registers a `RoomDatabase.Callback` whose `onCreate` executes
-   the same statement for a fresh database.
+   `CREATE INDEX IF NOT EXISTS index_question_results_questionId_id ON question_results(questionId, id) WHERE selectedOptionIds != ''`.
+2. `AppDatabase` registers a `RoomDatabase.Callback` whose `onCreate` drops
+   the ordinary index Room just created and executes the same partial
+   statement for a fresh database.
+
+Room 2.8.5 compares the **complete** index set during schema validation, so the
+entity must declare the index too. `@Index` has no `where` parameter, so
+`QuestionResultEntity` declares `Index("questionId", "id")` — the same name and
+columns, without the predicate. SQLite reports only the name and columns for a
+partial index, so validation passes while the database keeps the partial form.
+Keep the entity declaration and `PARTIAL_RESULT_INDEX_SQL` in sync.
 
 Test both paths: migrate a v20 database and create a fresh v21 database, then
-assert the index exists in each (`PRAGMA index_list('question_results')`).
-Because Room validates only the indices declared on entities, an extra raw
-index does not break schema validation.
+assert the index exists and is partial in each
+(`PRAGMA index_list('question_results')`, column `partial`).
 
 **As-of-attempt vs current category.** Report rows use the `categoryTitle`
 stored on `question_results`, so a rename or move does not rewrite history.

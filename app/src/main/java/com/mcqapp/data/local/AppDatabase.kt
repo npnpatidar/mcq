@@ -481,8 +481,15 @@ abstract class AppDatabase : RoomDatabase() {
          * two creation paths: a migration that only ran `ALTER TABLE` would
          * leave a fresh install without it, and a callback alone would leave
          * upgraded installs without it. Both paths execute this same
-         * statement. Room validates only the indices declared on entities, so
-         * the extra index does not fail schema validation.
+         * statement.
+         *
+         * Room 2.8.5 compares the *complete* index set during schema
+         * validation, so [QuestionResultEntity] declares the same name and
+         * columns as an ordinary index. On an upgrade the migration creates
+         * the partial index directly; on a fresh install Room first creates
+         * the ordinary one from the entity, and [CREATE_PARTIAL_RESULT_INDEX]
+         * replaces it. Validation only sees the name and columns, so the
+         * `WHERE` clause is invisible to it.
          */
         const val PARTIAL_RESULT_INDEX_SQL =
             "CREATE INDEX IF NOT EXISTS `index_question_results_questionId_id` " +
@@ -567,11 +574,14 @@ abstract class AppDatabase : RoomDatabase() {
 
         /**
          * Fresh installs get the raw partial index here, because no migration
-         * runs for them. Kept next to [MIGRATION_20_21], which executes the
-         * same statement for an upgrade.
+         * runs for them. Room has already created the ordinary index declared
+         * on [QuestionResultEntity] in `createAllTables`, so drop that one
+         * first and replace it with the partial form. Kept next to
+         * [MIGRATION_20_21], which executes the same statement for an upgrade.
          */
         val CREATE_PARTIAL_RESULT_INDEX = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP INDEX IF EXISTS `index_question_results_questionId_id`")
                 db.execSQL(PARTIAL_RESULT_INDEX_SQL)
             }
         }

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 21,
-    "identityHash": "2b03f9690aa148b959708477e556d36b",
+    "identityHash": "6d0658731cfb8af7fed4aed9c4963cd5",
     "entities": [
       {
         "tableName": "papers",
@@ -701,6 +701,16 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_question_results_attemptId_isCorrect` ON `${TABLE_NAME}` (`attemptId`, `isCorrect`)"
+          },
+          {
+            "name": "index_question_results_questionId_id",
+            "unique": false,
+            "columnNames": [
+              "questionId",
+              "id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_question_results_questionId_id` ON `${TABLE_NAME}` (`questionId`, `id`)"
           }
         ],
         "foreignKeys": [
@@ -1250,7 +1260,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2b03f9690aa148b959708477e556d36b')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6d0658731cfb8af7fed4aed9c4963cd5')"
     ]
   }
 }

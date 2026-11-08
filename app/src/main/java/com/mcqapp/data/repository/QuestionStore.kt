@@ -379,9 +379,14 @@ internal class QuestionStore(
         db.questionDao().upsertAll(questions)
         db.optionDao().upsertAll(options)
         db.correctAnswerDao().upsertAll(answers)
-        for (clone in clones) {
-            db.questionTagDao().replaceQuestionTags(clone.id, clone.tags)
+        val cloneIds = clones.map { it.id }
+        db.questionTagDao().deleteByQuestionsChunked(cloneIds)
+        val tagRows = clones.flatMap { clone ->
+            TagNormalizer.fromList(clone.tags).map {
+                QuestionTagEntity(clone.id, it.tag, it.folded)
+            }
         }
+        if (tagRows.isNotEmpty()) db.questionTagDao().insertIgnore(tagRows)
     }
 
     suspend fun deleteQuestion(questionId: String) {

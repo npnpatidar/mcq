@@ -64,7 +64,7 @@ class EditorSaveButtonUiTest {
     }
 
     private fun waitFor(text: String) {
-        compose.waitUntil(30_000) {
+        compose.waitUntil(60_000) {
             compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }

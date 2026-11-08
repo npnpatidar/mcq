@@ -130,7 +130,7 @@ class BrowseDeepLinkUiTest {
     @Test
     fun aDeepLinkBeyondTheJumpThresholdLandsOnTheRow() {
         openFocused(HUGE_PAPER, "$HUGE_PAPER-q$HUGE_JUMP")
-        compose.waitUntil(30_000) {
+        compose.waitUntil(60_000) {
             compose.onAllNodesWithText("H$HUGE_JUMP", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }

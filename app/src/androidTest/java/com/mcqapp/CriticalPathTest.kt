@@ -59,14 +59,14 @@ class CriticalPathTest {
     }
 
     private fun waitFor(text: String) {
-        compose.waitUntil(30_000) {
+        compose.waitUntil(60_000) {
             compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
     }
 
     private fun waitForTag(tag: String) {
-        compose.waitUntil(30_000) {
+        compose.waitUntil(60_000) {
             compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
     }

@@ -999,7 +999,7 @@ class MigrationTest {
                     arrayOf(name)
                 ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
             }
-            val partial = sql("index_question_results_question_id_graded")
+            val partial = sql("index_question_results_questionId_id")
             assertTrue(
                 "the graded-result partial index should exist: $partial",
                 partial != null && partial.contains("selectedOptionIds") &&
@@ -1043,7 +1043,7 @@ class MigrationTest {
                     val partial = cursor.getColumnIndexOrThrow("partial")
                     while (cursor.moveToNext()) {
                         if (cursor.getString(name) ==
-                            "index_question_results_question_id_graded"
+                            "index_question_results_questionId_id"
                         ) {
                             found = true
                             assertEquals(1, cursor.getInt(partial))

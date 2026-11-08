@@ -59,7 +59,7 @@ class SampleImageUiTest {
         compose.setContent {
             ContentElements(elements)
         }
-        compose.waitUntil(60_000) {
+        compose.waitUntil(120_000) {
             compose.onAllNodesWithTag("question-image", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }

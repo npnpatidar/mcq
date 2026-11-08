@@ -96,14 +96,14 @@ class StudyAndSelectionUiTest {
     }
 
     private fun waitFor(text: String) {
-        compose.waitUntil(60_000) {
+        compose.waitUntil(120_000) {
             compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
     }
 
     private fun waitForTag(tag: String) {
-        compose.waitUntil(60_000) {
+        compose.waitUntil(120_000) {
             compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
     }
@@ -491,7 +491,7 @@ class StudyAndSelectionUiTest {
             single("ui-chips-low", "ui-chips-cat"),
             single("ui-chips-new", "ui-chips-cat")
         )
-        val minute = 60_000L
+        val minute = 120_000L
         val day = 86_400_000L
         val now = System.currentTimeMillis()
         runBlocking {

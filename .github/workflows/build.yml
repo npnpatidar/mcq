@@ -203,7 +203,10 @@ jobs:
         with:
           api-level: 34
           arch: x86_64
-          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon -DskipFlakyTests=true
+          # Every instrumented test runs: the suite used to skip a handful via
+          # a system-property switch, but that property was never passed to the
+          # on-device test process, so the switch silently did nothing.
+          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon
 
       - name: Upload UI test results
         if: always()

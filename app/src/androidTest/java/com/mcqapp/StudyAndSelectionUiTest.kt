@@ -30,7 +30,6 @@ import com.mcqapp.ui.navigation.McqNavHost
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -117,7 +116,10 @@ class StudyAndSelectionUiTest {
     private fun confirmTestStart() {
         waitFor("Start a test")
         waitForTag("test-setup-start")
-        compose.onNodeWithTag("test-setup-start").performClick()
+        // The sheet is a scrollable column and Start sits at its bottom; the
+        // type chips alone can push it past the fold on the emulator. Scroll
+        // it into view, or the click lands off-screen and is swallowed.
+        compose.onNodeWithTag("test-setup-start").performScrollTo().performClick()
     }
 
     /** Scrolls the drawer's list until [tag] is on screen, and returns it. */
@@ -196,7 +198,6 @@ class StudyAndSelectionUiTest {
 
     @Test
     fun tappingTheTestQuestionClockPausesIt() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getProperty("skipFlakyTests") != "true")
         seedPaper(
             "ui-test-clock", "UITest Clock", "ui-test-clock-cat",
             single("ui-test-clock-q", "ui-test-clock-cat")
@@ -486,7 +487,6 @@ class StudyAndSelectionUiTest {
      */
     @Test
     fun eachPulledCardNamesThePoolThatServedIt() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getProperty("skipFlakyTests") != "true")
         runBlocking { repository.setSimplifiedStudy(true) }
         seedPaper(
             "ui-chips", "UIChips Paper", "ui-chips-cat",
@@ -494,7 +494,7 @@ class StudyAndSelectionUiTest {
             single("ui-chips-low", "ui-chips-cat"),
             single("ui-chips-new", "ui-chips-cat")
         )
-        val minute = 30_000L
+        val minute = 60_000L
         val day = 86_400_000L
         val now = System.currentTimeMillis()
         runBlocking {
@@ -720,7 +720,6 @@ class StudyAndSelectionUiTest {
      */
     @Test
     fun tickingInTwoPapersKeepsTheirSelectionsApart() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getProperty("skipFlakyTests") != "true")
         seedPaper("ui-iso-a", "UIIso A", "ui-iso-a-cat", single("ui-iso-a-q", "ui-iso-a-cat"))
         seedPaper("ui-iso-b", "UIIso B", "ui-iso-b-cat", single("ui-iso-b-q", "ui-iso-b-cat"))
         compose.setContent { McqNavHost(repository = repository) }
@@ -889,7 +888,6 @@ class StudyAndSelectionUiTest {
 
     @Test
     fun cardTestFollowsTheSelection() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getProperty("skipFlakyTests") != "true")
         // Tick the SECOND root: a whole-paper Test would serve the first one,
         // so serving the second is the proof the scope was honoured.
         val second = seedTwoRoots("ui-ctest", "UICTest Paper")

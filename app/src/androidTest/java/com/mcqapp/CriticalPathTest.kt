@@ -18,7 +18,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -76,13 +75,14 @@ class CriticalPathTest {
     private fun confirmTestStart() {
         waitFor("Start a test")
         waitForTag("test-setup-start")
-        compose.onNodeWithTag("test-setup-start").performClick()
+        // The sheet is a scrollable column and Start sits at its bottom; the
+        // type chips alone can push it past the fold on the emulator. Scroll
+        // it into view, or the click lands off-screen and is swallowed.
+        compose.onNodeWithTag("test-setup-start").performScrollTo().performClick()
     }
 
     @Test
     fun libraryToResults() {
-        // Flaky on CI due to emulator GPU rendering issues (b/300000000)
-        assumeTrue("Skipping on CI due to flaky emulator", System.getProperty("skipFlakyTests") != "true")
         compose.setContent { McqNavHost(repository = repository) }
 
         // Library -> start the seeded paper (drawer holds a duplicate title).

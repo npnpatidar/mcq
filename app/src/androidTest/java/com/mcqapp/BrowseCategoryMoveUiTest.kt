@@ -73,7 +73,7 @@ class BrowseCategoryMoveUiTest {
             )
         }
         compose.waitForIdle()
-        compose.waitUntil(120_000) {
+        compose.waitUntil(30_000) {
             compose.onAllNodesWithText("Second Cat", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
@@ -102,7 +102,7 @@ class BrowseCategoryMoveUiTest {
         compose.onNode(hasContentDescription("Move the whole category up") and isEnabled())
             .performScrollTo()
             .performClick()
-        compose.waitUntil(120_000) {
+        compose.waitUntil(30_000) {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
                 listOf("ub-q2", "ub-q1")
         }
@@ -112,7 +112,7 @@ class BrowseCategoryMoveUiTest {
         compose.onNode(hasContentDescription("Move the whole category down") and isEnabled())
             .performScrollTo()
             .performClick()
-        compose.waitUntil(120_000) {
+        compose.waitUntil(30_000) {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
                 listOf("ub-q1", "ub-q2")
         }
@@ -121,7 +121,7 @@ class BrowseCategoryMoveUiTest {
 
     /** Waits until a section-move button exists and is enabled. */
     private fun awaitSectionMove(description: String) {
-        compose.waitUntil(120_000) {
+        compose.waitUntil(30_000) {
             compose.onAllNodes(hasContentDescription(description) and isEnabled())
                 .fetchSemanticsNodes().isNotEmpty()
         }

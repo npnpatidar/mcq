@@ -16,11 +16,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.data.local.CategoryEntity
@@ -110,11 +108,12 @@ class StudyAndSelectionUiTest {
     }
 
     /**
-     * Every Test tap now lands on the duration picker (prefilled with the
-     * paper's duration); confirming starts the session unchanged.
+     * Every Test tap lands on the setup sheet, whose defaults are a random
+     * sample of the whole paper with the suggested time. Confirming starts the
+     * session with those defaults.
      */
     private fun confirmTestStart() {
-        waitFor("Duration in minutes")
+        waitFor("Start a test")
         compose.onNodeWithText("Start test", substring = false).performClick()
     }
 
@@ -339,37 +338,6 @@ class StudyAndSelectionUiTest {
 
         compose.onNodeWithText("marked Again", substring = true).assertDoesNotExist()
         compose.onNodeWithText("marked Good", substring = true).assertIsDisplayed()
-    }
-
-    /**
-     * A drill larger than the paper cannot be run, and the dialog says why
-     * instead of quietly handing back a smaller drill.
-     */
-    @Test
-    fun aDrillBiggerThanThePaperIsRefused() {
-        seedPaper(
-            "ui-sel", "UISel Paper", "ui-sel-cat",
-            single("ui-sel-q1", "ui-sel-cat"),
-            single("ui-sel-q2", "ui-sel-cat")
-        )
-        compose.setContent { McqNavHost(repository = repository) }
-
-        compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        compose.onNodeWithTag("paper-drill-ui-sel").performClick()
-
-        waitFor("Quick drill")
-
-        // The default is what this paper can supply, so the dialog opens valid.
-        // The whole line reads "2 random questions, 5:00 on the clock."
-        compose.onNodeWithText("2 random questions", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Start drill", substring = false).assertIsEnabled()
-
-        // Ask for more than it holds and it refuses, naming the real figure.
-        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("99")
-        compose.onNodeWithText("This paper has only 2 questions. Enter 2 or fewer.", substring = false)
-            .assertIsDisplayed()
-        compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()
-        compose.onNodeWithText("Cancel", substring = false).performClick()
     }
 
     /**
@@ -932,34 +900,6 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("UITest ui-ctest-q1?", substring = true)
                 .fetchSemanticsNodes().isEmpty()
         )
-    }
-
-    @Test
-    fun cardDrillFollowsTheSelection() {
-        // Tick the SECOND root: its single question becomes the drill's bound,
-        // where the whole paper would have supplied two.
-        val second = seedTwoRoots("ui-cdrill", "UICDrill Paper")
-        compose.setContent { McqNavHost(repository = repository) }
-
-        compose.onNodeWithTag("paper-show-ui-cdrill").performScrollTo().performClick()
-        waitForTag("card-cat-$second")
-        compose.onNodeWithTag("card-cat-$second").performScrollTo().performClick()
-        compose.onNodeWithTag("paper-drill-ui-cdrill").performScrollTo().performClick()
-        waitFor("Quick drill")
-
-        // The dialog names the scope and opens on what the selection holds.
-        compose.onNodeWithText("1 categories", substring = false).assertIsDisplayed()
-        compose.onNodeWithText("1 random question", substring = true).assertIsDisplayed()
-
-        // Asking for more than the selection holds refuses about the selection,
-        // not about the paper (which would have allowed 2).
-        compose.onAllNodes(hasSetTextAction())[0].performTextReplacement("9")
-        compose.onNodeWithText(
-            "This selection has only 1 question(s). Enter 1 or fewer.",
-            substring = false
-        ).assertIsDisplayed()
-        compose.onNodeWithText("Start drill", substring = false).assertIsNotEnabled()
-        compose.onNodeWithText("Cancel", substring = false).performClick()
     }
 
     @Test

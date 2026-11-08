@@ -64,9 +64,9 @@ class CriticalPathTest {
         }
     }
 
-    /** The Test tap opens the duration picker; confirming starts the session. */
+    /** The Test tap opens the setup sheet; confirming starts the session. */
     private fun confirmTestStart() {
-        waitFor("Duration in minutes")
+        waitFor("Start a test")
         compose.onNodeWithText("Start test", substring = false).performClick()
     }
 

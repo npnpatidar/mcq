@@ -7,6 +7,7 @@ import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.paging.PagingSource
+import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.TestType
 import kotlinx.coroutines.flow.Flow
 @Dao
@@ -479,6 +480,34 @@ interface QuestionDao {
      */
     @Query("SELECT id, passageId FROM questions WHERE id IN (:ids)")
     suspend fun getSessionRefsByIds(ids: List<String>): List<SessionRef>
+
+    /**
+     * The identity columns a signal calculation needs for one scope: id,
+     * category, category title, content hash and the authored difficulty. No
+     * stem, options or explanation, so a large scope stays a light scan.
+     */
+    @Query(
+        "SELECT q.id AS questionId, q.categoryId AS categoryId, " +
+            "c.title AS categoryTitle, q.contentHash AS contentHash, " +
+            "q.difficulty AS difficulty FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE q.categoryId IN (:categoryIds)"
+    )
+    suspend fun getSignalRowsByCategories(categoryIds: List<String>): List<QuestionSignalRow>
+
+    /** [getSignalRowsByCategories] for a whole paper. */
+    @Query(
+        "SELECT q.id AS questionId, q.categoryId AS categoryId, " +
+            "c.title AS categoryTitle, q.contentHash AS contentHash, " +
+            "q.difficulty AS difficulty FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId"
+    )
+    suspend fun getSignalRowsForPaper(paperId: String): List<QuestionSignalRow>
+
+    /** The current content hash of a known set of questions. */
+    @Query("SELECT id AS questionId, contentHash AS contentHash FROM questions WHERE id IN (:ids)")
+    suspend fun getContentHashesByIds(ids: List<String>): List<QuestionHashRow>
 
     /**
      * Scheduling inputs only: id and stored content hash, in the same
@@ -1108,6 +1137,27 @@ interface QuestionDao {
     @Query("SELECT COUNT(*) FROM questions")
     suspend fun countQuestions(): Int
 
+    /** Questions in one paper, or the whole library when [paperId] is null. */
+    @Query(
+        "SELECT COUNT(*) FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE (:paperId IS NULL OR c.paperId = :paperId)"
+    )
+    suspend fun countQuestionsInScope(paperId: String?): Int
+
+    /**
+     * Questions with no valid memory state: no card, a new card or a stale
+     * `contentHash`. This is the Unseen pool the practice-progress view shows.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE (:paperId IS NULL OR c.paperId = :paperId) " +
+            "AND NOT EXISTS (SELECT 1 FROM card_state s WHERE s.questionId = q.id " +
+            "AND s.contentHash = q.contentHash AND s.cardState != 'NEW')"
+    )
+    suspend fun countUnseenInScope(paperId: String?): Int
+
     /**
      * Per-category counts for one paper's categories.
      *
@@ -1473,6 +1523,24 @@ interface CardStateDao {
     @Query("SELECT COUNT(*) FROM card_state")
     suspend fun countAll(): Int
 
+    /** Leeches in one paper, or the whole library when [paperId] is null. */
+    @Query(
+        "SELECT COUNT(*) FROM card_state " +
+            "WHERE (:paperId IS NULL OR paperId = :paperId) AND leech = 1"
+    )
+    suspend fun countLeechesInScope(paperId: String?): Int
+
+    /**
+     * Cards due now with a valid memory state. A new card is not "at risk";
+     * it has no memory estimate to lose.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM card_state " +
+            "WHERE (:paperId IS NULL OR paperId = :paperId) " +
+            "AND dueAt <= :now AND cardState != 'NEW' AND stability > 0"
+    )
+    suspend fun countAtRisk(paperId: String?, now: Long): Int
+
     @Query("SELECT * FROM card_state WHERE paperId = :paperId AND questionId = :questionId")
     suspend fun get(paperId: String, questionId: String): CardStateEntity?
 
@@ -1484,6 +1552,18 @@ interface CardStateDao {
      */
     @Query("SELECT * FROM card_state WHERE questionId IN (:ids)")
     suspend fun getForQuestions(ids: List<String>): List<CardStateEntity>
+
+    /**
+     * The scheduling fields the signal calculation needs, without the rest of
+     * the entity. The caller compares [contentHash] with the question's current
+     * hash to invalidate a stale memory estimate.
+     */
+    @Query(
+        "SELECT questionId, difficulty, stability, reviewCount, lapses, leech, " +
+            "dueAt, lastReviewedAt, contentHash, cardState " +
+            "FROM card_state WHERE questionId IN (:ids)"
+    )
+    suspend fun getSignalsByIds(ids: List<String>): List<CardSignalRow>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: CardStateEntity)
@@ -1888,6 +1968,19 @@ interface ReviewLogDao {
     @Query("SELECT * FROM review_log WHERE questionId = :questionId ORDER BY reviewedAt ASC, id ASC")
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>
 
+    /**
+     * Guess evidence for a known set of questions. Only rows with a non-null
+     * `wasGuess` count as observations; a pre-v19 row genuinely has no flag and
+     * must not be treated as a non-guess.
+     */
+    @Query(
+        "SELECT questionId, COUNT(CASE WHEN wasGuess = 1 THEN 1 END) AS guesses, " +
+            "COUNT(wasGuess) AS flags FROM review_log " +
+            "WHERE questionId IN (:ids) AND wasGuess IS NOT NULL " +
+            "GROUP BY questionId"
+    )
+    suspend fun getGuessCountsByIds(ids: List<String>): List<GuessCountRow>
+
     /** How many reviews a paper has logged. */
     @Query("SELECT COUNT(*) FROM review_log WHERE paperId = :paperId")
     suspend fun countByPaper(paperId: String): Int
@@ -2222,7 +2315,7 @@ interface AttemptDao {
         "SELECT r.questionId AS questionId, r.categoryTitle AS categoryTitle, " +
             "q.categoryId AS currentCategoryId, r.dwellSeconds AS dwellSeconds, " +
             "r.isCorrect AS isCorrect, r.correctOptionIds AS correctOptionIds, " +
-            "r.selectedOptionIds AS selectedOptionIds " +
+            "r.selectedOptionIds AS selectedOptionIds, q.passageId AS passageId " +
             "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
             "WHERE r.attemptId = :attemptId ORDER BY r.rowid"
     )
@@ -2255,6 +2348,120 @@ interface AttemptDao {
         beforeFinishedAt: Long,
         limit: Int
     ): List<AttemptEntity>
+
+    /**
+     * The questions among [questionIds] that an earlier attempt already asked
+     * (section 11.10). "Earlier" is the same `(finishedAt, id)` order the
+     * comparable and standing queries use.
+     */
+    @Query(
+        "SELECT DISTINCT r.questionId FROM question_results r " +
+            "INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE r.questionId IN (:questionIds) " +
+            "AND (a.finishedAt < :beforeFinishedAt " +
+            "OR (a.finishedAt = :beforeFinishedAt AND a.id < :attemptId))"
+    )
+    suspend fun getTestedBeforeIds(
+        questionIds: List<String>,
+        beforeFinishedAt: Long,
+        attemptId: Long
+    ): List<String>
+
+    /**
+     * Each question's latest graded, answered standing before this attempt
+     * (section 11.10). This is the `finishedAt DESC, id DESC` rule, written as
+     * a correlated subquery because the app supports SQLite 3.18 (no window
+     * functions).
+     */
+    @Query(
+        "SELECT r.questionId AS questionId, r.isCorrect AS isCorrect " +
+            "FROM question_results r WHERE r.questionId IN (:questionIds) " +
+            "AND r.attemptId = (" +
+            "SELECT r2.attemptId FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId " +
+            "AND r2.correctOptionIds != '' AND r2.selectedOptionIds != '' " +
+            "AND (a2.finishedAt < :beforeFinishedAt " +
+            "OR (a2.finishedAt = :beforeFinishedAt AND a2.id < :attemptId)) " +
+            "ORDER BY a2.finishedAt DESC, a2.id DESC LIMIT 1)"
+    )
+    suspend fun getPriorStandings(
+        questionIds: List<String>,
+        beforeFinishedAt: Long,
+        attemptId: Long
+    ): List<StandingRow>
+
+    /** Distinct questions in a whole paper tested before this attempt. */
+    @Query(
+        "SELECT COUNT(DISTINCT r.questionId) FROM question_results r " +
+            "INNER JOIN questions q ON q.id = r.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE c.paperId = :paperId " +
+            "AND (a.finishedAt < :beforeFinishedAt " +
+            "OR (a.finishedAt = :beforeFinishedAt AND a.id < :attemptId))"
+    )
+    suspend fun countTestedInPaperBefore(
+        paperId: String,
+        beforeFinishedAt: Long,
+        attemptId: Long
+    ): Int
+
+    /** [countTestedInPaperBefore] over a category scope. */
+    @Query(
+        "SELECT COUNT(DISTINCT r.questionId) FROM question_results r " +
+            "INNER JOIN questions q ON q.id = r.questionId " +
+            "INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE q.categoryId IN (:categoryIds) " +
+            "AND (a.finishedAt < :beforeFinishedAt " +
+            "OR (a.finishedAt = :beforeFinishedAt AND a.id < :attemptId))"
+    )
+    suspend fun countTestedInCategoriesBefore(
+        categoryIds: List<String>,
+        beforeFinishedAt: Long,
+        attemptId: Long
+    ): Int
+
+    /** Questions in a whole paper whose latest standing before this attempt was wrong. */
+    @Query(
+        "SELECT COUNT(*) FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId AND (" +
+            "SELECT r.isCorrect FROM question_results r " +
+            "WHERE r.questionId = q.id AND r.attemptId = (" +
+            "SELECT r2.attemptId FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = q.id " +
+            "AND r2.correctOptionIds != '' AND r2.selectedOptionIds != '' " +
+            "AND (a2.finishedAt < :beforeFinishedAt " +
+            "OR (a2.finishedAt = :beforeFinishedAt AND a2.id < :attemptId)) " +
+            "ORDER BY a2.finishedAt DESC, a2.id DESC LIMIT 1) LIMIT 1) = 0"
+    )
+    suspend fun countMistakesInPaperBefore(
+        paperId: String,
+        beforeFinishedAt: Long,
+        attemptId: Long
+    ): Int
+
+    /** [countMistakesInPaperBefore] over a category scope. */
+    @Query(
+        "SELECT COUNT(*) FROM questions q " +
+            "WHERE q.categoryId IN (:categoryIds) AND (" +
+            "SELECT r.isCorrect FROM question_results r " +
+            "WHERE r.questionId = q.id AND r.attemptId = (" +
+            "SELECT r2.attemptId FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = q.id " +
+            "AND r2.correctOptionIds != '' AND r2.selectedOptionIds != '' " +
+            "AND (a2.finishedAt < :beforeFinishedAt " +
+            "OR (a2.finishedAt = :beforeFinishedAt AND a2.id < :attemptId)) " +
+            "ORDER BY a2.finishedAt DESC, a2.id DESC LIMIT 1) LIMIT 1) = 0"
+    )
+    suspend fun countMistakesInCategoriesBefore(
+        categoryIds: List<String>,
+        beforeFinishedAt: Long,
+        attemptId: Long
+    ): Int
 
     /**
      * The last [limit] representative attempts that can seed repeat avoidance
@@ -2366,6 +2573,18 @@ interface QuestionStatsDao {
         isCorrect: Boolean,
         finishedAt: Long
     )
+
+    /**
+     * The lifetime counters for a known set of questions, both the all-attempt
+     * set and the representative subset. Missing rows are absent; the caller
+     * gives them the neutral prior.
+     */
+    @Query(
+        "SELECT questionId, correctCount AS correct, wrongCount AS wrong, " +
+            "skipCount AS skip, repCorrect AS repCorrect, repWrong AS repWrong, " +
+            "repSkip AS repSkip FROM question_stats WHERE questionId IN (:ids)"
+    )
+    suspend fun getCountersByIds(ids: List<String>): List<QuestionCounterRow>
 
     /**
      * Hardest first: highest wrong rate, then most graded attempts, then text.
@@ -2654,7 +2873,8 @@ data class ReportRowEntity(
     val dwellSeconds: Long,
     val isCorrect: Boolean,
     val correctOptionIds: String,
-    val selectedOptionIds: String
+    val selectedOptionIds: String,
+    val passageId: String? = null
 )
 
 /** One-row header aggregate for the results screen. */
@@ -2680,6 +2900,56 @@ data class CategoryBreakdownRow(
 data class MinBlockRow(
     val minPassage: Int? = null,
     val standalone: Int = 0
+)
+
+/**
+ * The identity columns a signal calculation needs for one question. It never
+ * carries the stem, options or explanation.
+ */
+data class QuestionSignalRow(
+    val questionId: String,
+    val categoryId: String,
+    val categoryTitle: String,
+    val contentHash: String,
+    val difficulty: String
+)
+
+/** One question's current content hash, for stale-card validation. */
+data class QuestionHashRow(
+    val questionId: String,
+    val contentHash: String
+)
+
+/** One question's lifetime counters, all-attempt and representative. */
+data class QuestionCounterRow(
+    val questionId: String,
+    val correct: Int,
+    val wrong: Int,
+    val skip: Int,
+    val repCorrect: Int,
+    val repWrong: Int,
+    val repSkip: Int
+)
+
+/** The scheduling columns the signal calculation reads from `card_state`. */
+data class CardSignalRow(
+    val questionId: String,
+    val difficulty: Double,
+    val stability: Double,
+    val reviewCount: Int,
+    val lapses: Int,
+    val leech: Boolean,
+    val dueAt: Long,
+    val lastReviewedAt: Long,
+    val contentHash: String,
+    val cardState: CardStateKind
+)
+
+/** Guess counts for one question; [flags] is the non-null `wasGuess` sample. */
+data class GuessCountRow(
+    val questionId: String,
+    val guesses: Int,
+    val flags: Int
 )
 
 /**
@@ -2738,6 +3008,12 @@ data class LatestStanding(
     val isCorrect: Boolean,
     val finishedAt: Long,
     val rowId: Long
+)
+
+/** One question's latest graded standing before an attempt (section 11.10). */
+data class StandingRow(
+    val questionId: String,
+    val isCorrect: Boolean
 )
 
 /** One row of [AttemptDao.countMistakesByPaper]: a paper and its mistake count. */

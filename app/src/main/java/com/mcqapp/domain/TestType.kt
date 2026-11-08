@@ -34,6 +34,10 @@ enum class TestType {
     /** Practice types never claim mock comparability (section 11.5). */
     val isPractice: Boolean get() = !isRepresentative
 
+    /** The phase-2 metric selectors (stats.md §8.3–§8.5). */
+    val isFocus: Boolean
+        get() = this == WEAKEST_TOPICS || this == TOUGHEST_QUESTIONS || this == EASIEST_QUESTIONS
+
     /** Only these types may record `exclusionMode = RECENT_3` (section 9.8). */
     val supportsFreshSample: Boolean
         get() = this == RANDOM || this == BALANCED || this == EASIEST_QUESTIONS

@@ -108,7 +108,7 @@ fun HistoryScreen(
         } else {
             // Hoisted: was recomputed inside the lazy content lambda on every
         // list build.
-        val trends = remember(attempts) { Trends.perPaper(attempts) }
+        val trends = remember(attempts) { Trends.perFamily(attempts) }
         LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -120,7 +120,7 @@ fun HistoryScreen(
                     item(contentType = "header") {
                         Text(stringResource(R.string.trends), style = MaterialTheme.typography.titleSmall)
                     }
-                    items(trends, key = { "trend-${it.paperId}" }, contentType = { "trend" }) { trend ->
+                    items(trends, key = { "trend-${it.key}" }, contentType = { "trend" }) { trend ->
                         TrendCard(trend = trend)
                     }
                     item(contentType = "header") {
@@ -232,7 +232,7 @@ fun HistoryScreen(
 }
 
 @Composable
-private fun TrendCard(trend: Trends.PaperTrend) {
+private fun TrendCard(trend: Trends.FamilyTrend) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -242,6 +242,17 @@ private fun TrendCard(trend: Trends.PaperTrend) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(trend.title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    buildString {
+                        append(com.mcqapp.ui.common.familyLabel(trend.family))
+                        trend.type?.let { append(" · ").append(testTypeLabel(it)) }
+                        if (trend.requestedCount > 0) {
+                            append(" · ").append(trend.requestedCount).append(" questions")
+                        }
+                        if (trend.freshSample) append(" · fresh sample")
+                    },
+                    style = MaterialTheme.typography.labelSmall
+                )
                 Text(
                     "${trend.attempts} attempt${if (trend.attempts == 1) "" else "s"}" +
                         " · best ${formatPercent(trend.bestPercent)}",

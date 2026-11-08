@@ -196,13 +196,30 @@ internal fun TestSetupSheet(
                     onClick = { type = TestType.MISTAKES },
                     label = { Text(stringResource(R.string.test_setup_type_mistakes)) }
                 )
+                FilterChip(
+                    selected = type == TestType.WEAKEST_TOPICS,
+                    onClick = { type = TestType.WEAKEST_TOPICS },
+                    label = { Text(stringResource(R.string.test_setup_type_weakest)) }
+                )
+                FilterChip(
+                    selected = type == TestType.TOUGHEST_QUESTIONS,
+                    onClick = { type = TestType.TOUGHEST_QUESTIONS },
+                    label = { Text(stringResource(R.string.test_setup_type_toughest)) }
+                )
+                FilterChip(
+                    selected = type == TestType.EASIEST_QUESTIONS,
+                    onClick = { type = TestType.EASIEST_QUESTIONS },
+                    label = { Text(stringResource(R.string.test_setup_type_easiest)) }
+                )
             }
             Text(
                 stringResource(
-                    if (type == TestType.MISTAKES) {
-                        R.string.test_setup_type_mistakes_help
-                    } else {
-                        R.string.test_setup_type_random_help
+                    when (type) {
+                        TestType.MISTAKES -> R.string.test_setup_type_mistakes_help
+                        TestType.WEAKEST_TOPICS -> R.string.test_setup_type_weakest_help
+                        TestType.TOUGHEST_QUESTIONS -> R.string.test_setup_type_toughest_help
+                        TestType.EASIEST_QUESTIONS -> R.string.test_setup_type_easiest_help
+                        else -> R.string.test_setup_type_random_help
                     }
                 ),
                 style = MaterialTheme.typography.bodySmall,

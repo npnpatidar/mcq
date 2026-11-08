@@ -46,6 +46,7 @@ import com.mcqapp.ui.stats.sections.GuessingSection
 import com.mcqapp.ui.stats.sections.MemorySection
 import com.mcqapp.ui.stats.sections.OverviewSection
 import com.mcqapp.ui.stats.sections.RetentionSection
+import com.mcqapp.ui.stats.sections.TestsSection
 import com.mcqapp.ui.stats.sections.WorkloadSection
 
 /**
@@ -111,7 +112,8 @@ fun StatsScreen(
                     R.string.tab_workload,
                     R.string.tab_memory,
                     R.string.tab_cards,
-                    R.string.tab_guessing
+                    R.string.tab_guessing,
+                    R.string.tab_tests
                 ).forEachIndexed { index, titleRes ->
                     val section = StatsViewModel.Tab.entries[index]
                     Tab(
@@ -121,7 +123,9 @@ fun StatsScreen(
                     )
                 }
             }
-            RangeSelector(state.range, viewModel::setRange)
+            if (state.tab != StatsViewModel.Tab.TESTS) {
+                RangeSelector(state.range, viewModel::setRange)
+            }
             when {
                 state.loadError != null -> Box(
                     modifier = Modifier.fillMaxSize(),
@@ -183,6 +187,9 @@ fun StatsScreen(
                                     questionText = questionText,
                                     onOpenCard = { openCard(it.paperId, it.questionId) }
                                 )
+                            }
+                            StatsViewModel.Tab.TESTS -> state.testProgress?.let { data ->
+                                TestsSection(data)
                             }
                         }
                     }

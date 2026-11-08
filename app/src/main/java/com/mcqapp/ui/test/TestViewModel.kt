@@ -32,6 +32,9 @@ import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.TestType
 import com.mcqapp.domain.TimerWarnings
+import com.mcqapp.domain.signals.Breadth
+import com.mcqapp.domain.signals.Selection
+import com.mcqapp.domain.signals.TestSelector
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -310,8 +313,9 @@ class TestViewModel(
                 // never labelled a fresh sample under a rule it did not follow.
                 val effectivePlan: TestPlan?
                 val order: SessionOrder
+                var recentIds: Set<String> = emptySet()
                 if (plan != null && plan.exclusionMode == ExclusionMode.RECENT_3) {
-                    val recent = if (plan.type?.supportsFreshSample == true) {
+                    recentIds = if (plan.type?.supportsFreshSample == true) {
                         repository.recentComparableQuestionIds(
                             paperId = paperId,
                             testTypes = TestType.representativeNames(),
@@ -322,7 +326,7 @@ class TestViewModel(
                     } else {
                         emptySet()
                     }
-                    val filtered = baseOrder.excludingBlocksContaining(recent)
+                    val filtered = baseOrder.excludingBlocksContaining(recentIds)
                     val applied = filtered.size < baseOrder.size &&
                         TestPlan.freshSampleFits(filtered.size, plan.count)
                     order = if (applied) filtered else baseOrder
@@ -333,14 +337,38 @@ class TestViewModel(
                     }
                     Logger.i(
                         "TESTVM",
-                        "Repeat avoidance: asked=${recent.size}, base=${baseOrder.size}, " +
+                        "Repeat avoidance: asked=${recentIds.size}, base=${baseOrder.size}, " +
                             "after=${filtered.size}, applied=$applied"
                     )
                 } else {
                     order = baseOrder
                     effectivePlan = plan
                 }
-                sessionPlan = effectivePlan
+
+                // Phase-2 focus selectors rank the scope's evidence once and
+                // freeze the chosen ids. The plan records the targets and the
+                // fill composition, and a resume replays these ids instead of
+                // re-ranking after the metrics move.
+                val focusSelection = if (effectivePlan?.type?.isFocus == true) {
+                    val signals = repository.getQuestionSignals(paperId, scopeIds)
+                    val pool = if (recentIds.isEmpty()) {
+                        signals
+                    } else {
+                        signals.filterNot { it.questionId in recentIds }
+                    }
+                    TestSelector.select(effectivePlan, pool, Breadth.MEDIUM)
+                } else {
+                    null
+                }
+                val finalPlan = if (focusSelection != null && effectivePlan != null) {
+                    effectivePlan.copy(
+                        targetTopicIds = focusSelection.targets,
+                        compositionJson = focusSelection.composition.toJson()
+                    )
+                } else {
+                    effectivePlan
+                }
+                sessionPlan = finalPlan
                 Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesSession) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
@@ -366,34 +394,53 @@ class TestViewModel(
                 // allocate multi-megabyte index arrays, so they run off the
                 // main thread; only the resulting order is published to state.
                 val (_, drilled) = withContext(Dispatchers.Default) {
-                    if (effectivePlan != null) {
-                        // The plan's requested length is resolved against the
-                        // type's pool (the base order), then sampled exactly:
-                        // a short scope runs whole, a request above the pool is
-                        // clamped, and a passage block may overshoot the target
-                        // by at most the section 9.6 limit.
-                        val target = when (val resolution = effectivePlan.resolve(order.size)) {
-                            is TestPlan.Resolution.Refused ->
-                                throw IllegalStateException(resolution.message)
-                            is TestPlan.Resolution.Ready -> resolution.count
+                    if (finalPlan != null) {
+                        if (focusSelection != null) {
+                            // A focus selector already chose and froze the ids;
+                            // only the presentation shuffle remains. Re-sampling
+                            // here would re-rank or change the recorded sample.
+                            val focusOrder = repository.getSessionOrderForIds(focusSelection.ids)
+                            if (focusOrder.isEmpty && focusSelection.ids.isNotEmpty()) {
+                                throw IllegalStateException("The selected questions no longer exist.")
+                            }
+                            val presented = focusOrder.shuffled(seed, shuffleQ)
+                            drillSampleSeed = 0L
+                            Logger.i(
+                                "TESTVM",
+                                "Focus ${finalPlan.type}: requested=${finalPlan.count}, " +
+                                    "selected=${focusSelection.ids.size}, shown=${presented.size}, " +
+                                    "targets=${focusSelection.targets.size}, seed=$seed"
+                            )
+                            order to presented
+                        } else {
+                            // The plan's requested length is resolved against the
+                            // type's pool (the base order), then sampled exactly:
+                            // a short scope runs whole, a request above the pool is
+                            // clamped, and a passage block may overshoot the target
+                            // by at most the section 9.6 limit.
+                            val target = when (val resolution = finalPlan.resolve(order.size)) {
+                                is TestPlan.Resolution.Refused ->
+                                    throw IllegalStateException(resolution.message)
+                                is TestPlan.Resolution.Ready -> resolution.count
+                            }
+                            val sampled = order.sampledBounded(
+                                target = target,
+                                max = TestPlan.MAX_LENGTH,
+                                seed = finalPlan.seed
+                            )
+                            val selected = when (sampled) {
+                                is BoundedSample.Refused ->
+                                    throw IllegalStateException(sampled.message)
+                                is BoundedSample.Selected -> sampled.order
+                            }
+                            drillSampleSeed = 0L
+                            Logger.i(
+                                "TESTVM",
+                                "Bounded ${finalPlan.type}: requested=${finalPlan.count}, " +
+                                    "target=$target, shown=${selected.size}, seed=${finalPlan.seed}"
+                            )
+                            order to selected
                         }
-                        val sampled = order.sampledBounded(
-                            target = target,
-                            max = TestPlan.MAX_LENGTH,
-                            seed = effectivePlan.seed
-                        )
-                        val selected = when (sampled) {
-                            is BoundedSample.Refused ->
-                                throw IllegalStateException(sampled.message)
-                            is BoundedSample.Selected -> sampled.order
-                        }
-                        drillSampleSeed = 0L
-                        Logger.i(
-                            "TESTVM",
-                            "Bounded ${effectivePlan.type}: requested=${effectivePlan.count}, " +
-                                "target=$target, shown=${selected.size}, seed=${effectivePlan.seed}"
-                        )
-                        order to selected
                     } else {
                         val shuffledOrder = order.shuffled(seed, shuffleQ)
                         if (isDrill) {
@@ -567,7 +614,7 @@ class TestViewModel(
             seed = if (plan != null) sessionSeed else 0L,
             exclusionMode = plan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
             targetTopicIds = plan?.targetTopicIds?.joinToString(",") ?: "",
-            compositionJson = ""
+            compositionJson = plan?.compositionJson ?: ""
         )
     }
 
@@ -1117,6 +1164,14 @@ class TestViewModel(
         // an order the plan never sampled would label it a bounded test it is
         // not (section 7.6). The next save then writes the legacy metadata.
         if (saved.isLegacy) sessionPlan = null
+        // A resumed focus session keeps the targets and composition it was
+        // saved with; the route does not carry them.
+        if (!saved.isLegacy) {
+            sessionPlan = sessionPlan?.copy(
+                targetTopicIds = saved.targetTopicIds,
+                compositionJson = saved.compositionJson
+            )
+        }
         // Carry the saved seeds forward so later autosaves rewrite the same
         // tiny snapshot instead of falling back to an id list.
         saved.questionSeed?.let { sessionSeed = it }
@@ -1253,6 +1308,7 @@ class TestViewModel(
             samplingVersion = sessionPlan?.samplingVersion ?: 1,
             exclusionMode = sessionPlan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
             targetTopicIds = sessionPlan?.targetTopicIds.orEmpty(),
+            compositionJson = sessionPlan?.compositionJson.orEmpty(),
             // Untimed sessions bank their elapsed time so a resume neither
             // restarts the clock nor counts the dead interval (D7).
             elapsedSeconds = if (current.totalSeconds > 0) {

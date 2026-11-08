@@ -1,14 +1,17 @@
 # Phase 2 implementation plan: study-informed focus types and evidence
 
-Status: **plan only**. Branch `feature/phase2-stats`, cut from `main` at
-`991484f` (the merge of PR #50). No phase-2 production code exists on this
-branch yet. Phase 1 is merged and released through the normal PR flow.
+Status: **shipped on `feature/phase2-stats`, PR #51**. Branch cut from `main`
+at `991484f` (the merge of PR #50). Slices 1–6 below are implemented in that
+one PR; slice 7 (Tricky, At-risk, Unseen, Balanced, Mixed) stays deferred. The
+setup-sheet composition preview/target display and the session practice badge
+are also deferred (see §8). Phase 1 is merged and released through the normal
+PR flow.
 
 This document is the working plan for the phase-2 items in
-[`stats.md`](stats.md) §11.15 and §13. It records the intended file layout,
-queries, formulas, test seams and open decisions so the work can be split into
-small, reviewable PRs. When a slice ships, this document and `stats.md` must be
-updated together; an item that is deferred stays visibly deferred here.
+[`stats.md`](stats.md) §11.15 and §13. It records the file layout, queries,
+formulas, test seams and open decisions. When a slice ships, this document and
+`stats.md` are updated together; an item that is deferred stays visibly
+deferred here.
 
 ## 1. Goal and exit criteria
 
@@ -41,7 +44,7 @@ Exit criteria:
 | Area | Shipped in phase 1 | File |
 |---|---|---|
 | Bounded plan and setup rules | `TestPlan`, `TestSetup`, length clamp, sampler pre-check | `domain/TestPlan.kt`, `domain/TestSetup.kt` |
-| Types | All enum values; only `RANDOM` and `MISTAKES` reachable | `domain/TestType.kt` |
+| Types | All enum values; `RANDOM`, `MISTAKES`, `WEAKEST_TOPICS`, `TOUGHEST_QUESTIONS`, `EASIEST_QUESTIONS` reachable | `domain/TestType.kt`, `domain/TestSetup.kt` |
 | Block-aware sampler | `SessionOrder.sampledBounded` | `domain/SessionOrder.kt` |
 | Attempt metadata | type, requested count, scope key, version, seed, exclusion, targets, composition | `domain/Models.kt`, `data/local/Entities.kt` |
 | Report model | score, margin, family, topics, error mix, timing, actions | `domain/TestReport.kt` |
@@ -50,8 +53,8 @@ Exit criteria:
 | Statistics | six SRS tabs plus a result-family legend | `ui/stats/` |
 | Schema | v21; `question_stats.rep*`, `attempts` metadata, partial result index | `data/local/AppDatabase.kt` |
 
-`targetTopicIds` and `compositionJson` already exist in `Attempt` and are
-currently empty. The phase-2 selectors are their first producers.
+`targetTopicIds` and `compositionJson` existed in `Attempt` from phase 1 and
+are now written by the focus selectors; a legacy attempt still reads empty.
 
 ## 3. Constraints and non-goals
 
@@ -83,12 +86,13 @@ currently empty. The phase-2 selectors are their first producers.
   difficulty, Slowest, Mixed, item analysis, export and adaptive tests. They
   stay in phase 2/3 and are called out in §9.
 
-## 4. Proposed PR slices
+## 4. PR slices
 
-Each slice is a feature branch cut from `main` (or stacked on the previous
-slice), gets a draft PR, and keeps the pure-JVM suite green.
+Slices 1–6 ship together in PR #51 on `feature/phase2-stats` (the owner asked
+for the whole phase in one PR, so the slice split below is a review map rather
+than a branch plan). Slice 7 stays deferred.
 
-### Slice 1 — signals foundation (pure domain)
+### Slice 1 — signals foundation (pure domain) — **Done**
 
 - Add `domain/signals/QuestionSignals.kt` and `domain/signals/TestRanking.kt`.
 - Add `app/src/test/java/com/mcqapp/QuestionSignalsTest.kt`.
@@ -98,7 +102,7 @@ slice), gets a draft PR, and keeps the pure-JVM suite green.
 Deliverables: Wilson lower bound, neutral priors, validity gate, all signal
 components, toughness/ease composites, category weakness and ranking helpers.
 
-### Slice 2 — selector and queries
+### Slice 2 — selector and queries — **Done**
 
 - Add the minimal read projections for scope signals, card state, guess
   aggregates, due/unseen counts and category aggregates.
@@ -110,7 +114,18 @@ components, toughness/ease composites, category weakness and ranking helpers.
 - Record `targetTopicIds` and `compositionJson` for the new types.
 - Robolectric tests for the new queries; CI-only.
 
-### Slice 3 — setup sheet and labels
+### Slice 3 — setup sheet and labels — **Partly done**
+
+Done: the sheet offers the five startable types (Random, Weakest topics,
+Toughest questions, Easiest questions, Mistakes) with a one-line help note,
+and the report/History labels already know every family and type.
+
+Deferred: the per-type pool-size card, the live composition preview, the
+chosen-target list with observed accuracy, and the session-header practice
+badge. Those are display-only; the selector still records the truth on the
+attempt.
+
+The original slice plan (kept for reference):
 
 - Replace the "more types will be added" note in `TestSetupSheet` with type
   cards that show the pool size and a one-line "why these questions" note.
@@ -122,7 +137,7 @@ components, toughness/ease composites, category weakness and ranking helpers.
 - Compose/UI tests where the project already has them; otherwise the pure
   preview values are tested in `TestSetupTest`.
 
-### Slice 4 — report evidence
+### Slice 4 — report evidence — **Done**
 
 - Extend `TestReportInput` and `TestReport` with `memory`, `coverage`,
   `mistakes` and per-question lifetime accuracy.
@@ -131,7 +146,7 @@ components, toughness/ease composites, category weakness and ranking helpers.
   `ResultsScreen`.
 - Extend `TestReportBuilderTest` with valid, stale and missing `card_state`.
 
-### Slice 5 — trend and bootstrap
+### Slice 5 — trend and bootstrap — **Done**
 
 - Add the comparable trend model and confidence bands, including the
   fresh-vs-fresh approximation note.
@@ -141,20 +156,23 @@ components, toughness/ease composites, category weakness and ranking helpers.
 - Render the trend in `ResultsScreen` and the History row where appropriate.
 - Extend `TestReportBuilderTest` and `RecommendationEngineTest`.
 
-### Slice 6 — Statistics families and practice progress
+### Slice 6 — Statistics families and practice progress — **Done**
 
 - Split attempt aggregates by family (Mock / Fresh / Practice / Short /
   Legacy) and by strict vs fresh.
 - Add the practice-progress views: weak-topic accuracy, mistakes cleared,
   leeches, at-risk, unseen coverage.
-- The existing Overview legend stays; the Exam/Coverage/Progress tabs from
-  `statistics-plan.md` are the natural home. Decide whether to add tabs or
-  extend Overview before building the charts.
+- The existing Overview legend stays; the shipped home is a seventh
+  **Tests** tab (`ui/stats/sections/TestsSection.kt`) rather than extra
+  Overview charts, because the family split is a different question from the
+  SRS overview.
 
 ### Slice 7 (deferred) — remaining selectors
 
-Tricky, At-risk, Unseen, Balanced, Mixed, custom types. Only start after
-slices 1–6 are accepted; each needs its own definition, query and label.
+Tricky, At-risk, Unseen, Balanced, Mixed, custom types. Not implemented.
+Each needs its own definition, query and label, and stays out of the setup
+sheet until then; `TestSetup.isStartableType` keeps only the five shipped
+types startable.
 
 ## 5. Domain design
 
@@ -363,38 +381,42 @@ Notes:
 
 ### Setup sheet
 
-- Type cards: Random, Weakest topics, Toughest questions, Easiest questions,
-  Mistakes. Each shows the current pool size, the family (Mock / Practice) and
-  a short reason (`Your 3 weakest topics`, `Hardest 20 items`,
-  `Recently missed`).
+Shipped: the five startable type chips with a one-line help note, and the
+existing scope/length/time controls.
+
+Deferred: type cards that show the current pool size and the family, the live
+composition preview, and the chosen-target list with observed accuracy. If
+the learner changes breadth, nothing previews before Start yet; the selector
+still records the real composition on the attempt.
+
 - The sheet must not offer a type whose pool is empty; the existing Start
   validation and sampler pre-check remain the final gate.
-- Weakest topics shows the chosen topics and their observed accuracy. If the
-  learner changes breadth, the preview updates before Start.
 - The Fresh sample note appears only for types with `supportsFreshSample`;
   practice types show the practice note instead.
 
-### Results
+### Results — **shipped**
 
 - Memory card: the four quadrants (hard/wrong, hard/correct, easy/wrong,
   easy/correct), "no Study history", due-in-Study and retrievability. Every
   value is labelled as a Study estimate.
 - Coverage card: engaged / scope size, unseen remaining, repeat rate, mistakes
   added/cleared/remaining and due in Study.
-- Question review: a Study badge and lifetime accuracy with its source label
+- Question review: lifetime accuracy with its source label
   (`Mock attempts` vs `All attempts`).
-- Practice headline: the type, targets and a reminder that the score is biased
-  by design; no mock trend or margin.
+- Practice headline: the targets and a reminder that the score is biased by
+  design; no mock trend or margin.
 - Trend: only for comparable families; fresh-vs-fresh gets the approximate
   note; short and legacy get none.
+- Bootstrap interval: only when negative marking makes the accuracy margin an
+  incomplete description of the score.
 
-### Statistics
+### Statistics — **shipped**
 
-- Separate Mock, Fresh sample, Practice, Short and Legacy in the attempt
-  aggregates.
-- Practice progress: weak-topic accuracy over time, mistakes cleared, leeches,
-  at-risk and unseen coverage.
-- Do not mix practice scores into the mock trend.
+- A seventh **Tests** tab separates Mock, Fresh sample, Practice, Short and
+  Legacy in the attempt aggregates.
+- Practice progress: the last three focus runs with target accuracy and
+  mistakes cleared, plus leeches, at-risk and unseen coverage for the scope.
+- No practice score enters a mock trend.
 
 ## 9. Tests
 
@@ -407,11 +429,14 @@ Notes:
   minimum one, 40% cap and relaxation, fill ladder, Mistakes standing rule,
   Weakest targets recorded even when a target is missed, Easiest exclusion.
 - `TestSetupTest`: the new types resolve, clamp and refuse exactly like the
-  existing ones; the preview composition is deterministic.
+  existing ones; the startable set is exactly the five shipped types.
 - `TestReportBuilderTest`: memory quadrants with valid, stale and missing
   card state; coverage counts engaged rows only; mistakes added/cleared;
   due-in-Study; lifetime accuracy source; trend comparability; bootstrap
   determinism and passage resampling; practice headline.
+- `TestProgressTest` / `TrendsTest`: families stay separate, practice runs
+  are newest-first, a Fresh sample keeps its own line and a legacy attempt
+  gets none.
 - `RecommendationEngineTest`: each new rule fires only on its evidence; no
   practice action claims mock comparability; short/legacy suppress
   statistical actions.
@@ -421,10 +446,14 @@ Notes:
 ### Robolectric / SQLite (CI x86_64 only)
 
 - New DAO queries return the expected counts and order, including chunked
-  scopes and empty scopes.
+  scopes and empty scopes. **Deferred:** no dedicated test was added in this
+  PR; the pure selector/evidence rules are covered locally and CI compiles
+  the queries.
 - `getLatestStandings`-style prior standings match `finishedAt DESC, id DESC`.
+  **Deferred** for the new chunked query; the pure standing rule is tested.
 - A focus attempt writes `targetTopicIds` and `compositionJson`; a resumed
-  attempt does not re-rank.
+  attempt does not re-rank. **Deferred** for a database-level test; the
+  round-trip is covered by `TestPlanTest`/`TestSnapshotTest`.
 - Deleting an attempt recomputes the affected `question_stats` rows; a
   practice attempt never moves `rep*`.
 - Report queries match the header: score, counts, categories, dwell median,
@@ -492,15 +521,14 @@ Notes:
 - **ARM64 test gap.** Mitigation: pure-JVM tests locally; Robolectric and
   instrumented tests on CI x86_64 before merge.
 
-## 12. Suggested order
+## 12. Shipped order
 
-1. Slice 1 + 2: signals, selector, queries, tests; no UI.
-2. Slice 3: setup cards, composition, labels.
-3. Slice 4: report evidence.
-4. Slice 5: trend and bootstrap.
-5. Slice 6: Statistics families and practice progress.
-6. Slice 7: remaining selectors, only after owner review.
+1. Slice 1 + 2: signals, selector, queries, tests; no UI. **Done.**
+2. Slice 3: setup type chips; pool cards and preview still deferred.
+3. Slice 4: report evidence. **Done.**
+4. Slice 5: trend, bootstrap and practice headline. **Done.**
+5. Slice 6: Statistics families and practice progress. **Done.**
+6. Slice 7: remaining selectors, still deferred.
 
-Update `stats.md` §11.15/§13 and the README at the end of each shipped slice,
-not in advance. A deferred item stays marked deferred until its code and tests
-land.
+`stats.md` §11.15/§13 and the README are updated with this PR. A deferred item
+stays marked deferred until its code and tests land.

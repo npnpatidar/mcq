@@ -162,6 +162,21 @@ fun ResultsScreen(
             }
             if (report != null) {
                 item(contentType = "meaning") { MeaningCard(report) }
+                if (report.practice != null) {
+                    item(contentType = "practice") { PracticeCard(report) }
+                }
+                if (report.memory != null) {
+                    item(contentType = "memory") { MemoryCard(report) }
+                }
+                if (report.coverage != null || report.mistakes != null) {
+                    item(contentType = "coverage") { CoverageCard(report) }
+                }
+                if (report.trend != null) {
+                    item(contentType = "trend") { TrendCard(report) }
+                }
+                if (report.interval != null) {
+                    item(contentType = "interval") { IntervalCard(report) }
+                }
                 if (report.errorMix.hasAnything) {
                     item(contentType = "error-mix") { ErrorMixCard(report) }
                 }
@@ -256,7 +271,8 @@ fun ResultsScreen(
                         result = numbered.result,
                         bookmarked = numbered.result.questionId in bookmarked,
                         onToggleBookmark = { viewModel.toggleBookmark(numbered.result.questionId) },
-                        showDwell = showDwell
+                        showDwell = showDwell,
+                        lifetime = report?.lifetime?.get(numbered.result.questionId)
                     )
                 }
             }
@@ -829,12 +845,236 @@ private fun Stat(label: String, value: String, color: androidx.compose.ui.graphi
 }
 
 @Composable
+private fun PracticeCard(report: TestReport) {
+    val practice = report.practice ?: return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.report_practice_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            if (practice.withoutTargets) {
+                Text(
+                    stringResource(R.string.report_practice_no_targets),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                practice.targets.forEach { target ->
+                    Text(
+                        stringResource(
+                            R.string.report_practice_target_row,
+                            target.title,
+                            target.correct,
+                            target.asked,
+                            (target.accuracy * 100).roundToInt(),
+                            target.poolSize
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(
+                    R.string.report_practice_overall,
+                    (practice.overallAccuracy * 100).roundToInt(),
+                    practice.overallAsked
+                ),
+                style = MaterialTheme.typography.labelSmall
+            )
+            Text(
+                stringResource(R.string.report_practice_bias),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun MemoryCard(report: TestReport) {
+    val memory = report.memory ?: return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.report_memory_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            memory.quadrants.forEach { quadrant ->
+                val label = when {
+                    quadrant.hard && !quadrant.correct -> R.string.report_memory_hard_wrong
+                    quadrant.hard && quadrant.correct -> R.string.report_memory_hard_correct
+                    !quadrant.hard && !quadrant.correct -> R.string.report_memory_easy_wrong
+                    else -> R.string.report_memory_easy_correct
+                }
+                Text(
+                    stringResource(label, quadrant.count),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (memory.noStudy > 0) {
+                Text(
+                    stringResource(R.string.report_memory_no_study, memory.noStudy),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            if (memory.dueNow > 0) {
+                Text(
+                    stringResource(R.string.report_memory_due, memory.dueNow),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            memory.meanRetrievability?.let { mean ->
+                Text(
+                    stringResource(
+                        R.string.report_memory_retrievability,
+                        (mean * 100).roundToInt(),
+                        memory.validCards
+                    ),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.report_memory_estimate_note),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun CoverageCard(report: TestReport) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.report_coverage_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            report.coverage?.let { coverage ->
+                val percent = if (coverage.scopeSize > 0) {
+                    (coverage.engaged.toDouble() / coverage.scopeSize * 100).roundToInt()
+                } else {
+                    0
+                }
+                Text(
+                    stringResource(
+                        R.string.report_coverage_line,
+                        coverage.engaged,
+                        coverage.scopeSize,
+                        percent,
+                        coverage.repeats
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    stringResource(R.string.report_coverage_unseen, coverage.unseenRemaining),
+                    style = MaterialTheme.typography.labelSmall
+                )
+                if (coverage.dueNow > 0) {
+                    Text(
+                        stringResource(R.string.report_coverage_due, coverage.dueNow),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+            report.mistakes?.let { mistakes ->
+                Text(
+                    stringResource(
+                        R.string.report_mistakes_line,
+                        mistakes.added,
+                        mistakes.cleared,
+                        mistakes.remaining
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrendCard(report: TestReport) {
+    val trend = report.trend ?: return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.report_trend_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            val last = trend.points.lastOrNull() ?: return@Column
+            val sign = if (trend.deltaPoints >= 0) "+" else "−"
+            Text(
+                stringResource(
+                    R.string.report_trend_line,
+                    trend.points.size,
+                    last.percentage.roundToInt(),
+                    sign,
+                    abs(trend.deltaPoints).roundToInt()
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                stringResource(
+                    if (trend.withinNoise) R.string.report_trend_noise else R.string.report_trend_holds
+                ),
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (trend.freshSample) {
+                Text(
+                    stringResource(R.string.report_trend_fresh_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun IntervalCard(report: TestReport) {
+    val interval = report.interval ?: return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.report_interval_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(
+                    R.string.report_interval_line,
+                    interval.lowPercent.roundToInt(),
+                    interval.highPercent.roundToInt()
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                stringResource(
+                    R.string.report_interval_note,
+                    interval.passageBlocks,
+                    interval.resamples
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 private fun ResultCard(
     index: Int,
     result: QuestionResult,
     bookmarked: Boolean,
     onToggleBookmark: () -> Unit,
-    showDwell: Boolean = false
+    showDwell: Boolean = false,
+    lifetime: com.mcqapp.domain.LifetimeAccuracy? = null
 ) {
     val ungraded = result.correctOptionIds.isEmpty()
     Card(
@@ -874,6 +1114,25 @@ private fun ResultCard(
                         contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark question"
                     )
                 }
+            }
+            if (lifetime != null) {
+                Text(
+                    stringResource(
+                        R.string.report_lifetime_line,
+                        lifetime.correct,
+                        lifetime.answered,
+                        lifetime.percentage.roundToInt(),
+                        stringResource(
+                            if (lifetime.counterSet == com.mcqapp.domain.signals.CounterSet.REPRESENTATIVE) {
+                                R.string.report_lifetime_mock
+                            } else {
+                                R.string.report_lifetime_all
+                            }
+                        )
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             // QuestionResult carries the question's content elements rather than
             // a separate image field, so the question image is rendered with

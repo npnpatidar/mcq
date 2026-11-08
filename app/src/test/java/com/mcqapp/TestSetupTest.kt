@@ -140,15 +140,24 @@ class TestSetupTest {
     }
 
     @Test
-    fun phaseOneShipsOnlyRandomAndMistakes() {
+    fun phaseTwoShipsTheFocusTypesWithRandomAndMistakes() {
         assertEquals(
-            listOf(TestType.RANDOM, TestType.MISTAKES),
+            listOf(
+                TestType.RANDOM,
+                TestType.MISTAKES,
+                TestType.WEAKEST_TOPICS,
+                TestType.TOUGHEST_QUESTIONS,
+                TestType.EASIEST_QUESTIONS
+            ),
             TestSetup.STARTABLE_TYPES
         )
         assertTrue(TestSetup.isStartableType(TestType.RANDOM))
         assertTrue(TestSetup.isStartableType(TestType.MISTAKES))
+        assertTrue(TestSetup.isStartableType(TestType.WEAKEST_TOPICS))
+        assertTrue(TestSetup.isStartableType(TestType.TOUGHEST_QUESTIONS))
+        assertTrue(TestSetup.isStartableType(TestType.EASIEST_QUESTIONS))
         assertFalse(TestSetup.isStartableType(TestType.BALANCED))
-        assertFalse(TestSetup.isStartableType(TestType.WEAKEST_TOPICS))
+        assertFalse(TestSetup.isStartableType(TestType.TRICKY))
     }
 
     @Test

@@ -33,7 +33,11 @@ fun testTypeLabel(type: TestType?): String = when (type) {
 
 /** The attempt family's short label: Mock, Fresh sample, Practice, Short or Legacy. */
 @Composable
-fun attemptFamilyLabel(attempt: Attempt): String = when (TestReportBuilder.familyOf(attempt)) {
+fun attemptFamilyLabel(attempt: Attempt): String = familyLabel(TestReportBuilder.familyOf(attempt))
+
+/** [attemptFamilyLabel] for a family value already in hand. */
+@Composable
+fun familyLabel(family: ReportFamily): String = when (family) {
     ReportFamily.MOCK -> stringResource(R.string.report_mock)
     ReportFamily.FRESH_SAMPLE -> stringResource(R.string.report_fresh_sample)
     ReportFamily.PRACTICE -> stringResource(R.string.report_practice)

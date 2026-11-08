@@ -303,10 +303,10 @@ not shown.*
   or the selected length is invalid.
 - The preview line is the contract: it names the type, the requested length,
   the time and the comparability.
-- Phase 1 ships only **Random** and **Mistakes**; the other types exist in
-  `TestType` for phase 2 but are not rendered, and the sheet shows a "more
-  types will be added" note. The sheet never emits a route that the session's
-  `buildPlan()` would refuse (section 16 C5).
+- Phase 1 ships **Random** and **Mistakes**; phase 2 adds **Weakest topics**,
+  **Toughest questions** and **Easiest questions**. The remaining types exist
+  in `TestType` but are not rendered. The sheet never emits a route that the
+  session's `buildPlan()` would refuse (section 16 C5).
 
 ### 7.3 Length rules
 
@@ -452,10 +452,9 @@ Two families, because they answer different questions:
 | **Slowest** | custom | high median dwell in past tests | `question_results.dwellSeconds` | no | Time management and time sinks. |
 | **Mixed practice** | practice (later) | weighted mix of the above | all read-only signals | no | A daily driver that balances weakness, risk and coverage. |
 
-The first implementation should ship **Random** plus the focus types the owner
-asked for (**Weakest topics, Toughest questions, Easiest questions**) and
-**Mistakes** (already exists). Balanced, Tricky, At-risk, Unseen and the
-custom types follow in phase 2/3.
+The first implementation shipped **Random**, **Mistakes**, **Weakest topics**,
+**Toughest questions** and **Easiest questions**. Balanced, Tricky, At-risk,
+Unseen and the custom types remain deferred to a later phase.
 
 ### 8.1 Random
 
@@ -1153,9 +1152,9 @@ sqrt(n)`:
 
 (Independent random sampling. Passages are clusters, not independent
 questions, so the real margin is somewhat wider; label the figure
-"approximate" and, in phase 2, bootstrap by resampling passages rather than
-questions. MCQ guessing compresses the observed spread, so this is a
-conservative planning figure, not a promise.)
+"approximate" and bootstrap by resampling passages rather than questions
+(implemented in phase 2). MCQ guessing compresses the observed spread, so
+this is a conservative planning figure, not a promise.)
 
 **Finite population correction.** When the sample is a large fraction of a
 small scope, the margin shrinks by `sqrt((N − n) / (N − 1))`. For a 1,000-
@@ -1415,10 +1414,10 @@ Rules:
 `sqrt((N−n)/(N−1))` when the scope size `N` is known. `n` is the **shown**
 count; comparability uses the **requested** count. The margin assumes
 independent questions, but passages are clusters, so label it "approximate"
-and phase 2 bootstraps by resampling passages. For the score with negative
-marking, a bootstrap over the attempt's per-question scores is more honest;
-with ≤150 questions it is cheap. Phase 1 may use the accuracy margin and label
-the score margin "approximate"; phase 2 adds the bootstrap.
+and bootstrap by resampling passages. For the score with negative marking, a
+bootstrap over the attempt's per-question scores is more honest; with ≤150
+questions it is cheap. Phase 1 uses the accuracy margin and labels the score
+margin "approximate"; phase 2 adds the seeded passage bootstrap.
 
 **Trend.** Show a line only for comparable, trend-worthy attempts. If there
 are fewer than two trend-worthy attempts, say "This is your first comparable
@@ -1565,8 +1564,8 @@ A test is also a coverage event. Show:
   old huge attempts with 980 skipped rows must not inflate coverage.
 - **Unseen remaining:** scope size − tested.
 - **Repeat rate:** how many of this attempt's questions were tested before.
-- **Mistakes added / cleared / remaining** (phase 2 query; phase 1 may show
-  "wrong in this test" and "previously missed, now correct").
+- **Mistakes added / cleared / remaining** (phase 2 query; the report uses
+  the latest graded standing before the attempt).
 - **Practice target coverage:** for a focus type, the size of the targeted
   pool and how much of it this test covered.
 - **Due in Study:** how many of the attempt's questions are due now; link to
@@ -1756,8 +1755,11 @@ JVM-testable with synthetic data.
 - `AttemptDao.getResultAggregates` and `getResultCategoryBreakdown` already
   existed and still serve the stored header fallback.
 
-**Deferred queries (phase 2):** coverage, prior standings, representative and
-all-attempt lifetime accuracy, due-in-Study, and the FSRS quadrants.
+**Queries added in phase 2:** coverage (tested-before ids and scope counts),
+prior standings, representative and all-attempt lifetime accuracy,
+due-in-Study, the FSRS quadrants, and the Tests-tab leech/at-risk/unseen
+counts. Each is a bounded projection over the attempt's ids or one scope
+count; none materialises a whole paper.
 
 **Performance.** A bounded attempt has at most 150 results, so the report loads
 one light projection once and computes medians, the error mix and the topics in
@@ -1780,8 +1782,8 @@ question content for the whole paper, only for the attempt's questions.
   question no longer resolves are counted separately and the Study link is
   dropped rather than pointing at a dead id.
 - Basic error mix: wrong/slow (knowledge gap), wrong/fast (rushed), skipped,
-  ungraded, possible guess. **Done** from dwell alone; the FSRS evidence and
-  the memory quadrants stay in phase 2.
+  ungraded, possible guess. **Done** from dwell alone; the FSRS quadrants are
+  **done** in phase 2.
 - Time summary: total, average/median, slowest questions. **Done**, including
   the wrong-vs-correct pace comparison and a small-sample note below ten
   timed questions.
@@ -1801,20 +1803,36 @@ question content for the whole paper, only for the attempt's questions.
   default-on "Avoid recently tested questions" setting makes a representative
   test record `RECENT_3` when the exclusion actually applies (`NONE` when it
   is skipped).
-- Recorded `targetTopicIds` for Weakest topics (and later Mixed). **Deferred**
-  with the phase-2 focus types; phase 1 writes an empty list.
+- Recorded `targetTopicIds` for Weakest topics (and later Mixed). **Done for
+  the shipped focus types:** Weakest topics, Toughest questions and Easiest
+  questions record their targets and composition; Mixed is still deferred and
+  phase-1 attempts keep an empty list.
 
 **Phase 2:**
 
 - FSRS memory-vs-performance quadrants and per-question Study badges.
-- Coverage, repeats, mistakes added/cleared, due-in-Study count.
+  **Done:** `TestReportBuilder.memoryOf` buckets valid cards into the four
+  quadrants and counts stale/missing cards as no Study history; the result
+  page renders the card. The per-question Study badge itself stays deferred.
+- Coverage, repeats, mistakes added/cleared, due-in-Study count. **Done:**
+  `coverageOf` and `mistakesOf`, rendered in the coverage card; repeats use
+  the same "asked before this attempt" rule as the trend key.
 - Comparable trend with confidence bands; practice per-topic trend on a fixed
-  recorded target set.
-- Practice-specific headline and recommendations.
+  recorded target set. **Done (comparable trend):** `trendOf` draws up to five
+  same-key points, marks a change inside the margins as noise and keeps a
+  Fresh sample on its own line. The practice per-topic trend is **deferred**;
+  the practice headline shows the recorded targets for the current run.
+- Practice-specific headline and recommendations. **Done (headline):**
+  `practiceOf` leads with the recorded targets and the bias note; the existing
+  recommendation engine still treats practice as non-comparable. Practice-only
+  recommendations are **deferred**.
 - Bootstrap confidence interval for the score with negative marking,
-  resampling passages.
+  resampling passages. **Done:** `bootstrapOf`, seeded from the attempt seed,
+  1,000 resamples of passage blocks.
 - Per-question lifetime accuracy (rep* for mock, all-attempts for practice)
-  and "why this matters" tags.
+  and "why this matters" tags. **Done (lifetime accuracy):** the result review
+  shows the source label (`Mock attempts` / `All attempts`). "Why this
+  matters" tags are **deferred**.
 
 **Phase 3:**
 
@@ -1835,6 +1853,9 @@ question content for the whole paper, only for the attempt's questions.
   - topic sorting and small-sample flags;
   - memory quadrants with valid, stale and missing `card_state` (phase 2,
     with the FSRS evidence);
+  - coverage, repeats and mistakes against prior standings (phase 2);
+  - practice headline, lifetime counter set, comparable trend and the seeded
+    passage bootstrap (phase 2);
   - recommendation priority and cap (never more than five);
   - practice actions never claim mock comparability.
 - `RecommendationEngineTest`: each rule fires on its evidence and not
@@ -1844,14 +1865,20 @@ question content for the whole paper, only for the attempt's questions.
 
 - Comparable-attempt query matches the full key, including exclusion mode.
   **Done:** `RepositoryTest.comparableAttemptsMatchTheWholeKeyAndReportRowsCarryEvidence`.
-- Coverage counts engaged questions, not old skipped rows. (Phase 2.)
+- Coverage counts engaged questions, not old skipped rows. **Deferred:** the
+  pure `coverageOf` rule is covered by `TestReportBuilderTest`; no dedicated
+  Robolectric query test was added.
 - Prior-standings query returns the correct before/after for mistakes.
-  (Phase 2.)
+  **Deferred:** the pure `mistakesOf` rule is covered by
+  `TestReportBuilderTest`; the SQL standing query has no dedicated
+  Robolectric test yet.
 - Due-in-Study count is read-only and leaves `card_state` unchanged.
-  (Phase 2.)
+  **Deferred:** the read-only boundary is still asserted by
+  `RepositoryTest.savingATestLeavesTheStudyScheduleUntouched`, but the new
+  count query has no dedicated test.
 - Report queries return the same counts as the attempt header. (The report
   reads the same `question_results` rows the header aggregates, so a separate
-  cross-check is deferred with the phase-2 queries.)
+  cross-check is deferred.)
 
 **UI tests**
 
@@ -1879,13 +1906,15 @@ question content for the whole paper, only for the attempt's questions.
       tests.
 - [x] It shows the weakest topics with sample sizes and the topics that were
       not sampled.
-- [ ] It explains where the marks went with evidence (time, FSRS, skip,
+- [x] It explains where the marks went with evidence (time, FSRS, skip,
       guess), using "likely/suggests" language. (Time, skip and guess rules
-      ship; the FSRS evidence and the memory quadrants are phase 2.)
+      ship; the FSRS quadrants now ship too. The per-question "why this
+      matters" tag is still deferred.)
 - [x] It shows time analysis, including slowest questions and wrong-vs-correct
       pace.
-- [ ] It shows coverage, repeats, mistakes and due-in-Study where available.
-      (Phase 2.)
+- [x] It shows coverage, repeats, mistakes and due-in-Study where available.
+      (Phase 2: the coverage card. An old full-scope attempt counts engaged
+      rows, not its untouched remainder.)
 - [x] It gives three to five evidence-backed next actions with working links.
 - [x] Practice results never show a mock trend or claim mock comparability.
 - [x] Legacy and short attempts are labelled and do not get a margin/trend.
@@ -2109,17 +2138,19 @@ banks.
 
 ### Phase 1 — unified bounded Test (the core fix)
 
-> **As shipped, phase 1 offers only `RANDOM` and `MISTAKES`.** The other
-> selectors exist in `TestType` for phase 2, but no entry point emits them and
+> **As shipped, phase 1 offers only `RANDOM` and `MISTAKES`; phase 2 adds
+> `WEAKEST_TOPICS`, `TOUGHEST_QUESTIONS` and `EASIEST_QUESTIONS`.** The
+> remaining selectors exist in `TestType` but no entry point emits them and
 > the session refuses them. The results report (§11) landed in the
-> `feature/results-report` slice after `0.0.42`: `TestReport`/`TestReportBuilder`
-> derive the page, and the Results and History rows show the type and family.
-> The same slice adds the default-on "Avoid recently tested questions" setting
-> (a representative test records `RECENT_3` only when the exclusion applies),
-> the Statistics result-family legend, the sampler pre-check on the setup
-> sheet, and the short/legacy resume prompt. The phase-2 report sections (FSRS
-> quadrants, coverage/repeats/mistakes/due, practice trend, bootstrap) remain
-> deferred. Every deferral is marked inline below and left unticked in §15.
+> `feature/results-report` slice after `0.0.42`; it also added the default-on
+> "Avoid recently tested questions" setting (a representative test records
+> `RECENT_3` only when the exclusion applies), the Statistics result-family
+> legend, the sampler pre-check on the setup sheet, and the short/legacy
+> resume prompt. Phase 2 on `feature/phase2-stats` adds the signals,
+> selectors, evidence sections and Statistics families. The setup-sheet
+> composition preview/target display and the session practice badge are still
+> deferred, as are Tricky, At-risk, Unseen and Mixed. Every deferral is marked
+> inline below.
 
 1. **Domain**
    - Add `TestType` (`RANDOM`, `BALANCED`, `WEAKEST_TOPICS`,
@@ -2196,10 +2227,9 @@ banks.
      rows, card states and prior standings; the screen renders the model
      instead of recomputing in Compose. `TestReport.plan` is nullable and a
      legacy/short attempt gets a display plan derived from the attempt.
-     **Partly done:** the view model builds the report from one light
-     `getReportRows` projection plus the paper and same-key prior attempts, and
-     the screen renders it. `card_state` and the prior-standings reads are
-     phase 2, so the memory quadrants and coverage sections are absent.
+     **Done in phase 2:** the view model builds the report from one light
+     `getReportRows` projection plus the paper, same-key prior attempts,
+     `card_state`, counters and prior standings, and the screen renders it.
    - Add the boundary regression test: `card_state` and `review_log` counts
      are unchanged after a save. **Done:** `RepositoryTest
      .savingATestLeavesTheStudyScheduleUntouched`.
@@ -2209,17 +2239,18 @@ banks.
      `start_drill` strings.
    - The Mistakes shortcut opens the sheet with `MISTAKES` preselected.
    - Length chips and slider, type chips, scope summary, time, preview,
-     validation and the short-test label. **Deferred:** the "Avoid recently
-     tested questions" setting (phase 2; `RECENT_3` is refused).
+     validation and the short-test label. **Done:** the setting shipped in
+     the results-report slice, default on, and records `RECENT_3` only when
+     the exclusion applies.
    - Test session header: "Random · 20 questions" or "Practice · Weakest
      topics · 20 questions"; keep the "N asked, M shown" passage note.
    - Results and History: show the type badge, the composition and the Fresh
-     sample badge when `exclusionMode = RECENT_3`. **Done for the type and
-     family badge:** `ui/common/AttemptLabels.kt` names the type and family,
-     the Results header shows both, and the History row shows
-     `family · type`. The composition badge and the Statistics legend stay
-     with phase 2, and `RECENT_3` is still refused so the Fresh sample label
-     has no producer yet.
+     sample badge when `exclusionMode = RECENT_3`. **Done for the type,
+     family and Fresh sample badge:** `ui/common/AttemptLabels.kt` names the
+     type and family, the Results header shows both, the History row shows
+     `family · type`, and a `RECENT_3` attempt is labelled **Fresh sample**.
+     The composition *display* on the setup sheet/session header remains
+     **deferred**; the composition is recorded on the attempt.
    - **Results report (phase 1, section 11):** header (type, scope,
      requested/shown, score, accuracy, counts, time), comparability badge,
      approximate margin, topic breakdown with small-sample, as-of-attempt
@@ -2240,21 +2271,32 @@ banks.
 
 1. Add `QuestionSignals` / `TestRanking` (pure, JVM-testable): Wilson lower
    bound, composite toughness/ease, category weakness, neutral priors, stale
-   hash handling.
+   hash handling. **Done:** `domain/signals/QuestionSignals.kt`,
+   `domain/signals/TestRanking.kt`, `QuestionSignalsTest`.
 2. Add DAO queries and indexes:
    - category aggregates for the scope;
    - top-N toughest/easiest questions in the scope;
    - latest mistake standings (reuse `AttemptDao.getLatestStandings`);
    - leech/lapse/guess aggregates;
    - due/at-risk and unseen counts and samples.
+   **Done:** chunked projections in `Daos.kt` / `ChunkedQueries.kt`, wrapped
+   by `SignalStore`; no schema change was needed.
 3. Implement the selectors:
    - Weakest topics (top-K + allocation);
    - Toughest questions (top-N + category cap);
    - Easiest questions (top-2N sample);
    - Mistakes (existing rule, bounded);
    - Tricky, At-risk, Unseen.
-4. Implement the fill ladder and `compositionJson`.
+   **Done for Weakest/Toughest/Easiest** (`domain/signals/TestSelector.kt`,
+   `TestSelectorTest`); Mistakes keeps its phase-1 rule. Tricky, At-risk and
+   Unseen stay **deferred**.
+4. Implement the fill ladder and `compositionJson`. **Done:** proportional
+   allocation, min-one only for a zero category, 40% category cap, the fill
+   ladder, and a versioned JSON codec on `TestPlan`/`TestSnapshot`.
 5. UI: type cards with counts and "why these questions" text; practice badge.
+   **Partly done:** the five type chips and help text ship. The per-type
+   count card, live composition preview, target list and session practice
+   badge are **deferred**.
 6. **Results report (phase 2, section 11):** FSRS memory-vs-performance
    quadrants and per-question Study badges; coverage, repeats, mistakes
    added/cleared and due-in-Study; comparable trend with confidence bands and
@@ -2262,9 +2304,16 @@ banks.
    headline and recommendations; bootstrap score interval resampling
    passages; per-question lifetime accuracy (`rep*` for mock, all-attempts for
    practice) and "why this matters" tags.
+   **Done:** quadrants, coverage/repeats/mistakes/due, comparable trend,
+   practice headline, bootstrap and lifetime accuracy. **Deferred:** the
+   per-question Study badge, the practice target trend line, practice-only
+   recommendations and the "why this matters" tags.
 7. Statistics: separate mock and practice families, and separate strict from
    Fresh sample attempts; add the practice progress views (weak-topic
    accuracy, mistakes cleared, leeches, at-risk, unseen coverage).
+   **Done:** the seventh **Tests** tab (`domain/TestProgress.kt`,
+   `ui/stats/sections/TestsSection.kt`, `TestProgressTest`), and History
+   trends now group by family/type/length/exclusion.
 
 ### Phase 3 — custom and advanced
 
@@ -2352,7 +2401,24 @@ banks.
   - topic sorting, small-sample flags, as-of-attempt titles and the
     unresolved-question count;
   - memory quadrants with valid, stale and missing `card_state`;
-  - coverage counts engaged questions only.
+  - coverage counts engaged questions only;
+  - mistakes added/cleared/remaining against the prior standing;
+  - lifetime accuracy reads `rep*` for a mock and all-attempt counters for a
+    practice run;
+  - the practice headline names the recorded targets and never gets a trend;
+  - a comparable trend needs two trend-worthy points and marks a change
+    inside the margin as noise;
+  - the bootstrap is seeded, resamples passage blocks and is stable across
+    runs.
+- `TestProgressTest`
+  - families are averaged separately;
+  - practice runs keep only focus attempts, newest first;
+  - a Fresh sample stays in its own family.
+- `TrendsTest`
+  - grouping by paper, family, type, length and exclusion;
+  - practice never shares a mock line;
+  - strict and Fresh sample keep separate lines;
+  - a legacy attempt gets no line.
 - `RecommendationEngineTest`
   - each rule fires on its evidence and not otherwise;
   - at most five actions, ordered by priority;
@@ -2475,22 +2541,27 @@ banks.
 - [x] Ticking a parent topic includes its subtree, and ticking a parent plus
       its child does not duplicate questions.
 - [x] Random is labelled comparable; every practice type is labelled not
-      comparable. (Balanced is phase 2 and is not rendered.)
+      comparable. (Balanced remains deferred and is not rendered.)
 - [x] An attempt with "Avoid recently tested questions" on is labelled
       **Fresh sample** and is never compared to a strict Random attempt. The
       setting is on by default; an attempt records `RECENT_3` only when the
       exclusion actually applied, and `NONE` when it was skipped for a small
       pool. The Statistics Overview legend names the rule.
-- [ ] Weakest topics, Toughest questions and Easiest questions work from
+- [x] Weakest topics, Toughest questions and Easiest questions work from
       `question_stats` + `card_state` + authored difficulty, with neutral
-      priors and documented fallbacks. (Not implemented in phase 1.)
+      priors and documented fallbacks. **Done in phase 2:**
+      `QuestionSignals`, `TestRanking` and `TestSelector`, covered by
+      `QuestionSignalsTest` and `TestSelectorTest`.
 - [x] Mistakes is bounded by the same length and uses the latest graded,
       answered standing by `finishedAt DESC, id DESC` (skips are not
       mistakes).
-- [ ] A focus type with a short pool fills from its ladder and shows the
-      composition. (Not implemented in phase 1.)
-- [ ] The 40% category cap applies to Toughest/Tricky and relaxes with
-      redistribution when it is infeasible. (Not implemented in phase 1.)
+- [x] A focus type with a short pool fills from its ladder and shows the
+      composition. **Done for the recorded data:** the fill ladder runs and
+      `compositionJson` is stored on the attempt/snapshot; the setup-sheet
+      preview and session badge that would *display* it are **deferred**.
+- [x] The 40% category cap applies to Toughest/Tricky and relaxes with
+      redistribution when it is infeasible. **Done for Toughest** in
+      `TestSelector`; Tricky is not implemented.
 - [x] Passages stay whole; the header explains any difference between asked
       and shown.
 - [x] Sampling is deterministic across resume; focus selections are stored as
@@ -2501,16 +2572,17 @@ banks.
       removed.
 - [x] The partial `question_results` index exists after both a v20 → v21
       migration and a fresh create.
-- [ ] Attempts record type, requested count, scope, canonical scope key,
+- [x] Attempts record type, requested count, scope, canonical scope key,
       sampling version, exclusion mode, target topics and seed; old attempts
-      and snapshots still load as legacy. (Composition is deferred with the
-      phase-2 focus types; `compositionJson` is empty in phase 1, and
-      `targetTopicIds` is written empty until Weakest topics ships.)
+      and snapshots still load as legacy. **Done in phase 2:** the focus
+      selectors write `targetTopicIds` and `compositionJson`; a phase-1 or
+      legacy attempt still reads empty and resumes as labelled legacy.
 - [x] `rep*` counters update only for Random/Balanced attempts with
       `samplingVersion >= 2`; practice and legacy attempts do not touch them.
-- [ ] History/Results show the type; Statistics keeps mock and practice, and
-      strict and fresh, separate. (History and Results show `family · type`
-      now; the Statistics split is phase 2.)
+- [x] History/Results show the type; Statistics keeps mock and practice, and
+      strict and fresh, separate. **Done:** History/Results show
+      `family · type`; the Statistics **Tests** tab and History trend cards
+      group by family, type, requested length and exclusion rule.
 - [x] The result page labels the attempt kind and comparability, and shows
       score and accuracy separately with correct/wrong/skipped/ungraded and
       the negative-marking note (12/4/2/2 at 1/3 marking = 59.3%).
@@ -2518,16 +2590,19 @@ banks.
       using the shown count; short and legacy attempts do not.
 - [x] The page shows weakest topics with sample sizes, as-of-attempt titles,
       the unresolved count and the topics that were not sampled.
-- [ ] It explains where the marks went with evidence (time, FSRS, skip,
-      guess), using "likely/suggests" language. (Time, skip and guess rules
-      ship; the FSRS evidence is phase 2.)
-- [ ] It shows time analysis, coverage, repeats, mistakes and due-in-Study
-      where available. (Time analysis ships; the rest is phase 2.)
+- [x] It explains where the marks went with evidence (time, FSRS, skip,
+      guess), using "likely/suggests" language. **Done:** time/skip/guess
+      rules plus the FSRS memory-vs-performance quadrants; the per-question
+      "why this matters" tag stays **deferred**.
+- [x] It shows time analysis, coverage, repeats, mistakes and due-in-Study
+      where available. **Done:** time analysis and the coverage card; an old
+      full-scope attempt counts engaged rows, not its untouched remainder.
 - [x] It gives three to five evidence-backed next actions with working links.
-- [ ] Practice results never show a mock trend or claim mock comparability;
-      their per-topic trend uses the recorded target set. (Practice results
-      already get no margin, trend or Test action; the recorded-target trend
-      is phase 2.)
+- [x] Practice results never show a mock trend or claim mock comparability;
+      their per-topic trend uses the recorded target set. **Done for the
+      prohibition:** practice results get no margin, mock trend or Test
+      action. The recorded-target trend line is **deferred**; the practice
+      headline shows the current run's targets.
 - [x] The page states that the test did not change the Study schedule.
 - [x] README matches the behavior.
 

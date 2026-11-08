@@ -151,13 +151,20 @@ data class TestSetup(
     companion object {
 
         /**
-         * The selectors the phase-1 sheet offers (section 13). The others
-         * exist in the model but have no selector yet, so offering them would
-         * produce a route the session refuses (section 16 C5).
+         * The selectors the sheet offers: Random, Mistakes and the phase-2
+         * focus types. The remaining `TestType` values exist in the model but
+         * have no selector yet, so offering them would produce a route the
+         * session refuses (section 16 C5).
          */
-        val STARTABLE_TYPES: List<TestType> = listOf(TestType.RANDOM, TestType.MISTAKES)
+        val STARTABLE_TYPES: List<TestType> = listOf(
+            TestType.RANDOM,
+            TestType.MISTAKES,
+            TestType.WEAKEST_TOPICS,
+            TestType.TOUGHEST_QUESTIONS,
+            TestType.EASIEST_QUESTIONS
+        )
 
-        /** Whether [type] can be started in phase 1. */
+        /** Whether [type] can be started. */
         fun isStartableType(type: TestType): Boolean = type in STARTABLE_TYPES
     }
 }

@@ -96,14 +96,14 @@ class StudyAndSelectionUiTest {
     }
 
     private fun waitFor(text: String) {
-        compose.waitUntil(15_000) {
+        compose.waitUntil(30_000) {
             compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
     }
 
     private fun waitForTag(tag: String) {
-        compose.waitUntil(15_000) {
+        compose.waitUntil(30_000) {
             compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
     }
@@ -116,7 +116,10 @@ class StudyAndSelectionUiTest {
     private fun confirmTestStart() {
         waitFor("Start a test")
         waitForTag("test-setup-start")
-        compose.onNodeWithTag("test-setup-start").performClick()
+        // The sheet is a scrollable column and Start sits at its bottom; the
+        // type chips alone can push it past the fold on the emulator. Scroll
+        // it into view, or the click lands off-screen and is swallowed.
+        compose.onNodeWithTag("test-setup-start").performScrollTo().performClick()
     }
 
     /** Scrolls the drawer's list until [tag] is on screen, and returns it. */

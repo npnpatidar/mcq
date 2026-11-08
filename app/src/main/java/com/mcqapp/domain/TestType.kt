@@ -34,6 +34,19 @@ enum class TestType {
     /** Practice types never claim mock comparability (section 11.5). */
     val isPractice: Boolean get() = !isRepresentative
 
+    /** The phase-2 practice selectors (stats.md §8.3–§8.9, §8.14). */
+    val isFocus: Boolean
+        get() = this == WEAKEST_TOPICS || this == TOUGHEST_QUESTIONS ||
+            this == EASIEST_QUESTIONS || this == TRICKY || this == AT_RISK ||
+            this == UNSEEN || this == MIXED
+
+    /**
+     * Whether the type is chosen by the signal selector. Balanced is
+     * representative, so it is not a practice focus type, but its sample is
+     * still allocated from the same read-only signals.
+     */
+    val usesSignalSelector: Boolean get() = isFocus || this == BALANCED
+
     /** Only these types may record `exclusionMode = RECENT_3` (section 9.8). */
     val supportsFreshSample: Boolean
         get() = this == RANDOM || this == BALANCED || this == EASIEST_QUESTIONS

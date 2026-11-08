@@ -59,20 +59,26 @@ class CriticalPathTest {
     }
 
     private fun waitFor(text: String) {
-        compose.waitUntil(15_000) {
+        compose.waitUntil(30_000) {
             compose.onAllNodesWithText(text, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun waitForTag(tag: String) {
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
     /** The Test tap opens the setup sheet; confirming starts the session. */
     private fun confirmTestStart() {
         waitFor("Start a test")
-        compose.waitUntil(15_000) {
-            compose.onAllNodesWithTag("test-setup-start")
-                .fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("test-setup-start").performClick()
+        waitForTag("test-setup-start")
+        // The sheet is a scrollable column and Start sits at its bottom; the
+        // type chips alone can push it past the fold on the emulator. Scroll
+        // it into view, or the click lands off-screen and is swallowed.
+        compose.onNodeWithTag("test-setup-start").performScrollTo().performClick()
     }
 
     @Test

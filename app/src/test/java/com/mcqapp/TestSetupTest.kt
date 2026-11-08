@@ -140,15 +140,35 @@ class TestSetupTest {
     }
 
     @Test
-    fun phaseOneShipsOnlyRandomAndMistakes() {
+    fun phaseTwoShipsTheFocusTypesWithRandomAndMistakes() {
         assertEquals(
-            listOf(TestType.RANDOM, TestType.MISTAKES),
+            listOf(
+                TestType.RANDOM,
+                TestType.BALANCED,
+                TestType.MISTAKES,
+                TestType.WEAKEST_TOPICS,
+                TestType.TOUGHEST_QUESTIONS,
+                TestType.EASIEST_QUESTIONS,
+                TestType.TRICKY,
+                TestType.AT_RISK,
+                TestType.UNSEEN,
+                TestType.MIXED
+            ),
             TestSetup.STARTABLE_TYPES
         )
         assertTrue(TestSetup.isStartableType(TestType.RANDOM))
         assertTrue(TestSetup.isStartableType(TestType.MISTAKES))
-        assertFalse(TestSetup.isStartableType(TestType.BALANCED))
-        assertFalse(TestSetup.isStartableType(TestType.WEAKEST_TOPICS))
+        assertTrue(TestSetup.isStartableType(TestType.WEAKEST_TOPICS))
+        assertTrue(TestSetup.isStartableType(TestType.TOUGHEST_QUESTIONS))
+        assertTrue(TestSetup.isStartableType(TestType.EASIEST_QUESTIONS))
+        assertTrue(TestSetup.isStartableType(TestType.BALANCED))
+        assertTrue(TestSetup.isStartableType(TestType.TRICKY))
+        assertTrue(TestSetup.isStartableType(TestType.AT_RISK))
+        assertTrue(TestSetup.isStartableType(TestType.UNSEEN))
+        assertTrue(TestSetup.isStartableType(TestType.MIXED))
+        // Phase 3 keeps the custom types unstartable.
+        assertFalse(TestSetup.isStartableType(TestType.BOOKMARKED))
+        assertFalse(TestSetup.isStartableType(TestType.TAG))
     }
 
     @Test

@@ -126,12 +126,19 @@ class ResultsViewModel(
                 // one light projection and computes medians, the error mix and
                 // the topics in Kotlin. The question review stays paged.
                 val report = attempt?.let {
+                    val rows = repository.getReportRows(attemptId)
+                    val paper = repository.getPaper(it.paperId)
                     TestReportBuilder.build(
                         TestReportInput(
                             attempt = it,
-                            rows = repository.getReportRows(attemptId),
-                            paper = repository.getPaper(it.paperId),
-                            comparableAttempts = repository.getComparableAttempts(it)
+                            rows = rows,
+                            paper = paper,
+                            comparableAttempts = repository.getComparableAttempts(it),
+                            targetTopicIds = it.targetTopicIds
+                                .split(",")
+                                .filter { id -> id.isNotBlank() },
+                            evidence = repository.getReportEvidence(it, rows, paper),
+                            practiceHistory = repository.getPracticeHistory(it)
                         )
                     )
                 }

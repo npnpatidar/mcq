@@ -89,7 +89,9 @@ fun testRoute(
     /** The requested length (20..150 step 10); 0 for a legacy link. */
     count: Int = 0,
     /** The exclusion rule name; blank means [com.mcqapp.domain.ExclusionMode.NONE]. */
-    exclusion: String = ""
+    exclusion: String = "",
+    /** The Weakest/Mixed breadth name; blank means the medium default. */
+    breadth: String = ""
 ): String = "test?paperId=${encode(paperId)}" +
     "&categories=${encodeCategoryList(categoryIds)}" +
     "&mistakes=$mistakes" +
@@ -98,4 +100,5 @@ fun testRoute(
     "&minutes=$minutes" +
     "&type=${encode(type)}" +
     "&count=$count" +
-    "&exclusion=${encode(exclusion)}"
+    "&exclusion=${encode(exclusion)}" +
+    "&breadth=${encode(breadth)}"

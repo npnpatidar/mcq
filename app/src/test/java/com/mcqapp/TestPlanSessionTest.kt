@@ -330,7 +330,7 @@ class TestPlanSessionTest {
         seed(25)
         val viewModel = TestViewModel(
             app, "p1", listOf("c1"),
-            routeTestType = "BALANCED",
+            routeTestType = "BOOKMARKED",
             routeRequestedCount = 20
         )
         assertTrue(
@@ -338,7 +338,7 @@ class TestPlanSessionTest {
             awaitCondition { !viewModel.state.value.loading }
         )
         val error = viewModel.state.value.loadError
-        assertNotNull("BALANCED has no selector yet", error)
+        assertNotNull("BOOKMARKED has no selector yet", error)
         assertTrue("got: $error", error!!.contains("not available", ignoreCase = true))
     }
 

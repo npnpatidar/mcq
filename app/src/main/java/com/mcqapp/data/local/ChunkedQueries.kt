@@ -44,6 +44,56 @@ suspend fun QuestionDao.getRefsByCategoriesChunked(categoryIds: List<String>): L
 suspend fun QuestionDao.getSessionRefsByIdsChunked(ids: List<String>): List<SessionRef> =
     ids.chunks().flatMap { getSessionRefsByIds(it) }
 
+suspend fun QuestionDao.getSignalRowsByCategoriesChunked(
+    categoryIds: List<String>
+): List<QuestionSignalRow> =
+    categoryIds.chunks().flatMap { getSignalRowsByCategories(it) }
+
+suspend fun QuestionStatsDao.getCountersByIdsChunked(ids: List<String>): List<QuestionCounterRow> =
+    ids.chunks().flatMap { getCountersByIds(it) }
+
+suspend fun CardStateDao.getSignalsByIdsChunked(ids: List<String>): List<CardSignalRow> =
+    ids.chunks().flatMap { getSignalsByIds(it) }
+
+suspend fun ReviewLogDao.getGuessCountsByIdsChunked(ids: List<String>): List<GuessCountRow> =
+    ids.chunks().flatMap { getGuessCountsByIds(it) }
+
+suspend fun QuestionDao.getContentHashesByIdsChunked(ids: List<String>): List<QuestionHashRow> =
+    ids.chunks().flatMap { getContentHashesByIds(it) }
+
+suspend fun AttemptDao.getTestedBeforeIdsChunked(
+    questionIds: List<String>,
+    beforeFinishedAt: Long,
+    attemptId: Long
+): Set<String> =
+    questionIds.chunks()
+        .flatMap { getTestedBeforeIds(it, beforeFinishedAt, attemptId) }
+        .toHashSet()
+
+suspend fun AttemptDao.getPriorStandingsChunked(
+    questionIds: List<String>,
+    beforeFinishedAt: Long,
+    attemptId: Long
+): List<StandingRow> =
+    questionIds.chunks().flatMap { getPriorStandings(it, beforeFinishedAt, attemptId) }
+
+/** Chunks are disjoint categories, so the per-chunk counts sum exactly. */
+suspend fun AttemptDao.countTestedInCategoriesBeforeChunked(
+    categoryIds: List<String>,
+    beforeFinishedAt: Long,
+    attemptId: Long
+): Int =
+    categoryIds.distinct().chunks()
+        .sumOf { countTestedInCategoriesBefore(it, beforeFinishedAt, attemptId) }
+
+suspend fun AttemptDao.countMistakesInCategoriesBeforeChunked(
+    categoryIds: List<String>,
+    beforeFinishedAt: Long,
+    attemptId: Long
+): Int =
+    categoryIds.distinct().chunks()
+        .sumOf { countMistakesInCategoriesBefore(it, beforeFinishedAt, attemptId) }
+
 suspend fun QuestionDao.countUngradedForCategoriesChunked(categoryIds: List<String>): Int =
     categoryIds.chunks().sumOf { countUngradedForCategories(it) }
 

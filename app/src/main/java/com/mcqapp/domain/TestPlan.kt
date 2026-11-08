@@ -36,7 +36,9 @@ data class TestPlan(
     val scopeKey: String,
     val exclusionMode: ExclusionMode = ExclusionMode.NONE,
     /** Sorted, deduped targets; empty unless [TestType.supportsTargets]. */
-    val targetTopicIds: List<String> = emptyList()
+    val targetTopicIds: List<String> = emptyList(),
+    /** The recorded fill composition (stats.md §9.7); empty on older plans. */
+    val compositionJson: String = ""
 ) {
 
     /**

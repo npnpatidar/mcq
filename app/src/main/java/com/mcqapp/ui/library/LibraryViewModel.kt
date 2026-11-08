@@ -15,6 +15,12 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.ScopeKey
+import com.mcqapp.domain.TestPlan
+import com.mcqapp.domain.TestType
+import com.mcqapp.domain.signals.Breadth
+import com.mcqapp.domain.signals.SelectionPreview
+import com.mcqapp.domain.signals.TestSelector
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
 import java.io.InputStream
@@ -673,4 +679,36 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int =
         repository.getScopedMistakeCount(paperId, scopeIds)
+
+    /**
+     * The setup sheet's live composition preview: the same selector the session
+     * runs, read against the current signals. Display-only — Start recomputes
+     * the real selection, so a preview race cannot change what runs.
+     */
+    suspend fun previewSelection(
+        paper: Paper,
+        categoryIds: List<String>,
+        type: TestType,
+        count: Int,
+        breadth: Breadth
+    ): SelectionPreview {
+        val scopeIds = if (categoryIds.isEmpty()) {
+            emptyList()
+        } else {
+            CategorySelection.orderedIds(paper.categories, categoryIds)
+        }
+        val scopeKey = if (categoryIds.isEmpty()) {
+            ScopeKey.wholePaper(paper.id)
+        } else {
+            ScopeKey.ofExpanded(scopeIds)
+        }
+        val plan = TestPlan(
+            paperId = paper.id,
+            categoryIds = categoryIds,
+            type = type,
+            count = count,
+            scopeKey = scopeKey
+        )
+        return TestSelector.preview(plan, repository.getQuestionSignals(paper.id, scopeIds), breadth)
+    }
 }

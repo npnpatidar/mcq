@@ -13,21 +13,35 @@ import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.local.ResultScan
 import com.mcqapp.data.local.applyQuestionStats
+import com.mcqapp.data.local.countMistakesInCategoriesBeforeChunked
 import com.mcqapp.data.local.countMistakesInScopeChunked
+import com.mcqapp.data.local.countTestedInCategoriesBeforeChunked
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getContentHashesByIdsChunked
+import com.mcqapp.data.local.getCountersByIdsChunked
 import com.mcqapp.data.local.getMistakeOrderRowsInScopeChunked
+import com.mcqapp.data.local.getPriorStandingsChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
+import com.mcqapp.data.local.getSignalsByIdsChunked
+import com.mcqapp.data.local.getTestedBeforeIdsChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.AttemptMetadata
+import com.mcqapp.domain.CardState
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Mastery
 import com.mcqapp.domain.NumberedResult
+import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.QuestionStats
+import com.mcqapp.domain.ReportCard
+import com.mcqapp.domain.ReportCounters
+import com.mcqapp.domain.ReportEvidence
 import com.mcqapp.domain.ReportRow
 import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.SessionOrder
+import com.mcqapp.domain.Scheduler
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
@@ -516,9 +530,127 @@ internal class HistoryStore(
                 dwellSeconds = it.dwellSeconds,
                 isCorrect = it.isCorrect,
                 graded = it.correctOptionIds.isNotBlank(),
-                answered = it.selectedOptionIds.isNotBlank()
+                answered = it.selectedOptionIds.isNotBlank(),
+                passageId = it.passageId
             )
         }
+
+    /**
+     * The phase-2 report evidence (sections 11.8, 11.10): read-only Study
+     * cards, lifetime counters, repeat/coverage counts and the standing before
+     * this attempt. Every read is bounded by the attempt's rows (at most 150)
+     * plus a scope count, never a whole-paper materialisation.
+     */
+    suspend fun getReportEvidence(
+        attempt: Attempt,
+        rows: List<ReportRow>,
+        paper: Paper?,
+        scheduler: Scheduler,
+        now: Long
+    ): ReportEvidence {
+        if (rows.isEmpty()) return ReportEvidence(now = now)
+        val ids = rows.map { it.questionId }.distinct()
+        val hashes = db.questionDao().getContentHashesByIdsChunked(ids)
+            .associate { it.questionId to it.contentHash }
+        val cards = db.cardStateDao().getSignalsByIdsChunked(ids)
+            .associateBy { it.questionId }
+        val counters = db.questionStatsDao().getCountersByIdsChunked(ids)
+            .associateBy { it.questionId }
+        val testedBefore = db.attemptDao().getTestedBeforeIdsChunked(
+            questionIds = ids,
+            beforeFinishedAt = attempt.finishedAt,
+            attemptId = attempt.id
+        )
+        val prior = db.attemptDao().getPriorStandingsChunked(
+            questionIds = ids,
+            beforeFinishedAt = attempt.finishedAt,
+            attemptId = attempt.id
+        ).associate { it.questionId to it.isCorrect }
+
+        val ticked = attempt.scopeCategoryIds.split(",").filter { it.isNotBlank() }
+        val scopeIds = if (paper == null || ticked.isEmpty()) {
+            emptyList()
+        } else {
+            CategorySelection.orderedIds(paper.categories, ticked)
+        }
+        val wholePaper = scopeIds.isEmpty()
+        val testedInScope = if (wholePaper) {
+            db.attemptDao().countTestedInPaperBefore(
+                attempt.paperId,
+                attempt.finishedAt,
+                attempt.id
+            )
+        } else {
+            db.attemptDao().countTestedInCategoriesBeforeChunked(
+                scopeIds,
+                attempt.finishedAt,
+                attempt.id
+            )
+        }
+        val mistakesBefore = if (wholePaper) {
+            db.attemptDao().countMistakesInPaperBefore(
+                attempt.paperId,
+                attempt.finishedAt,
+                attempt.id
+            )
+        } else {
+            db.attemptDao().countMistakesInCategoriesBeforeChunked(
+                scopeIds,
+                attempt.finishedAt,
+                attempt.id
+            )
+        }
+        val targets = attempt.targetTopicIds.split(",").filter { it.isNotBlank() }
+        val byCategory = paper?.let { CategorySelection.flatten(it.categories).associate { it.first.id to it.first } }
+            .orEmpty()
+
+        return ReportEvidence(
+            cards = cards.mapValues { (id, card) ->
+                val state = CardState(
+                    questionId = id,
+                    dueAt = card.dueAt,
+                    reps = card.reviewCount,
+                    lapses = card.lapses,
+                    leech = card.leech,
+                    lastReviewedAt = card.lastReviewedAt,
+                    difficulty = card.difficulty,
+                    stability = card.stability,
+                    state = card.cardState,
+                    reviewCount = card.reviewCount
+                )
+                ReportCard(
+                    questionId = id,
+                    difficulty = card.difficulty,
+                    stability = card.stability,
+                    reviewCount = card.reviewCount,
+                    lapses = card.lapses,
+                    leech = card.leech,
+                    dueAt = card.dueAt,
+                    lastReviewedAt = card.lastReviewedAt,
+                    contentHashMatches = card.contentHash == hashes[id],
+                    cardState = card.cardState,
+                    retention = if (card.stability > 0.0) scheduler.retention(state, now) else null
+                )
+            },
+            counters = counters.mapValues { (_, counter) ->
+                ReportCounters(
+                    correct = counter.correct,
+                    wrong = counter.wrong,
+                    skip = counter.skip,
+                    repCorrect = counter.repCorrect,
+                    repWrong = counter.repWrong,
+                    repSkip = counter.repSkip
+                )
+            },
+            testedBefore = testedBefore,
+            priorStanding = prior,
+            testedInScope = testedInScope,
+            scopeMistakesBefore = mistakesBefore,
+            targetSizes = targets.associateWith { byCategory[it]?.questionCount ?: 0 },
+            targetTitles = targets.mapNotNull { id -> byCategory[id]?.let { id to it.title } }.toMap(),
+            now = now
+        )
+    }
 
     /**
      * Same-key attempts older than [attempt], newest first. A legacy attempt

@@ -112,13 +112,15 @@ fun TestSessionScreen(
     requestedCount: Int = 0,
     /** Exclusion rule name, or blank for NONE. */
     exclusionMode: String = "",
+    /** Weakest/Mixed breadth name, or blank for the medium default. */
+    breadth: String = "",
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
         key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly" +
             "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes" +
-            "-type=$testType-count=$requestedCount-exclusion=$exclusionMode",
+            "-type=$testType-count=$requestedCount-exclusion=$exclusionMode-breadth=$breadth",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
@@ -129,7 +131,8 @@ fun TestSessionScreen(
             durationMinutes,
             testType,
             requestedCount,
-            exclusionMode
+            exclusionMode,
+            breadth
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -552,14 +555,28 @@ fun TestSessionScreen(
                 if (!boundedType.isNullOrBlank() && state.requestedCount > 0) {
                     val shown = state.questionCount
                     val asked = state.requestedCount
+                    // The practice badge names the type the plan actually ran,
+                    // so a resumed focus session is never mislabelled Random.
+                    val bounded = com.mcqapp.domain.TestType.entries
+                        .firstOrNull { it.name == boundedType }
                     Text(
                         when {
                             shown < com.mcqapp.domain.TestPlan.MIN_LENGTH ->
                                 stringResource(R.string.test_banner_short, shown)
-                            boundedType == com.mcqapp.domain.TestType.MISTAKES.name ->
+                            bounded == com.mcqapp.domain.TestType.MISTAKES ->
                                 stringResource(
                                     R.string.test_banner_mistakes, minOf(asked, shown)
                                 )
+                            bounded != null && bounded.isFocus -> stringResource(
+                                R.string.test_banner_practice,
+                                stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
+                                minOf(asked, shown)
+                            )
+                            bounded == com.mcqapp.domain.TestType.BALANCED -> stringResource(
+                                R.string.test_banner_practice,
+                                stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
+                                minOf(asked, shown)
+                            )
                             else ->
                                 stringResource(
                                     R.string.test_banner_random, minOf(asked, shown)

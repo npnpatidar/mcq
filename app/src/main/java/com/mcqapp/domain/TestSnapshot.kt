@@ -64,6 +64,8 @@ data class TestSnapshot(
     val exclusionMode: String = "NONE",
     /** Recorded practice targets, sorted and deduplicated. */
     val targetTopicIds: List<String> = emptyList(),
+    /** The recorded fill composition (stats.md §9.7); empty on legacy snapshots. */
+    val compositionJson: String = "",
     /** Seconds already spent in an untimed session, banked on every autosave
      *  so a kill does not shrink the recorded duration (D7). */
     val elapsedSeconds: Int = 0,
@@ -102,12 +104,22 @@ data class TestSnapshot(
         } else {
             this.categoryIds.toSet() == categoryIds.toSet()
         }
+        // A focus route does not carry the target set (the selector records it
+        // at load), so for a target-bearing type an empty side accepts the
+        // other. Every other type keeps the strict set comparison.
+        val targetBearing = TestType.fromStorage(testType)?.supportsTargets == true
+        val targetsMatch = if (targetBearing) {
+            targetTopicIds.isEmpty() || this.targetTopicIds.isEmpty() ||
+                this.targetTopicIds.toSet() == targetTopicIds.toSet()
+        } else {
+            this.targetTopicIds.toSet() == targetTopicIds.toSet()
+        }
         return this.paperId == paperId && scopeMatches &&
             this.isDrill == isDrill && this.mistakesOnly == mistakesOnly &&
             (!isDrill || this.drillRequested == drillRequested) &&
             this.testType == testType && this.requestedCount == requestedCount &&
             this.exclusionMode == exclusionMode &&
-            this.targetTopicIds.toSet() == targetTopicIds.toSet()
+            targetsMatch
     }
 
     /** Whether any question was actually answered (reaching one is not answering). */

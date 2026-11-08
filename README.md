@@ -25,11 +25,11 @@ format (papers, categories, bookmarks, history) and is documented in
 |---|---|
 | Library | Paper cards with Browse / Export / Manage; **Test**, **Mistakes** (shown when the paper has any) and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), **test- and study-by-category**, JSON import |
 | Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); passage groups render with their shared context above the first member; edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
-| Test | A bounded session of up to 150 questions (20 by default; fewer when the scope is smaller) chosen on a setup sheet (Random or Mistakes in this release), with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume (short and legacy snapshots are labelled before they resume); a Random test can avoid recently tested questions (a **fresh sample**); passage members always carry their passage above the stem and move as one block |
+| Test | A bounded session of up to 150 questions (20 by default; fewer when the scope is smaller) chosen on a setup sheet (Random, Balanced, Mistakes or a study-informed focus type — Weakest topics, Toughest questions, Easiest questions, Tricky, At risk, Unseen, Mixed), with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume (short and legacy snapshots are labelled before they resume); a Random test can avoid recently tested questions (a **fresh sample**); a focus test records its targets and fill composition and resumes the same questions; passage members always carry their passage above the stem and move as one block |
 | Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. FSRS-6 schedules the next review (see below); a passage member shows its passage above the question |
 | Results / Review | A report — kind and comparability, scope and length, score vs accuracy, correct/wrong/skipped/ungraded with the marking, an approximate 95% margin, topics with sample sizes and not-sampled notes, where the marks went, time and time sinks, and up to five next actions — over a paged per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Slow/Saved); review reachable later from History |
 | History | Per-paper score trends, weakest categories, hardest questions, attempt list with each attempt's family and type; delete attempts; open any attempt in review mode |
-| Statistics | All papers or one, over a 7/30/90/365-day or all-time range, in six tabs — Overview, Retention, Workload, Memory, Cards, Guessing; every ranked list opens the card it names |
+| Statistics | All papers or one, over a 7/30/90/365-day or all-time range, in seven tabs — Overview, Retention, Workload, Memory, Cards, Guessing and Tests; every ranked list opens the card it names. The Tests tab keeps Mock, Fresh sample, Practice, Short and Legacy attempts apart and shows practice progress (target accuracy, mistakes cleared, leeches, at-risk and unseen coverage) |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
 | Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
 | Import | Import a **Word** bank or **JSON** → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups). See [Word](#import-word-documents-docx) / [JSON](#import-json-reference) |
@@ -79,10 +79,16 @@ winning contradictions:
   **fresh sample**, compared only with another fresh sample, not with a strict Random
   attempt; when the pool was too small it stays a strict attempt.
 - **Test** (per-paper Library button) — opens a setup sheet for a bounded test of up to 150
-  questions (20 by default; fewer when the scope is smaller): type (Random or Mistakes),
-  ticked-category scope, length in steps of ten, and a time (suggested, overridden or
-  untimed). The default is a 20-question random sample of the whole paper, so Test → Start
-  is two taps. Results are saved to History.
+  questions (20 by default; fewer when the scope is smaller): type (Random, Mistakes,
+  Weakest topics, Toughest questions, Easiest questions, Tricky, At risk, Unseen, Mixed or Balanced), ticked-category scope, length
+  in steps of ten, and a time (suggested, overridden or untimed). The default is a
+  20-question random sample of the whole paper, so Test → Start is two taps. The three
+  focus types are **practice**: Weakest topics ranks the scope's weakest categories and
+  allocates the requested length across them, Toughest questions takes the hardest items
+  with a 40% per-category cap, and Easiest questions samples from the easiest 2N while
+  avoiding leeches and at-risk cards where alternatives remain. A focus attempt records
+  its targets and fill composition and resumes the same questions rather than re-ranking.
+  Results are saved to History.
 - **Mistakes** (per-paper Library shortcut, shown when the paper has any) — opens the same
   sheet with **Mistakes** preselected, drawing only questions you previously got wrong in
   the chosen scope. It is a shortcut, not a separate engine.
@@ -230,6 +236,27 @@ stabilities.
   and a *Time* card gives the median pace, the wrong-vs-correct comparison and the three
   slowest questions. Below ten timed questions the relative thresholds are replaced by
   absolute ones and labelled as a small sample.
+- **Study evidence**: a *Study estimate vs test accuracy* card buckets the attempt's
+  questions into the four FSRS quadrants (hard/easy × wrong/correct) and counts questions
+  with no usable Study history — a missing card, a new card or a card whose content hash
+  went stale after an edit is never given a memory estimate. It also reports how many of
+  the attempt's questions are due in Study now and the mean predicted recall over the
+  studied cards.
+- **Coverage and progress**: a card counts the questions this attempt actually engaged,
+  out of the scope, with repeats (questions asked before), the remaining unseen pool, the
+  questions due in Study, and the mistakes added, cleared and remaining under the same
+  latest-standing rule History uses.
+- **Practice headline**: a practice attempt leads with its recorded targets — accuracy per
+  target and the current pool size — and treats the whole-scope score as secondary, with
+  a note that practice questions are selected *because* they are weak. A run with no
+  recorded targets says so rather than inventing a target set.
+- **Trend and interval**: a representative attempt gets a comparable trend line (up to
+  five same-key attempts; a Fresh sample keeps its own line) with the change called noise
+  when it sits inside the margins, and — when the paper has negative marking — a seeded
+  95% bootstrap interval that resamples whole passage blocks, so the same attempt always
+  reports the same interval. Each reviewed question also shows its lifetime accuracy,
+  read from the representative counters for a mock and from all attempts for a practice
+  run.
 - **Next actions**: up to five, each with its evidence and a working link — review the
   wrong questions, study the weakest topic, attempt every question (or guess only with
   elimination, depending on marking), take a longer mock (capped at 50 questions), or
@@ -237,10 +264,12 @@ stabilities.
 - **Review filters**: All, Correct, Wrong, Skipped, Ungraded, Slow (2× the median or 60 s,
   whichever is larger) and Saved (bookmarked) — the last three appear only when
   applicable. Each card shows its own time spent.
-- **History**: per-paper **trend cards** (attempts, best, latest, ▲/▼/= delta), **weakest
-  categories** with mastery bars, **hardest questions** with wrong/skip rates, then the
-  attempt list, each row labelled with its family and type. Ungraded rows never pollute
-  difficulty signals.
+- **History**: per-family **trend cards** (family and type, attempts, best, latest, ▲/▼/=
+  delta), grouped by paper, family, type, requested length and exclusion rule so a mock, a
+  practice set, a short test, a legacy attempt and a Fresh sample never share one line;
+  then **weakest categories** with mastery bars, **hardest questions** with wrong/skip
+  rates, then the attempt list, each row labelled with its family and type. Ungraded rows
+  never pollute difficulty signals.
 
 ## Browse: search, filters, bulk ops
 

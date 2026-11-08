@@ -9,12 +9,14 @@ import com.mcqapp.data.local.minBlockSizeForCategoriesChunked
 import com.mcqapp.data.local.minBlockSizeForPaper
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
+import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
+import com.mcqapp.domain.signals.Signals
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.CardsData
@@ -52,6 +54,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val paperStore = PaperStore(db, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
+    private val signalStore = SignalStore(db)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings)
     private val testProgress = TestProgressStore(db, settings)
@@ -519,6 +522,29 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionStore.getOrderForCategories(paperId, categoryIds)
 
     /**
+     * The order named by [ids], in that order. A focus selector chooses ids
+     * first; resolving their passage membership here keeps the frozen sample
+     * and its resume identity identical.
+     */
+    suspend fun getSessionOrderForIds(ids: List<String>): SessionOrder {
+        if (ids.isEmpty()) return SessionOrder.empty()
+        val byId = db.questionDao()
+            .getSessionRefsByIdsChunked(ids)
+            .associateBy { it.id }
+        return SessionOrder.of(ids.mapNotNull { byId[it] })
+    }
+
+    /**
+     * The per-question signals a focus selector ranks (stats.md §9.2).
+     * Read-only: it never touches `card_state` or `review_log`.
+     */
+    suspend fun getQuestionSignals(
+        paperId: String,
+        scopeIds: List<String>,
+        now: Long = System.currentTimeMillis()
+    ): List<Signals> = signalStore.signals(paperId, scopeIds, now)
+
+    /**
      * The smallest passage block in a scope (section 9.6). The setup sheet's
      * sampler pre-check uses it before it emits a route; a standalone question
      * makes the answer 1.
@@ -895,6 +921,69 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): List<com.mcqapp.domain.Attempt> = historyStore.getComparableAttempts(attempt, limit)
 
     /**
+     * The phase-2 report evidence (sections 11.8, 11.10). Read-only: it reads
+     * `card_state`, `question_stats` and prior results, and never writes Study
+     * state.
+     */
+    suspend fun getReportEvidence(
+        attempt: com.mcqapp.domain.Attempt,
+        rows: List<com.mcqapp.domain.ReportRow>,
+        paper: com.mcqapp.domain.Paper?,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.ReportEvidence {
+        val config = settings.schedulerConfigNow()
+        val scheduler = com.mcqapp.domain.FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = config
+        )
+        return historyStore.getReportEvidence(attempt, rows, paper, scheduler, now)
+    }
+
+    /**
+     * Earlier practice runs on the same recorded target set, oldest first
+     * (stats.md §11.5). Practice is never compared with a mock, so this line
+     * exists only for the practice trend and reads the light result rows of at
+     * most five prior runs.
+     */
+    suspend fun getPracticeHistory(
+        attempt: com.mcqapp.domain.Attempt
+    ): List<com.mcqapp.domain.PracticeTrendPoint> {
+        val targets = attempt.targetTopicIds
+            .split(",")
+            .filter { it.isNotBlank() }
+            .sorted()
+        if (targets.isEmpty()) return emptyList()
+        val type = com.mcqapp.domain.TestType.fromStorage(attempt.testType) ?: return emptyList()
+        if (type.isRepresentative) return emptyList()
+        if (com.mcqapp.domain.TestReportBuilder.familyOf(attempt) !=
+            com.mcqapp.domain.ReportFamily.PRACTICE
+        ) {
+            return emptyList()
+        }
+        val targetSet = targets.toHashSet()
+        val prior = getComparableAttempts(attempt, limit = 5)
+            .filter {
+                com.mcqapp.domain.TestReportBuilder.familyOf(it) ==
+                    com.mcqapp.domain.ReportFamily.PRACTICE &&
+                    it.targetTopicIds.split(",")
+                        .filter { id -> id.isNotBlank() }
+                        .sorted() == targets
+            }
+            .sortedBy { it.finishedAt }
+        return prior.map { earlier ->
+            val rows = getReportRows(earlier.id)
+            com.mcqapp.domain.PracticeTrendPoint(
+                attemptId = earlier.id,
+                finishedAt = earlier.finishedAt,
+                asked = rows.count { it.currentCategoryId in targetSet },
+                correct = rows.count {
+                    it.currentCategoryId in targetSet && it.graded && it.answered && it.isCorrect
+                }
+            )
+        }
+    }
+
+    /**
      * Questions asked in the last three comparable representative attempts of
      * this paper, scope and length (section 9.8). The session excludes their
      * blocks only when enough alternatives remain.
@@ -919,6 +1008,57 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun getWeakestCategories(limit: Int = 5): List<com.mcqapp.domain.Mastery.CategoryMastery> =
         historyStore.getWeakestCategories(limit)
     suspend fun getAttempts(): List<com.mcqapp.domain.Attempt> = historyStore.getAttempts()
+
+    /**
+     * The Statistics "Tests" tab (stats.md §13 phase 2): attempt families,
+     * the last three focus-practice runs and the scope's current leech,
+     * at-risk and unseen counts. The practice runs read their own bounded
+     * result rows, never a whole-paper result list.
+     */
+    suspend fun getTestProgress(
+        paperId: String?,
+        now: Long = System.currentTimeMillis()
+    ): com.mcqapp.domain.TestProgressData {
+        val attempts = getAttempts().filter { paperId == null || it.paperId == paperId }
+        val practicePairs = com.mcqapp.domain.TestProgress.practiceRuns(attempts).map { attempt ->
+            val rows = historyStore.getReportRows(attempt.id)
+            val paper = getPaper(attempt.paperId)
+            val evidence = getReportEvidence(attempt, rows, paper, now)
+            val report = com.mcqapp.domain.TestReportBuilder.build(
+                com.mcqapp.domain.TestReportInput(
+                    attempt = attempt,
+                    rows = rows,
+                    paper = paper,
+                    targetTopicIds = attempt.targetTopicIds
+                        .split(",")
+                        .filter { it.isNotBlank() },
+                    evidence = evidence
+                )
+            )
+            report to com.mcqapp.domain.PracticeRun(
+                attemptId = attempt.id,
+                type = com.mcqapp.domain.TestType.fromStorage(attempt.testType),
+                finishedAt = attempt.finishedAt,
+                targetedAsked = report.practice?.targetedAsked ?: 0,
+                targetedCorrect = report.practice?.targetedCorrect ?: 0,
+                overallAccuracy = report.score.accuracy,
+                mistakesCleared = report.mistakes?.cleared ?: 0,
+                targets = attempt.targetTopicIds.split(",").filter { it.isNotBlank() }
+            )
+        }
+        return com.mcqapp.domain.TestProgressData(
+            families = com.mcqapp.domain.TestProgress.families(attempts),
+            practiceRuns = practicePairs.map { it.second },
+            practiceTopics = com.mcqapp.domain.TestProgress.practiceTopics(
+                practicePairs.map { it.first }
+            ),
+            leeches = db.cardStateDao().countLeechesInScope(paperId),
+            atRisk = db.cardStateDao().countAtRisk(paperId, now),
+            unseen = db.questionDao().countUnseenInScope(paperId),
+            scopeSize = db.questionDao().countQuestionsInScope(paperId),
+            scopeIsWholeLibrary = paperId == null
+        )
+    }
     /** Wall-clock finish of the paper's latest attempt, or null when it has none. */
     suspend fun latestAttemptFinishedAt(paperId: String): Long? =
         db.attemptDao().getLatestFinishedAt(paperId)

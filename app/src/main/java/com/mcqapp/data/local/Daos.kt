@@ -2083,6 +2083,31 @@ interface AttemptDao {
     suspend fun getMistakenQuestionIdsForPaper(paperId: String): List<String>
 
     /**
+     * The same mistake ids, restricted to [scopeIds] by the question's
+     * category. The filter has to run in SQL: a session order holds question
+     * ids only, so intersecting it with category ids in Kotlin would drop
+     * every mistake. Like [countMistakesInScope], phase 1 calls this only for
+     * an explicitly ticked scope.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId FROM question_results r " +
+            "INNER JOIN attempts ON r.attemptId = attempts.id " +
+            "INNER JOIN questions q ON q.id = r.questionId " +
+            "WHERE attempts.paperId = :paperId AND q.categoryId IN (:scopeIds) " +
+            "AND r.isCorrect = 0 " +
+            "AND r.id = (SELECT r2.id FROM question_results r2 " +
+            "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
+            "WHERE r2.questionId = r.questionId " +
+            "AND r2.selectedOptionIds != '' AND r2.correctOptionIds != '' " +
+            "ORDER BY a2.finishedAt DESC, r2.id DESC LIMIT 1) " +
+            "ORDER BY attempts.finishedAt DESC, r.id DESC"
+    )
+    suspend fun getMistakenQuestionIdsForPaperInScope(
+        paperId: String,
+        scopeIds: List<String>
+    ): List<String>
+
+    /**
      * Counts the mistakes inside a scoped selection. Uses the same standing
      * rule (latest graded, answered row per question) but restricts to the
      * given category ids. A cheap chunked helper would be needed for large

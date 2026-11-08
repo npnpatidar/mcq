@@ -874,6 +874,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         SessionOrder.of(historyStore.getMistakenQuestionRefs(paperId))
 
     /**
+     * The same order, restricted to an expanded category scope. The filter runs
+     * in SQL: a [SessionOrder] holds question ids, not categories.
+     */
+    suspend fun getMistakenQuestionOrder(
+        paperId: String,
+        scopeIds: List<String>
+    ): SessionOrder =
+        SessionOrder.of(historyStore.getScopedMistakenQuestionRefs(paperId, scopeIds))
+
+    /**
      * How many of these questions have no answer key — excluded from scoring.
      * Ids only: never loads question content to count them. Only the sampled
      * sessions (a drill, mistakes-only) count by id, where the session's

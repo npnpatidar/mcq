@@ -284,10 +284,16 @@ class TestPlanSessionTest {
         )
         assertTrue(
             "the session never loaded: state=${viewModel.state.value}",
-            awaitCondition { !viewModel.state.value.loading }
+            awaitCondition {
+                !viewModel.state.value.loading && viewModel.state.value.current != null
+            }
         )
         val loaded = viewModel.state.value
-        assertEquals("MISTAKES", loaded.testType)
+        assertEquals(
+            "the MISTAKES plan did not load: loadError=${loaded.loadError}",
+            "MISTAKES",
+            loaded.testType
+        )
         assertTrue("a bounded mistakes plan must set the banner", loaded.mistakesOnly)
         assertEquals("only the scoped mistake is served", listOf("q0"), loaded.order.idsInOrder())
 
@@ -322,8 +328,10 @@ class TestPlanSessionTest {
         seed(25)
         val first = boundedRandom()
         assertTrue(
-            "the first session never loaded",
-            awaitCondition { !first.state.value.loading }
+            "the first session never loaded: state=${first.state.value}",
+            awaitCondition {
+                !first.state.value.loading && first.state.value.current != null
+            }
         )
         val current = first.state.value.current!!
         first.toggleOption("${current.id}-a")
@@ -372,7 +380,12 @@ class TestPlanSessionTest {
     fun aDifferentRequestedCountDoesNotOfferTheSavedSession() {
         seed(25)
         val first = boundedRandom()
-        assertTrue(awaitCondition { !first.state.value.loading })
+        assertTrue(
+            "the first session never loaded: state=${first.state.value}",
+            awaitCondition {
+                !first.state.value.loading && first.state.value.current != null
+            }
+        )
         val current = first.state.value.current!!
         first.toggleOption("${current.id}-a")
         assertTrue(awaitCondition { answerRows().isNotEmpty() })
@@ -384,7 +397,12 @@ class TestPlanSessionTest {
         )
 
         val other = boundedRandom(count = 50)
-        assertTrue(awaitCondition { !other.state.value.loading })
+        assertTrue(
+            "the second session never loaded: state=${other.state.value}",
+            awaitCondition {
+                !other.state.value.loading && other.state.value.current != null
+            }
+        )
         assertNull(
             "a 50-question request must not offer a 20-question session",
             other.state.value.resumeOffer

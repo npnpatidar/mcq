@@ -548,6 +548,13 @@ custom types follow in phase 2/3.
   last result is stored as `isCorrect = false` and would leak skips into the
   mistake pool. Reuse `AttemptDao.getLatestStandings` /
   `Mistakes.mistakenIdsByPaper`, which already filter to graded, answered rows.
+- **Scoped sessions filter in SQL.** A session order carries question ids, not
+  category ids, so a Kotlin intersection of the two would drop every mistake.
+  `AttemptDao.getMistakenQuestionIdsForPaperInScope` applies the same standing
+  rule with `questions.categoryId IN (:scopeIds)`; `HistoryStore` and
+  `McqRepository` expose it as `getScopedMistakenQuestionRefs` /
+  `getMistakenQuestionOrder(paperId, scopeIds)`. A ticked scope that expands to
+  nothing is an empty pool, never the whole paper.
 
 ### 8.7 Tricky (leeches, lapses, guesses, skips)
 

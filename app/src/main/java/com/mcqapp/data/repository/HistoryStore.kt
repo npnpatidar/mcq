@@ -570,11 +570,33 @@ internal class HistoryStore(
     /** The mistaken questions of a paper as session refs (content is fetched on demand). */
     suspend fun getMistakenQuestionRefs(
         paperId: String
+    ): List<com.mcqapp.data.local.SessionRef> =
+        refsFor(db.attemptDao().getMistakenQuestionIdsForPaper(paperId))
+
+    /**
+     * The same refs, restricted to [scopeIds] by the question's category.
+     * An empty scope has no mistakes — it is not the whole paper.
+     *
+     * The filter lives in SQL because the returned order holds question ids
+     * only; intersecting those with category ids in Kotlin would drop every
+     * mistake.
+     */
+    suspend fun getScopedMistakenQuestionRefs(
+        paperId: String,
+        scopeIds: List<String>
     ): List<com.mcqapp.data.local.SessionRef> {
-        // Scoped to the paper in SQL: the ordering key (rowid) travels with the
-        // id list, so the whole bank's standings never have to be materialised.
-        val ids = db.attemptDao().getMistakenQuestionIdsForPaper(paperId)
+        if (scopeIds.isEmpty()) return emptyList()
+        return refsFor(
+            db.attemptDao().getMistakenQuestionIdsForPaperInScope(paperId, scopeIds)
+        )
+    }
+
+    private suspend fun refsFor(
+        ids: List<String>
+    ): List<com.mcqapp.data.local.SessionRef> {
         if (ids.isEmpty()) return emptyList()
+        // The ids arrive already scoped and ordered by the SQL query; this only
+        // joins their passage membership so content is fetched on demand.
         val byId = db.questionDao().getSessionRefsByIdsChunked(ids).associateBy { it.id }
         val refs = ids.mapNotNull { byId[it] }
         // Two members of one passage missed at different times used to sit in

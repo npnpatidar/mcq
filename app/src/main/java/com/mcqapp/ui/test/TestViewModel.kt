@@ -442,15 +442,18 @@ class TestViewModel(
      * The mistaken questions of this paper, restricted to the session's
      * expanded scope. The paper-level query predates scoped Test; a bounded
      * Mistakes plan must not sample a question outside the chosen scope.
+     *
+     * The scope filter runs in SQL by question category. A [SessionOrder]
+     * holds question ids only, so intersecting it with category ids here would
+     * drop every mistake. A ticked scope that expands to nothing is an empty
+     * scope, not the whole paper.
      */
-    private suspend fun mistakenOrderInScope(scopeIds: List<String>): SessionOrder {
-        val mistakes = repository.getMistakenQuestionOrder(paperId)
-        if (categoryIds.isEmpty() || mistakes.isEmpty) return mistakes
-        val scopeSet = scopeIds.toHashSet()
-        val scoped = mistakes.idsInOrder().filter { it in scopeSet }
-        if (scoped.isEmpty()) return SessionOrder.empty()
-        return mistakes.subsetInOrder(scoped) ?: SessionOrder.empty()
-    }
+    private suspend fun mistakenOrderInScope(scopeIds: List<String>): SessionOrder =
+        when {
+            categoryIds.isEmpty() -> repository.getMistakenQuestionOrder(paperId)
+            scopeIds.isEmpty() -> SessionOrder.empty()
+            else -> repository.getMistakenQuestionOrder(paperId, scopeIds)
+        }
 
     /**
      * The bounded plan the route describes, or null for a legacy deep link.

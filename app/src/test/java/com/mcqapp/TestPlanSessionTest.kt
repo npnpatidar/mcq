@@ -308,15 +308,20 @@ class TestPlanSessionTest {
         assertEquals(1, attempt.totalQuestions)
         assertEquals(2, attempt.samplingVersion)
 
-        runBlocking { repository.db() }.query(
-            "SELECT repCorrect,repWrong,repSkip FROM question_stats WHERE questionId = 'q0'",
-            null
-        ).use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            assertEquals("a practice attempt must not move repCorrect", 0, cursor.getInt(0))
-            assertEquals("a practice attempt must not move repWrong", 0, cursor.getInt(1))
-            assertEquals("a practice attempt must not move repSkip", 0, cursor.getInt(2))
+        // Room forbids a blocking query on the main thread; this class's helper
+        // runs it on Dispatchers.IO while pumping the looper.
+        val stats = offMain {
+            repository.db().query(
+                "SELECT repCorrect,repWrong,repSkip FROM question_stats WHERE questionId = 'q0'",
+                null
+            ).use { cursor ->
+                assertTrue("a question_stats row must exist for q0", cursor.moveToFirst())
+                Triple(cursor.getInt(0), cursor.getInt(1), cursor.getInt(2))
+            }
         }
+        assertEquals("a practice attempt must not move repCorrect", 0, stats.first)
+        assertEquals("a practice attempt must not move repWrong", 0, stats.second)
+        assertEquals("a practice attempt must not move repSkip", 0, stats.third)
     }
 
     /**

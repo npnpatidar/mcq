@@ -1692,82 +1692,108 @@ attempt is legacy and not comparable.
 ### 11.14 Data and computation
 
 Add a pure `TestReport` model and a `TestReportBuilder` so the page is not a
-pile of ad-hoc queries in the ViewModel:
+pile of ad-hoc queries in the ViewModel. As shipped in the results-report
+slice:
 
 ```
 data class TestReport(
     val attempt: Attempt,
-    val plan: TestPlan?,          // null for legacy/short attempts
+    val family: ReportFamily,          // Mock / Fresh sample / Practice / Short / Legacy
+    val type: TestType?,               // null only for a legacy attempt
+    val requestedCount: Int,
+    val shownCount: Int,
+    val scopeSize: Int,
     val score: ScoreSummary,
-    val comparability: Comparability,
+    val comparable: Boolean,
+    val marginPoints: Double?,         // null for short/practice/legacy
+    val trendWorthy: Boolean,
+    val previousComparable: ComparablePoint?,
     val errorMix: ErrorMix,
     val topics: List<TopicResult>,
-    val memory: MemoryQuadrants?,
+    val notSampledTopics: List<String>,
+    val unresolvedResults: Int,
     val timing: TimingSummary,
-    val coverage: CoverageSummary,
-    val mistakes: MistakeSummary,
-    val actions: List<RecommendedAction>
+    val actions: List<RecommendedAction>,
+    val negativeMarking: Double
 )
 ```
 
-`plan` is nullable: legacy and short attempts have no original `TestPlan`. The
-report derives a display plan from the attempt (`requestedCount`,
-`totalQuestions`, type) and labels it.
+The phase-2 fields (`memory`, `coverage`, `mistakes`) are absent until their
+queries exist; adding them to the data class is the natural first step of that
+slice. `familyOf(attempt)` derives the display family from the stored metadata:
+a null type or `samplingVersion < 2` is **Legacy**, a shown count below 20 is
+**Short**, `RECENT_3` is **Fresh sample**, a representative type is **Mock** and
+anything else is **Practice**. A legacy or short attempt has no original
+`TestPlan`; the header derives its display line from `requestedCount`,
+`totalQuestions` and the type.
 
-`RecommendedAction` carries `title`, `evidence`, `priority`, `kind`
-(Study/Test/Review) and the route arguments. The builder takes the attempt,
-results, category rows, card states, lifetime stats and previous attempts, and
-is JVM-testable with synthetic data.
+`RecommendedAction` carries a structured `Rule` (the evidence as values), a
+`kind` (Study/Test/Review) and the route arguments (category ids, review filter,
+test type and count). The screen renders the English text from `strings.xml`,
+so a rule is testable without Compose and the page is not the only place the
+wording lives. This is a deliberate deviation from the original
+`title`/`evidence` strings: it keeps localization in the resource files and
+lets the tests assert numbers instead of prose.
 
-**Queries to add** (phase 1/2):
+The builder takes the attempt, the light result rows, the paper (for the scope
+size and the marking fallback) and the same-key previous attempts; it is
+JVM-testable with synthetic data.
+
+**Queries added (phase 1):**
 
 - `AttemptDao.getComparableAttempts(paperId, testType, scopeKey,
   requestedCount, samplingVersion, exclusionMode, excludeId, limit)` — same
-  key, newest by `finishedAt DESC, id DESC`; excludes legacy
-  (`testType IS NULL`, `samplingVersion < 2`).
-- `AttemptDao.getResultSummary(attemptId)` — counts, score, answered, dwell
-  sum/count, min/max; median can be computed from the bounded rows.
-- `AttemptDao.getResultCategoryBreakdown(attemptId)` — extend to
-  asked/correct/wrong/skipped, using the **stored** `categoryTitle`; join
-  `questions` only to resolve the current `categoryId` for a Study link.
-- `AttemptDao.getResultQuestionMeta(attemptId)` — for bounded attempts:
-  question id, stored category title, current category id when it still
-  exists, authored difficulty, content hash, dwell, correctness,
-  selected/correct ids.
-- `AttemptDao.getCoverageForPaper(paperId, scopeKey)` — distinct engaged
-  questions, with a scope variant.
-- `AttemptDao.getPriorStandings(attemptId)` — the latest graded, answered
-  result before this attempt by `finishedAt DESC, id DESC`, for "mistakes
-  added/cleared".
-- `QuestionStatsDao.getRepresentativeForQuestions(ids)` — `rep*` lifetime
-  accuracy for mock context.
-- `QuestionStatsDao.getAllForQuestions(ids)` — all-attempt lifetime accuracy
-  for practice context.
-- `CardStateDao.getForQuestions(ids)` already exists for FSRS state.
-- `CardStateDao.countDueForQuestions(ids, now)` — "due in Study" count.
+  key, newest by `finishedAt DESC, id DESC`; a legacy attempt never calls it.
+- `AttemptDao.getReportRows(attemptId)` — question id, the **stored**
+  `categoryTitle`, the current `categoryId` via a left join (null when the
+  question was deleted), dwell, correctness and the selected/correct ids.
+- `AttemptDao.getResultAggregates` and `getResultCategoryBreakdown` already
+  existed and still serve the stored header fallback.
 
-**Performance.** A bounded attempt has at most 150 results, so the report can
-load them all once and compute medians, quadrants and the error mix in Kotlin.
-Legacy attempts keep the paged review and use SQL aggregates; the report hides
-the expensive sections. Never load question content for the whole paper, only
-for the attempt's questions.
+**Deferred queries (phase 2):** coverage, prior standings, representative and
+all-attempt lifetime accuracy, due-in-Study, and the FSRS quadrants.
+
+**Performance.** A bounded attempt has at most 150 results, so the report loads
+one light projection once and computes medians, the error mix and the topics in
+Kotlin. A legacy attempt still gets the report, but the expensive sections are
+simply absent; the question review stays paged in every case. Never load
+question content for the whole paper, only for the attempt's questions.
 
 ### 11.15 Implementation phases
 
 **Phase 1 (with the unified Test):**
 
 - Header with type, scope, requested/shown, score, accuracy, counts, time.
-- Comparability badge and approximate margin.
-- Topic breakdown with sample-size badges and not-sampled topics.
+  **Done:** `TestReportBuilder` derives it and `ReportHeaderCard` renders it;
+  scope size is the ticked subtree's current question count.
+- Comparability badge and approximate margin. **Done:** Wilson interval with
+  the finite-population correction, on the shown count (C6); short, practice
+  and legacy attempts get no margin.
+- Topic breakdown with sample-size badges and not-sampled topics. **Done:**
+  titles are the as-of-attempt `question_results.categoryTitle`; rows whose
+  question no longer resolves are counted separately and the Study link is
+  dropped rather than pointing at a dead id.
 - Basic error mix: wrong/slow (knowledge gap), wrong/fast (rushed), skipped,
-  ungraded, possible guess.
-- Time summary: total, average/median, slowest questions.
+  ungraded, possible guess. **Done** from dwell alone; the FSRS evidence and
+  the memory quadrants stay in phase 2.
+- Time summary: total, average/median, slowest questions. **Done**, including
+  the wrong-vs-correct pace comparison and a small-sample note below ten
+  timed questions.
 - Three actions: review wrong, study weakest topic, take a longer mock.
-- "This test did not change your Study schedule" note.
-- Extended question filters (wrong, skipped, slow, saved).
-- Legacy/short/full-scope labels, including a legacy drill snapshot.
+  **Done**, capped at five: review wrong, study weakest, attempt every question
+  (or guess only with elimination, depending on negative marking), take a
+  longer mock (at most 50 questions), and keep going.
+- "This test did not change your Study schedule" note. **Done.**
+- Extended question filters (wrong, skipped, slow, saved). **Done** (plus
+  ungraded); Slow is 2× the median or 60 s, whichever is larger.
+- Legacy/short/full-scope labels, including a legacy drill snapshot. **Done:**
+  a pre-v21 snapshot still loads and is labelled **Legacy attempt**.
 - Fresh sample badge on the result, History row and Statistics legend.
-- Recorded `targetTopicIds` for Weakest topics (and later Mixed).
+  **Partly:** the result and the History row show the **Fresh sample** family,
+  but the Statistics legend and the setting are still deferred, and no attempt
+  can carry `RECENT_3` yet, so the badge cannot appear in practice.
+- Recorded `targetTopicIds` for Weakest topics (and later Mixed). **Deferred**
+  with the phase-2 focus types; phase 1 writes an empty list.
 
 **Phase 2:**
 
@@ -1798,7 +1824,8 @@ for the attempt's questions.
   - comparable vs practice vs short vs legacy;
   - error mix thresholds with a synthetic dwell distribution;
   - topic sorting and small-sample flags;
-  - memory quadrants with valid, stale and missing `card_state`;
+  - memory quadrants with valid, stale and missing `card_state` (phase 2,
+    with the FSRS evidence);
   - recommendation priority and cap (never more than five);
   - practice actions never claim mock comparability.
 - `RecommendationEngineTest`: each rule fires on its evidence and not
@@ -1807,12 +1834,21 @@ for the attempt's questions.
 **Database tests (Robolectric, CI x86_64)**
 
 - Comparable-attempt query matches the full key, including exclusion mode.
-- Coverage counts engaged questions, not old skipped rows.
+  **Done:** `RepositoryTest.comparableAttemptsMatchTheWholeKeyAndReportRowsCarryEvidence`.
+- Coverage counts engaged questions, not old skipped rows. (Phase 2.)
 - Prior-standings query returns the correct before/after for mistakes.
+  (Phase 2.)
 - Due-in-Study count is read-only and leaves `card_state` unchanged.
-- Report queries return the same counts as the attempt header.
+  (Phase 2.)
+- Report queries return the same counts as the attempt header. (The report
+  reads the same `question_results` rows the header aggregates, so a separate
+  cross-check is deferred with the phase-2 queries.)
 
 **UI tests**
+
+> Not written yet: the project has no instrumented Results test, so these
+> behaviours are covered by the pure-builder tests and by manual review only.
+> They stay listed here as the target for the instrumented suite.
 
 - A 20-question Random result shows the margin, comparability badge and
   "first comparable attempt" when there is no prior.
@@ -1826,23 +1862,25 @@ for the attempt's questions.
 
 **Acceptance criteria**
 
-- [ ] The result page says what kind of test it was and whether it is
+- [x] The result page says what kind of test it was and whether it is
       comparable.
-- [ ] It shows score and accuracy separately, with correct/wrong/skipped/
+- [x] It shows score and accuracy separately, with correct/wrong/skipped/
       ungraded and the negative-marking note.
-- [ ] It shows the sample size and an approximate margin for representative
+- [x] It shows the sample size and an approximate margin for representative
       tests.
-- [ ] It shows the weakest topics with sample sizes and the topics that were
+- [x] It shows the weakest topics with sample sizes and the topics that were
       not sampled.
 - [ ] It explains where the marks went with evidence (time, FSRS, skip,
-      guess), using "likely/suggests" language.
-- [ ] It shows time analysis, including slowest questions and wrong-vs-correct
+      guess), using "likely/suggests" language. (Time, skip and guess rules
+      ship; the FSRS evidence and the memory quadrants are phase 2.)
+- [x] It shows time analysis, including slowest questions and wrong-vs-correct
       pace.
 - [ ] It shows coverage, repeats, mistakes and due-in-Study where available.
-- [ ] It gives three to five evidence-backed next actions with working links.
-- [ ] Practice results never show a mock trend or claim mock comparability.
-- [ ] Legacy and short attempts are labelled and do not get a margin/trend.
-- [ ] The page states that the test did not change the Study schedule.
+      (Phase 2.)
+- [x] It gives three to five evidence-backed next actions with working links.
+- [x] Practice results never show a mock trend or claim mock comparability.
+- [x] Legacy and short attempts are labelled and do not get a margin/trend.
+- [x] The page states that the test did not change the Study schedule.
 
 ## 12. Data model and migration
 
@@ -2064,10 +2102,12 @@ banks.
 
 > **As shipped, phase 1 offers only `RANDOM` and `MISTAKES`.** The other
 > selectors exist in `TestType` for phase 2, but no entry point emits them and
-> the session refuses them. The results report (§11), its `TestReport` model
-> and the Results/History type badges are **deferred** to a follow-up slice;
-> the result page still shows the existing score breakdown. Every deferral is
-> marked inline below and left unticked in §15.
+> the session refuses them. The results report (§11) landed in the
+> `feature/results-report` slice after `0.0.42`: `TestReport`/`TestReportBuilder`
+> derive the page, and the Results and History rows show the type and family.
+> The phase-2 report sections (FSRS quadrants, coverage/repeats/mistakes/due,
+> practice trend, bootstrap) remain deferred. Every deferral is marked inline
+> below and left unticked in §15.
 
 1. **Domain**
    - Add `TestType` (`RANDOM`, `BALANCED`, `WEAKEST_TOPICS`,
@@ -2092,7 +2132,10 @@ banks.
      tie-break. Keep `sampled` for legacy snapshots or fold it in with tests.
    - Add the pure report model and builders: `TestReport`, `TestReportBuilder`
      and `RecommendationEngine` (section 11.14), so the result page has no
-     ad-hoc scoring logic. **Deferred** to the results-report follow-up.
+     ad-hoc scoring logic. **Done:** `domain/TestReport.kt` holds the model,
+     the family/score/topic/error-mix/timing derivation, the Wilson margin and
+     the rule engine; `TestReportBuilderTest` and `RecommendationEngineTest`
+     cover it on the JVM.
 2. **Data**
    - Migration v20 → v21 for the `attempts` columns and the three `rep*`
      columns on `question_stats`; new bounded attempts write
@@ -2141,7 +2184,10 @@ banks.
      rows, card states and prior standings; the screen renders the model
      instead of recomputing in Compose. `TestReport.plan` is nullable and a
      legacy/short attempt gets a display plan derived from the attempt.
-     **Deferred** to the results-report follow-up.
+     **Partly done:** the view model builds the report from one light
+     `getReportRows` projection plus the paper and same-key prior attempts, and
+     the screen renders it. `card_state` and the prior-standings reads are
+     phase 2, so the memory quadrants and coverage sections are absent.
    - Add the boundary regression test: `card_state` and `review_log` counts
      are unchanged after a save. **Done:** `RepositoryTest
      .savingATestLeavesTheStudyScheduleUntouched`.
@@ -2156,18 +2202,22 @@ banks.
    - Test session header: "Random · 20 questions" or "Practice · Weakest
      topics · 20 questions"; keep the "N asked, M shown" passage note.
    - Results and History: show the type badge, the composition and the Fresh
-     sample badge when `exclusionMode = RECENT_3`. **Deferred** to the
-     results-report follow-up.
+     sample badge when `exclusionMode = RECENT_3`. **Done for the type and
+     family badge:** `ui/common/AttemptLabels.kt` names the type and family,
+     the Results header shows both, and the History row shows
+     `family · type`. The composition badge and the Statistics legend stay
+     with phase 2, and `RECENT_3` is still refused so the Fresh sample label
+     has no producer yet.
    - **Results report (phase 1, section 11):** header (type, scope,
      requested/shown, score, accuracy, counts, time), comparability badge,
      approximate margin, topic breakdown with small-sample, as-of-attempt
      titles and not-sampled notes, basic error mix, time summary and time
      sinks, three evidence-backed actions, "Study schedule unchanged" note,
-     extended question filters, and legacy/short/full-scope labels.
-     **Deferred** to the results-report follow-up.
+     extended question filters, and legacy/short/full-scope labels. **Done.**
    - Replace the current `ResultsScreen` header and category tally with the
-     report sections; keep the paged question review underneath. **Deferred**
-     to the results-report follow-up.
+     report sections; keep the paged question review underneath. **Done:** the
+     paged review keeps its `ResultCard`, gains the Slow filter, and its
+     filters update in place rather than navigating.
 5. **Docs**
    - Fix the README's drill claims; document the unified Test, the length
      rules and the type families. **Done:** the README now describes the
@@ -2408,9 +2458,7 @@ banks.
       and a 6 + 5 + 5 pool reaches 10 as 5 + 5.
 - [x] Unanswered questions within the sample are skipped; questions outside
       the sample are not in the attempt at all.
-- [ ] Scope and length are shown separately on the start sheet and the result.
-      (The start sheet shows both; the result page still shows only the score
-      breakdown, so this stays unticked until the report lands.)
+- [x] Scope and length are shown separately on the start sheet and the result.
 - [x] Ticking a parent topic includes its subtree, and ticking a parent plus
       its child does not duplicate questions.
 - [x] Random is labelled comparable; every practice type is labelled not
@@ -2441,32 +2489,31 @@ banks.
 - [ ] Attempts record type, requested count, scope, canonical scope key,
       sampling version, exclusion mode, target topics and seed; old attempts
       and snapshots still load as legacy. (Composition is deferred with the
-      phase-2 focus types; `compositionJson` is empty in phase 1.)
+      phase-2 focus types; `compositionJson` is empty in phase 1, and
+      `targetTopicIds` is written empty until Weakest topics ships.)
 - [x] `rep*` counters update only for Random/Balanced attempts with
       `samplingVersion >= 2`; practice and legacy attempts do not touch them.
 - [ ] History/Results show the type; Statistics keeps mock and practice, and
-      strict and fresh, separate. (Not implemented in phase 1.)
-- [ ] The result page labels the attempt kind and comparability, and shows
+      strict and fresh, separate. (History and Results show `family · type`
+      now; the Statistics split is phase 2.)
+- [x] The result page labels the attempt kind and comparability, and shows
       score and accuracy separately with correct/wrong/skipped/ungraded and
-      the negative-marking note (12/4/2/2 at 1/3 marking = 59.3%). (Not
-      implemented in phase 1.)
-- [ ] Representative tests show the sample size and an approximate margin
-      using the shown count; short and legacy attempts do not. (Not
-      implemented in phase 1.)
-- [ ] The page shows weakest topics with sample sizes, as-of-attempt titles,
-      the unresolved count and the topics that were not sampled. (Not
-      implemented in phase 1.)
+      the negative-marking note (12/4/2/2 at 1/3 marking = 59.3%).
+- [x] Representative tests show the sample size and an approximate margin
+      using the shown count; short and legacy attempts do not.
+- [x] The page shows weakest topics with sample sizes, as-of-attempt titles,
+      the unresolved count and the topics that were not sampled.
 - [ ] It explains where the marks went with evidence (time, FSRS, skip,
-      guess), using "likely/suggests" language. (Not implemented in phase 1.)
+      guess), using "likely/suggests" language. (Time, skip and guess rules
+      ship; the FSRS evidence is phase 2.)
 - [ ] It shows time analysis, coverage, repeats, mistakes and due-in-Study
-      where available. (Not implemented in phase 1.)
-- [ ] It gives three to five evidence-backed next actions with working links.
-      (Not implemented in phase 1.)
+      where available. (Time analysis ships; the rest is phase 2.)
+- [x] It gives three to five evidence-backed next actions with working links.
 - [ ] Practice results never show a mock trend or claim mock comparability;
-      their per-topic trend uses the recorded target set. (Not implemented in
-      phase 1.)
-- [ ] The page states that the test did not change the Study schedule. (Not
-      implemented in phase 1.)
+      their per-topic trend uses the recorded target set. (Practice results
+      already get no margin, trend or Test action; the recorded-target trend
+      is phase 2.)
+- [x] The page states that the test did not change the Study schedule.
 - [x] README matches the behavior.
 
 ## 16. Decisions accepted by the owner

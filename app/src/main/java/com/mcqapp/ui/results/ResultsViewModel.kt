@@ -10,10 +10,15 @@ import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
 import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.ResultPageKey
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.NumberedResult
 import com.mcqapp.domain.ReviewFilters
+import com.mcqapp.domain.TestReport
+import com.mcqapp.domain.TestReportBuilder
+import com.mcqapp.domain.TestReportInput
 import com.mcqapp.util.Logger
+import androidx.paging.PagingSource
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +37,8 @@ data class ResultsUiState(
     /** Header tallies, one row from SQL instead of the whole result list. */
     val aggregates: ResultAggregates = ResultAggregates(),
     val categoryBreakdown: List<Pair<String, Pair<Int, Int>>> = emptyList(),
+    /** The derived report (section 11.14); null until the attempt loads. */
+    val report: TestReport? = null,
     val filter: String = ReviewFilters.ALL
 )
 
@@ -55,7 +62,7 @@ class ResultsViewModel(
     private val request = MutableStateFlow(ResultsRequest(ReviewFilters.ALL))
 
     /** The live paging source; bookmark writes invalidate it in place (F14). */
-    private var liveSource: androidx.paging.PagingSource<com.mcqapp.data.repository.ResultPageKey, NumberedResult>? = null
+    private var liveSource: PagingSource<ResultPageKey, NumberedResult>? = null
 
     val pagingData: Flow<PagingData<NumberedResult>> = request
         .flatMapLatest { req ->
@@ -70,8 +77,15 @@ class ResultsViewModel(
                     enablePlaceholders = false
                 )
             ) {
-                repository.resultPagingSource(attemptId, req.filter) { _state.value.bookmarked }
-                    .also { liveSource = it }
+                repository.resultPagingSource(
+                    attemptId,
+                    req.filter,
+                    {
+                        _state.value.report?.timing?.slowThresholdSeconds
+                            ?: ReviewFilters.DEFAULT_SLOW_SECONDS
+                    },
+                    { _state.value.bookmarked }
+                ).also { liveSource = it }
             }.flow
         }
         .cachedIn(viewModelScope)
@@ -108,6 +122,19 @@ class ResultsViewModel(
                 val aggregates = repository.getResultAggregates(attemptId)
                 val breakdown = repository.getResultCategoryBreakdown(attemptId)
                     .map { it.title to (it.correct to it.graded) }
+                // One bounded attempt is at most 150 rows, so the report loads
+                // one light projection and computes medians, the error mix and
+                // the topics in Kotlin. The question review stays paged.
+                val report = attempt?.let {
+                    TestReportBuilder.build(
+                        TestReportInput(
+                            attempt = it,
+                            rows = repository.getReportRows(attemptId),
+                            paper = repository.getPaper(it.paperId),
+                            comparableAttempts = repository.getComparableAttempts(it)
+                        )
+                    )
+                }
                 Logger.i(
                     "RESULTVM",
                     "Loaded attempt '${attempt?.title}' with ${aggregates.total} results"
@@ -118,7 +145,8 @@ class ResultsViewModel(
                         loading = false,
                         attempt = attempt,
                         aggregates = aggregates,
-                        categoryBreakdown = breakdown
+                        categoryBreakdown = breakdown,
+                        report = report
                     )
                 }
             } catch (e: Exception) {

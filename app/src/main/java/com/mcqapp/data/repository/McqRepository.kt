@@ -844,13 +844,22 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun resultPagingSource(
         attemptId: Long,
         filter: String,
+        slowSeconds: () -> Long = { com.mcqapp.domain.ReviewFilters.DEFAULT_SLOW_SECONDS },
         bookmarked: () -> Set<String>
     ): androidx.paging.PagingSource<ResultPageKey, com.mcqapp.domain.NumberedResult> =
-        historyStore.resultPagingSource(attemptId, filter, bookmarked)
+        historyStore.resultPagingSource(attemptId, filter, slowSeconds, bookmarked)
     suspend fun getResultAggregates(attemptId: Long) =
         historyStore.getResultAggregates(attemptId)
     suspend fun getResultCategoryBreakdown(attemptId: Long) =
         historyStore.getResultCategoryBreakdown(attemptId)
+    /** The result report's light per-question evidence (section 11.14). */
+    suspend fun getReportRows(attemptId: Long): List<com.mcqapp.domain.ReportRow> =
+        historyStore.getReportRows(attemptId)
+    /** Same-key attempts older than [attempt], newest first (section 11.5). */
+    suspend fun getComparableAttempts(
+        attempt: com.mcqapp.domain.Attempt,
+        limit: Int = 5
+    ): List<com.mcqapp.domain.Attempt> = historyStore.getComparableAttempts(attempt, limit)
     suspend fun getAllQuestionResults(): List<com.mcqapp.domain.QuestionResult> =
         historyStore.getAllQuestionResults()
     suspend fun getHardestQuestions(limit: Int = 5): List<com.mcqapp.domain.QuestionStats.Stat> =

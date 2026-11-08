@@ -1264,4 +1264,63 @@ class RepositoryTest {
         assertEquals(direct, chunked)
         assertEquals(listOf("q2", "q1"), chunked.map { it.questionId })
     }
+
+    /**
+     * Comparability is the whole six-field key (section 11.5): the same paper,
+     * type, scope, requested count, sampling version and exclusion mode. A
+     * different length or exclusion must not join the trend. The report rows
+     * are the light projection the page computes from, so they must carry
+     * correctness, dwell and the graded/answered split.
+     */
+    @Test
+    fun comparableAttemptsMatchTheWholeKeyAndReportRowsCarryEvidence() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val key = com.mcqapp.domain.ScopeKey.wholePaper("p1")
+
+        fun metadata(
+            requested: Int = 20,
+            exclusion: String = "NONE"
+        ) = com.mcqapp.domain.AttemptMetadata(
+            testType = "RANDOM",
+            requestedCount = requested,
+            scopeKey = key,
+            samplingVersion = com.mcqapp.domain.TestPlan.SAMPLING_VERSION,
+            exclusionMode = exclusion
+        )
+
+        suspend fun save(finishedAt: Long, meta: com.mcqapp.domain.AttemptMetadata): Long =
+            repository.saveAttempt(
+                paperId = "p1",
+                paperTitle = "Paper",
+                questions = listOf(question("q1", setOf("q1-a"))),
+                selections = mapOf("q1" to setOf("q1-a")),
+                negativeMarking = 0.0,
+                durationSeconds = 30,
+                finishedAt = finishedAt,
+                dwellSeconds = mapOf("q1" to 12L),
+                metadata = meta
+            )
+
+        val older = save(1_000L, metadata())
+        val newer = save(2_000L, metadata())
+        save(1_500L, metadata(requested = 50))
+        save(1_600L, metadata(exclusion = "RECENT_3"))
+
+        val attempt = repository.getAttempt(newer)!!
+        val comparable = repository.getComparableAttempts(attempt)
+        assertEquals(
+            "only the same-key attempt is comparable",
+            listOf(older),
+            comparable.map { it.id }
+        )
+
+        val row = repository.getReportRows(newer).single()
+        assertEquals("q1", row.questionId)
+        assertEquals("Cat", row.categoryTitle)
+        assertEquals(12L, row.dwellSeconds)
+        assertTrue(row.graded)
+        assertTrue(row.answered)
+        assertTrue(row.isCorrect)
+    }
 }

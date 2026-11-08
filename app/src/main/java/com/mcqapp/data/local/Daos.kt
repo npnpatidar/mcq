@@ -2150,7 +2150,7 @@ interface AttemptDao {
      * rare filter never decodes every heavy element/option JSON in the attempt.
      */
     @Query(
-        "SELECT id, questionId, isCorrect, correctOptionIds, selectedOptionIds " +
+        "SELECT id, questionId, isCorrect, correctOptionIds, selectedOptionIds, dwellSeconds " +
             "FROM question_results WHERE attemptId = :attemptId " +
             "AND id > :afterId ORDER BY rowid LIMIT :limit"
     )
@@ -2177,6 +2177,50 @@ interface AttemptDao {
             "GROUP BY categoryTitle ORDER BY categoryTitle"
     )
     suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow>
+
+    /**
+     * The report's per-question evidence (section 11.14), without the heavy
+     * element/option JSON: correctness, dwell, the stored as-of-attempt
+     * category title and the question's current category for a Study link.
+     * A deleted question still yields its row, with a null current id.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId, r.categoryTitle AS categoryTitle, " +
+            "q.categoryId AS currentCategoryId, r.dwellSeconds AS dwellSeconds, " +
+            "r.isCorrect AS isCorrect, r.correctOptionIds AS correctOptionIds, " +
+            "r.selectedOptionIds AS selectedOptionIds " +
+            "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
+            "WHERE r.attemptId = :attemptId ORDER BY r.rowid"
+    )
+    suspend fun getReportRows(attemptId: Long): List<ReportRowEntity>
+
+    /**
+     * Attempts under the same comparability key (section 11.5), newest first.
+     * The key is all six fields; [exclusionMode] keeps a Fresh sample from
+     * being compared with a strict attempt. The tuple comparison on
+     * `(finishedAt, id)` makes "older than this one" deterministic when two
+     * attempts share a finish time.
+     */
+    @Query(
+        "SELECT * FROM attempts WHERE paperId = :paperId AND id != :excludeId " +
+            "AND testType = :testType AND scopeKey = :scopeKey " +
+            "AND requestedCount = :requestedCount " +
+            "AND samplingVersion = :samplingVersion AND exclusionMode = :exclusionMode " +
+            "AND (finishedAt < :beforeFinishedAt " +
+            "OR (finishedAt = :beforeFinishedAt AND id < :excludeId)) " +
+            "ORDER BY finishedAt DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getComparableAttempts(
+        paperId: String,
+        excludeId: Long,
+        testType: String,
+        scopeKey: String,
+        requestedCount: Int,
+        samplingVersion: Int,
+        exclusionMode: String,
+        beforeFinishedAt: Long,
+        limit: Int
+    ): List<AttemptEntity>
 
     @Query("SELECT * FROM question_results ORDER BY rowid")
     suspend fun getAllResults(): List<QuestionResultEntity>
@@ -2528,6 +2572,22 @@ data class ContentHashMatch(val id: String, val contentHash: String)
 data class ResultScan(
     val id: Long,
     val questionId: String,
+    val isCorrect: Boolean,
+    val correctOptionIds: String,
+    val selectedOptionIds: String,
+    val dwellSeconds: Long = 0
+)
+
+/**
+ * One row of [AttemptDao.getReportRows]: the light projection the result
+ * report computes from. [currentCategoryId] is null when the question was
+ * deleted or moved out of the paper.
+ */
+data class ReportRowEntity(
+    val questionId: String,
+    val categoryTitle: String,
+    val currentCategoryId: String?,
+    val dwellSeconds: Long,
     val isCorrect: Boolean,
     val correctOptionIds: String,
     val selectedOptionIds: String

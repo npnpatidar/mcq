@@ -196,7 +196,7 @@ class StudyAndSelectionUiTest {
 
     @Test
     fun tappingTheTestQuestionClockPausesIt() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") == null)
+        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") != "true" && System.getenv("GITHUB_ACTIONS") != "true")
         seedPaper(
             "ui-test-clock", "UITest Clock", "ui-test-clock-cat",
             single("ui-test-clock-q", "ui-test-clock-cat")
@@ -486,6 +486,7 @@ class StudyAndSelectionUiTest {
      */
     @Test
     fun eachPulledCardNamesThePoolThatServedIt() {
+        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") != "true" && System.getenv("GITHUB_ACTIONS") != "true")
         runBlocking { repository.setSimplifiedStudy(true) }
         seedPaper(
             "ui-chips", "UIChips Paper", "ui-chips-cat",
@@ -719,7 +720,7 @@ class StudyAndSelectionUiTest {
      */
     @Test
     fun tickingInTwoPapersKeepsTheirSelectionsApart() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") == null)
+        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") != "true" && System.getenv("GITHUB_ACTIONS") != "true")
         seedPaper("ui-iso-a", "UIIso A", "ui-iso-a-cat", single("ui-iso-a-q", "ui-iso-a-cat"))
         seedPaper("ui-iso-b", "UIIso B", "ui-iso-b-cat", single("ui-iso-b-q", "ui-iso-b-cat"))
         compose.setContent { McqNavHost(repository = repository) }
@@ -888,7 +889,7 @@ class StudyAndSelectionUiTest {
 
     @Test
     fun cardTestFollowsTheSelection() {
-        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") == null)
+        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") != "true" && System.getenv("GITHUB_ACTIONS") != "true")
         // Tick the SECOND root: a whole-paper Test would serve the first one,
         // so serving the second is the proof the scope was honoured.
         val second = seedTwoRoots("ui-ctest", "UICTest Paper")

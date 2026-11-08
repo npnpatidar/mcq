@@ -170,6 +170,8 @@ data class AttemptDto(
     val exclusionMode: String = "NONE",
     val targetTopicIds: String = "",
     val compositionJson: String = "",
+    /** The custom type's choice (phase 3); null on older backups. */
+    val variant: String? = null,
     val results: List<AttemptResultDto> = emptyList()
 )
 

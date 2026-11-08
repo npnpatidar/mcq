@@ -43,9 +43,14 @@ enum class TestType {
     /**
      * Whether the type is chosen by the signal selector. Balanced is
      * representative, so it is not a practice focus type, but its sample is
-     * still allocated from the same read-only signals.
+     * still allocated from the same read-only signals. The phase-3 custom
+     * types draw their pool outside the signals (bookmarks, tags, dwell),
+     * but their composition and fill still come from the one selector, so
+     * they take this path too.
      */
-    val usesSignalSelector: Boolean get() = isFocus || this == BALANCED
+    val usesSignalSelector: Boolean
+        get() = isFocus || this == BALANCED || this == BOOKMARKED ||
+            this == TAG || this == AUTHORED_DIFFICULTY || this == SLOWEST
 
     /** Only these types may record `exclusionMode = RECENT_3` (section 9.8). */
     val supportsFreshSample: Boolean

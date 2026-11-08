@@ -335,7 +335,9 @@ data class Attempt(
     val seed: Long = 0,
     val exclusionMode: String = "NONE",
     val targetTopicIds: String = "",
-    val compositionJson: String = ""
+    val compositionJson: String = "",
+    /** The custom type's choice: the tag or difficulty a Tag/Authored run used. */
+    val variant: String? = null
 ) {
     val percentage: Double get() = if (maxScore > 0) score / maxScore * 100.0 else 0.0
 
@@ -367,7 +369,9 @@ data class AttemptMetadata(
     val seed: Long = 0,
     val exclusionMode: String = "NONE",
     val targetTopicIds: String = "",
-    val compositionJson: String = ""
+    val compositionJson: String = "",
+    /** The custom type's choice: the tag or difficulty a Tag/Authored run used. */
+    val variant: String? = null
 )
 
 /**

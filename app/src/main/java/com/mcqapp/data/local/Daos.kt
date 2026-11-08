@@ -1071,6 +1071,10 @@ interface QuestionDao {
     @Query("SELECT id FROM questions WHERE id IN (:ids)")
     suspend fun getExistingIds(ids: Collection<String>): List<String>
 
+    /** Tags for a set of questions, for report export (no heavy columns). */
+    @Query("SELECT id, tags FROM questions WHERE id IN (:ids)")
+    suspend fun getTagsByIds(ids: List<String>): List<QuestionTagRow>
+
     /**
      * Per-paper question counts in one grouped read. The storage report used
      * to filter a fully materialised question list per paper.
@@ -2102,6 +2106,106 @@ interface BookmarkDao {
     suspend fun isBookmarked(questionId: String): Boolean
 }
 
+/** One distinct tag with how many questions in the request's scope carry it. */
+data class TagCount(
+    val tag: String,
+    val tagFolded: String,
+    val count: Int
+)
+
+/**
+ * Reads over the exact-tag index (`question_tags`, phase 3).
+ *
+ * Scope is the ticked categories (or the whole paper when [scopeAll] is
+ * set), never an expanded id list: the index has no paper or category column
+ * of its own, so every read joins through `questions` and `categories`.
+ * Equality on `tagFolded` is the whole point — a tag `java` never matches
+ * `javascript`.
+ */
+@Dao
+interface QuestionTagDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(rows: List<QuestionTagEntity>)
+
+    @Query("DELETE FROM question_tags WHERE questionId IN (:questionIds)")
+    suspend fun deleteByQuestions(questionIds: Collection<String>): Int
+
+    /**
+     * The distinct tags of the scope, most used first. `MIN(tag)` keeps a
+     * deterministic spelling when questions disagree only on case.
+     */
+    @Query(
+        "SELECT MIN(qt.tag) AS tag, qt.tagFolded AS tagFolded, COUNT(*) AS count " +
+            "FROM question_tags qt " +
+            "INNER JOIN questions q ON q.id = qt.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "GROUP BY qt.tagFolded ORDER BY count DESC, tagFolded"
+    )
+    suspend fun tagCounts(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>
+    ): List<TagCount>
+
+    /** The ids of the scope's questions carrying exactly [tagFolded]. */
+    @Query(
+        "SELECT q.id FROM question_tags qt " +
+            "INNER JOIN questions q ON q.id = qt.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE qt.tagFolded = :tagFolded AND c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "ORDER BY q.sortOrder, q.rowid"
+    )
+    suspend fun questionIdsForTag(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>,
+        tagFolded: String
+    ): List<String>
+
+    /**
+     * The scope's bookmarked questions, most recently bookmarked first — the
+     * Bookmarked test's pool (phase 3).
+     */
+    @Query(
+        "SELECT q.id FROM bookmarks b " +
+            "INNER JOIN questions q ON q.id = b.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "ORDER BY b.createdAt DESC, q.rowid"
+    )
+    suspend fun bookmarkedIdsInScope(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>
+    ): List<String>
+
+    /**
+     * Every timed sample of the scope, one row per graded answer, for the
+     * Slowest test's median dwell (phase 3). The median itself is computed
+     * in Kotlin; the query only projects the samples.
+     */
+    @Query(
+        "SELECT q.id AS questionId, qr.dwellSeconds AS dwellSeconds " +
+            "FROM question_results qr " +
+            "INNER JOIN questions q ON q.id = qr.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId AND qr.dwellSeconds > 0 " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds))"
+    )
+    suspend fun dwellSamplesInScope(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>
+    ): List<DwellSample>
+}
+
+/** One timed answer's dwell, for a median computation. */
+data class DwellSample(val questionId: String, val dwellSeconds: Long)
+
 @Dao
 interface AttemptDao {
     @Insert
@@ -2918,6 +3022,12 @@ data class QuestionSignalRow(
 data class QuestionHashRow(
     val questionId: String,
     val contentHash: String
+)
+
+/** Question id and its comma-separated tags, for report export. */
+data class QuestionTagRow(
+    val id: String,
+    val tags: String
 )
 
 /** One question's lifetime counters, all-attempt and representative. */

@@ -38,7 +38,12 @@ data class TestPlan(
     /** Sorted, deduped targets; empty unless [TestType.supportsTargets]. */
     val targetTopicIds: List<String> = emptyList(),
     /** The recorded fill composition (stats.md §9.7); empty on older plans. */
-    val compositionJson: String = ""
+    val compositionJson: String = "",
+    /**
+     * The custom type's choice (phase 3): the tag or difficulty name a Tag /
+     * Authored difficulty attempt covers. Null for every other type.
+     */
+    val variant: String? = null
 ) {
 
     /**
@@ -71,6 +76,14 @@ data class TestPlan(
         }
         if (targetTopicIds != canonicalTargets(targetTopicIds)) return TARGET_ORDER_MESSAGE
         if (targetTopicIds.isNotEmpty() && type?.supportsTargets != true) return TARGET_MESSAGE
+        // A custom type without its choice cannot start: a Tag run needs the
+        // tag, an Authored difficulty run needs the label.
+        if (type == TestType.TAG && variant.isNullOrBlank()) return VARIANT_REQUIRED_MESSAGE
+        if (type == TestType.AUTHORED_DIFFICULTY &&
+            Difficulty.entries.none { it.name == variant?.trim() }
+        ) {
+            return VARIANT_REQUIRED_MESSAGE
+        }
         if (available <= 0) return EMPTY_SCOPE_MESSAGE
         return null
     }
@@ -155,6 +168,7 @@ data class TestPlan(
         const val FRESH_MESSAGE: String = "This test type cannot avoid recently tested questions."
         const val TARGET_MESSAGE: String = "This test type cannot record target topics."
         const val TARGET_ORDER_MESSAGE: String = "Target topics must be sorted and deduplicated."
+        const val VARIANT_REQUIRED_MESSAGE: String = "Choose a tag or difficulty for this test."
 
         /**
          * The largest shown count a sample may reach for [target] (section

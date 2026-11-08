@@ -2321,13 +2321,14 @@ banks.
 ### Phase 3 — custom and advanced
 
 See [`stats-phase3.md`](stats-phase3.md) for the working plan, slices and the
-open decisions.
+open decisions. Implementation of slices 1–3 is **in progress on `feature/phase3-custom`** (uncommitted, CI pending).
 
-1. Bookmarked, Tag, Authored difficulty, Slowest.
-2. `question_tags` table (or delimited exact matching).
+1. Bookmarked, Tag, Authored difficulty, Slowest. **Implemented on `feature/phase3-custom` (CI pending).**
+2. `question_tags` table (or delimited exact matching). **Implemented as `question_tags` index (v22).**
 3. Mixed practice composition. **Done in phase 2.**
-4. Exam blueprint (per-paper sections, counts, optional weights/time).
-5. Reliability, item analysis, guessing correction, staged/adaptive tests.
+4. Exam blueprint (per-paper sections, counts, optional weights/time). **Deferred** (owner decision / plan-shape change).
+5. Reliability, item analysis, guessing correction, staged/adaptive tests. **Partly implemented:** `Reliability.kt` (split-half/Spearman–Brown, SEM, KR-20, point-biserial, guessing correction) + tests and reliability card UI; staged/adaptive deferred (needs calibrated item bank).
+6. Export/share the report (CSV/PDF). **Implemented on branch** (CSV + simple PDF + Results share action; CI pending).
 
 ## 14. Test plan
 

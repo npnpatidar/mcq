@@ -91,7 +91,13 @@ fun testRoute(
     /** The exclusion rule name; blank means [com.mcqapp.domain.ExclusionMode.NONE]. */
     exclusion: String = "",
     /** The Weakest/Mixed breadth name; blank means the medium default. */
-    breadth: String = ""
+    breadth: String = "",
+    /**
+     * The custom type's choice (phase 3: tag or difficulty name); blank for
+     * every non-custom type. The variant is the *folded* tag: the session
+     * folds again before reading the index, so case cannot split the pool.
+     */
+    variant: String = ""
 ): String = "test?paperId=${encode(paperId)}" +
     "&categories=${encodeCategoryList(categoryIds)}" +
     "&mistakes=$mistakes" +
@@ -101,4 +107,5 @@ fun testRoute(
     "&type=${encode(type)}" +
     "&count=$count" +
     "&exclusion=${encode(exclusion)}" +
-    "&breadth=${encode(breadth)}"
+    "&breadth=${encode(breadth)}" +
+    "&variant=${encode(variant)}"

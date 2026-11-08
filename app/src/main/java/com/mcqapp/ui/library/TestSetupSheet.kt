@@ -92,20 +92,34 @@ internal fun TestSetupSheet(
     /**
      * The live composition preview for a signal-selected type. Display-only: a
      * failure leaves the preview blank and Start still runs the real selector.
+     * [variant] is the custom choice (phase 3): the folded tag or difficulty
+     * name, or null.
      */
-    loadPreview: suspend (TestType, Int, Breadth) -> SelectionPreview,
+    loadPreview: suspend (TestType, Int, Breadth, String?) -> SelectionPreview,
+    /** The scope's distinct tags for the phase-3 Tag picker. */
+    loadTags: suspend () -> List<com.mcqapp.data.local.TagCount> = { emptyList() },
     onDismiss: () -> Unit,
     onStart: (
         type: TestType,
         requestedCount: Int,
         minutes: Int,
         exclusion: ExclusionMode,
-        breadth: Breadth
+        breadth: Breadth,
+        variant: String?
     ) -> Unit
 ) {
     var type by rememberSaveable(initialType) { mutableStateOf(initialType) }
     var requestedCount by rememberSaveable { mutableIntStateOf(TestPlan.DEFAULT_LENGTH) }
     var breadth by rememberSaveable { mutableStateOf(Breadth.MEDIUM) }
+    /** The custom choice (phase 3): folded tag for `TAG`, difficulty name else. */
+    var variant by rememberSaveable { mutableStateOf<String?>(null) }
+    /** The scope's distinct tags, loaded once for the Tag picker. */
+    var tags by remember(paper.id, categoryIds) { mutableStateOf<List<com.mcqapp.data.local.TagCount>?>(null) }
+    LaunchedEffect(paper.id, categoryIds, type) {
+        if (type == TestType.TAG && tags == null) {
+            tags = runCatching { loadTags() }.getOrDefault(emptyList())
+        }
+    }
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -140,7 +154,37 @@ internal fun TestSetupSheet(
     }
     val mistakePool = if (categoryIds.isEmpty()) mistakeCount else scopedMistakes
     val poolLoading = type == TestType.MISTAKES && mistakePool == null
-    val available = if (type == TestType.MISTAKES) mistakePool ?: 0 else questionPool
+    // A custom type's pool comes from the preview (computed below); until
+    // it lands the pool reads empty and Start waits.
+    val isCustom = type == TestType.BOOKMARKED || type == TestType.TAG ||
+        type == TestType.AUTHORED_DIFFICULTY || type == TestType.SLOWEST
+
+    // The live preview of what the current request would select. It is a read
+    // of the same signals the session uses, so the composition the learner sees
+    // before Start is the one the attempt records.
+    var selectionPreview by remember(paper.id, expanded) {
+        mutableStateOf<SelectionPreview?>(null)
+    }
+    var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
+    LaunchedEffect(paper.id, expanded, type, requestedCount, breadth, variant) {
+        if (!type.usesSignalSelector) {
+            selectionPreview = null
+            previewLoading = false
+            return@LaunchedEffect
+        }
+        previewLoading = true
+        selectionPreview = runCatching {
+            loadPreview(type, requestedCount, breadth, variant)
+        }.getOrNull()
+        previewLoading = false
+    }
+    // A custom type's pool comes from the preview: Start clamps against the
+    // pool the selector will actually draw from, not the whole scope.
+    val available = when {
+        type == TestType.MISTAKES -> mistakePool ?: 0
+        isCustom -> selectionPreview?.pool ?: 0
+        else -> questionPool
+    }
 
     // The sampler's smallest block for the pool the selected type draws from.
     // Null while the query is in flight, so Start waits instead of emitting a
@@ -156,26 +200,6 @@ internal fun TestSetupSheet(
         }
     }
     val blockLoading = minBlockSize == null
-
-    // The live preview of what the current request would select. It is a read
-    // of the same signals the session uses, so the composition the learner sees
-    // before Start is the one the attempt records.
-    var selectionPreview by remember(paper.id, expanded) {
-        mutableStateOf<SelectionPreview?>(null)
-    }
-    var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
-    LaunchedEffect(paper.id, expanded, type, requestedCount, breadth) {
-        if (!type.usesSignalSelector) {
-            selectionPreview = null
-            previewLoading = false
-            return@LaunchedEffect
-        }
-        previewLoading = true
-        selectionPreview = runCatching {
-            loadPreview(type, requestedCount, breadth)
-        }.getOrNull()
-        previewLoading = false
-    }
 
     val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
         ExclusionMode.RECENT_3
@@ -193,6 +217,7 @@ internal fun TestSetupSheet(
             ?: TestTime.Suggested,
         available = available,
         exclusionMode = exclusionMode,
+        variant = if (type == TestType.TAG || type == TestType.AUTHORED_DIFFICULTY) variant else null,
         minBlockSize = minBlockSize ?: 1
     )
     // The largest length this pool can actually supply. Chips above it are
@@ -227,7 +252,10 @@ internal fun TestSetupSheet(
                 TestSetup.STARTABLE_TYPES.forEach { candidate ->
                     FilterChip(
                         selected = type == candidate,
-                        onClick = { type = candidate },
+                        onClick = {
+                            if (type != candidate) variant = null
+                            type = candidate
+                        },
                         label = { Text(stringResource(testTypeLabelRes(candidate))) }
                     )
                 }
@@ -244,12 +272,71 @@ internal fun TestSetupSheet(
                         TestType.AT_RISK -> R.string.test_setup_type_at_risk_help
                         TestType.UNSEEN -> R.string.test_setup_type_unseen_help
                         TestType.MIXED -> R.string.test_setup_type_mixed_help
+                        TestType.BOOKMARKED -> R.string.test_setup_type_bookmarked_help
+                        TestType.TAG -> R.string.test_setup_type_tag_help
+                        TestType.AUTHORED_DIFFICULTY -> R.string.test_setup_type_authored_help
+                        TestType.SLOWEST -> R.string.test_setup_type_slowest_help
                         else -> R.string.test_setup_type_random_help
                     }
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // A custom type needs its choice before Start is offered.
+            when (type) {
+                TestType.TAG -> {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.test_setup_pick_tag),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    if (tags.isNullOrEmpty()) {
+                        Text(
+                            stringResource(R.string.test_setup_no_tags),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            tags.orEmpty().forEach { counted ->
+                                FilterChip(
+                                    selected = variant == counted.tagFolded,
+                                    onClick = {
+                                        variant = if (variant == counted.tagFolded) null else counted.tagFolded
+                                    },
+                                    label = {
+                                        Text(
+                                            "${counted.tag} · ${counted.count}"
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                TestType.AUTHORED_DIFFICULTY -> {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.test_setup_pick_difficulty),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.mcqapp.domain.Difficulty.entries.forEach { difficulty ->
+                            FilterChip(
+                                selected = variant == difficulty.name,
+                                onClick = {
+                                    variant = if (variant == difficulty.name) null else difficulty.name
+                                },
+                                label = { Text(difficulty.label) }
+                            )
+                        }
+                    }
+                }
+                else -> Unit
+            }
+
             // Breadth only means something for the category-based practice
             // selectors; the metric selectors have no K to choose.
             if (type == TestType.WEAKEST_TOPICS || type == TestType.MIXED) {
@@ -452,7 +539,7 @@ internal fun TestSetupSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { onStart(type, requestedCount, setup.minutes(), exclusionMode, breadth) },
+                onClick = { onStart(type, requestedCount, setup.minutes(), exclusionMode, breadth, variant) },
                 enabled = setup.startable() && !poolLoading && !blockLoading,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -496,6 +583,10 @@ private fun fillSourceLabel(source: String): String = when (source.uppercase()) 
     "UNSEEN" -> stringResource(R.string.test_setup_fill_unseen)
     "BALANCED" -> stringResource(R.string.test_setup_fill_balanced)
     "MIXED" -> stringResource(R.string.test_setup_fill_mixed)
+    "BOOKMARKED" -> stringResource(R.string.test_setup_fill_bookmarked)
+    "TAG" -> stringResource(R.string.test_setup_fill_tag)
+    "AUTHORED_EASY" -> stringResource(R.string.test_setup_fill_authored_easy)
+    "SLOWEST" -> stringResource(R.string.test_setup_fill_slowest)
     "LEAST_RECENTLY_REVIEWED", "AUTHORED_HARD", "AUTHORED_MEDIUM" ->
         stringResource(R.string.test_setup_fill_recent)
     else -> stringResource(R.string.test_setup_fill_random)

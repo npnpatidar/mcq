@@ -8,8 +8,10 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.minBlockSizeForCategoriesChunked
 import com.mcqapp.data.local.minBlockSizeForPaper
 import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.TagCount
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
+import com.mcqapp.data.local.getTagsByIdsChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
@@ -17,6 +19,7 @@ import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.signals.Signals
+import com.mcqapp.domain.signals.TestSelector
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.CardsData
@@ -545,6 +548,65 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): List<Signals> = signalStore.signals(paperId, scopeIds, now)
 
     /**
+     * The scope's distinct tags with their counts (phase 3), most used first.
+     * [categoryIds] are the ticked branches; empty means the whole paper.
+     */
+    suspend fun tagCountsForScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<TagCount> = db.questionTagDao().tagCounts(
+        paperId = paperId,
+        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+        categoryIds = categoryIds
+    )
+
+    /**
+     * The ids of the scope's questions carrying exactly a tag (phase 3): the
+     * Tag selector's pool. [foldedTag] is [TagNormalizer.fold]'s output.
+     */
+    suspend fun questionIdsForTagInScope(
+        paperId: String,
+        categoryIds: List<String>,
+        foldedTag: String
+    ): List<String> = db.questionTagDao().questionIdsForTag(
+        paperId = paperId,
+        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+        categoryIds = categoryIds,
+        tagFolded = foldedTag
+    )
+
+    /** The scope's bookmarked question ids, most recently bookmarked first. */
+    suspend fun bookmarkedIdsInScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<String> = db.questionTagDao().bookmarkedIdsInScope(
+        paperId = paperId,
+        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+        categoryIds = categoryIds
+    )
+
+    /**
+     * The median dwell seconds of every scope question with at least
+     * [TestSelector.SLOWEST_MIN_SAMPLES] timed answers (phase 3): the Slowest
+     * selector's input. A median of an even sample list is the lower median,
+     * so the values are exact stored seconds, never a blended number.
+     */
+    suspend fun medianDwellSecondsInScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): Map<String, Long> =
+        db.questionTagDao()
+            .dwellSamplesInScope(
+                paperId = paperId,
+                scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+                categoryIds = categoryIds
+            )
+            .groupBy { it.questionId }
+            .mapValues { (_, samples) -> samples.map { it.dwellSeconds }.sorted() }
+            .filter { it.value.size >= TestSelector.SLOWEST_MIN_SAMPLES }
+            .mapValues { (_, samples) -> samples[(samples.size - 1) / 2] }
+
+    /**
      * The smallest passage block in a scope (section 9.6). The setup sheet's
      * sampler pre-check uses it before it emits a route; a standalone question
      * makes the answer 1.
@@ -914,6 +976,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** The result report's light per-question evidence (section 11.14). */
     suspend fun getReportRows(attemptId: Long): List<com.mcqapp.domain.ReportRow> =
         historyStore.getReportRows(attemptId)
+    /** Raw result entities for report export. */
+    suspend fun getAttemptResultEntities(attemptId: Long) =
+        historyStore.getAttemptResultEntities(attemptId)
+    /** Question tags by id, for report export. */
+    suspend fun getQuestionTagsByIds(ids: List<String>): Map<String, String> =
+        db.questionDao().getTagsByIdsChunked(ids)
     /** Same-key attempts older than [attempt], newest first (section 11.5). */
     suspend fun getComparableAttempts(
         attempt: com.mcqapp.domain.Attempt,

@@ -66,6 +66,8 @@ data class TestSnapshot(
     val targetTopicIds: List<String> = emptyList(),
     /** The recorded fill composition (stats.md §9.7); empty on legacy snapshots. */
     val compositionJson: String = "",
+    /** The custom type's choice (phase 3: tag or difficulty name). */
+    val variant: String? = null,
     /** Seconds already spent in an untimed session, banked on every autosave
      *  so a kill does not shrink the recorded duration (D7). */
     val elapsedSeconds: Int = 0,

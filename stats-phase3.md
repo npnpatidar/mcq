@@ -1,9 +1,17 @@
 # Phase 3 implementation plan: custom tests, reliability and export
 
-Status: **planning only — no code yet.** Phase 2 (selectors, previews, report
-evidence, practice trend and Statistics practice views) is complete on
-`feature/phase2-stats`; this document prepares the next branch,
-`feature/phase3-custom`, cut from `main` after that PR merges.
+Status: **implemented on `feature/phase3-custom` (cut from `origin/main`; uncommitted, CI pending).** Phase 2 is merged to `main` (PR #51).
+
+**Implemented (slices 1–5, pending CI):**
+- **Slice 1 (data foundation):** `question_tags` index + schema v22 migration/backfill (`MIGRATION_21_22`), nullable `attempts.variant`, tag normalization (`Tags.kt`), write-path tag-index sync (QuestionStore/Importer/StreamingImportSession/bulk), exact scoped tag/bookmark/dwell reads. Generated schema `22.json`. `MigrationTest.ALL_MIGRATIONS` updated to include `21_22` (Robolectric v21→v22 fixture/assertions still a follow-up for full coverage).
+- **Slice 2 (custom selectors):** Bookmarked/Tag/Authored difficulty/Slowest startable (practice, not `isFocus`), `variant` threaded through plan/attempt/snapshot/route/session, custom selector logic + preview (`TestSelector`, `LibraryViewModel`, `McqRepository` scoped reads), setup-sheet tag/difficulty pickers and variant-aware Start.
+- **Slice 3 (tag editing/round-trip):** editor tag-chip add/remove; tags/index sync on save paths; import/export continue to use `questions.tags` CSV as canonical.
+- **Slice 4 (reliability/item analysis):** pure domain `domain/stats/Reliability.kt` (split-half odd/even + Spearman–Brown, SEM, KR-20, point-biserial across attempts, guessing correction, NaN/zero-SD/small-sample guards) with `ReliabilityTest` (18). Tests tab shows a Reliability card (`TestProgressData.reliability`/`ReliabilitySummary`) — full family-scoped computation from per-attempt item vectors in the stats pipeline remains a follow-up; the card displays “sample too small” when no summary is provided.
+- **Slice 5 (report export):** `ReportCsv` (UTF-8, RFC 4180, header comment block, stable columns) + `ReportExportCsvTest` (5), simple `ReportPdf` (v1 table/text, no charts), Results export/share actions (CSV/PDF) via cache `reports/` + `FileProvider`.
+
+**Deferred by plan prerequisites (not implemented):** Slice 6 adaptive next test/staged testing (needs calibrated item bank/exposure requirements) and Slice 7 exam blueprint (needs owner decision; changes plan shape). These remain deferred in §6/§9.
+
+**Verification (local, ARM64):** `:app:compileDebugKotlin` + `:app:compileDebugUnitTestKotlin` pass; targeted pure-JVM tests pass (TagNormalizer 6, Reliability 18, ReportExportCsv 5, TestSelector 29, TestSetup 23, TestReportBuilder 36). Robolectric/SQLite + instrumented tests not run locally (CI x86_64 authoritative). **Not committed/pushed/PR’d.**
 
 It is the working plan for the phase-3 items in [`stats.md`](stats.md)
 §8.10–§8.13, §11.15 (phase 3), §12.4 and §13 (phase 3). When a slice ships,
@@ -317,9 +325,9 @@ them.
 
 ## 10. Shipped order
 
-1. Slice 1: `question_tags` + v22 migration. **Not started.**
-2. Slice 2: four custom selectors and the setup-sheet plumbing. **Not started.**
-3. Slice 3: tag editing and round-trip. **Not started.**
-4. Slice 4: reliability and item analysis. **Not started.**
-5. Slice 5: CSV/PDF export. **Not started.**
-6. Slice 6/7: adaptive next test and exam blueprint, after §9 decisions.
+1. Slice 1: `question_tags` + v22 migration. **Implemented on branch** (CI pending; v21→v22 Robolectric fixture/assertions follow-up).
+2. Slice 2: four custom selectors and the setup-sheet plumbing. **Implemented on branch.**
+3. Slice 3: tag editing and round-trip. **Implemented on branch.**
+4. Slice 4: reliability and item analysis. **Implemented (domain/tests + reliability card UI; stats-pipeline computation/discrimination wiring follow-up).**
+5. Slice 5: CSV/PDF export. **Implemented on branch** (CSV/PDF + share action).
+6. Slice 6/7: adaptive next test and exam blueprint. **Deferred** (calibrated item bank / owner decision per §9).

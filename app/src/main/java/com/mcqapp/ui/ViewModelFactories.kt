@@ -20,13 +20,14 @@ class TestViewModelFactory(
     private val testType: String = "",
     private val requestedCount: Int = 0,
     private val exclusionMode: String = "",
-    private val breadth: String = ""
+    private val breadth: String = "",
+    private val variant: String = ""
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return TestViewModel(
             application, paperId, categoryIds, mistakesOnly, drillCount, drillMinutes,
-            durationMinutes, testType, requestedCount, exclusionMode, breadth
+            durationMinutes, testType, requestedCount, exclusionMode, breadth, variant
         ) as T
     }
 }

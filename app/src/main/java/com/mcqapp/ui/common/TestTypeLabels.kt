@@ -21,6 +21,10 @@ fun testTypeLabelRes(type: TestType?): Int = when (type) {
     TestType.AT_RISK -> R.string.test_setup_type_at_risk
     TestType.UNSEEN -> R.string.test_setup_type_unseen
     TestType.MIXED -> R.string.test_setup_type_mixed
+    TestType.BOOKMARKED -> R.string.test_setup_type_bookmarked
+    TestType.TAG -> R.string.test_setup_type_tag
+    TestType.AUTHORED_DIFFICULTY -> R.string.test_setup_type_authored
+    TestType.SLOWEST -> R.string.test_setup_type_slowest
     else -> R.string.test_setup_type_random
 }
 
@@ -40,5 +44,9 @@ fun testTypeLabelText(type: TestType?): String = when (type) {
     TestType.AT_RISK -> stringResource(R.string.test_setup_type_at_risk)
     TestType.UNSEEN -> stringResource(R.string.test_setup_type_unseen)
     TestType.MIXED -> stringResource(R.string.test_setup_type_mixed)
+    TestType.BOOKMARKED -> stringResource(R.string.test_setup_type_bookmarked)
+    TestType.TAG -> stringResource(R.string.test_setup_type_tag)
+    TestType.AUTHORED_DIFFICULTY -> stringResource(R.string.test_setup_type_authored)
+    TestType.SLOWEST -> stringResource(R.string.test_setup_type_slowest)
     else -> stringResource(R.string.test_setup_type_random)
 }

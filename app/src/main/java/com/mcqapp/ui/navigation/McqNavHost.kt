@@ -56,7 +56,8 @@ fun McqNavHost(repository: McqRepository) {
                 navArgument("type") { type = NavType.StringType; defaultValue = "" },
                 navArgument("count") { type = NavType.IntType; defaultValue = 0 },
                 navArgument("exclusion") { type = NavType.StringType; defaultValue = "" },
-                navArgument("breadth") { type = NavType.StringType; defaultValue = "" }
+                navArgument("breadth") { type = NavType.StringType; defaultValue = "" },
+                navArgument("variant") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
@@ -69,9 +70,10 @@ fun McqNavHost(repository: McqRepository) {
             val count = entry.arguments?.getInt("count") ?: 0
             val exclusion = entry.arguments?.getString("exclusion").orEmpty()
             val breadth = entry.arguments?.getString("breadth").orEmpty()
+            val variant = entry.arguments?.getString("variant").orEmpty()
             Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories', " +
                 "mistakes=$mistakes, drill=$drillCount/${drillMinutes}min, minutes=$minutes, " +
-                "type='$type', count=$count, exclusion='$exclusion', breadth='$breadth'")
+                "type='$type', count=$count, exclusion='$exclusion', breadth='$breadth', variant='$variant'")
             TestSessionScreen(
                 repository = repository,
                 paperId = paperId,
@@ -84,6 +86,7 @@ fun McqNavHost(repository: McqRepository) {
                 requestedCount = count,
                 exclusionMode = exclusion,
                 breadth = breadth,
+                variant = variant,
                 navController = navController
             )
         }

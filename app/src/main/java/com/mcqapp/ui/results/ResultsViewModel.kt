@@ -1,6 +1,9 @@
 package com.mcqapp.ui.results
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
@@ -8,6 +11,10 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.data.export.ReportCsv
+import com.mcqapp.data.export.ReportCsvHeader
+import com.mcqapp.data.export.ReportCsvRow
+import com.mcqapp.data.export.ReportPdf
 import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.ResultPageKey
@@ -19,6 +26,7 @@ import com.mcqapp.domain.TestReportBuilder
 import com.mcqapp.domain.TestReportInput
 import com.mcqapp.util.Logger
 import androidx.paging.PagingSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +35,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.nio.charset.StandardCharsets
 
 data class ResultsUiState(
     val loading: Boolean = true,
@@ -180,6 +193,81 @@ class ResultsViewModel(
             } catch (e: Exception) {
                 Logger.e("RESULTVM", "toggleBookmark($questionId) failed", e)
             }
+        }
+    }
+
+    /** Slice 5: export the report as CSV and return a share intent, or null. */
+    suspend fun exportCsvIntent(): Intent? = withContext(Dispatchers.IO) {
+        val report = _state.value.report ?: return@withContext null
+        try {
+            val entities = repository.getAttemptResultEntities(attemptId)
+            val tagsById = repository.getQuestionTagsByIds(entities.map { it.questionId }.distinct())
+            val rows = entities.mapIndexed { index, entity ->
+                val result = when {
+                    entity.selectedOptionIds.isBlank() -> "skipped"
+                    entity.isCorrect -> "correct"
+                    else -> "wrong"
+                }
+                ReportCsvRow(
+                    number = index + 1,
+                    questionId = entity.questionId,
+                    category = entity.categoryTitle,
+                    result = result,
+                    dwellSeconds = entity.dwellSeconds,
+                    tags = tagsById[entity.questionId].orEmpty()
+                )
+            }
+            val header = ReportCsvHeader(
+                attemptId = report.attempt.id,
+                paperTitle = report.attempt.title,
+                testType = report.type?.name ?: "LEGACY",
+                family = report.family.name,
+                exportedAtEpochMs = System.currentTimeMillis()
+            )
+            val file = reportFile("csv")
+            FileOutputStream(file).use { fos ->
+                OutputStreamWriter(fos, StandardCharsets.UTF_8).use { writer ->
+                    ReportCsv.write(writer, header, rows)
+                }
+            }
+            shareIntent(file, "text/csv")
+        } catch (e: Exception) {
+            Logger.e("RESULTVM", "CSV export failed", e)
+            null
+        }
+    }
+
+    /** Slice 5: export the report as a simple PDF and return a share intent. */
+    suspend fun exportPdfIntent(): Intent? = withContext(Dispatchers.IO) {
+        val report = _state.value.report ?: return@withContext null
+        try {
+            val file = reportFile("pdf")
+            FileOutputStream(file).use { out -> ReportPdf.write(report, out) }
+            shareIntent(file, "application/pdf")
+        } catch (e: Exception) {
+            Logger.e("RESULTVM", "PDF export failed", e)
+            null
+        }
+    }
+
+    private fun reportFile(ext: String): File {
+        val dir = File(getApplication<Application>().cacheDir, "reports").apply { mkdirs() }
+        val attempt = _state.value.attempt
+        val safeTitle = (attempt?.title ?: "report").replace(Regex("[^A-Za-z0-9._-]+"), "_").take(40)
+        return File(dir, "mcq-report-${safeTitle}-${attemptId}.$ext")
+    }
+
+    private fun shareIntent(file: File, mime: String): Intent {
+        val app = getApplication<Application>()
+        val uri: Uri = FileProvider.getUriForFile(
+            app,
+            app.packageName + ".fileprovider",
+            file
+        )
+        return Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
 

@@ -1,5 +1,7 @@
 package com.mcqapp.data.local
 
+import com.mcqapp.domain.TagNormalizer
+
 /**
  * SQLite caps the number of bind variables in one statement at 999 on the
  * versions shipped up to API 30 (it only rose to 32766 later), and this app
@@ -125,6 +127,9 @@ suspend fun QuestionDao.getMatchesByContentHashesChunked(
 suspend fun QuestionDao.getExistingIdsChunked(ids: Collection<String>): List<String> =
     ids.toList().chunks().flatMap { getExistingIds(it) }
 
+suspend fun QuestionDao.getTagsByIdsChunked(ids: List<String>): Map<String, String> =
+    ids.chunks().flatMap { getTagsByIds(it) }.associate { it.id to it.tags }
+
 suspend fun BookmarkDao.removeAllChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { removeAll(it) }
 }
@@ -192,6 +197,24 @@ suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String
 
 suspend fun ReviewLogDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { deleteByQuestions(it) }
+}
+
+/**
+ * Rewrites one question's exact-tag rows from its tag list (phase 3).
+ *
+ * Every writer that stores a `tags` CSV calls this with the same list, so
+ * [com.mcqapp.domain.TagNormalizer] deduplicates and folds exactly as the
+ * migration backfilled: the index can never disagree with the CSV.
+ */
+suspend fun QuestionTagDao.replaceQuestionTags(questionId: String, tags: Collection<String>) {
+    deleteByQuestions(listOf(questionId))
+    val rows = TagNormalizer.fromList(tags)
+        .map { QuestionTagEntity(questionId, it.tag, it.folded) }
+    if (rows.isNotEmpty()) insertIgnore(rows)
+}
+
+suspend fun QuestionTagDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
+    questionIds.toList().chunks().forEach { deleteByQuestions(it as List<String>) }
 }
 
 /**

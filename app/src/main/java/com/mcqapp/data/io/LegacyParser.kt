@@ -1248,6 +1248,7 @@ object LegacyParser {
             exclusionMode = obj["exclusionMode"]?.jsonPrimitive?.contentOrNull ?: "NONE",
             targetTopicIds = str("targetTopicIds"),
             compositionJson = str("compositionJson"),
+            variant = obj["variant"]?.jsonPrimitive?.contentOrNull,
             results = resultsJson.map { it.jsonObject }.map { r ->
                 AttemptResultDto(
                     questionId = r["questionId"]?.jsonPrimitive?.contentOrNull ?: "",

@@ -18,6 +18,13 @@ enum class Breadth(val categories: Int) {
 }
 
 /** One source in a focus test's composition (stats.md §9.7). */
+/**
+ * One source in a focus or custom test's composition (stats.md §9.7, §8.10–§8.13).
+ *
+ * The four phase-3 custom sources record which pool supplied the block, not
+ * a metric: the composition cannot suggest how much of the run came from a
+ * bookmarked pool versus random fill.
+ */
 enum class FillSource {
     WEAKEST_TOPICS,
     TOUGHEST_QUESTIONS,
@@ -30,6 +37,10 @@ enum class FillSource {
     LEAST_RECENTLY_REVIEWED,
     AUTHORED_HARD,
     AUTHORED_MEDIUM,
+    AUTHORED_EASY,
+    BOOKMARKED,
+    TAG,
+    SLOWEST,
     RANDOM
 }
 
@@ -126,7 +137,19 @@ object TestSelector {
     fun select(
         plan: TestPlan,
         signals: List<Signals>,
-        breadth: Breadth = Breadth.MEDIUM
+        breadth: Breadth = Breadth.MEDIUM,
+        /**
+         * The ids a custom pool read from outside the signals (phase 3):
+         * bookmarks or one exact tag. Empty unless the type is `BOOKMARKED`
+         * or `TAG`; the scope's signals supply the fill.
+         */
+        customPool: Set<String> = emptySet(),
+        /**
+         * Median dwell per question for `SLOWEST` (phase 3), computed by the
+         * caller from the stored results. Only questions with at least
+         * [SLOWEST_MIN_SAMPLES] timed answers are present.
+         */
+        medianDwellSeconds: Map<String, Long> = emptyMap()
     ): Selection? = when (plan.type) {
         TestType.WEAKEST_TOPICS -> weakest(plan, signals, breadth)
         TestType.TOUGHEST_QUESTIONS -> toughest(plan, signals)
@@ -136,14 +159,31 @@ object TestSelector {
         TestType.UNSEEN -> unseen(plan, signals)
         TestType.BALANCED -> balanced(plan, signals)
         TestType.MIXED -> mixed(plan, signals, breadth)
+        TestType.BOOKMARKED -> fromPool(plan, signals, customPool, FillSource.BOOKMARKED)
+        TestType.TAG -> fromPool(plan, signals, customPool, FillSource.TAG)
+        TestType.AUTHORED_DIFFICULTY -> authored(plan, signals)
+        TestType.SLOWEST -> slowest(plan, signals, medianDwellSeconds)
         else -> null
     }
 
     /** The type's available supply for the sheet's pool count. */
-    fun poolSize(type: TestType?, signals: List<Signals>): Int = when (type) {
+    fun poolSize(
+        type: TestType?,
+        signals: List<Signals>,
+        /** The custom choice whose pool is counted (phase 3). */
+        variant: String? = null,
+        customPool: Set<String> = emptySet(),
+        medianDwellSeconds: Map<String, Long> = emptyMap()
+    ): Int = when (type) {
         TestType.TRICKY -> signals.count { it.trickiness > 0.0 || it.leech }
         TestType.AT_RISK -> signals.count { it.atRisk }
         TestType.UNSEEN -> signals.count { it.unseen }
+        TestType.BOOKMARKED, TestType.TAG -> signals.count { it.questionId in customPool }
+        TestType.AUTHORED_DIFFICULTY -> {
+            val chosen = authoredDifficultyOf(variant) ?: return 0
+            signals.count { it.authoredDifficulty == chosen }
+        }
+        TestType.SLOWEST -> slowestEligible(signals, medianDwellSeconds).size
         else -> signals.size
     }
 
@@ -154,9 +194,11 @@ object TestSelector {
     fun preview(
         plan: TestPlan,
         signals: List<Signals>,
-        breadth: Breadth = Breadth.MEDIUM
+        breadth: Breadth = Breadth.MEDIUM,
+        customPool: Set<String> = emptySet(),
+        medianDwellSeconds: Map<String, Long> = emptyMap()
     ): SelectionPreview {
-        val selection = select(plan, signals, breadth)
+        val selection = select(plan, signals, breadth, customPool, medianDwellSeconds)
         val targets = selection?.targets.orEmpty().mapNotNull { id ->
             val rows = signals.filter { it.categoryId == id }
             if (rows.isEmpty()) return@mapNotNull null
@@ -169,7 +211,7 @@ object TestSelector {
             )
         }
         return SelectionPreview(
-            pool = poolSize(plan.type, signals),
+            pool = poolSize(plan.type, signals, plan.variant, customPool, medianDwellSeconds),
             composition = selection?.composition ?: Composition(),
             targets = targets
         )
@@ -467,6 +509,162 @@ object TestSelector {
     }
 
     private fun shareOf(n: Int, percent: Int): Int = ceil(n * percent / 100.0).toInt()
+
+    /** Timed answers a question needs to qualify for Slowest (stats.md §8.13). */
+    const val SLOWEST_MIN_SAMPLES: Int = 2
+
+    /** Slowest applies a 30-second floor, so a fast paper brands nothing slow. */
+    const val SLOWEST_MIN_THRESHOLD_SECONDS: Long = 30
+
+    /**
+     * The custom pool shared by Bookmarked and Tag (stats.md §8.10–§8.11):
+     * the ids the caller read outside the signals, sampled uniformly and
+     * filled randomly from the scope. The composition says how much came
+     * from the pool and how much is fill, so a short pool never pretends
+     * to be a pure type.
+     */
+    private fun fromPool(
+        plan: TestPlan,
+        signals: List<Signals>,
+        customPool: Set<String>,
+        source: FillSource
+    ): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val pool = signals.filter { it.questionId in customPool }
+        val selected = pool.shuffled(Random(plan.seed)).take(n)
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(FillSource.RANDOM to signals)
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                source to selected.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * Authored difficulty (stats.md §8.12): the author's chosen label, in
+     * seeded order. A short pool is topped from the adjacent label (Easy
+     * reaches Medium first, Hard reaches Medium first) and only then from
+     * random, so the run stays in the label family while it can.
+     */
+    private fun authored(plan: TestPlan, signals: List<Signals>): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val chosen = authoredDifficultyOf(plan.variant) ?: return Selection(emptyList())
+        val pool = signals.filter { it.authoredDifficulty == chosen }
+        val selected = pool.shuffled(Random(plan.seed)).take(n)
+        val adjacent = when (chosen) {
+            Difficulty.EASY -> Difficulty.MEDIUM
+            Difficulty.MEDIUM -> Difficulty.HARD
+            Difficulty.HARD -> Difficulty.MEDIUM
+        }
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(
+                fillSourceOf(adjacent) to signals.filter { it.authoredDifficulty == adjacent },
+                FillSource.RANDOM to signals
+            )
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                fillSourceOf(chosen) to selected.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * Slowest (stats.md §8.13): questions whose median dwell is at or above
+     * the scope's 75th percentile of medians, slowest first. The fill is
+     * Toughest, then Random. Slow, never claimed hard: a long question is
+     * slow for its reading, not its difficulty.
+     */
+    private fun slowest(
+        plan: TestPlan,
+        signals: List<Signals>,
+        medianDwellSeconds: Map<String, Long>
+    ): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val eligible = slowestEligible(signals, medianDwellSeconds)
+        if (eligible.isEmpty()) return Selection(emptyList())
+        val threshold = slowestThreshold(eligible, medianDwellSeconds)
+        val ranked = eligible
+            .filter { (medianDwellSeconds[it.questionId] ?: 0L) >= threshold }
+            .sortedWith(
+                compareByDescending<Signals> { medianDwellSeconds[it.questionId] ?: 0L }
+                    .thenBy { it.questionId }
+            )
+        val selected = cappedTop(ranked, n)
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(
+                FillSource.TOUGHEST_QUESTIONS to TestRanking.rankToughest(signals, signals.size),
+                FillSource.RANDOM to signals
+            )
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                FillSource.SLOWEST to selected.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * The slowest-eligible questions: in the scope and present in the
+     * dwell map (the caller sends at least [SLOWEST_MIN_SAMPLES] samples).
+     */
+    private fun slowestEligible(
+        signals: List<Signals>,
+        medianDwellSeconds: Map<String, Long>
+    ): List<Signals> {
+        if (medianDwellSeconds.isEmpty()) return emptyList()
+        return signals.filter { it.questionId in medianDwellSeconds }
+    }
+
+    /**
+     * The 75th percentile of the eligible medians, floored at
+     * [SLOWEST_MIN_THRESHOLD_SECONDS]. The percentile is the index-based
+     * one (the value at that rank), so a tiny eligible set degrades to its
+     * largest median rather than inventing a number. An empty eligible set
+     * is a malformed call, not a threshold: [slowest] returns early for it.
+     */
+    private fun slowestThreshold(
+        eligible: List<Signals>,
+        medianDwellSeconds: Map<String, Long>
+    ): Long {
+        if (eligible.isEmpty()) throw IllegalArgumentException("No slowest-eligible questions.")
+        val medians = eligible.mapNotNull { medianDwellSeconds[it.questionId] }.sorted()
+        val index = (0.75 * (medians.size - 1)).toInt()
+        return medians[index].coerceAtLeast(SLOWEST_MIN_THRESHOLD_SECONDS)
+    }
+
+    private fun fillSourceOf(difficulty: Difficulty): FillSource = when (difficulty) {
+        Difficulty.HARD -> FillSource.AUTHORED_HARD
+        Difficulty.MEDIUM -> FillSource.AUTHORED_MEDIUM
+        Difficulty.EASY -> FillSource.AUTHORED_EASY
+    }
+
+    /** The difficulty a variant name carries (e.g. `"HARD"`), or null. */
+    private fun authoredDifficultyOf(variant: String?): Difficulty? =
+        Difficulty.entries.firstOrNull { it.name == variant?.trim() }
 
     /**
      * The top [n] of an already ranked list under the 40% per-category cap,

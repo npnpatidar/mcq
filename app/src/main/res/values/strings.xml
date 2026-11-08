@@ -285,6 +285,10 @@
     <string name="test_setup_type_at_risk">At risk</string>
     <string name="test_setup_type_unseen">Unseen</string>
     <string name="test_setup_type_mixed">Mixed</string>
+    <string name="test_setup_type_bookmarked">Bookmarked</string>
+    <string name="test_setup_type_tag">Tag</string>
+    <string name="test_setup_type_authored">Authored difficulty</string>
+    <string name="test_setup_type_slowest">Slowest</string>
     <string name="test_setup_type_random_help">A random sample of the chosen scope.</string>
     <string name="test_setup_type_mistakes_help">Previously missed questions in the chosen scope.</string>
     <string name="test_setup_type_weakest_help">Practice the topics where your evidence is weakest.</string>
@@ -295,6 +299,13 @@
     <string name="test_setup_type_at_risk_help">Questions whose memory is due or nearly due, before they are forgotten.</string>
     <string name="test_setup_type_unseen_help">Questions you have never answered in this scope.</string>
     <string name="test_setup_type_mixed_help">A blend of weakest topics, tricky, due and unseen questions.</string>
+    <string name="test_setup_type_bookmarked_help">The questions you bookmarked in this scope, filled with random questions when the bookmarks run short.</string>
+    <string name="test_setup_type_tag_help">Questions carrying one exact tag in this scope, filled with random questions when the tag runs short.</string>
+    <string name="test_setup_type_authored_help">Questions by the difficulty label their author gave them, topped from the nearest label when a label runs short.</string>
+    <string name="test_setup_type_slowest_help">Questions you spend the most time on, slowest first. Slow is not necessarily hard: long questions take time to read.</string>
+    <string name="test_setup_pick_tag">Choose a tag</string>
+    <string name="test_setup_no_tags">No tags in this scope</string>
+    <string name="test_setup_pick_difficulty">Choose a difficulty</string>
     <string name="test_setup_breadth">Breadth</string>
     <string name="test_setup_breadth_narrow">Narrow · 1 topic</string>
     <string name="test_setup_breadth_medium">Medium · 3 topics</string>
@@ -313,6 +324,10 @@
     <string name="test_setup_fill_balanced">balanced</string>
     <string name="test_setup_fill_mixed">mixed</string>
     <string name="test_setup_fill_recent">recent</string>
+    <string name="test_setup_fill_bookmarked">bookmarked</string>
+    <string name="test_setup_fill_tag">tag</string>
+    <string name="test_setup_fill_authored_easy">easy</string>
+    <string name="test_setup_fill_slowest">slowest</string>
     <string name="test_setup_fill_random">random</string>
     <string name="test_setup_scope_whole_paper">Whole paper</string>
     <string name="test_setup_scope_categories">%1$d categories</string>
@@ -348,6 +363,9 @@
     <string name="submit_test_2">Submit test</string>
     <string name="table">Table</string>
     <string name="tags_comma_separated">Tags (comma separated)</string>
+    <string name="add_tag">Add a tag…</string>
+    <string name="add_tag_button">Add</string>
+    <string name="remove_tag">Remove tag %1$s</string>
     <string name="tags_comma_separated_blank_keep">Tags, comma separated (blank = keep)</string>
     <string name="text">Text</string>
     <string name="this_cannot_be_undone">This cannot be undone.</string>
@@ -751,6 +769,18 @@
     <string name="report_type_tag">Tag</string>
     <string name="report_type_difficulty">Authored difficulty</string>
     <string name="report_type_slowest">Slowest</string>
+    <string name="report_type_tag_variant">Tag · %1$s</string>
+    <string name="report_type_difficulty_variant">Authored difficulty · %1$s</string>
+    <string name="report_export">Export report</string>
+    <string name="report_export_csv">Export CSV</string>
+    <string name="report_export_pdf">Export PDF</string>
+    <string name="report_export_failed">Could not export the report.</string>
+    <string name="report_export_share">Share report</string>
+    <string name="stats_reliability_title">Reliability (estimate)</string>
+    <string name="stats_reliability_help">Split-half reliability and standard error for families with enough attempted questions. A small or biased sample is not a stable score.</string>
+    <string name="stats_reliability_too_small">Sample too small to estimate reliability.</string>
+    <string name="stats_reliability_value">r = %1$.2f · SEM %2$.1f</string>
+    <string name="stats_reliability_kr20">KR-20 %1$.2f</string>
     <string name="report_type_mixed">Mixed</string>
     <string name="report_header_of_scope">%1$d of %2$d questions</string>
     <string name="report_header_questions">%1$d questions</string>

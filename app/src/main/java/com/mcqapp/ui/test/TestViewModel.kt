@@ -136,7 +136,9 @@ class TestViewModel(
     /** The route's exclusion rule name; blank means [ExclusionMode.NONE]. */
     private val routeExclusionMode: String = "",
     /** The Weakest/Mixed breadth name; blank means the medium default. */
-    private val routeBreadth: String = ""
+    private val routeBreadth: String = "",
+    /** The custom type's choice (phase 3: tag or difficulty name), or blank. */
+    private val routeVariant: String = ""
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -361,7 +363,28 @@ class TestViewModel(
                     val breadth = Breadth.entries
                         .firstOrNull { it.name == routeBreadth }
                         ?: Breadth.MEDIUM
-                    TestSelector.select(effectivePlan, pool, breadth)
+                    // The custom pools (phase 3) are the same reads the setup
+                    // sheet previews: the closest the live selection can
+                    // come to the preview.
+                    val customPool = when (effectivePlan.type) {
+                        TestType.BOOKMARKED -> repository.bookmarkedIdsInScope(
+                            paperId, categoryIds
+                        ).toSet()
+                        TestType.TAG -> effectivePlan.variant?.let {
+                            repository.questionIdsForTagInScope(
+                                paperId, categoryIds, com.mcqapp.domain.TagNormalizer.fold(it)
+                            ).toSet()
+                        } ?: emptySet()
+                        else -> emptySet()
+                    }
+                    val medianDwellSeconds = if (effectivePlan.type == TestType.SLOWEST) {
+                        repository.medianDwellSecondsInScope(paperId, categoryIds)
+                    } else {
+                        emptyMap()
+                    }
+                    TestSelector.select(
+                        effectivePlan, pool, breadth, customPool, medianDwellSeconds
+                    )
                 } else {
                     null
                 }
@@ -581,6 +604,15 @@ class TestViewModel(
             runCatching { ExclusionMode.valueOf(routeExclusionMode) }.getOrNull()
                 ?: throw IllegalStateException("Unknown exclusion rule '$routeExclusionMode'.")
         }
+        // The variant is the custom type's choice (phase 3): a folded tag or
+        // a difficulty name. A Tag/Authored route without one cannot start,
+        // and Start on the setup sheet already refuses without it.
+        val variant = when (type) {
+            TestType.TAG, TestType.AUTHORED_DIFFICULTY -> routeVariant.ifBlank {
+                throw IllegalStateException("This test needs a choice.")
+            }
+            else -> null
+        }
         return TestPlan(
             paperId = paperId,
             categoryIds = categoryIds,
@@ -591,7 +623,8 @@ class TestViewModel(
             samplingVersion = TestPlan.SAMPLING_VERSION,
             scopeKey = scopeKey,
             exclusionMode = exclusion,
-            targetTopicIds = emptyList()
+            targetTopicIds = emptyList(),
+            variant = variant
         )
     }
 
@@ -619,7 +652,8 @@ class TestViewModel(
             seed = if (plan != null) sessionSeed else 0L,
             exclusionMode = plan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
             targetTopicIds = plan?.targetTopicIds?.joinToString(",") ?: "",
-            compositionJson = plan?.compositionJson ?: ""
+            compositionJson = plan?.compositionJson ?: "",
+            variant = plan?.variant
         )
     }
 
@@ -1174,7 +1208,8 @@ class TestViewModel(
         if (!saved.isLegacy) {
             sessionPlan = sessionPlan?.copy(
                 targetTopicIds = saved.targetTopicIds,
-                compositionJson = saved.compositionJson
+                compositionJson = saved.compositionJson,
+                variant = saved.variant
             )
         }
         // Carry the saved seeds forward so later autosaves rewrite the same
@@ -1314,6 +1349,7 @@ class TestViewModel(
             exclusionMode = sessionPlan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
             targetTopicIds = sessionPlan?.targetTopicIds.orEmpty(),
             compositionJson = sessionPlan?.compositionJson.orEmpty(),
+            variant = sessionPlan?.variant,
             // Untimed sessions bank their elapsed time so a resume neither
             // restarts the clock nor counts the dead interval (D7).
             elapsedSeconds = if (current.totalSeconds > 0) {

@@ -61,7 +61,16 @@ data class TestProgressData(
     val atRisk: Int = 0,
     val unseen: Int = 0,
     val scopeSize: Int = 0,
-    val scopeIsWholeLibrary: Boolean = false
+    val scopeIsWholeLibrary: Boolean = false,
+    /** Slice 4: optional reliability summary (family-scoped), when computable. */
+    val reliability: ReliabilitySummary? = null
+)
+
+data class ReliabilitySummary(
+    val reliability: Double,
+    val semPoints: Double,
+    val kr20: Double? = null,
+    val attempted: Int
 )
 
 /** Pure family aggregation, so the tab is testable without a database. */

@@ -328,7 +328,8 @@ internal class HistoryStore(
                 seed = metadata.seed,
                 exclusionMode = metadata.exclusionMode,
                 targetTopicIds = metadata.targetTopicIds,
-                compositionJson = metadata.compositionJson
+                compositionJson = metadata.compositionJson,
+                variant = metadata.variant
             )
             val attemptId = db.attemptDao().insertAttempt(attempt)
             db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
@@ -388,7 +389,8 @@ internal class HistoryStore(
             seed = metadata.seed,
             exclusionMode = metadata.exclusionMode,
             targetTopicIds = metadata.targetTopicIds,
-            compositionJson = metadata.compositionJson
+            compositionJson = metadata.compositionJson,
+            variant = metadata.variant
         )
         val attemptId = db.attemptDao().insertAttempt(attempt)
         val categoryTitles = HashMap<String, String>()
@@ -465,7 +467,8 @@ internal class HistoryStore(
         seed = seed,
         exclusionMode = exclusionMode,
         targetTopicIds = targetTopicIds,
-        compositionJson = compositionJson
+        compositionJson = compositionJson,
+        variant = variant
     )
 
     /**
@@ -478,6 +481,10 @@ internal class HistoryStore(
         Logger.d("REPO", "getAttemptResults($attemptId)")
         return db.attemptDao().getResults(attemptId).map { it.toDomainResult() }
     }
+
+    /** Raw result entities for report export (bounded by the attempt). */
+    suspend fun getAttemptResultEntities(attemptId: Long): List<com.mcqapp.data.local.QuestionResultEntity> =
+        db.attemptDao().getResults(attemptId)
 
     /**
      * Attempt rows as a paged list. The key is `(last scanned id, skipped

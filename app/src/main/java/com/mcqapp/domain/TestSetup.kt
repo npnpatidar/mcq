@@ -68,6 +68,12 @@ data class TestSetup(
     /** Whether this run avoids questions from the last three comparable attempts. */
     val exclusionMode: ExclusionMode = ExclusionMode.NONE,
     /**
+     * A custom type's choice (phase 3): the folded tag for `TAG`, or the
+     * difficulty name for `AUTHORED_DIFFICULTY`. Null for every other type;
+     * a custom plan without its variant cannot start.
+     */
+    val variant: String? = null,
+    /**
      * The smallest passage block in the pool, or 1 when it has standalone
      * questions (or no passage information). The sampler pre-check refuses a
      * scope whose smallest block cannot fit the overshoot limit (section 9.6).
@@ -109,7 +115,8 @@ data class TestSetup(
         minutes = minutes,
         samplingVersion = TestPlan.SAMPLING_VERSION,
         scopeKey = scopeKey,
-        exclusionMode = exclusionMode
+        exclusionMode = exclusionMode,
+        variant = variant
     )
 
     /** The length the session actually runs: the request, the clamp or the short scope. */
@@ -166,7 +173,11 @@ data class TestSetup(
             TestType.TRICKY,
             TestType.AT_RISK,
             TestType.UNSEEN,
-            TestType.MIXED
+            TestType.MIXED,
+            TestType.BOOKMARKED,
+            TestType.TAG,
+            TestType.AUTHORED_DIFFICULTY,
+            TestType.SLOWEST
         )
 
         /** Whether [type] can be started. */

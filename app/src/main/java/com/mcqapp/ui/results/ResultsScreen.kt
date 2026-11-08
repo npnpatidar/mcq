@@ -310,10 +310,17 @@ private fun ReportHeaderCard(report: TestReport) {
                 )
             }
             Spacer(Modifier.height(12.dp))
+            // The exam score and the percentage answer different questions
+            // (section 11.4): keep the raw marks visible, not only the percent.
             Text(
-                stringResource(R.string.report_score_line, attempt.percentage.roundToInt()),
+                stringResource(R.string.l_1f_0f).format(attempt.score, attempt.maxScore),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
+            )
+            Text(
+                stringResource(R.string.report_score_line, attempt.percentage.roundToInt()),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.tertiary
             )
             Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
@@ -368,9 +375,14 @@ private fun StoredHeaderCard(attempt: com.mcqapp.domain.Attempt) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(attempt.title, style = MaterialTheme.typography.titleMedium)
             Text(
-                stringResource(R.string.report_score_line, attempt.percentage.roundToInt()),
+                stringResource(R.string.l_1f_0f).format(attempt.score, attempt.maxScore),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
+            )
+            Text(
+                stringResource(R.string.report_score_line, attempt.percentage.roundToInt()),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.tertiary
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),

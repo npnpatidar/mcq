@@ -82,7 +82,7 @@ class CriticalPathTest {
     @Test
     fun libraryToResults() {
         // Flaky on CI due to emulator GPU rendering issues (b/300000000)
-        assumeTrue("Skipping on CI due to flaky emulator", System.getenv("CI") != "true" && System.getenv("GITHUB_ACTIONS") != "true")
+        assumeTrue("Skipping on CI due to flaky emulator", System.getProperty("skipFlakyTests") != "true")
         compose.setContent { McqNavHost(repository = repository) }
 
         // Library -> start the seeded paper (drawer holds a duplicate title).

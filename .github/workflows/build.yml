@@ -203,7 +203,7 @@ jobs:
         with:
           api-level: 34
           arch: x86_64
-          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon -DskipFlakyTests=true
 
       - name: Upload UI test results
         if: always()

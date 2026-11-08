@@ -32,6 +32,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val repository: McqRepository = (application as McqApplication).repository
 
     /**
+     * Whether a representative test should avoid recently asked questions.
+     * Read by the setup sheet so the route it emits and the preview agree.
+     */
+    val avoidRecentQuestions: StateFlow<Boolean> = repository.avoidRecentQuestions()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /**
      * The export the format dialog and the system save dialog are working on.
      *
      * Held in the VM: the save dialog recreates the activity, and composition

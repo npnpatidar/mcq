@@ -77,6 +77,7 @@ fun LibraryScreen(
     val papers by viewModel.papers.collectAsStateWithLifecycle()
     val mistakeCounts by viewModel.mistakeCounts.collectAsStateWithLifecycle()
     val studyCounts by viewModel.studyCounts.collectAsStateWithLifecycle()
+    val avoidRecentQuestions by viewModel.avoidRecentQuestions.collectAsStateWithLifecycle()
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val categoryCounts by viewModel.categoryCounts.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
@@ -455,15 +456,23 @@ fun LibraryScreen(
             initialType = request.type,
             mistakeCount = mistakeCounts[request.paper.id] ?: 0,
             categoryIds = request.categoryIds,
+            avoidRecentQuestions = avoidRecentQuestions,
             loadScopedMistakeCount = { scopeIds ->
                 viewModel.repository.getScopedMistakeCount(request.paper.id, scopeIds)
             },
+            loadMinBlockSize = { type, scopeIds ->
+                when (type) {
+                    TestType.MISTAKES ->
+                        viewModel.repository.getMistakenMinBlockSize(request.paper.id, scopeIds)
+                    else -> viewModel.repository.getMinBlockSize(request.paper.id, scopeIds)
+                }
+            },
             onDismiss = { pendingTestSetup = null },
-            onStart = { type, requestedCount, minutes ->
+            onStart = { type, requestedCount, minutes, exclusion ->
                 pendingTestSetup = null
                 Logger.i(
                     "LIB",
-                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes"
+                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}"
                 )
                 navController.navigate(
                     com.mcqapp.ui.navigation.testRoute(
@@ -472,7 +481,7 @@ fun LibraryScreen(
                         minutes = minutes,
                         type = type.name,
                         count = requestedCount,
-                        exclusion = "NONE"
+                        exclusion = exclusion.name
                     )
                 )
             }

@@ -150,4 +150,40 @@ class SessionOrderTest {
         assertEquals(expected, order.idsInOrder())
         assertEquals(1234, order.indexOfId("q1234"))
     }
+
+    @Test
+    fun aStandaloneQuestionMakesTheSmallestBlockOne() {
+        assertEquals(1, SessionOrder.of(bank()).minBlockSize())
+        assertEquals(1, SessionOrder.empty().minBlockSize())
+    }
+
+    @Test
+    fun theSmallestBlockIsAPassagesMemberCount() {
+        val passagesOnly = SessionOrder.of(
+            listOf(
+                ref("q0", "p"), ref("q1", "p"), ref("q2", "p"),
+                ref("q3", "r"), ref("q4", "r")
+            )
+        )
+        assertEquals(2, passagesOnly.minBlockSize())
+    }
+
+    @Test
+    fun excludingABlockDropsTheWholePassageAndOnlyItsOwnQuestions() {
+        val order = SessionOrder.of(bank())
+        val excluded = order.excludingBlocksContaining(setOf("q3", "q6"))
+        assertEquals(listOf("q0", "q1", "q2", "q5", "q7"), excluded.idsInOrder())
+
+        assertSame(order, order.excludingBlocksContaining(emptySet()))
+        assertSame(order, order.excludingBlocksContaining(setOf("gone")))
+    }
+
+    @Test
+    fun excludingAPassageMemberNeverLeavesThePassageHole() {
+        val order = SessionOrder.of(bank())
+        val excluded = order.excludingBlocksContaining(setOf("q4"))
+        assertTrue("q3 left behind", "q3" !in excluded.idsInOrder())
+        assertTrue("q4 left behind", "q4" !in excluded.idsInOrder())
+        assertEquals(6, excluded.size)
+    }
 }

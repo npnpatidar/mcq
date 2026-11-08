@@ -398,17 +398,19 @@ On resume:
 - Rebuild the order directly from the saved ids, dropping ids that no longer
   exist. Do not re-rank, re-sample or re-shuffle.
 - If fewer than 20 ids remain, warn and offer "Resume with N questions" or
-  "Start a new test". **Not yet implemented:** phase 1 resumes the surviving
-  ids without the labelled prompt; it lands with the setup/resume UI slice.
+  "Start a new test". The dialog says how many questions survive and that the
+  result is a short test with no margin or trend.
 - A snapshot from an older version (`isDrill`, `drillRequested`, no
   `testType`, `samplingVersion < 2`) is a **legacy snapshot**. Resume it as a
   labelled Short/Legacy session, or offer "Start a new test"; never silently
-  start a 10-question Random test. **Not yet implemented for a bounded route:**
-  a legacy snapshot is still offered when the route is legacy, but a bounded
-  route does not yet offer it as a labelled legacy session. Starting the new
-  test takes the single resume slot and `TestProgressStore.save` drops the old
-  session's answer rows, so they cannot leak into the new attempt; the labelled
-  legacy resume lands with the setup/resume UI slice.
+  start a 10-question Random test. A legacy snapshot in the same paper, ticked
+  scope and mistakes flag is offered even on a bounded route; resuming it
+  clears the route's plan, so the attempt is saved with the legacy metadata
+  (`testType = null`, `requestedCount = 0`, `samplingVersion = 1`) rather than
+  the fresh plan's type. A legacy snapshot of a *different* scope is not
+  offered: starting the new test takes the single resume slot and
+  `TestProgressStore.save` drops the old session's answer rows, so they cannot
+  leak into the new attempt.
 - `TestSnapshot.matches` must include the test type and requested count, not
   only paper + categories + drill shape.
 
@@ -1060,6 +1062,10 @@ with a weak-topic head start; label it accordingly.
   practice attempts never count, so a burst of practice cannot empty the
   window. Define "enough" as `remaining >= 2 × requested`; otherwise skip the
   exclusion rather than distort a small pool.
+- Exclusion is block-aware: naming one member of a passage removes the whole
+  passage block, so a comprehension set is never served with a hole. A
+  standalone question is a block of one. When the rule cannot leave at least
+  twice the request, the session keeps the full pool and records `NONE`.
 - The setting ("Avoid recently tested questions", default **on**) is recorded
   on the attempt as `exclusionMode` (`NONE` or `RECENT_3`). It is part of the
   comparability key (section 11.5).
@@ -1789,9 +1795,12 @@ question content for the whole paper, only for the attempt's questions.
 - Legacy/short/full-scope labels, including a legacy drill snapshot. **Done:**
   a pre-v21 snapshot still loads and is labelled **Legacy attempt**.
 - Fresh sample badge on the result, History row and Statistics legend.
-  **Partly:** the result and the History row show the **Fresh sample** family,
-  but the Statistics legend and the setting are still deferred, and no attempt
-  can carry `RECENT_3` yet, so the badge cannot appear in practice.
+  **Done:** the result and the History row show the **Fresh sample** family;
+  the Statistics Overview carries the result-family legend (Mock / Fresh
+  sample / Practice / Short / Legacy) with the fresh-vs-fresh rule; and the
+  default-on "Avoid recently tested questions" setting makes a representative
+  test record `RECENT_3` when the exclusion actually applies (`NONE` when it
+  is skipped).
 - Recorded `targetTopicIds` for Weakest topics (and later Mixed). **Deferred**
   with the phase-2 focus types; phase 1 writes an empty list.
 
@@ -2105,9 +2114,12 @@ banks.
 > the session refuses them. The results report (§11) landed in the
 > `feature/results-report` slice after `0.0.42`: `TestReport`/`TestReportBuilder`
 > derive the page, and the Results and History rows show the type and family.
-> The phase-2 report sections (FSRS quadrants, coverage/repeats/mistakes/due,
-> practice trend, bootstrap) remain deferred. Every deferral is marked inline
-> below and left unticked in §15.
+> The same slice adds the default-on "Avoid recently tested questions" setting
+> (a representative test records `RECENT_3` only when the exclusion applies),
+> the Statistics result-family legend, the sampler pre-check on the setup
+> sheet, and the short/legacy resume prompt. The phase-2 report sections (FSRS
+> quadrants, coverage/repeats/mistakes/due, practice trend, bootstrap) remain
+> deferred. Every deferral is marked inline below and left unticked in §15.
 
 1. **Domain**
    - Add `TestType` (`RANDOM`, `BALANCED`, `WEAKEST_TOPICS`,
@@ -2406,7 +2418,7 @@ banks.
 - The "Study schedule unchanged" note is present.
 - Question filters (wrong, skipped, slow, saved) and per-question evidence
   render.
-- A Fresh sample badge appears in History and in the Statistics trend legend.
+- A Fresh sample badge appears in History and in the Statistics legend.
 - The "Avoid recently tested questions" setting is on by default; turning it
   off labels the attempt `comparable`, turning it on labels it `fresh sample`.
 - A legacy drill snapshot opens as Short/Legacy, not as a 10-question Random.
@@ -2440,16 +2452,17 @@ banks.
 - [x] Test asks for a length unless the whole scope is below 20 (then it is a
       labelled short test); allowed lengths are 20–150 in steps of 10; presets
       are 20/50/80/100/120/150; the default is 20.
-- [ ] A scope smaller than 20 gets a labelled **Short test · N questions**, not
+- [x] A scope smaller than 20 gets a labelled **Short test · N questions**, not
       a disabled Test button; a sampler result below 20 from a larger scope is
-      also labelled **Short test** and gets no margin or trend. (Phase 1 labels
-      short tests in the preview but the Resume prompt is not yet implemented;
-      see §7.6.)
-- [ ] The sampler never returns an empty session; when no passage fits the
+      also labelled **Short test** and gets no margin or trend. The resume
+      prompt offers "Resume with N questions" or "Start a new test" when
+      fewer than 20 ids survive, and a legacy snapshot resumes as a labelled
+      Legacy session.
+- [x] The sampler never returns an empty session; when no passage fits the
       requested length and overshoot limit, it refuses with a specific message
-      and suggests a longer length. (Sampler logic done; the session refuses at
-      load with the message, but the setup sheet does not pre-check the sampler
-      yet, so Start can lead to that load error.)
+      and suggests a longer length. The setup sheet pre-checks the pool's
+      smallest block and keeps Start disabled with the same message, so a
+      refused route is not emitted.
 - [x] A 1,000-question paper can start a 20-question test in two taps.
 - [x] Submitting that test stores `requestedCount = 20` and
       `totalQuestions = shown` (20, or the passage overshoot), not 1,000.
@@ -2463,9 +2476,11 @@ banks.
       its child does not duplicate questions.
 - [x] Random is labelled comparable; every practice type is labelled not
       comparable. (Balanced is phase 2 and is not rendered.)
-- [ ] An attempt with "Avoid recently tested questions" on is labelled
-      **Fresh sample** and is never compared to a strict Random attempt. (Not
-      implemented in phase 1; `RECENT_3` is refused.)
+- [x] An attempt with "Avoid recently tested questions" on is labelled
+      **Fresh sample** and is never compared to a strict Random attempt. The
+      setting is on by default; an attempt records `RECENT_3` only when the
+      exclusion actually applied, and `NONE` when it was skipped for a small
+      pool. The Statistics Overview legend names the rule.
 - [ ] Weakest topics, Toughest questions and Easiest questions work from
       `question_stats` + `card_state` + authored difficulty, with neutral
       priors and documented fallbacks. (Not implemented in phase 1.)

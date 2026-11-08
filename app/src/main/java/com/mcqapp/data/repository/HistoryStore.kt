@@ -545,6 +545,35 @@ internal class HistoryStore(
         ).map { it.toDomain() }
     }
 
+    /**
+     * The questions asked in the last [limit] comparable representative
+     * attempts of this paper, scope and length (section 9.8). The exclusion
+     * rule is not part of the key: a fresh sample should avoid what a strict
+     * attempt asked too. Practice, legacy and short attempts never count.
+     */
+    suspend fun recentComparableQuestionIds(
+        paperId: String,
+        testTypes: List<String>,
+        scopeKey: String,
+        requestedCount: Int,
+        limit: Int = 3
+    ): Set<String> {
+        if (testTypes.isEmpty() || scopeKey.isBlank() || requestedCount <= 0) return emptySet()
+        val attempts = db.attemptDao().getRecentComparableAttempts(
+            paperId = paperId,
+            testTypes = testTypes,
+            scopeKey = scopeKey,
+            requestedCount = requestedCount,
+            samplingVersion = TestPlan.SAMPLING_VERSION,
+            minShown = TestPlan.MIN_LENGTH,
+            limit = limit
+        )
+        if (attempts.isEmpty()) return emptySet()
+        return db.attemptDao()
+            .getResultQuestionIdsForAttempts(attempts.map { it.id })
+            .toHashSet()
+    }
+
     suspend fun getAllQuestionResults(): List<QuestionResult> {
         Logger.d("REPO", "getAllQuestionResults()")
         return db.attemptDao().getAllResults().map { it.toDomainResult() }

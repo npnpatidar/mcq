@@ -522,6 +522,40 @@ interface QuestionDao {
     suspend fun countForCategories(paperId: String, categoryIds: List<String>): Int
 
     /**
+     * The smallest passage block of a whole paper, plus whether any standalone
+     * question exists. A standalone question is a block of one, so a non-zero
+     * [MinBlockRow.standalone] makes the answer 1; otherwise it is the
+     * smallest per-passage member count (or null when the paper has no
+     * passages). The setup sheet's sampler pre-check reads this (section 9.6).
+     */
+    @Query(
+        "SELECT (SELECT MIN(cnt) FROM (" +
+            "SELECT COUNT(*) AS cnt FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.passageId IS NOT NULL " +
+            "GROUP BY questions.passageId)) AS minPassage, " +
+            "(SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.passageId IS NULL) AS standalone"
+    )
+    suspend fun minBlockRowForPaper(paperId: String): MinBlockRow
+
+    /** [minBlockRowForPaper] over an explicit category selection. */
+    @Query(
+        "SELECT (SELECT MIN(cnt) FROM (" +
+            "SELECT COUNT(*) AS cnt FROM questions " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND questions.passageId IS NOT NULL " +
+            "GROUP BY questions.passageId)) AS minPassage, " +
+            "(SELECT COUNT(*) FROM questions " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND questions.passageId IS NULL) AS standalone"
+    )
+    suspend fun minBlockRowForCategories(categoryIds: List<String>): MinBlockRow
+
+    /**
      * How many of the paper's questions have no answer key — excluded from
      * scoring entirely. One aggregate query, so the submit summary of a
      * million-question paper does not count a million ids in Kotlin.
@@ -2222,6 +2256,36 @@ interface AttemptDao {
         limit: Int
     ): List<AttemptEntity>
 
+    /**
+     * The last [limit] representative attempts that can seed repeat avoidance
+     * (section 9.8): same paper, measurement family, canonical scope and
+     * requested length, and a shown count that is at least the minimum. The
+     * exclusion rule itself is deliberately not part of this key — a fresh
+     * sample should still avoid questions asked in a strict attempt — while
+     * practice and short attempts never count.
+     */
+    @Query(
+        "SELECT * FROM attempts WHERE paperId = :paperId " +
+            "AND testType IN (:testTypes) AND scopeKey = :scopeKey " +
+            "AND requestedCount = :requestedCount " +
+            "AND samplingVersion >= :samplingVersion " +
+            "AND totalQuestions >= :minShown " +
+            "ORDER BY finishedAt DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getRecentComparableAttempts(
+        paperId: String,
+        testTypes: List<String>,
+        scopeKey: String,
+        requestedCount: Int,
+        samplingVersion: Int,
+        minShown: Int,
+        limit: Int
+    ): List<AttemptEntity>
+
+    /** The questions a set of attempts presented, including skips. */
+    @Query("SELECT DISTINCT questionId FROM question_results WHERE attemptId IN (:attemptIds)")
+    suspend fun getResultQuestionIdsForAttempts(attemptIds: List<Long>): List<String>
+
     @Query("SELECT * FROM question_results ORDER BY rowid")
     suspend fun getAllResults(): List<QuestionResultEntity>
 
@@ -2606,6 +2670,16 @@ data class CategoryBreakdownRow(
     val title: String,
     val correct: Int,
     val graded: Int
+)
+
+/**
+ * The smallest passage block in a scope. [minPassage] is null when the scope
+ * has no passages; [standalone] counts questions with no passage, each of
+ * which is a block of one.
+ */
+data class MinBlockRow(
+    val minPassage: Int? = null,
+    val standalone: Int = 0
 )
 
 /**

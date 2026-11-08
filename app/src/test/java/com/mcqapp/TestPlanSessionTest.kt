@@ -5,6 +5,7 @@ import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
@@ -220,9 +221,36 @@ class TestPlanSessionTest {
         assertTrue("got: $error", error!!.contains("length", ignoreCase = true))
     }
 
+    /**
+     * Repeat avoidance (section 9.8): a fresh sample drops the whole blocks a
+     * recent comparable attempt asked, and the attempt records the rule it
+     * actually followed.
+     */
     @Test
-    fun aRecent3RequestIsRefusedInsteadOfBeingRecorded() {
-        seed(25)
+    fun aRecent3SampleExcludesQuestionsFromTheLastComparableAttempts() {
+        seed(60)
+        val recent = (0 until 20).map { "q$it" }.toSet()
+        runBlocking {
+            repository.saveAttempt(
+                paperId = "p1",
+                paperTitle = "Paper",
+                questions = recent.map { repository.getQuestion(it)!! },
+                selections = emptyMap(),
+                negativeMarking = 0.0,
+                durationSeconds = 60,
+                finishedAt = 1_700_000_000_000,
+                metadata = AttemptMetadata(
+                    testType = "RANDOM",
+                    requestedCount = 20,
+                    scopeCategoryIds = "c1",
+                    scopeKey = ScopeKey.ofExpanded(listOf("c1")),
+                    samplingVersion = 2,
+                    seed = 1L,
+                    exclusionMode = "NONE"
+                )
+            )
+        }
+
         val viewModel = TestViewModel(
             app, "p1", listOf("c1"),
             routeTestType = "RANDOM",
@@ -233,9 +261,68 @@ class TestPlanSessionTest {
             "the session never finished loading",
             awaitCondition { !viewModel.state.value.loading }
         )
-        val error = viewModel.state.value.loadError
-        assertNotNull("RECENT_3 is not implemented and must not be recorded", error)
-        assertTrue("got: $error", error!!.contains("recently", ignoreCase = true))
+        assertNull(viewModel.state.value.loadError)
+        assertEquals(20, viewModel.state.value.questionCount)
+        val shown = viewModel.state.value.order.idsInOrder().toSet()
+        assertEquals("the exclusion must not shrink the request", 20, shown.size)
+        assertTrue("a recently asked question was served: ${shown.intersect(recent)}", shown.none { it in recent })
+
+        viewModel.submit()
+        assertTrue(
+            "the save never landed",
+            awaitCondition { viewModel.state.value.attemptId != null && !viewModel.state.value.saving }
+        )
+        val attempt = runBlocking { repository.getAttempt(viewModel.state.value.attemptId!!) }!!
+        assertEquals("RECENT_3", attempt.exclusionMode)
+    }
+
+    /**
+     * Exclusion is skipped when it would take away more than half the pool:
+     * a small scope must not be distorted, and the attempt must not claim a
+     * rule it did not apply.
+     */
+    @Test
+    fun repeatAvoidanceThatCannotLeaveTwiceTheRequestRecordsNone() {
+        seed(25)
+        runBlocking {
+            repository.saveAttempt(
+                paperId = "p1",
+                paperTitle = "Paper",
+                questions = (0 until 20).map { repository.getQuestion("q$it")!! },
+                selections = emptyMap(),
+                negativeMarking = 0.0,
+                durationSeconds = 60,
+                finishedAt = 1_700_000_000_000,
+                metadata = AttemptMetadata(
+                    testType = "RANDOM",
+                    requestedCount = 20,
+                    scopeCategoryIds = "c1",
+                    scopeKey = ScopeKey.ofExpanded(listOf("c1")),
+                    samplingVersion = 2,
+                    seed = 1L,
+                    exclusionMode = "NONE"
+                )
+            )
+        }
+
+        val viewModel = TestViewModel(
+            app, "p1", listOf("c1"),
+            routeTestType = "RANDOM",
+            routeRequestedCount = 20,
+            routeExclusionMode = "RECENT_3"
+        )
+        assertTrue(
+            "the session never finished loading",
+            awaitCondition { !viewModel.state.value.loading }
+        )
+        assertNull(viewModel.state.value.loadError)
+        viewModel.submit()
+        assertTrue(
+            "the save never landed",
+            awaitCondition { viewModel.state.value.attemptId != null && !viewModel.state.value.saving }
+        )
+        val attempt = runBlocking { repository.getAttempt(viewModel.state.value.attemptId!!) }!!
+        assertEquals("NONE", attempt.exclusionMode)
     }
 
     @Test
@@ -445,6 +532,8 @@ class TestPlanSessionTest {
             "no resume offer was made",
             awaitCondition { relaunched.state.value.resumeOffer != null }
         )
+        assertEquals("two surviving ids make a short resume", 2, relaunched.state.value.resumeOfferCount)
+        assertFalse(relaunched.state.value.resumeOfferLegacy)
         relaunched.resume()
         assertEquals(listOf("q0", "q1"), relaunched.state.value.order.idsInOrder())
         assertTrue(
@@ -458,6 +547,8 @@ class TestPlanSessionTest {
      * A bounded Test taking the single resume slot must drop the abandoned
      * legacy session's answer rows: they are keyed by paper, so leaving them
      * would join answers the reader never gave into the new attempt's resume.
+     * This snapshot is a *different* scope (c2), so it is not the session
+     * being resumed.
      */
     @Test
     fun aNewBoundedSessionDropsTheAbandonedLegacySessionsAnswers() {
@@ -466,7 +557,7 @@ class TestPlanSessionTest {
             repository.saveTestProgress(
                 TestSnapshot(
                     paperId = "p1",
-                    categoryIds = listOf("c1"),
+                    categoryIds = listOf("c2"),
                     questionSeed = 5L,
                     questionShuffle = true
                 ),
@@ -480,7 +571,7 @@ class TestPlanSessionTest {
             awaitCondition { !viewModel.state.value.loading && viewModel.state.value.current != null }
         )
         assertNull(
-            "a legacy snapshot must not be offered to a bounded plan",
+            "another scope's legacy snapshot must not be offered to this plan",
             viewModel.state.value.resumeOffer
         )
         val current = viewModel.state.value.current!!
@@ -495,5 +586,54 @@ class TestPlanSessionTest {
             answerRows()
         )
         assertFalse("q-c2" in answerRows())
+    }
+
+    /**
+     * A legacy snapshot in the same scope is offered as itself, even on a
+     * bounded route (section 7.6): it resumes its surviving ids and saves
+     * legacy metadata, never the fresh plan's type or count.
+     */
+    @Test
+    fun aLegacySnapshotInTheSameScopeResumesAsLegacy() {
+        seedTwoCategories()
+        offMain {
+            repository.saveTestProgress(
+                TestSnapshot(
+                    paperId = "p1",
+                    categoryIds = listOf("c1"),
+                    questionSeed = 5L,
+                    questionShuffle = true
+                ),
+                listOf(TestAnswer("q0", selection = setOf("q0-a")))
+            )
+        }
+
+        val viewModel = boundedRandom()
+        assertTrue(
+            "the session never loaded: state=${viewModel.state.value}",
+            awaitCondition { !viewModel.state.value.loading && viewModel.state.value.current != null }
+        )
+        assertTrue(
+            "no resume offer was made",
+            awaitCondition { viewModel.state.value.resumeOffer != null }
+        )
+        assertTrue(viewModel.state.value.resumeOfferLegacy)
+        assertEquals(5, viewModel.state.value.resumeOfferCount)
+
+        viewModel.resume()
+        assertEquals(
+            "the legacy snapshot must replay its own order",
+            5,
+            viewModel.state.value.order.size
+        )
+        viewModel.submit()
+        assertTrue(
+            "the save never landed",
+            awaitCondition { viewModel.state.value.attemptId != null && !viewModel.state.value.saving }
+        )
+        val attempt = runBlocking { repository.getAttempt(viewModel.state.value.attemptId!!) }!!
+        assertNull("a resumed legacy session must not claim a type", attempt.testType)
+        assertEquals(0, attempt.requestedCount)
+        assertEquals(1, attempt.samplingVersion)
     }
 }

@@ -52,6 +52,7 @@ internal fun OverviewSection(
     ) {
         item(contentType = "today") { TodayCard(bundle) }
         item(contentType = "kpis") { KpisCard(bundle) }
+        item(contentType = "families") { ResultFamiliesCard() }
         item(contentType = "true-retention") { TrueRetentionCard(bundle) }
         item(contentType = "calendar") { CalendarCard(bundle) }
         if (bundle.weakest.isNotEmpty()) {
@@ -59,6 +60,30 @@ internal fun OverviewSection(
         }
         item(contentType = "scheduler") { SchedulerCard(bundle, onOpenSettings) }
     }
+}
+
+@Composable
+private fun ResultFamiliesCard() {
+    ChartCard(
+        testTag = "stats-result-families",
+        title = { ChartTitle(R.string.stats_legend_title) },
+        subtitle = { ChartSubtitle(R.string.stats_legend_help) }
+    ) {
+        LegendLine(R.string.stats_legend_mock)
+        LegendLine(R.string.stats_legend_fresh)
+        LegendLine(R.string.stats_legend_practice)
+        LegendLine(R.string.stats_legend_short)
+        LegendLine(R.string.stats_legend_legacy)
+    }
+}
+
+@Composable
+private fun LegendLine(textRes: Int) {
+    Text(
+        stringResource(textRes),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable

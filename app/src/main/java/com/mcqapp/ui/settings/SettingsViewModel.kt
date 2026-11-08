@@ -259,6 +259,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setAutoAdvance(enabled) }
     }
 
+    private val _avoidRecentQuestions = MutableStateFlow(true)
+    val avoidRecentQuestions: StateFlow<Boolean> = _avoidRecentQuestions.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.avoidRecentQuestions().collect { _avoidRecentQuestions.value = it }
+        }
+    }
+
+    fun setAvoidRecentQuestions(enabled: Boolean) {
+        viewModelScope.launch { repository.setAvoidRecentQuestions(enabled) }
+    }
+
     private val _loadRemoteImages = MutableStateFlow(false)
     val loadRemoteImages: StateFlow<Boolean> = _loadRemoteImages.asStateFlow()
 

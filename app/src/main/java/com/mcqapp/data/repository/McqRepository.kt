@@ -5,6 +5,8 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.countUngradedForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.minBlockSizeForCategoriesChunked
+import com.mcqapp.data.local.minBlockSizeForPaper
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.domain.FsrsFitResult
@@ -90,6 +92,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     fun autoAdvance(): Flow<Boolean> = settings.autoAdvance()
     suspend fun setAutoAdvance(enabled: Boolean) = settings.setAutoAdvance(enabled)
+
+    /** Whether Random tests avoid questions from the last three comparable attempts. */
+    fun avoidRecentQuestions(): Flow<Boolean> = settings.avoidRecentQuestions()
+    suspend fun setAvoidRecentQuestions(enabled: Boolean) =
+        settings.setAvoidRecentQuestions(enabled)
 
     fun loadRemoteImages(): Flow<Boolean> = settings.loadRemoteImages()
     suspend fun setLoadRemoteImages(enabled: Boolean) = settings.setLoadRemoteImages(enabled)
@@ -512,6 +519,32 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         questionStore.getOrderForCategories(paperId, categoryIds)
 
     /**
+     * The smallest passage block in a scope (section 9.6). The setup sheet's
+     * sampler pre-check uses it before it emits a route; a standalone question
+     * makes the answer 1.
+     */
+    suspend fun getMinBlockSize(paperId: String, scopeIds: List<String>): Int =
+        if (scopeIds.isEmpty()) {
+            db.questionDao().minBlockSizeForPaper(paperId)
+        } else {
+            db.questionDao().minBlockSizeForCategoriesChunked(scopeIds)
+        }
+
+    /**
+     * The smallest passage block among the mistakes the scope would serve.
+     * Mistakes are a separate pool, so the scope's block size can be smaller
+     * than the block the sampler will actually see.
+     */
+    suspend fun getMistakenMinBlockSize(paperId: String, scopeIds: List<String>): Int {
+        val order = if (scopeIds.isEmpty()) {
+            getMistakenQuestionOrder(paperId)
+        } else {
+            getMistakenQuestionOrder(paperId, scopeIds)
+        }
+        return order.minBlockSize()
+    }
+
+    /**
      * The scope's category ids in the flat `(sortOrder, title)` order the
      * session order and every SQL list surface serve. A scoped study screen
      * calls this once on the `orderedIds` expansion it just built (the
@@ -860,6 +893,25 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         attempt: com.mcqapp.domain.Attempt,
         limit: Int = 5
     ): List<com.mcqapp.domain.Attempt> = historyStore.getComparableAttempts(attempt, limit)
+
+    /**
+     * Questions asked in the last three comparable representative attempts of
+     * this paper, scope and length (section 9.8). The session excludes their
+     * blocks only when enough alternatives remain.
+     */
+    suspend fun recentComparableQuestionIds(
+        paperId: String,
+        testTypes: List<String>,
+        scopeKey: String,
+        requestedCount: Int,
+        limit: Int = 3
+    ): Set<String> = historyStore.recentComparableQuestionIds(
+        paperId = paperId,
+        testTypes = testTypes,
+        scopeKey = scopeKey,
+        requestedCount = requestedCount,
+        limit = limit
+    )
     suspend fun getAllQuestionResults(): List<com.mcqapp.domain.QuestionResult> =
         historyStore.getAllQuestionResults()
     suspend fun getHardestQuestions(limit: Int = 5): List<com.mcqapp.domain.QuestionStats.Stat> =

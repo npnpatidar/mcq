@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import com.mcqapp.domain.ExamTiming
+import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestComparability
 import com.mcqapp.domain.TestPlan
@@ -25,7 +26,9 @@ class TestSetupTest {
         requested: Int = TestPlan.DEFAULT_LENGTH,
         available: Int,
         time: TestTime = TestTime.Suggested,
-        categoryIds: List<String> = emptyList()
+        categoryIds: List<String> = emptyList(),
+        exclusionMode: ExclusionMode = ExclusionMode.NONE,
+        minBlockSize: Int = 1
     ) = TestSetup(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -37,7 +40,9 @@ class TestSetupTest {
         type = type,
         requestedCount = requested,
         time = time,
-        available = available
+        available = available,
+        exclusionMode = exclusionMode,
+        minBlockSize = minBlockSize
     )
 
     @Test
@@ -159,5 +164,48 @@ class TestSetupTest {
         assertEquals(TestPlan.SAMPLING_VERSION, plan.samplingVersion)
         assertEquals(ScopeKey.ofExpanded(listOf("c1")), plan.scopeKey)
         assertEquals(50, plan.minutes)
+        assertEquals(ExclusionMode.NONE, plan.exclusionMode)
+    }
+
+    @Test
+    fun theSamplerPreCheckRefusesWhenTheSmallestBlockCannotFit() {
+        // 20 questions allow a 25-question overshoot; a 26-question passage
+        // cannot start, so Start must not emit a route that fails at load.
+        val tooLarge = setup(available = 1_000, requested = 20, minBlockSize = 26)
+        assertFalse(tooLarge.startable())
+        assertEquals(TestPlan.noPassageFitsMessage(), tooLarge.message())
+        assertEquals(0, tooLarge.resolvedCount())
+
+        val fits = setup(available = 1_000, requested = 20, minBlockSize = 25)
+        assertTrue(fits.startable())
+        assertEquals(TestPlan.DEFAULT_LENGTH, fits.resolvedCount())
+    }
+
+    @Test
+    fun aBlockLargerThanTheHardCapNamesTheWayOut() {
+        val impossible = setup(available = 1_000, requested = 20, minBlockSize = 151)
+        assertFalse(impossible.startable())
+        assertEquals(TestPlan.passageTooLargeMessage(), impossible.message())
+    }
+
+    @Test
+    fun aFreshSampleIsItsOwnComparability() {
+        val fresh = setup(
+            type = TestType.RANDOM,
+            available = 1_000,
+            exclusionMode = ExclusionMode.RECENT_3
+        )
+        assertEquals(TestComparability.FRESH, fresh.comparability())
+        assertEquals(ExclusionMode.RECENT_3, fresh.plan().exclusionMode)
+
+        // A short scope is short before it is fresh: the label describes the
+        // length that actually ran.
+        val shortFresh = setup(
+            type = TestType.RANDOM,
+            requested = 20,
+            available = 12,
+            exclusionMode = ExclusionMode.RECENT_3
+        )
+        assertEquals(TestComparability.SHORT, shortFresh.comparability())
     }
 }

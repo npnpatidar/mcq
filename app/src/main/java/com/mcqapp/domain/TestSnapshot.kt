@@ -113,6 +113,13 @@ data class TestSnapshot(
     /** Whether any question was actually answered (reaching one is not answering). */
     val hasAnswers: Boolean get() = selections.any { it.value.isNotEmpty() }
 
+    /**
+     * A snapshot written before the bounded-Test metadata existed: no type, or
+     * a sampling version below 2 (section 7.6). It can only resume as a
+     * labelled Short/Legacy session, never as a bounded Random test.
+     */
+    val isLegacy: Boolean get() = testType == null || samplingVersion < TestPlan.SAMPLING_VERSION
+
     /** This header with the per-question payload stripped out. */
     fun header(): TestSnapshot = copy(
         selections = emptyMap(),

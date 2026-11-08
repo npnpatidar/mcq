@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.CategorySelection
+import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestComparability
@@ -68,14 +69,22 @@ internal fun TestSetupSheet(
     mistakeCount: Int,
     /** The ticked branches; empty means the whole paper. */
     categoryIds: List<String>,
+    /** Whether representative tests should avoid recently asked questions. */
+    avoidRecentQuestions: Boolean,
     /**
      * Counts the mistakes inside an expanded scope. The paper-level badge
      * counts every mistake in the paper, which would overstate a scoped
      * pool, so the scope needs its own count.
      */
     loadScopedMistakeCount: suspend (List<String>) -> Int,
+    /**
+     * The smallest passage block the selected type would sample. The sampler
+     * pre-check uses it so Start cannot emit a route that fails at load
+     * (section 9.6).
+     */
+    loadMinBlockSize: suspend (TestType, List<String>) -> Int,
     onDismiss: () -> Unit,
-    onStart: (type: TestType, requestedCount: Int, minutes: Int) -> Unit
+    onStart: (type: TestType, requestedCount: Int, minutes: Int, exclusion: ExclusionMode) -> Unit
 ) {
     var type by rememberSaveable(initialType) { mutableStateOf(initialType) }
     var requestedCount by rememberSaveable { mutableIntStateOf(TestPlan.DEFAULT_LENGTH) }
@@ -115,6 +124,27 @@ internal fun TestSetupSheet(
     val poolLoading = type == TestType.MISTAKES && mistakePool == null
     val available = if (type == TestType.MISTAKES) mistakePool ?: 0 else questionPool
 
+    // The sampler's smallest block for the pool the selected type draws from.
+    // Null while the query is in flight, so Start waits instead of emitting a
+    // route the session would refuse at load.
+    var minBlockSize by remember(paper.id, expanded, type, available) {
+        mutableStateOf<Int?>(null)
+    }
+    LaunchedEffect(paper.id, expanded, type, available) {
+        minBlockSize = if (available <= 0) {
+            1
+        } else {
+            runCatching { loadMinBlockSize(type, expanded) }.getOrDefault(1)
+        }
+    }
+    val blockLoading = minBlockSize == null
+
+    val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
+        ExclusionMode.RECENT_3
+    } else {
+        ExclusionMode.NONE
+    }
+
     val setup = TestSetup(
         paperId = paper.id,
         categoryIds = categoryIds,
@@ -123,7 +153,9 @@ internal fun TestSetupSheet(
         requestedCount = requestedCount,
         time = minutesOverride?.let { TestTime.Fixed(it.toIntOrNull() ?: 0) }
             ?: TestTime.Suggested,
-        available = available
+        available = available,
+        exclusionMode = exclusionMode,
+        minBlockSize = minBlockSize ?: 1
     )
     // The largest length this pool can actually supply. Chips above it are
     // disabled rather than left to the clamp message (§7.2, §14); the message
@@ -307,6 +339,7 @@ internal fun TestSetupSheet(
                     append(stringResource(
                         when (setup.comparability()) {
                             TestComparability.COMPARABLE -> R.string.test_preview_comparable
+                            TestComparability.FRESH -> R.string.test_preview_fresh
                             TestComparability.PRACTICE -> R.string.test_preview_practice
                             TestComparability.SHORT -> R.string.test_preview_short
                         },
@@ -315,6 +348,13 @@ internal fun TestSetupSheet(
                 },
                 style = MaterialTheme.typography.bodyMedium
             )
+            if (type.supportsFreshSample && avoidRecentQuestions) {
+                Text(
+                    stringResource(R.string.test_setup_fresh_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             val note = when {
                 poolLoading -> null
                 type == TestType.MISTAKES && available == 0 ->
@@ -332,8 +372,8 @@ internal fun TestSetupSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { onStart(type, requestedCount, setup.minutes()) },
-                enabled = setup.startable() && !poolLoading,
+                onClick = { onStart(type, requestedCount, setup.minutes(), exclusionMode) },
+                enabled = setup.startable() && !poolLoading && !blockLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("test-setup-start")

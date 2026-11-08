@@ -204,6 +204,37 @@ internal suspend fun QuestionDao.countForCategoriesChunked(
 ): Int =
     categoryIds.chunks().sumOf { countForCategories(paperId, it) }
 
+/**
+ * The smallest block in a whole paper (section 9.6). A standalone question is
+ * a block of one; with none, it is the smallest passage's member count.
+ */
+internal suspend fun QuestionDao.minBlockSizeForPaper(paperId: String): Int {
+    val row = minBlockRowForPaper(paperId)
+    return if (row.standalone > 0) 1 else row.minPassage ?: 1
+}
+
+/**
+ * The smallest block in a category scope. Chunks are disjoint, but a passage
+ * whose members span chunks is split by this read, so the result can only be
+ * smaller than the true block — a conservative pre-check that may miss a
+ * refusal, never invent one. The session's sampler remains authoritative.
+ */
+internal suspend fun QuestionDao.minBlockSizeForCategoriesChunked(
+    categoryIds: List<String>
+): Int {
+    var smallest = Int.MAX_VALUE
+    for (chunk in categoryIds.chunks()) {
+        val row = minBlockRowForCategories(chunk)
+        val chunkMin = when {
+            row.standalone > 0 -> 1
+            row.minPassage != null -> row.minPassage
+            else -> Int.MAX_VALUE
+        }
+        if (chunkMin < smallest) smallest = chunkMin
+    }
+    return if (smallest == Int.MAX_VALUE) 1 else smallest
+}
+
 /** The first new question in serving order: the first found chunk's first row. */
 internal suspend fun QuestionDao.firstNewQuestionForCategoriesChunked(
     paperId: String,

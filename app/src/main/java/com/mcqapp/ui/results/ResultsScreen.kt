@@ -55,6 +55,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import android.app.Application
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.QuestionResult
@@ -98,6 +99,10 @@ fun ResultsScreen(
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val resources = LocalResources.current
     var showExportMenu by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -128,7 +133,7 @@ fun ResultsScreen(
                                             context.startActivity(
                                                 android.content.Intent.createChooser(
                                                     intent,
-                                                    context.getString(R.string.report_export_share)
+                                                    resources.getString(R.string.report_export_share)
                                                 )
                                             )
                                         } else {
@@ -147,7 +152,7 @@ fun ResultsScreen(
                                             context.startActivity(
                                                 android.content.Intent.createChooser(
                                                     intent,
-                                                    context.getString(R.string.report_export_share)
+                                                    resources.getString(R.string.report_export_share)
                                                 )
                                             )
                                         } else {

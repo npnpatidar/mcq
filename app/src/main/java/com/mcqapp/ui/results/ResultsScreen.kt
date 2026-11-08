@@ -39,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -50,7 +52,9 @@ import androidx.compose.ui.platform.LocalContext
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.QuestionResult
+import com.mcqapp.domain.QuestionReview
 import com.mcqapp.domain.ReportFamily
+import com.mcqapp.domain.ReviewTag
 import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.TestReport
 import com.mcqapp.domain.TestType
@@ -147,7 +151,10 @@ fun ResultsScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // Tagged so the instrumented review can scroll to a card below
+                // the header cards without depending on its index.
+                .testTag("results-list"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -272,7 +279,8 @@ fun ResultsScreen(
                         bookmarked = numbered.result.questionId in bookmarked,
                         onToggleBookmark = { viewModel.toggleBookmark(numbered.result.questionId) },
                         showDwell = showDwell,
-                        lifetime = report?.lifetime?.get(numbered.result.questionId)
+                        lifetime = report?.lifetime?.get(numbered.result.questionId),
+                        review = report?.reviews?.get(numbered.result.questionId)
                     )
                 }
             }
@@ -708,6 +716,16 @@ private fun actionTitle(rule: com.mcqapp.domain.RecommendedAction.Rule): String 
         stringResource(R.string.report_action_guess)
     is com.mcqapp.domain.RecommendedAction.Rule.TakeLongerMock ->
         stringResource(R.string.report_action_longer)
+    is com.mcqapp.domain.RecommendedAction.Rule.RepeatPractice ->
+        stringResource(R.string.report_action_repeat_practice)
+    is com.mcqapp.domain.RecommendedAction.Rule.PractiseMistakes ->
+        stringResource(R.string.report_action_practise_mistakes, rule.remaining)
+    is com.mcqapp.domain.RecommendedAction.Rule.CheckTransfer ->
+        stringResource(R.string.report_action_check_transfer)
+    is com.mcqapp.domain.RecommendedAction.Rule.ContinueFocus ->
+        stringResource(R.string.report_action_continue_focus, rule.remaining)
+    is com.mcqapp.domain.RecommendedAction.Rule.ReviewDue ->
+        stringResource(R.string.report_action_review_due, rule.due)
     com.mcqapp.domain.RecommendedAction.Rule.KeepGoing ->
         stringResource(R.string.report_action_keep_going)
 }
@@ -754,6 +772,28 @@ private fun actionEvidence(
                 rule.targetMargin.roundToInt()
             )
         }
+    is com.mcqapp.domain.RecommendedAction.Rule.RepeatPractice ->
+        stringResource(
+            R.string.report_action_repeat_practice_evidence,
+            rule.correct,
+            rule.asked,
+            (rule.accuracy * 100).roundToInt()
+        )
+    is com.mcqapp.domain.RecommendedAction.Rule.PractiseMistakes ->
+        stringResource(R.string.report_action_practise_mistakes_evidence, rule.remaining)
+    is com.mcqapp.domain.RecommendedAction.Rule.CheckTransfer ->
+        stringResource(
+            R.string.report_action_check_transfer_evidence,
+            rule.practiceDeltaPoints.roundToInt()
+        )
+    is com.mcqapp.domain.RecommendedAction.Rule.ContinueFocus ->
+        stringResource(
+            R.string.report_action_continue_focus_evidence,
+            rule.covered,
+            rule.pool
+        )
+    is com.mcqapp.domain.RecommendedAction.Rule.ReviewDue ->
+        stringResource(R.string.report_action_review_due_evidence, rule.due)
     com.mcqapp.domain.RecommendedAction.Rule.KeepGoing ->
         stringResource(R.string.report_action_keep_going_evidence)
 }
@@ -888,6 +928,40 @@ private fun PracticeCard(report: TestReport) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // The practice line is drawn only on a fixed recorded target set;
+            // it never appears beside the comparable mock trend.
+            report.practiceTrend?.let { trend ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.report_practice_trend_title),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text(
+                    stringResource(
+                        R.string.report_practice_trend_line,
+                        trend.points.size,
+                        trend.points.joinToString(" → ") {
+                            (it.accuracy * 100).roundToInt().toString() + "%"
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    stringResource(R.string.report_practice_trend_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                trend.deltaPoints?.let { delta ->
+                    Text(
+                        stringResource(
+                            R.string.report_practice_trend_delta,
+                            delta.roundToInt()
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
@@ -1074,7 +1148,8 @@ private fun ResultCard(
     bookmarked: Boolean,
     onToggleBookmark: () -> Unit,
     showDwell: Boolean = false,
-    lifetime: com.mcqapp.domain.LifetimeAccuracy? = null
+    lifetime: com.mcqapp.domain.LifetimeAccuracy? = null,
+    review: QuestionReview? = null
 ) {
     val ungraded = result.correctOptionIds.isEmpty()
     Card(
@@ -1112,6 +1187,32 @@ private fun ResultCard(
                     Icon(
                         if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                         contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark question"
+                    )
+                }
+            }
+            if (review != null) {
+                // "Why this matters" for this question, then the Study badge.
+                // Both read the same evidence the report cards already used.
+                Text(
+                    stringResource(reviewTagLabel(review.tag)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when (review.tag) {
+                        ReviewTag.SOLID_CORRECT -> MaterialTheme.colorScheme.primary
+                        ReviewTag.SKIPPED, ReviewTag.UNGRADED ->
+                            MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.error
+                    }
+                )
+                Text(
+                    reviewStudyLine(review),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (review.targeted) {
+                    Text(
+                        stringResource(R.string.report_targeted),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -1185,4 +1286,42 @@ private fun ResultCard(
             QuestionImage(src = result.explanationImage, contentDescription = stringResource(R.string.explanation_image))
         }
     }
+}
+
+/** The "why this matters" label for one reviewed question. */
+@Composable
+private fun reviewTagLabel(tag: ReviewTag): Int = when (tag) {
+    ReviewTag.KNOWLEDGE_GAP -> R.string.report_tag_knowledge_gap
+    ReviewTag.RUSHED -> R.string.report_tag_rushed
+    ReviewTag.SKIPPED -> R.string.report_tag_skipped
+    ReviewTag.POSSIBLE_GUESS -> R.string.report_tag_possible_guess
+    ReviewTag.FRAGILE_CORRECT -> R.string.report_tag_fragile_correct
+    ReviewTag.SOLID_CORRECT -> R.string.report_tag_solid_correct
+    ReviewTag.UNGRADED -> R.string.report_tag_ungraded
+}
+
+/**
+ * The question's Study badge: a valid card gives difficulty and predicted
+ * recall (plus due-now), a new or stale card says which it is, and a question
+ * with no card says so rather than implying a memory estimate.
+ */
+@Composable
+private fun reviewStudyLine(review: QuestionReview): String {
+    val context = LocalContext.current
+    if (review.inStudy) {
+        val difficulty = String.format(
+            java.util.Locale.getDefault(),
+            "%.1f",
+            review.difficulty ?: 0.0
+        )
+        val recall = ((review.retention ?: 0.0) * 100).roundToInt()
+        return context.getString(
+            if (review.dueNow) R.string.report_study_line_due else R.string.report_study_line,
+            difficulty,
+            recall
+        )
+    }
+    if (review.staleCard) return context.getString(R.string.report_study_stale)
+    if (review.newCard) return context.getString(R.string.report_study_new)
+    return context.getString(R.string.report_no_study)
 }

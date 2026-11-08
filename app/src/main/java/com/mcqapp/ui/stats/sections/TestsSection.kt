@@ -36,6 +36,7 @@ internal fun TestsSection(data: TestProgressData) {
     ) {
         item(contentType = "families") { FamiliesCard(data) }
         item(contentType = "practice") { PracticeCard(data) }
+        item(contentType = "practice-topics") { PracticeTopicsCard(data) }
         item(contentType = "scope") { ScopeCard(data) }
     }
 }
@@ -105,6 +106,42 @@ private fun PracticeCard(data: TestProgressData) {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The weak-topic accuracy view: what the recorded practice targets scored
+ * across the recent runs, weakest first. A target with no asked question is
+ * absent, so the card never shows a 0/0 as "0%".
+ */
+@Composable
+private fun PracticeTopicsCard(data: TestProgressData) {
+    if (data.practiceTopics.isEmpty()) return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.stats_practice_topics_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                stringResource(R.string.stats_practice_topics_help),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            data.practiceTopics.forEach { topic ->
+                Text(
+                    stringResource(
+                        R.string.stats_practice_topics_row,
+                        topic.title,
+                        topic.correct,
+                        topic.asked,
+                        (topic.accuracy * 100).roundToInt()
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }

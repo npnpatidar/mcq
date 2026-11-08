@@ -137,7 +137,8 @@ class ResultsViewModel(
                             targetTopicIds = it.targetTopicIds
                                 .split(",")
                                 .filter { id -> id.isNotBlank() },
-                            evidence = repository.getReportEvidence(it, rows, paper)
+                            evidence = repository.getReportEvidence(it, rows, paper),
+                            practiceHistory = repository.getPracticeHistory(it)
                         )
                     )
                 }

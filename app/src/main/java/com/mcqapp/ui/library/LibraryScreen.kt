@@ -467,12 +467,15 @@ fun LibraryScreen(
                     else -> viewModel.repository.getMinBlockSize(request.paper.id, scopeIds)
                 }
             },
+            loadPreview = { type, count, breadth ->
+                viewModel.previewSelection(request.paper, request.categoryIds, type, count, breadth)
+            },
             onDismiss = { pendingTestSetup = null },
-            onStart = { type, requestedCount, minutes, exclusion ->
+            onStart = { type, requestedCount, minutes, exclusion, breadth ->
                 pendingTestSetup = null
                 Logger.i(
                     "LIB",
-                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}"
+                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}"
                 )
                 navController.navigate(
                     com.mcqapp.ui.navigation.testRoute(
@@ -481,7 +484,8 @@ fun LibraryScreen(
                         minutes = minutes,
                         type = type.name,
                         count = requestedCount,
-                        exclusion = exclusion.name
+                        exclusion = exclusion.name,
+                        breadth = breadth.name
                     )
                 )
             }

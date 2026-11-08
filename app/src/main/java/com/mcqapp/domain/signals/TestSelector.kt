@@ -22,6 +22,12 @@ enum class FillSource {
     WEAKEST_TOPICS,
     TOUGHEST_QUESTIONS,
     EASIEST_QUESTIONS,
+    TRICKY,
+    AT_RISK,
+    UNSEEN,
+    BALANCED,
+    MIXED,
+    LEAST_RECENTLY_REVIEWED,
     AUTHORED_HARD,
     AUTHORED_MEDIUM,
     RANDOM
@@ -79,6 +85,28 @@ data class Selection(
     val composition: Composition = Composition()
 )
 
+/** One chosen target's current observed accuracy, for the setup-sheet preview. */
+data class TargetPreview(
+    val categoryId: String,
+    val title: String,
+    val asked: Int,
+    val correct: Int,
+    val poolSize: Int
+) {
+    val accuracy: Double get() = if (asked > 0) correct.toDouble() / asked else 0.0
+}
+
+/**
+ * What the setup sheet shows before Start: the type's available pool, the
+ * composition the current request would produce and the chosen targets with
+ * their observed accuracy. Display-only; Start recomputes the real selection.
+ */
+data class SelectionPreview(
+    val pool: Int,
+    val composition: Composition,
+    val targets: List<TargetPreview>
+)
+
 /**
  * The phase-2 focus selectors (stats.md §8.3–§8.5, §9.3–§9.7).
  *
@@ -103,7 +131,48 @@ object TestSelector {
         TestType.WEAKEST_TOPICS -> weakest(plan, signals, breadth)
         TestType.TOUGHEST_QUESTIONS -> toughest(plan, signals)
         TestType.EASIEST_QUESTIONS -> easiest(plan, signals)
+        TestType.TRICKY -> tricky(plan, signals)
+        TestType.AT_RISK -> atRisk(plan, signals)
+        TestType.UNSEEN -> unseen(plan, signals)
+        TestType.BALANCED -> balanced(plan, signals)
+        TestType.MIXED -> mixed(plan, signals, breadth)
         else -> null
+    }
+
+    /** The type's available supply for the sheet's pool count. */
+    fun poolSize(type: TestType?, signals: List<Signals>): Int = when (type) {
+        TestType.TRICKY -> signals.count { it.trickiness > 0.0 || it.leech }
+        TestType.AT_RISK -> signals.count { it.atRisk }
+        TestType.UNSEEN -> signals.count { it.unseen }
+        else -> signals.size
+    }
+
+    /**
+     * The display preview for [plan]: same selector, plus the chosen targets'
+     * observed accuracy. Never persists anything; Start runs the real selection.
+     */
+    fun preview(
+        plan: TestPlan,
+        signals: List<Signals>,
+        breadth: Breadth = Breadth.MEDIUM
+    ): SelectionPreview {
+        val selection = select(plan, signals, breadth)
+        val targets = selection?.targets.orEmpty().mapNotNull { id ->
+            val rows = signals.filter { it.categoryId == id }
+            if (rows.isEmpty()) return@mapNotNull null
+            TargetPreview(
+                categoryId = id,
+                title = rows.first().categoryTitle,
+                asked = rows.sumOf { it.answered },
+                correct = rows.sumOf { it.correct },
+                poolSize = rows.size
+            )
+        }
+        return SelectionPreview(
+            pool = poolSize(plan.type, signals),
+            composition = selection?.composition ?: Composition(),
+            targets = targets
+        )
     }
 
     /**
@@ -167,30 +236,7 @@ object TestSelector {
         val n = plan.count.coerceAtLeast(0)
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val ranked = TestRanking.rankToughest(signals, signals.size)
-        val categoryCount = ranked.map { it.categoryId ?: it.questionId }.distinct().size
-        var cap = ceil(CATEGORY_CAP_FRACTION * n).toInt().coerceAtLeast(1)
-        if (cap.toLong() * categoryCount < n) {
-            cap = ceil(n.toDouble() / categoryCount.coerceAtLeast(1)).toInt()
-        }
-        val selected = mutableListOf<Signals>()
-        val perCategory = mutableMapOf<String, Int>()
-        for (signal in ranked) {
-            if (selected.size >= n) break
-            val key = signal.categoryId ?: signal.questionId
-            if ((perCategory[key] ?: 0) < cap) {
-                selected += signal
-                perCategory[key] = (perCategory[key] ?: 0) + 1
-            }
-        }
-        // The cap can leave places empty when some categories are small; fill
-        // from the leftovers in rank order, preserving the toughness priority.
-        if (selected.size < n) {
-            val taken = selected.mapTo(mutableSetOf()) { it.questionId }
-            for (signal in ranked) {
-                if (selected.size >= n) break
-                if (taken.add(signal.questionId)) selected += signal
-            }
-        }
+        val selected = cappedTop(ranked, n)
         val (ids, fill) = fill(
             selected = selected,
             pool = signals,
@@ -235,6 +281,277 @@ object TestSelector {
                 *fill.toTypedArray()
             )
         )
+    }
+
+    /**
+     * Tricky: leeches, lapses, guesses and skips, with the same per-category
+     * cap as Toughest (stats.md §8.7). The fill ladder is Toughest, then
+     * Random.
+     */
+    private fun tricky(plan: TestPlan, signals: List<Signals>): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val ranked = signals.sortedWith(
+            compareByDescending<Signals> { it.trickiness }.thenBy { it.questionId }
+        )
+        val selected = cappedTop(ranked, n)
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(
+                FillSource.TOUGHEST_QUESTIONS to TestRanking.rankToughest(signals, signals.size),
+                FillSource.RANDOM to signals
+            )
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                FillSource.TRICKY to selected.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * At risk: due cards, lowest predicted recall first (stats.md §8.8). A
+     * stale hash is not at-risk: the card is treated as unseen. The fill is
+     * soonest due, then unseen, then random.
+     */
+    private fun atRisk(plan: TestPlan, signals: List<Signals>): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val due = signals
+            .filter { it.atRisk }
+            .sortedWith(
+                compareByDescending<Signals> { it.memoryRisk }
+                    .thenBy { it.dueAt }
+                    .thenBy { it.questionId }
+            )
+        val selected = due.take(n)
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(
+                FillSource.AT_RISK to due.drop(selected.size),
+                FillSource.UNSEEN to signals.filter { it.unseen }.sortedBy { it.questionId },
+                FillSource.RANDOM to signals.sortedBy { it.questionId }
+            )
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                FillSource.AT_RISK to selected.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * Unseen: no card, a new card or a stale content hash (stats.md §8.9).
+     * Uniform random within the pool; the fill is least-recently-reviewed,
+     * then random.
+     */
+    private fun unseen(plan: TestPlan, signals: List<Signals>): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val pool = signals.filter { it.unseen }
+        val selected = pool.shuffled(Random(plan.seed)).take(n)
+        val leastRecent = signals
+            .filterNot { it.unseen }
+            .sortedWith(
+                compareBy<Signals> { it.lastReviewedAt == 0L }
+                    .thenBy { it.lastReviewedAt }
+                    .thenBy { it.questionId }
+            )
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(
+                FillSource.LEAST_RECENTLY_REVIEWED to leastRecent,
+                FillSource.RANDOM to signals.sortedBy { it.questionId }
+            )
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                FillSource.UNSEEN to selected.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * Balanced: a representative mock whose sample is allocated across every
+     * category proportionally to its size, then interleaved so the test does
+     * not run in topic blocks (stats.md §8.2, §9.4). It is a measurement type,
+     * so it records no targets and never uses FSRS to choose a question.
+     */
+    private fun balanced(plan: TestPlan, signals: List<Signals>): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val categories = TestRanking.categories(signals)
+        val allocation = allocate(n, categories)
+        val perCategory = categories.mapNotNull { category ->
+            val need = allocation[category.categoryId] ?: 0
+            if (need <= 0) return@mapNotNull null
+            signals
+                .filter { it.categoryId == category.categoryId }
+                .shuffled(Random(plan.seed xor category.categoryId.hashCode().toLong()))
+                .take(need)
+        }
+        val interleaved = interleave(perCategory)
+        val (ids, fill) = fillWith(
+            selected = interleaved,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(FillSource.RANDOM to signals)
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                FillSource.BALANCED to interleaved.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * Mixed practice: a weighted blend of the individual selectors (stats.md
+     * §8.14). The split is 40% weakest topics, 25% tricky, 20% at risk and the
+     * rest unseen; a short pool is filled randomly and the composition records
+     * every segment, so the attempt never claims to be a pure type.
+     */
+    private fun mixed(plan: TestPlan, signals: List<Signals>, breadth: Breadth): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val weakestPart = weakest(plan.copy(count = shareOf(n, 40)), signals, breadth)
+        val trickyPart = tricky(plan.copy(count = shareOf(n, 25)), signals)
+        val atRiskPart = atRisk(plan.copy(count = shareOf(n, 20)), signals)
+        val unseenPart = unseen(plan.copy(count = shareOf(n, 15)), signals)
+        val selected = mutableListOf<Signals>()
+        val byId = signals.associateBy { it.questionId }
+        val taken = mutableSetOf<String>()
+        val stages = mutableListOf<Pair<FillSource, Int>>()
+        fun add(ids: List<String>, source: FillSource) {
+            var added = 0
+            for (id in ids) {
+                if (selected.size >= n) break
+                if (!taken.add(id)) continue
+                byId[id]?.let { selected += it; added++ }
+            }
+            if (added > 0) stages += source to added
+        }
+        add(weakestPart.ids, FillSource.WEAKEST_TOPICS)
+        add(trickyPart.ids, FillSource.TRICKY)
+        add(atRiskPart.ids, FillSource.AT_RISK)
+        add(unseenPart.ids, FillSource.UNSEEN)
+        val (ids, fill) = fillWith(
+            selected = selected,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(FillSource.RANDOM to signals)
+        )
+        return Selection(
+            ids = ids,
+            targets = weakestPart.targets,
+            composition = Composition.of(*stages.toTypedArray(), *fill.toTypedArray())
+        )
+    }
+
+    private fun shareOf(n: Int, percent: Int): Int = ceil(n * percent / 100.0).toInt()
+
+    /**
+     * The top [n] of an already ranked list under the 40% per-category cap,
+     * relaxing the cap when it cannot fill the request and then topping up from
+     * the leftovers in rank order.
+     */
+    private fun cappedTop(ranked: List<Signals>, n: Int): List<Signals> {
+        if (n <= 0) return emptyList()
+        val categoryCount = ranked.map { it.categoryId ?: it.questionId }.distinct().size
+        var cap = ceil(CATEGORY_CAP_FRACTION * n).toInt().coerceAtLeast(1)
+        if (cap.toLong() * categoryCount < n) {
+            cap = ceil(n.toDouble() / categoryCount.coerceAtLeast(1)).toInt()
+        }
+        val selected = mutableListOf<Signals>()
+        val perCategory = mutableMapOf<String, Int>()
+        for (signal in ranked) {
+            if (selected.size >= n) break
+            val key = signal.categoryId ?: signal.questionId
+            if ((perCategory[key] ?: 0) < cap) {
+                selected += signal
+                perCategory[key] = (perCategory[key] ?: 0) + 1
+            }
+        }
+        if (selected.size < n) {
+            val taken = selected.mapTo(mutableSetOf()) { it.questionId }
+            for (signal in ranked) {
+                if (selected.size >= n) break
+                if (taken.add(signal.questionId)) selected += signal
+            }
+        }
+        return selected
+    }
+
+    /** Round-robin the per-category sequences so topics interleave. */
+    private fun interleave(groups: List<List<Signals>>): List<Signals> {
+        val result = mutableListOf<Signals>()
+        val longest = groups.maxOfOrNull { it.size } ?: 0
+        for (index in 0 until longest) {
+            for (group in groups) {
+                group.getOrNull(index)?.let { result += it }
+            }
+        }
+        return result
+    }
+
+    /**
+     * Adds stages of candidates in order until [target] is reached, skipping
+     * duplicates. The recorded segments say which stage supplied each block.
+     */
+    private fun fillWith(
+        selected: List<Signals>,
+        target: Int,
+        seed: Long,
+        pool: List<Signals>,
+        stages: List<Pair<FillSource, List<Signals>>>
+    ): Pair<List<String>, List<Pair<FillSource, Int>>> {
+        val result = selected.toMutableList()
+        val taken = selected.mapTo(mutableSetOf()) { it.questionId }
+        val segments = mutableListOf<Pair<FillSource, Int>>()
+        if (result.size >= target) return result.map { it.questionId } to segments
+        for ((source, candidates) in stages) {
+            if (result.size >= target) break
+            var added = 0
+            for (signal in candidates) {
+                if (result.size >= target) break
+                if (taken.add(signal.questionId)) {
+                    result += signal
+                    added++
+                }
+            }
+            if (added > 0) segments += source to added
+        }
+        // A deterministic last resort: the pool itself, shuffled by the seed.
+        if (result.size < target) {
+            var added = 0
+            for (signal in pool.shuffled(Random(seed xor 7L))) {
+                if (result.size >= target) break
+                if (taken.add(signal.questionId)) {
+                    result += signal
+                    added++
+                }
+            }
+            if (added > 0) segments += FillSource.RANDOM to added
+        }
+        return result.map { it.questionId } to segments
     }
 
     /**

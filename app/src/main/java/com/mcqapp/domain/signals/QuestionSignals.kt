@@ -105,8 +105,16 @@ data class Signals(
     val fsrsAvailable: Boolean,
     val leech: Boolean,
     val atRisk: Boolean,
+    /** The card's due instant, or 0 when there is no valid card. */
+    val dueAt: Long,
+    /** When the card was last reviewed, or 0 when it has no history. */
+    val lastReviewedAt: Long,
+    /** Predicted recall probability for a valid card, or null. */
+    val retention: Double?,
     val toughness: Double,
-    val ease: Double
+    val ease: Double,
+    /** The tricky composite that ranks leeches, lapses, guesses and skips. */
+    val trickiness: Double
 )
 
 /**
@@ -240,6 +248,10 @@ object QuestionSignals {
             0.25 * (1.0 - difficulty) +
             0.20 * (1.0 - memoryRisk) +
             0.10 * (1.0 - lapse)
+        val trickiness = 0.40 * lapse +
+            0.25 * guess +
+            0.20 * skip +
+            0.15 * weakness
 
         return Signals(
             questionId = input.questionId,
@@ -263,8 +275,12 @@ object QuestionSignals {
             fsrsAvailable = valid,
             leech = leech,
             atRisk = atRisk,
+            dueAt = if (valid) card!!.dueAt else 0L,
+            lastReviewedAt = if (valid) card!!.lastReviewedAt else 0L,
+            retention = if (valid) input.retention else null,
             toughness = toughness.coerceIn(0.0, 1.0),
-            ease = ease.coerceIn(0.0, 1.0)
+            ease = ease.coerceIn(0.0, 1.0),
+            trickiness = trickiness.coerceIn(0.0, 1.0)
         )
     }
 

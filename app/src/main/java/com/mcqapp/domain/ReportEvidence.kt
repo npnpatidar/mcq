@@ -154,6 +154,63 @@ data class PracticeEvidence(
         get() = if (targetedPool > 0) targetedAsked.toDouble() / targetedPool else 0.0
 }
 
+/**
+ * One practice run's targeted accuracy, on a fixed recorded target set
+ * (stats.md §11.5). Practice runs are never compared with a mock; this line
+ * only answers "is this target set improving?".
+ */
+data class PracticeTrendPoint(
+    val attemptId: Long,
+    val finishedAt: Long,
+    val asked: Int,
+    val correct: Int
+) {
+    val accuracy: Double get() = if (asked > 0) correct.toDouble() / asked else 0.0
+}
+
+/** The practice target trend: prior same-target runs plus this one. */
+data class PracticeTrend(
+    val points: List<PracticeTrendPoint>
+) {
+    val deltaPoints: Double?
+        get() {
+            if (points.size < 2) return null
+            return (points.last().accuracy - points[points.size - 2].accuracy) * 100.0
+        }
+}
+
+/**
+ * Why a reviewed question matters (stats.md §11.12): the tag names the failure
+ * mode, and the Study fields reuse the card the memory card already read.
+ */
+enum class ReviewTag {
+    KNOWLEDGE_GAP,
+    RUSHED,
+    SKIPPED,
+    POSSIBLE_GUESS,
+    FRAGILE_CORRECT,
+    SOLID_CORRECT,
+    UNGRADED
+}
+
+/** One question's review evidence: the "why this matters" tag and Study state. */
+data class QuestionReview(
+    val tag: ReviewTag,
+    /** A valid FSRS card exists (not new, not stale). */
+    val inStudy: Boolean = false,
+    val dueNow: Boolean = false,
+    val leech: Boolean = false,
+    /** FSRS difficulty, only when a valid card exists. */
+    val difficulty: Double? = null,
+    val retention: Double? = null,
+    /** The question belongs to a recorded practice target. */
+    val targeted: Boolean = false,
+    /** The question changed since its Study card was written. */
+    val staleCard: Boolean = false,
+    /** A card exists but has never been reviewed (a new card). */
+    val newCard: Boolean = false
+)
+
 /** One point on the comparable trend line (stats.md §11.5). */
 data class TrendPoint(
     val attemptId: Long,

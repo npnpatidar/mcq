@@ -39,7 +39,8 @@ class TestReportBuilderTest {
         maxScore: Double = 18.0,
         scopeKey: String = ScopeKey.wholePaper("p1"),
         exclusion: String = ExclusionMode.NONE.name,
-        finishedAt: Long = 1_000L
+        finishedAt: Long = 1_000L,
+        targetTopicIds: String = ""
     ) = Attempt(
         id = id,
         paperId = "p1",
@@ -56,7 +57,8 @@ class TestReportBuilderTest {
         requestedCount = requested,
         scopeKey = scopeKey,
         samplingVersion = samplingVersion,
-        exclusionMode = exclusion
+        exclusionMode = exclusion,
+        targetTopicIds = targetTopicIds
     )
 
     private fun row(
@@ -329,7 +331,11 @@ class TestReportBuilderTest {
             report.actions.none { it.rule is com.mcqapp.domain.RecommendedAction.Rule.TakeLongerMock }
         )
         assertTrue(
-            report.actions.none { it.kind == com.mcqapp.domain.RecommendedAction.Kind.TEST }
+            "no practice action sends the learner into a random mock line",
+            report.actions.none {
+                it.kind == com.mcqapp.domain.RecommendedAction.Kind.TEST &&
+                    it.testType == com.mcqapp.domain.TestType.RANDOM
+            }
         )
     }
 
@@ -568,6 +574,228 @@ class TestReportBuilderTest {
         assertEquals(10, first.passageBlocks)
         assertEquals(1_000, first.resamples)
         assertTrue(first.lowPercent <= first.highPercent)
+    }
+
+    @Test
+    fun reviewsCarryTheWhyTagAndTheStudyBadge() {
+        val rows = listOf(
+            row("solid", correct = true, dwell = 30),
+            row("guess", correct = true, dwell = 2),
+            row("rushed", correct = false, dwell = 8),
+            row("gap", correct = false, dwell = 40),
+            row("skipped", correct = false, dwell = 0, answered = false),
+            row("ungraded", correct = false, dwell = 0, graded = false, answered = false)
+        )
+        val timing = com.mcqapp.domain.TimingSummary(
+            totalSeconds = 300,
+            timedQuestions = 10,
+            medianSeconds = 40,
+            averageSeconds = 40,
+            correctAverageSeconds = 30,
+            wrongAverageSeconds = 40,
+            targetSecondsPerQuestion = 60,
+            slowest = emptyList(),
+            smallSample = false,
+            slowThresholdSeconds = 60
+        )
+        val evidence = com.mcqapp.domain.ReportEvidence(
+            cards = mapOf(
+                "solid" to reportCard("solid", difficulty = 3.0, valid = true, dueAt = 2_000),
+                "guess" to reportCard("guess", difficulty = 8.0, valid = true, dueAt = 500),
+                "gap" to reportCard("gap", difficulty = 9.0, valid = true, dueAt = 500),
+                "skipped" to reportCard("skipped", difficulty = 3.0, valid = false, dueAt = 500)
+            ),
+            now = 1_000
+        )
+        val reviews = TestReportBuilder.reviewsOf(
+            rows,
+            timing,
+            evidence,
+            targetTopicIds = emptyList(),
+            family = ReportFamily.PRACTICE
+        )
+        assertEquals(com.mcqapp.domain.ReviewTag.SOLID_CORRECT, reviews["solid"]!!.tag)
+        assertEquals(com.mcqapp.domain.ReviewTag.POSSIBLE_GUESS, reviews["guess"]!!.tag)
+        assertTrue("the guess card is due now", reviews["guess"]!!.dueNow)
+        assertEquals(com.mcqapp.domain.ReviewTag.RUSHED, reviews["rushed"]!!.tag)
+        assertEquals(com.mcqapp.domain.ReviewTag.KNOWLEDGE_GAP, reviews["gap"]!!.tag)
+        assertEquals(com.mcqapp.domain.ReviewTag.SKIPPED, reviews["skipped"]!!.tag)
+        assertTrue("the stale card says so", reviews["skipped"]!!.staleCard)
+        assertEquals(com.mcqapp.domain.ReviewTag.UNGRADED, reviews["ungraded"]!!.tag)
+        assertFalse("a question with no card claims no Study memory", reviews["rushed"]!!.inStudy)
+    }
+
+    @Test
+    fun aFragileCorrectIsAHardOrLowRecallCard() {
+        val rows = listOf(row("hard", correct = true, dwell = 30))
+        val timing = com.mcqapp.domain.TimingSummary(
+            totalSeconds = 30,
+            timedQuestions = 1,
+            medianSeconds = 30,
+            averageSeconds = 30,
+            correctAverageSeconds = 30,
+            wrongAverageSeconds = 0,
+            targetSecondsPerQuestion = 60,
+            slowest = emptyList(),
+            smallSample = true,
+            slowThresholdSeconds = 60
+        )
+        val evidence = com.mcqapp.domain.ReportEvidence(
+            cards = mapOf(
+                "hard" to reportCard("hard", difficulty = 8.0, valid = true, dueAt = 2_000)
+            ),
+            now = 1_000
+        )
+        val reviews = TestReportBuilder.reviewsOf(
+            rows,
+            timing,
+            evidence,
+            emptyList(),
+            ReportFamily.MOCK
+        )
+        assertEquals(com.mcqapp.domain.ReviewTag.FRAGILE_CORRECT, reviews["hard"]!!.tag)
+        assertEquals(8.0, reviews["hard"]!!.difficulty!!, 0.001)
+    }
+
+    @Test
+    fun practiceTrendUsesOnlyPriorRunsOnTheSameTargets() {
+        val rows = listOf(
+            row("t1", correct = true, dwell = 10, title = "Polity", current = "c1"),
+            row("t2", correct = false, dwell = 10, title = "Polity", current = "c1"),
+            row("t3", correct = false, dwell = 10, title = "Polity", current = "c1"),
+            row("t4", correct = false, dwell = 10, title = "Polity", current = "c1")
+        )
+        val report = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(testType = "WEAKEST_TOPICS", targetTopicIds = "c1"),
+                rows = rows,
+                paper = paper(),
+                targetTopicIds = listOf("c1"),
+                evidence = com.mcqapp.domain.ReportEvidence(
+                    targetSizes = mapOf("c1" to 20),
+                    targetTitles = mapOf("c1" to "Polity")
+                ),
+                practiceHistory = listOf(
+                    com.mcqapp.domain.PracticeTrendPoint(2, 800, asked = 5, correct = 1),
+                    com.mcqapp.domain.PracticeTrendPoint(3, 900, asked = 5, correct = 1)
+                )
+            )
+        )
+        val trend = report.practiceTrend!!
+        assertEquals(3, trend.points.size)
+        assertTrue("the target accuracy improved", trend.deltaPoints!! > 0)
+        assertTrue("a practice run still has no mock trend", report.trend == null)
+        assertEquals(1, report.practice!!.targetedCorrect)
+        assertEquals(4, report.practice!!.targetedAsked)
+
+        val mock = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(),
+                rows = rows,
+                paper = paper(),
+                practiceHistory = listOf(
+                    com.mcqapp.domain.PracticeTrendPoint(2, 800, asked = 5, correct = 1)
+                )
+            )
+        )
+        assertNull("a mock never reads the practice line", mock.practiceTrend)
+    }
+
+    @Test
+    fun practiceActionsFollowThePracticeRules() {
+        val rows = listOf(
+            row("t1", correct = true, dwell = 10, title = "Polity", current = "c1"),
+            row("t2", correct = false, dwell = 10, title = "Polity", current = "c1"),
+            row("t3", correct = false, dwell = 10, title = "Polity", current = "c1"),
+            row("t4", correct = false, dwell = 10, title = "Polity", current = "c1")
+        )
+        val report = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(
+                    testType = "WEAKEST_TOPICS",
+                    total = 20,
+                    requested = 20,
+                    correct = 1,
+                    wrong = 3,
+                    skipped = 0,
+                    score = 1.0,
+                    maxScore = 20.0,
+                    targetTopicIds = "c1"
+                ),
+                rows = rows,
+                paper = paper(),
+                targetTopicIds = listOf("c1"),
+                evidence = com.mcqapp.domain.ReportEvidence(
+                    targetSizes = mapOf("c1" to 20),
+                    targetTitles = mapOf("c1" to "Polity")
+                ),
+                practiceHistory = listOf(
+                    com.mcqapp.domain.PracticeTrendPoint(2, 800, asked = 5, correct = 1)
+                )
+            )
+        )
+        val rules = report.actions.map { it.rule }
+        assertTrue(
+            "a weak target set repeats the focus",
+            rules.any { it is com.mcqapp.domain.RecommendedAction.Rule.RepeatPractice }
+        )
+        assertTrue(
+            "open mistakes get their own practice",
+            rules.any { it is com.mcqapp.domain.RecommendedAction.Rule.PractiseMistakes }
+        )
+        assertTrue(
+            "an improved practice target asks for a random control",
+            rules.any { it is com.mcqapp.domain.RecommendedAction.Rule.CheckTransfer }
+        )
+        assertTrue(
+            "half-uncovered targets continue the focus set",
+            rules.any { it is com.mcqapp.domain.RecommendedAction.Rule.ContinueFocus }
+        )
+        assertTrue(report.actions.size <= 5)
+    }
+
+    @Test
+    fun anAtRiskPracticeRecommendsStudyWhenQuestionsAreStillDue() {
+        val rows = listOf(
+            row("t1", correct = true, dwell = 10, title = "Polity", current = "c1"),
+            row("t2", correct = true, dwell = 10, title = "Polity", current = "c1")
+        )
+        val report = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(
+                    testType = "AT_RISK",
+                    total = 20,
+                    requested = 20,
+                    correct = 2,
+                    wrong = 0,
+                    skipped = 0,
+                    score = 2.0,
+                    maxScore = 20.0,
+                    targetTopicIds = "c1"
+                ),
+                rows = rows,
+                paper = paper(),
+                targetTopicIds = listOf("c1"),
+                evidence = com.mcqapp.domain.ReportEvidence(
+                    cards = mapOf(
+                        "t1" to reportCard("t1", difficulty = 6.0, valid = true, dueAt = 500),
+                        "t2" to reportCard("t2", difficulty = 6.0, valid = true, dueAt = 500)
+                    ),
+                    targetSizes = mapOf("c1" to 20),
+                    targetTitles = mapOf("c1" to "Polity"),
+                    now = 1_000
+                )
+            )
+        )
+        val due = report.actions.firstOrNull {
+            it.rule is com.mcqapp.domain.RecommendedAction.Rule.ReviewDue
+        }
+        assertNotNull("expected the due-in-Study rule", due)
+        assertEquals(
+            2,
+            (due!!.rule as com.mcqapp.domain.RecommendedAction.Rule.ReviewDue).due
+        )
+        assertEquals(com.mcqapp.domain.RecommendedAction.Kind.STUDY, due.kind)
     }
 
     private fun reportCard(

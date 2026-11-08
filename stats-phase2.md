@@ -1,10 +1,11 @@
 # Phase 2 implementation plan: study-informed focus types and evidence
 
 Status: **shipped on `feature/phase2-stats`, PR #51**. Branch cut from `main`
-at `991484f` (the merge of PR #50). Slices 1–6 below are implemented in that
-one PR; slice 7 (Tricky, At-risk, Unseen, Balanced, Mixed) stays deferred. The
-setup-sheet composition preview/target display and the session practice badge
-are also deferred (see §8). Phase 1 is merged and released through the normal
+at `991484f` (the merge of PR #50). Slices 1–7 below are implemented in that
+one PR: every practice selector including Tricky, At-risk, Unseen, Balanced
+and Mixed, the setup-sheet composition preview/target display and the session
+practice badge. Only the custom types (Bookmarked, Tag, Authored difficulty,
+Slowest) remain for phase 3. Phase 1 is merged and released through the normal
 PR flow.
 
 This document is the working plan for the phase-2 items in
@@ -27,8 +28,9 @@ Phase 2 answers two questions the phase-1 report cannot:
 
 Exit criteria:
 
-- The setup sheet offers Random, Weakest topics, Toughest questions, Easiest
-  questions and Mistakes; every other `TestType` remains unselectable.
+- The setup sheet offers Random, Balanced, Mistakes and the seven focus types
+  (Weakest topics, Toughest questions, Easiest questions, Tricky, At risk,
+  Unseen, Mixed); the custom `TestType`s remain unselectable.
 - A focus attempt records its type, targets and composition, and resumes with
   the same ids without re-ranking.
 - A practice result never claims mock comparability and never enters the mock
@@ -90,7 +92,7 @@ are now written by the focus selectors; a legacy attempt still reads empty.
 
 Slices 1–6 ship together in PR #51 on `feature/phase2-stats` (the owner asked
 for the whole phase in one PR, so the slice split below is a review map rather
-than a branch plan). Slice 7 stays deferred.
+than a branch plan). Slices 1–7 are all done.
 
 ### Slice 1 — signals foundation (pure domain) — **Done**
 
@@ -114,16 +116,15 @@ components, toughness/ease composites, category weakness and ranking helpers.
 - Record `targetTopicIds` and `compositionJson` for the new types.
 - Robolectric tests for the new queries; CI-only.
 
-### Slice 3 — setup sheet and labels — **Partly done**
+### Slice 3 — setup sheet and labels — **Done**
 
-Done: the sheet offers the five startable types (Random, Weakest topics,
-Toughest questions, Easiest questions, Mistakes) with a one-line help note,
-and the report/History labels already know every family and type.
+Shipped: all ten startable types with a one-line help note, the per-type pool
+count, the breadth control for Weakest/Mixed, the live composition preview,
+the chosen-target list with observed accuracy, and the session-header practice
+badge. The report/History labels already know every family and type.
 
-Deferred: the per-type pool-size card, the live composition preview, the
-chosen-target list with observed accuracy, and the session-header practice
-badge. Those are display-only; the selector still records the truth on the
-attempt.
+The preview is display-only; the selector still records the truth on the
+attempt, so a preview race cannot change what runs.
 
 The original slice plan (kept for reference):
 
@@ -167,12 +168,12 @@ The original slice plan (kept for reference):
   Overview charts, because the family split is a different question from the
   SRS overview.
 
-### Slice 7 (deferred) — remaining selectors
+### Slice 7 — remaining selectors — **Done**
 
-Tricky, At-risk, Unseen, Balanced, Mixed, custom types. Not implemented.
-Each needs its own definition, query and label, and stays out of the setup
-sheet until then; `TestSetup.isStartableType` keeps only the five shipped
-types startable.
+Tricky, At-risk, Unseen, Balanced and Mixed are implemented in
+`TestSelector`, startable from the sheet and labelled in the session, report
+and History. Custom types (Bookmarked, Tag, Authored difficulty, Slowest)
+stay deferred to phase 3: exact tag filtering needs a `question_tags` table.
 
 ## 5. Domain design
 
@@ -381,13 +382,11 @@ Notes:
 
 ### Setup sheet
 
-Shipped: the five startable type chips with a one-line help note, and the
-existing scope/length/time controls.
-
-Deferred: type cards that show the current pool size and the family, the live
-composition preview, and the chosen-target list with observed accuracy. If
-the learner changes breadth, nothing previews before Start yet; the selector
-still records the real composition on the attempt.
+Shipped: all ten startable type chips with a one-line help note, the existing
+scope/length/time controls, the per-type pool count, a breadth control for
+Weakest/Mixed, the live composition preview and the chosen-target list with
+observed accuracy. Changing type, length or breadth re-reads the preview; the
+selector still records the real composition on the attempt.
 
 - The sheet must not offer a type whose pool is empty; the existing Start
   validation and sampler pre-check remain the final gate.
@@ -429,7 +428,7 @@ still records the real composition on the attempt.
   minimum one, 40% cap and relaxation, fill ladder, Mistakes standing rule,
   Weakest targets recorded even when a target is missed, Easiest exclusion.
 - `TestSetupTest`: the new types resolve, clamp and refuse exactly like the
-  existing ones; the startable set is exactly the five shipped types.
+  existing ones; the startable set is exactly the ten shipped types.
 - `TestReportBuilderTest`: memory quadrants with valid, stale and missing
   card state; coverage counts engaged rows only; mistakes added/cleared;
   due-in-Study; lifetime accuracy source; trend comparability; bootstrap
@@ -437,8 +436,10 @@ still records the real composition on the attempt.
 - `TestProgressTest` / `TrendsTest`: families stay separate, practice runs
   are newest-first, a Fresh sample keeps its own line and a legacy attempt
   gets none.
-- `RecommendationEngineTest`: each new rule fires only on its evidence; no
-  practice action claims mock comparability; short/legacy suppress
+- `RecommendationEngineTest` / `TestReportBuilderTest`: each new rule fires
+  only on its evidence; no practice action claims mock comparability; the
+  practice trend needs two same-target runs and never feeds the mock line;
+  the review tags use the error-mix thresholds; short/legacy suppress
   statistical actions.
 - `TestSnapshotTest` / `TestPlanTest`: focus metadata round-trips and a
   resumed focus session keeps its ids.
@@ -446,14 +447,14 @@ still records the real composition on the attempt.
 ### Robolectric / SQLite (CI x86_64 only)
 
 - New DAO queries return the expected counts and order, including chunked
-  scopes and empty scopes. **Deferred:** no dedicated test was added in this
-  PR; the pure selector/evidence rules are covered locally and CI compiles
-  the queries.
+  scopes and empty scopes. **Done (core reads):** `SignalQueryTest` pins the
+  due/unseen signal read and the same-target practice history.
 - `getLatestStandings`-style prior standings match `finishedAt DESC, id DESC`.
   **Deferred** for the new chunked query; the pure standing rule is tested.
 - A focus attempt writes `targetTopicIds` and `compositionJson`; a resumed
-  attempt does not re-rank. **Deferred** for a database-level test; the
-  round-trip is covered by `TestPlanTest`/`TestSnapshotTest`.
+  attempt does not re-rank. The round-trip is covered by
+  `TestPlanTest`/`TestSnapshotTest`; `SignalQueryTest` also seeds two focus
+  attempts and asserts the recorded targets drive the practice history.
 - Deleting an attempt recomputes the affected `question_stats` rows; a
   practice attempt never moves `rep*`.
 - Report queries match the header: score, counts, categories, dwell median,
@@ -501,7 +502,8 @@ still records the real composition on the attempt.
    codec, unknown fields ignored. Do not put prose in the database.
 10. **Tricky/At-risk/Unseen timing.** Recommendation: defer to a separate
     phase-2 follow-up after the first five types are stable; they need
-    different evidence and labels.
+    different evidence and labels. **Landed** with Balanced and Mixed in slice
+    7.
 
 ## 11. Risks and mitigations
 
@@ -524,11 +526,13 @@ still records the real composition on the attempt.
 ## 12. Shipped order
 
 1. Slice 1 + 2: signals, selector, queries, tests; no UI. **Done.**
-2. Slice 3: setup type chips; pool cards and preview still deferred.
+2. Slice 3: setup type chips, pool count, composition preview and session
+   practice badge. **Done.**
 3. Slice 4: report evidence. **Done.**
 4. Slice 5: trend, bootstrap and practice headline. **Done.**
 5. Slice 6: Statistics families and practice progress. **Done.**
-6. Slice 7: remaining selectors, still deferred.
+6. Slice 7: Tricky, At-risk, Unseen, Balanced, Mixed and the remaining
+   report/Statistics views. **Done.**
 
 `stats.md` §11.15/§13 and the README are updated with this PR. A deferred item
 stays marked deferred until its code and tests land.

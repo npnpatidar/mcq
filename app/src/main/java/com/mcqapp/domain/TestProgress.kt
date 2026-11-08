@@ -39,9 +39,24 @@ data class PracticeRun(
  * counters (stats.md §13 phase 2). [leeches], [atRisk] and [unseen] describe
  * the current scope, not one attempt.
  */
+/**
+ * One practiced topic's accuracy across the recent practice runs, weakest
+ * first (stats.md §13 phase 2). It aggregates the recorded targets, so the
+ * number is about the questions practice actually asked.
+ */
+data class PracticeTopicAccuracy(
+    val categoryId: String,
+    val title: String,
+    val asked: Int,
+    val correct: Int
+) {
+    val accuracy: Double get() = if (asked > 0) correct.toDouble() / asked else 0.0
+}
+
 data class TestProgressData(
     val families: List<FamilySummary> = emptyList(),
     val practiceRuns: List<PracticeRun> = emptyList(),
+    val practiceTopics: List<PracticeTopicAccuracy> = emptyList(),
     val leeches: Int = 0,
     val atRisk: Int = 0,
     val unseen: Int = 0,
@@ -80,4 +95,33 @@ object TestProgress {
             }
             .sortedByDescending { it.finishedAt }
             .take(limit)
+
+    /**
+     * The practiced topics' accuracy over [reports], weakest first. A target
+     * with no asked question adds nothing; the limit keeps the card to the
+     * few topics worth acting on.
+     */
+    fun practiceTopics(
+        reports: List<TestReport>,
+        limit: Int = 5
+    ): List<PracticeTopicAccuracy> {
+        val totals = mutableMapOf<String, PracticeTopicAccuracy>()
+        for (report in reports) {
+            val practice = report.practice ?: continue
+            if (practice.withoutTargets) continue
+            for (target in practice.targets) {
+                if (target.asked <= 0) continue
+                val earlier = totals[target.categoryId]
+                totals[target.categoryId] = PracticeTopicAccuracy(
+                    categoryId = target.categoryId,
+                    title = target.title,
+                    asked = (earlier?.asked ?: 0) + target.asked,
+                    correct = (earlier?.correct ?: 0) + target.correct
+                )
+            }
+        }
+        return totals.values
+            .sortedWith(compareBy({ it.accuracy }, { -it.asked }))
+            .take(limit)
+    }
 }

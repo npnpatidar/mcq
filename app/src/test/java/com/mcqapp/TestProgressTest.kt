@@ -21,7 +21,8 @@ class TestProgressTest {
         finishedAt: Long,
         total: Int = 20,
         requested: Int = 20,
-        exclusion: String = ExclusionMode.NONE.name
+        exclusion: String = ExclusionMode.NONE.name,
+        targetTopicIds: String = ""
     ) = Attempt(
         id = id,
         paperId = "p1",
@@ -39,7 +40,9 @@ class TestProgressTest {
         scopeKey = ScopeKey.wholePaper("p1"),
         samplingVersion = TestPlan.SAMPLING_VERSION,
         exclusionMode = exclusion,
-        targetTopicIds = if (type == TestType.WEAKEST_TOPICS.name) "c1,c2" else ""
+        targetTopicIds = targetTopicIds.ifEmpty {
+            if (type == TestType.WEAKEST_TOPICS.name) "c1,c2" else ""
+        }
     )
 
     @Test
@@ -70,6 +73,67 @@ class TestProgressTest {
         )
         val runs = TestProgress.practiceRuns(attempts, limit = 2)
         assertEquals(listOf(5L, 3L), runs.map { it.id })
+    }
+
+    @Test
+    fun practiceTopicsAggregateTheRecordedTargetsWeakestFirst() {
+        fun report(
+            id: Long,
+            rows: List<com.mcqapp.domain.ReportRow>
+        ) = com.mcqapp.domain.TestReportBuilder.build(
+            com.mcqapp.domain.TestReportInput(
+                attempt = attempt(
+                    id = id,
+                    type = TestType.WEAKEST_TOPICS.name,
+                    score = 1.0,
+                    finishedAt = id * 100,
+                    targetTopicIds = "c1,c2"
+                ),
+                rows = rows,
+                targetTopicIds = listOf("c1", "c2"),
+                evidence = com.mcqapp.domain.ReportEvidence(
+                    targetSizes = mapOf("c1" to 20, "c2" to 20),
+                    targetTitles = mapOf("c1" to "Polity", "c2" to "Economy")
+                )
+            )
+        )
+        fun r(id: String, category: String, correct: Boolean) = com.mcqapp.domain.ReportRow(
+            questionId = id,
+            categoryTitle = category,
+            currentCategoryId = if (category == "Polity") "c1" else "c2",
+            dwellSeconds = 10,
+            isCorrect = correct,
+            graded = true,
+            answered = true
+        )
+        val reports = listOf(
+            report(
+                1,
+                listOf(
+                    r("a", "Polity", true),
+                    r("b", "Polity", false),
+                    r("c", "Polity", false),
+                    r("d", "Polity", false),
+                    r("e", "Economy", true),
+                    r("f", "Economy", true),
+                    r("g", "Economy", true),
+                    r("h", "Economy", false)
+                )
+            ),
+            report(
+                2,
+                listOf(
+                    r("i", "Polity", false),
+                    r("j", "Polity", false)
+                )
+            )
+        )
+        val topics = com.mcqapp.domain.TestProgress.practiceTopics(reports)
+        assertEquals(listOf("c1", "c2"), topics.map { it.categoryId })
+        assertEquals(6, topics[0].asked)
+        assertEquals(1, topics[0].correct)
+        assertEquals(4, topics[1].asked)
+        assertEquals(3, topics[1].correct)
     }
 
     @Test

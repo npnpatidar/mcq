@@ -134,7 +134,9 @@ class TestViewModel(
     /** The plan's requested length; 0 for a legacy link. */
     private val routeRequestedCount: Int = 0,
     /** The route's exclusion rule name; blank means [ExclusionMode.NONE]. */
-    private val routeExclusionMode: String = ""
+    private val routeExclusionMode: String = "",
+    /** The Weakest/Mixed breadth name; blank means the medium default. */
+    private val routeBreadth: String = ""
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
@@ -349,14 +351,17 @@ class TestViewModel(
                 // freeze the chosen ids. The plan records the targets and the
                 // fill composition, and a resume replays these ids instead of
                 // re-ranking after the metrics move.
-                val focusSelection = if (effectivePlan?.type?.isFocus == true) {
+                val focusSelection = if (effectivePlan?.type?.usesSignalSelector == true) {
                     val signals = repository.getQuestionSignals(paperId, scopeIds)
                     val pool = if (recentIds.isEmpty()) {
                         signals
                     } else {
                         signals.filterNot { it.questionId in recentIds }
                     }
-                    TestSelector.select(effectivePlan, pool, Breadth.MEDIUM)
+                    val breadth = Breadth.entries
+                        .firstOrNull { it.name == routeBreadth }
+                        ?: Breadth.MEDIUM
+                    TestSelector.select(effectivePlan, pool, breadth)
                 } else {
                     null
                 }

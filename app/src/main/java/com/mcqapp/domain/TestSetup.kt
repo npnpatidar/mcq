@@ -158,10 +158,15 @@ data class TestSetup(
          */
         val STARTABLE_TYPES: List<TestType> = listOf(
             TestType.RANDOM,
+            TestType.BALANCED,
             TestType.MISTAKES,
             TestType.WEAKEST_TOPICS,
             TestType.TOUGHEST_QUESTIONS,
-            TestType.EASIEST_QUESTIONS
+            TestType.EASIEST_QUESTIONS,
+            TestType.TRICKY,
+            TestType.AT_RISK,
+            TestType.UNSEEN,
+            TestType.MIXED
         )
 
         /** Whether [type] can be started. */

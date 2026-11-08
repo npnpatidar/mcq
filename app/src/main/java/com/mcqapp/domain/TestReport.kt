@@ -55,7 +55,12 @@ data class TestReportInput(
     val comparableAttempts: List<Attempt> = emptyList(),
     val targetTopicIds: List<String> = emptyList(),
     /** Phase-2 evidence; the defaults are what a legacy/absent read yields. */
-    val evidence: ReportEvidence = ReportEvidence()
+    val evidence: ReportEvidence = ReportEvidence(),
+    /**
+     * Earlier practice runs on the same recorded target set, oldest first.
+     * Display-only for the practice trend; never read by a mock's trend.
+     */
+    val practiceHistory: List<PracticeTrendPoint> = emptyList()
 )
 
 /** The headline numbers, with both denominators the report shows (section 11.4). */
@@ -177,6 +182,25 @@ data class RecommendedAction(
             val canReachFifty: Boolean
         ) : Rule
 
+        /** A practice target set is still weak, so repeat the same focus. */
+        data class RepeatPractice(
+            val correct: Int,
+            val asked: Int,
+            val accuracy: Double
+        ) : Rule
+
+        /** Mistakes recorded in this practice run are still open. */
+        data class PractiseMistakes(val remaining: Int) : Rule
+
+        /** A practice target improved; a random mock is the transfer check. */
+        data class CheckTransfer(val practiceDeltaPoints: Double) : Rule
+
+        /** The recorded target pool is not half covered yet. */
+        data class ContinueFocus(val remaining: Int, val covered: Int, val pool: Int) : Rule
+
+        /** An At-risk run asked questions that are still due in Study. */
+        data class ReviewDue(val due: Int) : Rule
+
         data object KeepGoing : Rule
     }
 }
@@ -219,6 +243,10 @@ data class TestReport(
     val practice: PracticeEvidence? = null,
     /** The comparable trend, or null when the family gets none. */
     val trend: TrendEvidence? = null,
+    /** Per-question review evidence, keyed by question id; empty on a legacy read. */
+    val reviews: Map<String, QuestionReview> = emptyMap(),
+    /** The practice per-target trend, or null for a mock/legacy/short run. */
+    val practiceTrend: PracticeTrend? = null,
     /** The bootstrap score interval, when negative marking makes it meaningful. */
     val interval: ScoreInterval? = null
 )
@@ -279,6 +307,14 @@ object TestReportBuilder {
         val lifetime = lifetimeOf(input.rows, evidence, family)
         val practice = practiceOf(input, type, score)
         val trend = trendOf(attempt, input.comparableAttempts, scopeSize, family, score)
+        val practiceTrend = practiceTrendOf(input, family, type, practice)
+        val reviews = reviewsOf(
+            input.rows,
+            timing,
+            evidence,
+            input.targetTopicIds,
+            family
+        )
 
         val report = TestReport(
             attempt = attempt,
@@ -315,6 +351,8 @@ object TestReportBuilder {
             lifetime = lifetime,
             practice = practice,
             trend = trend,
+            reviews = reviews,
+            practiceTrend = practiceTrend,
             interval = bootstrapOf(attempt, input.rows)
         )
         return report.copy(actions = RecommendationEngine.recommend(report))
@@ -489,6 +527,100 @@ object TestReportBuilder {
             overallAsked = score.answered,
             withoutTargets = false
         )
+    }
+
+    /**
+     * The practice target trend (section 11.5): prior runs on the same recorded
+     * target set plus this one. A practice run is selected on the dependent
+     * variable, so it never enters the mock line; a single point is no line.
+     */
+    fun practiceTrendOf(
+        input: TestReportInput,
+        family: ReportFamily,
+        type: TestType?,
+        practice: PracticeEvidence?
+    ): PracticeTrend? {
+        if (family != ReportFamily.PRACTICE) return null
+        if (type == null || type.isRepresentative) return null
+        if (input.targetTopicIds.isEmpty()) return null
+        if (practice == null || practice.targetedAsked <= 0) return null
+        if (input.practiceHistory.isEmpty()) return null
+        val current = PracticeTrendPoint(
+            attemptId = input.attempt.id,
+            finishedAt = input.attempt.finishedAt,
+            asked = practice.targetedAsked,
+            correct = practice.targetedCorrect
+        )
+        val points = (input.practiceHistory + current)
+            .filter { it.asked > 0 }
+            .sortedBy { it.finishedAt }
+            .takeLast(TREND_POINTS)
+        if (points.size < 2) return null
+        return PracticeTrend(points)
+    }
+
+    /**
+     * The per-question "why this matters" tag and Study badge (section
+     * 11.12). The thresholds are the same ones the error mix uses, so the card
+     * cannot call a question rushed while the mix counts it as a knowledge gap.
+     * Every row gets an entry: the report only exists after the card table was
+     * read for these rows, so a missing card is "no Study history", not
+     * "unknown".
+     */
+    fun reviewsOf(
+        rows: List<ReportRow>,
+        timing: TimingSummary,
+        evidence: ReportEvidence,
+        targetTopicIds: List<String>,
+        family: ReportFamily
+    ): Map<String, QuestionReview> {
+        if (rows.isEmpty()) return emptyMap()
+        val targetSet = targetTopicIds.toHashSet()
+        val targetTitles = evidence.targetTitles
+            .filterKeys { it in targetSet }
+            .values
+            .toHashSet()
+        val median = timing.medianSeconds.toDouble()
+        val small = timing.smallSample
+        val rushedBelow = if (small) 5.0 else maxOf(5.0, median * 0.25)
+        val result = mutableMapOf<String, QuestionReview>()
+        for (row in rows) {
+            val card = evidence.cards[row.questionId]
+            val stale = card != null && !card.contentHashMatches
+            val newCard = card != null && !stale && card.cardState == CardStateKind.NEW
+            val valid = card?.hasValidMemory == true
+            val dueNow = valid && evidence.now > 0L && card != null && card.dueAt <= evidence.now
+            val tag = when {
+                !row.graded -> ReviewTag.UNGRADED
+                !row.answered -> ReviewTag.SKIPPED
+                !row.isCorrect ->
+                    if (row.dwellSeconds > 0 && row.dwellSeconds < rushedBelow) {
+                        ReviewTag.RUSHED
+                    } else {
+                        ReviewTag.KNOWLEDGE_GAP
+                    }
+                row.dwellSeconds in 1L until POSSIBLE_GUESS_BELOW ->
+                    ReviewTag.POSSIBLE_GUESS
+                valid && (card!!.difficulty >= HARD_DIFFICULTY ||
+                    (card.retention != null && card.retention < FRAGILE_RETENTION)) ->
+                    ReviewTag.FRAGILE_CORRECT
+                else -> ReviewTag.SOLID_CORRECT
+            }
+            result[row.questionId] = QuestionReview(
+                tag = tag,
+                inStudy = valid,
+                dueNow = dueNow,
+                leech = valid && card != null && card.leech,
+                difficulty = if (valid) card?.difficulty else null,
+                retention = if (valid) card?.retention else null,
+                targeted = family == ReportFamily.PRACTICE &&
+                    (row.currentCategoryId in targetSet ||
+                        (row.currentCategoryId == null && row.categoryTitle in targetTitles)),
+                staleCard = stale,
+                newCard = newCard
+            )
+        }
+        return result
     }
 
     /**
@@ -756,6 +888,9 @@ object TestReportBuilder {
     /** A correct answer under three seconds is a *possible* guess. */
     const val POSSIBLE_GUESS_BELOW: Long = 3
 
+    /** Predicted recall below this makes a correct answer fragile. */
+    const val FRAGILE_RETENTION: Double = 0.7
+
     private const val SLOWEST_COUNT = 3
 
     /** A single 20-question point is not a trend; 50 shown is the bar (section 11.5). */
@@ -826,13 +961,105 @@ object RecommendationEngine {
         }
     }
 
+    /**
+     * The practice rules (section 11.11). A practice run never recommends a
+     * mock trend as proof of progress; improvement is checked with a random
+     * control instead, because a practice gain can be regression to the mean.
+     */
     private fun practiceActions(report: TestReport): List<RecommendedAction> = buildList {
         if (report.score.wrong >= 3) reviewWrong(report)?.let { add(it) }
         studyWeakest(report)?.let { add(it) }
+        val practice = report.practice
+        val targets = practice?.targets?.map { it.categoryId }.orEmpty()
+        val scope = report.attempt.scopeCategoryIds.split(",").filter { it.isNotBlank() }
+        val focusType = report.type ?: TestType.MIXED
+        val focusCount = if (report.requestedCount > 0) {
+            report.requestedCount
+        } else {
+            TestPlan.DEFAULT_LENGTH
+        }
+        if (practice != null && !practice.withoutTargets && practice.targetedAsked > 0 &&
+            practice.targetedAccuracy < WEAK_TARGET_ACCURACY
+        ) {
+            add(
+                RecommendedAction(
+                    rule = RecommendedAction.Rule.RepeatPractice(
+                        correct = practice.targetedCorrect,
+                        asked = practice.targetedAsked,
+                        accuracy = practice.targetedAccuracy
+                    ),
+                    kind = RecommendedAction.Kind.TEST,
+                    testType = focusType,
+                    testCount = focusCount,
+                    categoryIds = targets
+                )
+            )
+        }
+        report.mistakes?.let { mistakes ->
+            if (mistakes.remaining > 0) {
+                add(
+                    RecommendedAction(
+                        rule = RecommendedAction.Rule.PractiseMistakes(mistakes.remaining),
+                        kind = RecommendedAction.Kind.TEST,
+                        testType = TestType.MISTAKES,
+                        testCount = focusCount,
+                        categoryIds = scope
+                    )
+                )
+            }
+        }
+        val delta = report.practiceTrend?.deltaPoints
+        if (delta != null && delta > 0) {
+            add(
+                RecommendedAction(
+                    rule = RecommendedAction.Rule.CheckTransfer(delta),
+                    kind = RecommendedAction.Kind.TEST,
+                    testType = TestType.RANDOM,
+                    testCount = TestPlan.DEFAULT_LENGTH,
+                    categoryIds = scope
+                )
+            )
+        }
+        if (practice != null && !practice.withoutTargets && practice.coverage < HALF_COVERAGE) {
+            val remaining = practice.targetedPool - practice.targetedAsked
+            if (remaining > 0) {
+                add(
+                    RecommendedAction(
+                        rule = RecommendedAction.Rule.ContinueFocus(
+                            remaining = remaining,
+                            covered = practice.targetedAsked,
+                            pool = practice.targetedPool
+                        ),
+                        kind = RecommendedAction.Kind.TEST,
+                        testType = focusType,
+                        testCount = focusCount,
+                        categoryIds = targets
+                    )
+                )
+            }
+        }
+        if (report.type == TestType.AT_RISK) {
+            val due = report.memory?.dueNow ?: 0
+            if (due > 0) {
+                add(
+                    RecommendedAction(
+                        rule = RecommendedAction.Rule.ReviewDue(due),
+                        kind = RecommendedAction.Kind.STUDY,
+                        categoryIds = targets.ifEmpty { scope }
+                    )
+                )
+            }
+        }
         if (isEmpty() && report.score.wrong > 0) {
             reviewWrong(report)?.let { add(it) }
         }
     }
+
+    /** Below half, the recorded targets are still the practice headline. */
+    private const val WEAK_TARGET_ACCURACY: Double = 0.5
+
+    /** Below half, continue the focus set rather than claiming coverage. */
+    private const val HALF_COVERAGE: Double = 0.5
 
     private fun reviewWrong(report: TestReport): RecommendedAction? {
         if (report.score.wrong <= 0) return null

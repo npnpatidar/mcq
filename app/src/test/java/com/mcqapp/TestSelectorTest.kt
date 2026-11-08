@@ -36,7 +36,18 @@ class TestSelectorTest {
         wrong: Int = 0,
         authored: Difficulty? = null,
         leech: Boolean = false,
-        dueAt: Long = 0L
+        dueAt: Long = 0L,
+        card: CardSignal? = CardSignal(
+            difficulty = 5.0,
+            stability = 10.0,
+            reviewCount = 5,
+            lapses = 0,
+            leech = leech,
+            dueAt = dueAt,
+            lastReviewedAt = 1L,
+            contentHashMatches = true,
+            state = CardStateKind.REVIEW
+        )
     ): Signals = QuestionSignals.of(
         QuestionSignalInput(
             questionId = id,
@@ -45,17 +56,7 @@ class TestSelectorTest {
             authoredDifficulty = authored,
             correct = correct,
             wrong = wrong,
-            card = CardSignal(
-                difficulty = 5.0,
-                stability = 10.0,
-                reviewCount = 5,
-                lapses = 0,
-                leech = leech,
-                dueAt = dueAt,
-                lastReviewedAt = 1L,
-                contentHashMatches = true,
-                state = CardStateKind.REVIEW
-            ),
+            card = card,
             retention = 0.9
         ),
         now = 1_000L
@@ -193,6 +194,106 @@ class TestSelectorTest {
         val signals = listOf(signal("q1", "c"))
         assertNull(TestSelector.select(plan(TestType.RANDOM, 20), signals))
         assertNull(TestSelector.select(plan(TestType.MISTAKES, 20), signals))
+    }
+
+    @Test
+    fun trickyRanksLeechesAheadOfOrdinaryQuestions() {
+        val signals = buildList {
+            repeat(4) { add(signal("leech$it", "a", leech = true)) }
+            repeat(6) { add(signal("plain$it", "b")) }
+        }
+        val selection = TestSelector.select(plan(TestType.TRICKY, 4), signals)!!
+        assertEquals(4, selection.ids.size)
+        // The 40% per-category cap gives the leech category two of four
+        // places; the other two go to the next-ranked category.
+        assertEquals(
+            "ids=${selection.ids} segments=${selection.composition.segments}",
+            2,
+            selection.ids.count { it.startsWith("leech") }
+        )
+        assertEquals(FillSource.TRICKY.name, selection.composition.segments.first().source)
+        assertEquals(4, selection.composition.segments.first().count)
+        assertEquals(4, selection.composition.segments.sumOf { it.count })
+    }
+
+    @Test
+    fun atRiskTakesOnlyDueCardsAndFillsFromTheLadder() {
+        val signals = buildList {
+            repeat(2) { add(signal("due$it", "a", dueAt = 500L)) }
+            repeat(4) { add(signal("later$it", "b", dueAt = 5_000L)) }
+        }
+        val selection = TestSelector.select(plan(TestType.AT_RISK, 4), signals)!!
+        assertEquals(4, selection.ids.size)
+        assertEquals(2, selection.ids.count { it.startsWith("due") })
+        assertEquals(FillSource.AT_RISK.name, selection.composition.segments.first().source)
+        assertEquals(2, TestSelector.poolSize(TestType.AT_RISK, signals))
+    }
+
+    @Test
+    fun unseenTakesQuestionsWithoutACardAndFillsRecentlyReviewed() {
+        val signals = buildList {
+            repeat(3) { add(signal("new$it", "a", card = null)) }
+            repeat(3) { add(signal("known$it", "b")) }
+        }
+        val selection = TestSelector.select(plan(TestType.UNSEEN, 3), signals)!!
+        assertEquals(3, selection.ids.size)
+        assertTrue(selection.ids.all { it.startsWith("new") })
+        assertEquals(FillSource.UNSEEN.name, selection.composition.segments.first().source)
+        assertEquals(3, TestSelector.poolSize(TestType.UNSEEN, signals))
+    }
+
+    @Test
+    fun balancedAllocatesProportionallyAndRecordsNoTargets() {
+        val signals = buildList {
+            repeat(30) { add(signal("a$it", "a")) }
+            repeat(10) { add(signal("b$it", "b")) }
+        }
+        val selection = TestSelector.select(plan(TestType.BALANCED, 20), signals)!!
+        assertEquals(20, selection.ids.size)
+        assertEquals(15, selection.ids.count { it.startsWith("a") })
+        assertEquals(5, selection.ids.count { it.startsWith("b") })
+        assertTrue(selection.targets.isEmpty())
+        assertEquals(
+            FillSource.BALANCED.name,
+            selection.composition.segments.first().source
+        )
+        assertEquals(20, selection.composition.segments.first().count)
+    }
+
+    @Test
+    fun mixedBlendsThePartsAndKeepsTheWeakestTargets() {
+        val signals = buildList {
+            repeat(10) { add(signal("weak$it", "a", correct = 0, wrong = 5)) }
+            repeat(10) { add(signal("strong$it", "b", correct = 5)) }
+            add(signal("due", "c", dueAt = 500L))
+        }
+        val selection = TestSelector.select(plan(TestType.MIXED, 10), signals)!!
+        assertEquals(10, selection.ids.size)
+        assertEquals(10, selection.ids.distinct().size)
+        assertTrue("the weakest topic is a target", "a" in selection.targets)
+        assertTrue("breadth caps the target list", selection.targets.size <= 3)
+        val sources = selection.composition.segments.map { it.source }
+        assertTrue(FillSource.WEAKEST_TOPICS.name in sources)
+        assertTrue(FillSource.TRICKY.name in sources)
+        assertEquals(10, selection.composition.segments.sumOf { it.count })
+    }
+
+    @Test
+    fun previewReportsThePoolCompositionAndTargetAccuracy() {
+        val signals = buildList {
+            repeat(10) { add(signal("weak$it", "a", title = "Algebra", correct = 0, wrong = 5)) }
+            repeat(10) { add(signal("strong$it", "b", correct = 5)) }
+        }
+        val preview = TestSelector.preview(
+            plan(TestType.WEAKEST_TOPICS, 10),
+            signals,
+            Breadth.NARROW
+        )
+        assertEquals(20, preview.pool)
+        assertEquals(10, preview.composition.segments.sumOf { it.count })
+        assertEquals("Algebra", preview.targets.single().title)
+        assertEquals(50, preview.targets.single().asked)
+        assertEquals(0, preview.targets.single().correct)
     }
 
     @Test

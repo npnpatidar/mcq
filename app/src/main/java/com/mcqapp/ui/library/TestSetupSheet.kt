@@ -31,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -45,6 +46,10 @@ import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestTime
 import com.mcqapp.domain.TestType
+import com.mcqapp.domain.signals.Breadth
+import com.mcqapp.domain.signals.Composition
+import com.mcqapp.domain.signals.SelectionPreview
+import com.mcqapp.ui.common.testTypeLabelRes
 import kotlin.math.roundToInt
 
 /**
@@ -53,8 +58,9 @@ import kotlin.math.roundToInt
  *
  * It replaces the duration-only picker, which could only ever start a
  * full-paper legacy session. Everything the sheet offers is a **bounded** plan
- * the session accepts: only Random and Mistakes are startable in phase 1, the
- * length is 20..150 in steps of ten, and the exclusion rule is always NONE.
+ * the session accepts: Random, Balanced, Mistakes and the seven focus types in
+ * [TestSetup.STARTABLE_TYPES], a length of 20..150 in steps of ten, and the
+ * exclusion rule the settings choose.
  *
  * The rules live in [TestSetup] so they can be tested without a screen; this
  * file only draws them.
@@ -83,11 +89,23 @@ internal fun TestSetupSheet(
      * (section 9.6).
      */
     loadMinBlockSize: suspend (TestType, List<String>) -> Int,
+    /**
+     * The live composition preview for a signal-selected type. Display-only: a
+     * failure leaves the preview blank and Start still runs the real selector.
+     */
+    loadPreview: suspend (TestType, Int, Breadth) -> SelectionPreview,
     onDismiss: () -> Unit,
-    onStart: (type: TestType, requestedCount: Int, minutes: Int, exclusion: ExclusionMode) -> Unit
+    onStart: (
+        type: TestType,
+        requestedCount: Int,
+        minutes: Int,
+        exclusion: ExclusionMode,
+        breadth: Breadth
+    ) -> Unit
 ) {
     var type by rememberSaveable(initialType) { mutableStateOf(initialType) }
     var requestedCount by rememberSaveable { mutableIntStateOf(TestPlan.DEFAULT_LENGTH) }
+    var breadth by rememberSaveable { mutableStateOf(Breadth.MEDIUM) }
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -139,6 +157,26 @@ internal fun TestSetupSheet(
     }
     val blockLoading = minBlockSize == null
 
+    // The live preview of what the current request would select. It is a read
+    // of the same signals the session uses, so the composition the learner sees
+    // before Start is the one the attempt records.
+    var selectionPreview by remember(paper.id, expanded) {
+        mutableStateOf<SelectionPreview?>(null)
+    }
+    var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
+    LaunchedEffect(paper.id, expanded, type, requestedCount, breadth) {
+        if (!type.usesSignalSelector) {
+            selectionPreview = null
+            previewLoading = false
+            return@LaunchedEffect
+        }
+        previewLoading = true
+        selectionPreview = runCatching {
+            loadPreview(type, requestedCount, breadth)
+        }.getOrNull()
+        previewLoading = false
+    }
+
     val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
         ExclusionMode.RECENT_3
     } else {
@@ -186,31 +224,13 @@ internal fun TestSetupSheet(
             Text(stringResource(R.string.test_setup_type), style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = type == TestType.RANDOM,
-                    onClick = { type = TestType.RANDOM },
-                    label = { Text(stringResource(R.string.test_setup_type_random)) }
-                )
-                FilterChip(
-                    selected = type == TestType.MISTAKES,
-                    onClick = { type = TestType.MISTAKES },
-                    label = { Text(stringResource(R.string.test_setup_type_mistakes)) }
-                )
-                FilterChip(
-                    selected = type == TestType.WEAKEST_TOPICS,
-                    onClick = { type = TestType.WEAKEST_TOPICS },
-                    label = { Text(stringResource(R.string.test_setup_type_weakest)) }
-                )
-                FilterChip(
-                    selected = type == TestType.TOUGHEST_QUESTIONS,
-                    onClick = { type = TestType.TOUGHEST_QUESTIONS },
-                    label = { Text(stringResource(R.string.test_setup_type_toughest)) }
-                )
-                FilterChip(
-                    selected = type == TestType.EASIEST_QUESTIONS,
-                    onClick = { type = TestType.EASIEST_QUESTIONS },
-                    label = { Text(stringResource(R.string.test_setup_type_easiest)) }
-                )
+                TestSetup.STARTABLE_TYPES.forEach { candidate ->
+                    FilterChip(
+                        selected = type == candidate,
+                        onClick = { type = candidate },
+                        label = { Text(stringResource(testTypeLabelRes(candidate))) }
+                    )
+                }
             }
             Text(
                 stringResource(
@@ -219,17 +239,35 @@ internal fun TestSetupSheet(
                         TestType.WEAKEST_TOPICS -> R.string.test_setup_type_weakest_help
                         TestType.TOUGHEST_QUESTIONS -> R.string.test_setup_type_toughest_help
                         TestType.EASIEST_QUESTIONS -> R.string.test_setup_type_easiest_help
+                        TestType.BALANCED -> R.string.test_setup_type_balanced_help
+                        TestType.TRICKY -> R.string.test_setup_type_tricky_help
+                        TestType.AT_RISK -> R.string.test_setup_type_at_risk_help
+                        TestType.UNSEEN -> R.string.test_setup_type_unseen_help
+                        TestType.MIXED -> R.string.test_setup_type_mixed_help
                         else -> R.string.test_setup_type_random_help
                     }
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text(
-                stringResource(R.string.test_setup_more_types),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // Breadth only means something for the category-based practice
+            // selectors; the metric selectors have no K to choose.
+            if (type == TestType.WEAKEST_TOPICS || type == TestType.MIXED) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.test_setup_breadth),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Breadth.entries.forEach { option ->
+                        FilterChip(
+                            selected = breadth == option,
+                            onClick = { breadth = option },
+                            label = { Text(stringResource(breadthLabel(option))) }
+                        )
+                    }
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
 
@@ -248,11 +286,41 @@ internal fun TestSetupSheet(
                     type == TestType.MISTAKES -> stringResource(
                         R.string.test_setup_pool_mistakes, mistakePool ?: 0
                     )
+                    type.usesSignalSelector && selectionPreview != null -> stringResource(
+                        R.string.test_setup_pool_type, selectionPreview!!.pool
+                    )
                     else -> stringResource(R.string.test_setup_pool_questions, questionPool)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (type.usesSignalSelector) {
+                Text(
+                    if (previewLoading && selectionPreview == null) {
+                        stringResource(R.string.test_setup_preview_loading)
+                    } else {
+                        stringResource(
+                            R.string.test_setup_composition,
+                            compositionText(selectionPreview?.composition)
+                        )
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                selectionPreview?.targets.orEmpty().forEach { target ->
+                    Text(
+                        stringResource(
+                            R.string.test_setup_target_row,
+                            target.title,
+                            (target.accuracy * 100).roundToInt(),
+                            target.correct,
+                            target.asked
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
 
@@ -338,12 +406,7 @@ internal fun TestSetupSheet(
             // --- preview ---
             Text(
                 buildString {
-                    append(stringResource(
-                        when (type) {
-                            TestType.MISTAKES -> R.string.test_setup_type_mistakes
-                            else -> R.string.test_setup_type_random
-                        }
-                    ))
+                    append(LocalContext.current.getString(testTypeLabelRes(type)))
                     append(" · ")
                     append(stringResource(R.string.test_setup_count_label, setup.resolvedCount()))
                     append(" · ")
@@ -389,7 +452,7 @@ internal fun TestSetupSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { onStart(type, requestedCount, setup.minutes(), exclusionMode) },
+                onClick = { onStart(type, requestedCount, setup.minutes(), exclusionMode, breadth) },
                 enabled = setup.startable() && !poolLoading && !blockLoading,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -414,4 +477,40 @@ internal fun TestSetupSheet(
             }
         }
     }
+}
+
+private fun breadthLabel(breadth: Breadth): Int = when (breadth) {
+    Breadth.NARROW -> R.string.test_setup_breadth_narrow
+    Breadth.MEDIUM -> R.string.test_setup_breadth_medium
+    Breadth.BROAD -> R.string.test_setup_breadth_broad
+}
+
+/** One recorded segment's short label, e.g. `weakest` or `random`. */
+private fun fillSourceLabel(source: String): Int = when (source.uppercase()) {
+    "WEAKEST_TOPICS" -> R.string.test_setup_fill_weakest
+    "TOUGHEST_QUESTIONS" -> R.string.test_setup_fill_toughest
+    "EASIEST_QUESTIONS" -> R.string.test_setup_fill_easiest
+    "TRICKY" -> R.string.test_setup_fill_tricky
+    "AT_RISK" -> R.string.test_setup_fill_at_risk
+    "UNSEEN" -> R.string.test_setup_fill_unseen
+    "BALANCED" -> R.string.test_setup_fill_balanced
+    "MIXED" -> R.string.test_setup_fill_mixed
+    "LEAST_RECENTLY_REVIEWED", "AUTHORED_HARD", "AUTHORED_MEDIUM" ->
+        R.string.test_setup_fill_recent
+    else -> R.string.test_setup_fill_random
+}
+
+/** `12 weakest + 8 random`, or an em dash when the selection is empty. */
+@Composable
+private fun compositionText(composition: Composition?): String {
+    if (composition == null || composition.isEmpty) return "—"
+    val context = LocalContext.current
+    val text = StringBuilder()
+    for (segment in composition.segments) {
+        if (text.isNotEmpty()) text.append(" + ")
+        text.append(segment.count)
+        text.append(' ')
+        text.append(context.getString(fillSourceLabel(segment.source)))
+    }
+    return text.toString()
 }

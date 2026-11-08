@@ -144,10 +144,15 @@ class TestSetupTest {
         assertEquals(
             listOf(
                 TestType.RANDOM,
+                TestType.BALANCED,
                 TestType.MISTAKES,
                 TestType.WEAKEST_TOPICS,
                 TestType.TOUGHEST_QUESTIONS,
-                TestType.EASIEST_QUESTIONS
+                TestType.EASIEST_QUESTIONS,
+                TestType.TRICKY,
+                TestType.AT_RISK,
+                TestType.UNSEEN,
+                TestType.MIXED
             ),
             TestSetup.STARTABLE_TYPES
         )
@@ -156,8 +161,14 @@ class TestSetupTest {
         assertTrue(TestSetup.isStartableType(TestType.WEAKEST_TOPICS))
         assertTrue(TestSetup.isStartableType(TestType.TOUGHEST_QUESTIONS))
         assertTrue(TestSetup.isStartableType(TestType.EASIEST_QUESTIONS))
-        assertFalse(TestSetup.isStartableType(TestType.BALANCED))
-        assertFalse(TestSetup.isStartableType(TestType.TRICKY))
+        assertTrue(TestSetup.isStartableType(TestType.BALANCED))
+        assertTrue(TestSetup.isStartableType(TestType.TRICKY))
+        assertTrue(TestSetup.isStartableType(TestType.AT_RISK))
+        assertTrue(TestSetup.isStartableType(TestType.UNSEEN))
+        assertTrue(TestSetup.isStartableType(TestType.MIXED))
+        // Phase 3 keeps the custom types unstartable.
+        assertFalse(TestSetup.isStartableType(TestType.BOOKMARKED))
+        assertFalse(TestSetup.isStartableType(TestType.TAG))
     }
 
     @Test

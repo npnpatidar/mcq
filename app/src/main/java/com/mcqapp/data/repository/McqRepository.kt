@@ -940,6 +940,50 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     }
 
     /**
+     * Earlier practice runs on the same recorded target set, oldest first
+     * (stats.md §11.5). Practice is never compared with a mock, so this line
+     * exists only for the practice trend and reads the light result rows of at
+     * most five prior runs.
+     */
+    suspend fun getPracticeHistory(
+        attempt: com.mcqapp.domain.Attempt
+    ): List<com.mcqapp.domain.PracticeTrendPoint> {
+        val targets = attempt.targetTopicIds
+            .split(",")
+            .filter { it.isNotBlank() }
+            .sorted()
+        if (targets.isEmpty()) return emptyList()
+        val type = com.mcqapp.domain.TestType.fromStorage(attempt.testType) ?: return emptyList()
+        if (type.isRepresentative) return emptyList()
+        if (com.mcqapp.domain.TestReportBuilder.familyOf(attempt) !=
+            com.mcqapp.domain.ReportFamily.PRACTICE
+        ) {
+            return emptyList()
+        }
+        val targetSet = targets.toHashSet()
+        val prior = getComparableAttempts(attempt, limit = 5)
+            .filter {
+                com.mcqapp.domain.TestReportBuilder.familyOf(it) ==
+                    com.mcqapp.domain.ReportFamily.PRACTICE &&
+                    it.targetTopicIds.split(",")
+                        .filter { id -> id.isNotBlank() }
+                        .sorted() == targets
+            }
+            .sortedBy { it.finishedAt }
+        return prior.map { earlier ->
+            val rows = getReportRows(earlier.id)
+            com.mcqapp.domain.PracticeTrendPoint(
+                attemptId = earlier.id,
+                finishedAt = earlier.finishedAt,
+                asked = rows.count { it.currentCategoryId in targetSet },
+                correct = rows.count {
+                    it.currentCategoryId in targetSet && it.graded && it.answered && it.isCorrect
+                }
+            )
+        }
+    }
+
+    /**
      * Questions asked in the last three comparable representative attempts of
      * this paper, scope and length (section 9.8). The session excludes their
      * blocks only when enough alternatives remain.
@@ -976,7 +1020,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.TestProgressData {
         val attempts = getAttempts().filter { paperId == null || it.paperId == paperId }
-        val runs = com.mcqapp.domain.TestProgress.practiceRuns(attempts).map { attempt ->
+        val practicePairs = com.mcqapp.domain.TestProgress.practiceRuns(attempts).map { attempt ->
             val rows = historyStore.getReportRows(attempt.id)
             val paper = getPaper(attempt.paperId)
             val evidence = getReportEvidence(attempt, rows, paper, now)
@@ -991,7 +1035,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     evidence = evidence
                 )
             )
-            com.mcqapp.domain.PracticeRun(
+            report to com.mcqapp.domain.PracticeRun(
                 attemptId = attempt.id,
                 type = com.mcqapp.domain.TestType.fromStorage(attempt.testType),
                 finishedAt = attempt.finishedAt,
@@ -1004,7 +1048,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         }
         return com.mcqapp.domain.TestProgressData(
             families = com.mcqapp.domain.TestProgress.families(attempts),
-            practiceRuns = runs,
+            practiceRuns = practicePairs.map { it.second },
+            practiceTopics = com.mcqapp.domain.TestProgress.practiceTopics(
+                practicePairs.map { it.first }
+            ),
             leeches = db.cardStateDao().countLeechesInScope(paperId),
             atRisk = db.cardStateDao().countAtRisk(paperId, now),
             unseen = db.questionDao().countUnseenInScope(paperId),

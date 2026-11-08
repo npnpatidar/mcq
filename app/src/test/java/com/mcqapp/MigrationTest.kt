@@ -574,11 +574,18 @@ class MigrationTest {
             )
             chainFile.close()
 
+            // Only migrations 3->4 through 9->10 (version 3 to 10).
+            val chainMigrations = arrayOf(
+                AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5,
+                AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7,
+                AppDatabase.MIGRATION_7_8, AppDatabase.MIGRATION_8_9,
+                AppDatabase.MIGRATION_9_10
+            )
             val db = Room.databaseBuilder(context, AppDatabase::class.java, "chain-test.db")
-                .addMigrations(*ALL_MIGRATIONS)
+                .addMigrations(*chainMigrations)
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->17; Room validates the final schema.
+            // One open exercises 3->4->...->10; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)

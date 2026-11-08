@@ -380,12 +380,7 @@ data class AttemptEntity(
     ],
     // (attemptId, isCorrect) serves the results-screen tallies; the attemptId
     // prefix replaces the old standalone index.
-    // Partial index for graded results only (section 9.10): avoids scanning
-    // unanswered rows when computing hardest/weakest questions.
-    indices = [
-        Index("attemptId", "isCorrect"),
-        Index(value = ["questionId", "id"], where = "selectedOptionIds != ''")
-    ]
+    indices = [Index("attemptId", "isCorrect")]
 )
 data class QuestionResultEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

@@ -106,6 +106,15 @@ class ResultsPracticeUiTest {
         }
     }
 
+    /** Several review rows can carry the same tag, so assert any one is shown. */
+    private fun assertAnyText(text: String) {
+        assertTrue(
+            "expected at least one '$text' node",
+            compose.onAllNodesWithText(text, substring = false)
+                .fetchSemanticsNodes().isNotEmpty()
+        )
+    }
+
     @Test
     fun practiceResultsShowTheHeadlineTagAndStudyBadge() {
         compose.setContent {
@@ -124,13 +133,13 @@ class ResultsPracticeUiTest {
 
         // The review list is below the header cards: scroll to the tags.
         compose.onNodeWithTag("results-list").performScrollToNode(hasText("Solid correct"))
-        compose.onNodeWithText("Solid correct", substring = false).assertIsDisplayed()
+        assertAnyText("Solid correct")
         // No card was ever written for these questions, and the page says so
         // instead of implying a memory estimate.
-        compose.onNodeWithText("No Study history", substring = false).assertIsDisplayed()
+        assertAnyText("No Study history")
 
         compose.onNodeWithTag("results-list").performScrollToNode(hasText("Knowledge gap"))
-        compose.onNodeWithText("Knowledge gap", substring = false).assertIsDisplayed()
+        assertAnyText("Knowledge gap")
 
         compose.onNodeWithTag("results-list").performScrollToNode(
             hasText("Targeted · this question came from a practice target")

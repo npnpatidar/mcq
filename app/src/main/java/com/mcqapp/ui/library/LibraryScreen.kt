@@ -59,6 +59,8 @@ import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.TestType
+import com.mcqapp.ui.library.TestSetupSheet
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
 import kotlinx.coroutines.Dispatchers
@@ -104,9 +106,9 @@ fun LibraryScreen(
     var showPaperDialog by rememberSaveable { mutableStateOf(false) }
     // The paper being edited (Manage → Edit paper); null hides the dialog.
     var editingPaper by remember { mutableStateOf<Paper?>(null) }
-    // A Test tap parks its paper + scope here so the duration dialog can ask
-    // how long this run should be before the route carries it to the session.
-    var pendingTestStart by remember { mutableStateOf<PendingTestStart?>(null) }
+    // A Test/Mistakes tap parks its paper + scope + preselected type here so
+    // the setup sheet can ask for the bounded plan before the route carries it.
+    var pendingTestSetup by remember { mutableStateOf<PendingTestSetup?>(null) }
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var categoryDialogPaperId by rememberSaveable { mutableStateOf("") }
     var categoryDialogParentId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -231,7 +233,7 @@ fun LibraryScreen(
                         val paper = papers.firstOrNull { it.id == paperId }
                         Logger.i("LIB", "Drawer test: paperId=$paperId, categories=${categoryIds.size}")
                         if (paper != null) {
-                            pendingTestStart = PendingTestStart(paper, categoryIds)
+                            pendingTestSetup = PendingTestSetup(paper, categoryIds, com.mcqapp.domain.TestType.RANDOM)
                         } else {
                             // No paper record (should not happen): fall back to
                             // the paper's own duration rather than dropping the tap.
@@ -318,26 +320,7 @@ fun LibraryScreen(
                                 canMoveDown = index < papers.lastIndex,
                                 onMovePaper = { delta -> viewModel.movePaper(paper.id, delta) },
                                 paper = paper,
-                                onStart = { pendingTestStart = PendingTestStart(paper, emptyList()) },
-                                onPracticeMistakes = {
-                                    navController.navigate(
-                                        com.mcqapp.ui.navigation.testRoute(paper.id, mistakes = true)
-                                    )
-                                },
-                                onDrill = { count, minutes, ticked ->
-                                    // Scoped like Study/Test/Export (§15.1): the
-                                    // ticked branches ride on the existing
-                                    // categoryIds argument of the drill route.
-                                    Logger.i("LIB", "Drill: paperId=${paper.id}, categories=${ticked.size}")
-                                    navController.navigate(
-                                        com.mcqapp.ui.navigation.testRoute(
-                                            paper.id,
-                                            categoryIds = ticked,
-                                            drillCount = count,
-                                            drillMinutes = minutes
-                                        )
-                                    )
-                                },
+                                onStart = { pendingTestSetup = PendingTestSetup(paper, emptyList(), com.mcqapp.domain.TestType.RANDOM) },
                                 onStudy = {
                                     Logger.i("LIB", "Study: paperId=${paper.id}, due=$dueCountBadge")
                                     navController.navigate(com.mcqapp.ui.navigation.studyRoute(paper.id))
@@ -373,7 +356,11 @@ fun LibraryScreen(
                                 },
                                 onScopedTest = { ids ->
                                     Logger.i("LIB", "Card test: paperId=${paper.id}, categories=${ids.size}")
-                                    pendingTestStart = PendingTestStart(paper, ids)
+                                    pendingTestSetup = PendingTestSetup(paper, ids, com.mcqapp.domain.TestType.RANDOM)
+                                },
+                                onPracticeMistakes = { ids ->
+                                    Logger.i("LIB", "Card mistakes: paperId=${paper.id}, categories=${ids.size}")
+                                    pendingTestSetup = PendingTestSetup(paper, ids, com.mcqapp.domain.TestType.MISTAKES)
                                 },
                                 onExport = { tickedIds ->
                                     // Nothing ticked → the whole paper; a
@@ -462,22 +449,30 @@ fun LibraryScreen(
         )
     }
 
-    pendingTestStart?.let { request ->
-        TestDurationDialog(
-            paperTitle = request.paper.title,
-            initialMinutes = request.paper.durationMinutes,
-            onDismiss = { pendingTestStart = null },
-            onStart = { minutes ->
-                pendingTestStart = null
+    pendingTestSetup?.let { request ->
+        TestSetupSheet(
+            paper = request.paper,
+            initialType = request.type,
+            mistakeCount = mistakeCounts[request.paper.id] ?: 0,
+            categoryIds = request.categoryIds,
+            loadScopedMistakeCount = { scopeIds ->
+                viewModel.repository.getScopedMistakeCount(request.paper.id, scopeIds)
+            },
+            onDismiss = { pendingTestSetup = null },
+            onStart = { type, requestedCount, minutes ->
+                pendingTestSetup = null
                 Logger.i(
                     "LIB",
-                    "Test: paperId=${request.paper.id}, categories=${request.categoryIds.size}, minutes=$minutes"
+                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes"
                 )
                 navController.navigate(
                     com.mcqapp.ui.navigation.testRoute(
                         request.paper.id,
                         request.categoryIds,
-                        minutes = minutes
+                        minutes = minutes,
+                        type = type.name,
+                        count = requestedCount,
+                        exclusion = "NONE"
                     )
                 )
             }
@@ -686,11 +681,12 @@ fun LibraryScreen(
 }
 
 /**
- * A Test tap waiting on the duration dialog: which paper to start and which
- * ticked branches scope it. Held in screen state because the dialog resolves
- * after the tap, and the route needs both values once it does.
+ * A Test/Mistakes tap waiting on the setup sheet: which paper, which ticked
+ * branches scope it, and which type was preselected. Held in screen state
+ * because the sheet resolves after the tap, and the route needs all values.
  */
-private data class PendingTestStart(
+private data class PendingTestSetup(
     val paper: Paper,
-    val categoryIds: List<String>
+    val categoryIds: List<String>,
+    val type: com.mcqapp.domain.TestType
 )

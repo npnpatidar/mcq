@@ -645,7 +645,16 @@ class Importer(
                         score = attempt.score,
                         maxScore = attempt.maxScore,
                         durationSeconds = attempt.durationSeconds,
-                        finishedAt = attempt.finishedAt
+                        finishedAt = attempt.finishedAt,
+                        testType = attempt.testType,
+                        requestedCount = attempt.requestedCount,
+                        scopeCategoryIds = attempt.scopeCategoryIds,
+                        scopeKey = attempt.scopeKey,
+                        samplingVersion = attempt.samplingVersion,
+                        seed = attempt.seed,
+                        exclusionMode = attempt.exclusionMode,
+                        targetTopicIds = attempt.targetTopicIds,
+                        compositionJson = attempt.compositionJson
                     )
                 )
                 val restoredRows = attempt.results.map { r ->
@@ -665,7 +674,9 @@ class Importer(
                 }
                 db.attemptDao().insertResults(restoredRows)
                 db.questionStatsDao().applyQuestionStats(
-                    attempt.paperId, attempt.title, attempt.finishedAt, restoredRows
+                    attempt.paperId, attempt.title, attempt.finishedAt, restoredRows,
+                    testType = attempt.testType,
+                    samplingVersion = attempt.samplingVersion
                 )
                 restoredAttempts++
             }

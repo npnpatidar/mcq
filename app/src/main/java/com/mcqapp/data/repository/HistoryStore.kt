@@ -13,9 +13,12 @@ import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.local.ResultScan
 import com.mcqapp.data.local.applyQuestionStats
+import com.mcqapp.data.local.countMistakesInScopeChunked
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getMistakeOrderRowsInScopeChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.domain.Attempt
+import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.Mastery
 import com.mcqapp.domain.NumberedResult
 import com.mcqapp.domain.Question
@@ -273,7 +276,8 @@ internal class HistoryStore(
         negativeMarking: Double,
         durationSeconds: Long,
         finishedAt: Long,
-        dwellSeconds: Map<String, Long> = emptyMap()
+        dwellSeconds: Map<String, Long> = emptyMap(),
+        metadata: AttemptMetadata = AttemptMetadata()
     ): Long {
         val tally = Tally()
         val results = mutableListOf<QuestionResultEntity>()
@@ -289,22 +293,34 @@ internal class HistoryStore(
         // One transaction: the attempt header and its per-question rows must
         // land together, so history never shows an attempt without results.
         return db.withTransaction {
-            val attemptId = db.attemptDao().insertAttempt(
-                AttemptEntity(
-                    paperId = paperId,
-                    title = paperTitle,
-                    totalQuestions = questions.size,
-                    correctCount = tally.correct,
-                    wrongCount = tally.wrong,
-                    skippedCount = tally.skipped,
-                    score = tally.score,
-                    maxScore = tally.maxScore,
-                    durationSeconds = durationSeconds,
-                    finishedAt = finishedAt
-                )
+            val attempt = AttemptEntity(
+                paperId = paperId,
+                title = paperTitle,
+                totalQuestions = questions.size,
+                correctCount = tally.correct,
+                wrongCount = tally.wrong,
+                skippedCount = tally.skipped,
+                score = tally.score,
+                maxScore = tally.maxScore,
+                durationSeconds = durationSeconds,
+                finishedAt = finishedAt,
+                testType = metadata.testType,
+                requestedCount = metadata.requestedCount,
+                scopeCategoryIds = metadata.scopeCategoryIds,
+                scopeKey = metadata.scopeKey,
+                samplingVersion = metadata.samplingVersion,
+                seed = metadata.seed,
+                exclusionMode = metadata.exclusionMode,
+                targetTopicIds = metadata.targetTopicIds,
+                compositionJson = metadata.compositionJson
             )
+            val attemptId = db.attemptDao().insertAttempt(attempt)
             db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
-            db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, results)
+            db.questionStatsDao().applyQuestionStats(
+                paperId, paperTitle, finishedAt, results,
+                testType = attempt.testType,
+                samplingVersion = attempt.samplingVersion
+            )
             Logger.d("REPO", "saveAttempt stored attemptId=$attemptId with ${results.size} results")
             attemptId
         }
@@ -332,24 +348,33 @@ internal class HistoryStore(
         durationSeconds: Long,
         finishedAt: Long,
         dwellSeconds: Map<String, Long> = emptyMap(),
+        metadata: AttemptMetadata = AttemptMetadata(),
         onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
     ): Long = db.withTransaction {
         val tally = Tally()
         var stored = 0
-        val attemptId = db.attemptDao().insertAttempt(
-            AttemptEntity(
-                paperId = paperId,
-                title = paperTitle,
-                totalQuestions = order.size,
-                correctCount = 0,
-                wrongCount = 0,
-                skippedCount = 0,
-                score = 0.0,
-                maxScore = 0.0,
-                durationSeconds = durationSeconds,
-                finishedAt = finishedAt
-            )
+        val attempt = AttemptEntity(
+            paperId = paperId,
+            title = paperTitle,
+            totalQuestions = order.size,
+            correctCount = 0,
+            wrongCount = 0,
+            skippedCount = 0,
+            score = 0.0,
+            maxScore = 0.0,
+            durationSeconds = durationSeconds,
+            finishedAt = finishedAt,
+            testType = metadata.testType,
+            requestedCount = metadata.requestedCount,
+            scopeCategoryIds = metadata.scopeCategoryIds,
+            scopeKey = metadata.scopeKey,
+            samplingVersion = metadata.samplingVersion,
+            seed = metadata.seed,
+            exclusionMode = metadata.exclusionMode,
+            targetTopicIds = metadata.targetTopicIds,
+            compositionJson = metadata.compositionJson
         )
+        val attemptId = db.attemptDao().insertAttempt(attempt)
         val categoryTitles = HashMap<String, String>()
         val knownCategories = HashSet<String>()
         var start = 0
@@ -370,7 +395,11 @@ internal class HistoryStore(
                 categoryTitles, dwellSeconds, tally, rows
             )
             db.attemptDao().insertResults(rows.map { it.copy(attemptId = attemptId) })
-            db.questionStatsDao().applyQuestionStats(paperId, paperTitle, finishedAt, rows)
+            db.questionStatsDao().applyQuestionStats(
+                paperId, paperTitle, finishedAt, rows,
+                testType = attempt.testType,
+                samplingVersion = attempt.samplingVersion
+            )
             stored += rows.size
             onProgress(stored, order.size)
             start = end
@@ -411,7 +440,16 @@ internal class HistoryStore(
         score = score,
         maxScore = maxScore,
         durationSeconds = durationSeconds,
-        finishedAt = finishedAt
+        finishedAt = finishedAt,
+        testType = testType,
+        requestedCount = requestedCount,
+        scopeCategoryIds = scopeCategoryIds,
+        scopeKey = scopeKey,
+        samplingVersion = samplingVersion,
+        seed = seed,
+        exclusionMode = exclusionMode,
+        targetTopicIds = targetTopicIds,
+        compositionJson = compositionJson
     )
 
     /**
@@ -509,6 +547,16 @@ internal class HistoryStore(
         // graded. The library recomputes this after every finished test.
         db.attemptDao().countMistakesByPaper().associate { it.paperId to it.count }
 
+    /**
+     * Counts the mistakes inside a scoped selection. The paper-level badge
+     * counts every mistake in the paper, which would overstate a scoped
+     * pool, so the scope needs its own count.
+     */
+    suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int {
+        if (scopeIds.isEmpty()) return 0
+        return db.attemptDao().countMistakesInScopeChunked(paperId, scopeIds)
+    }
+
     /** Export DTO of all bookmarked questions, grouped by source paper. */
     suspend fun getBookmarkExportDto(): com.mcqapp.data.io.PaperDto? {
         val ids = db.bookmarkDao().getAll()
@@ -524,11 +572,35 @@ internal class HistoryStore(
     /** The mistaken questions of a paper as session refs (content is fetched on demand). */
     suspend fun getMistakenQuestionRefs(
         paperId: String
+    ): List<com.mcqapp.data.local.SessionRef> =
+        refsFor(db.attemptDao().getMistakenQuestionIdsForPaper(paperId))
+
+    /**
+     * The same refs, restricted to [scopeIds] by the question's category.
+     * An empty scope has no mistakes — it is not the whole paper.
+     *
+     * The filter lives in SQL because the returned order holds question ids
+     * only; intersecting those with category ids in Kotlin would drop every
+     * mistake.
+     */
+    suspend fun getScopedMistakenQuestionRefs(
+        paperId: String,
+        scopeIds: List<String>
     ): List<com.mcqapp.data.local.SessionRef> {
-        // Scoped to the paper in SQL: the ordering key (rowid) travels with the
-        // id list, so the whole bank's standings never have to be materialised.
-        val ids = db.attemptDao().getMistakenQuestionIdsForPaper(paperId)
+        if (scopeIds.isEmpty()) return emptyList()
+        return refsFor(
+            db.attemptDao()
+                .getMistakeOrderRowsInScopeChunked(paperId, scopeIds)
+                .map { it.questionId }
+        )
+    }
+
+    private suspend fun refsFor(
+        ids: List<String>
+    ): List<com.mcqapp.data.local.SessionRef> {
         if (ids.isEmpty()) return emptyList()
+        // The ids arrive already scoped and ordered by the SQL query; this only
+        // joins their passage membership so content is fetched on demand.
         val byId = db.questionDao().getSessionRefsByIdsChunked(ids).associateBy { it.id }
         val refs = ids.mapNotNull { byId[it] }
         // Two members of one passage missed at different times used to sit in
@@ -555,7 +627,9 @@ internal class HistoryStore(
         // to this paper and preserves the most-recently-missed-first order.
         val ids = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
             db.attemptDao().getLatestStandings().map {
-                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+                com.mcqapp.domain.MistakeStanding(
+                    it.questionId, it.paperId, it.isCorrect, it.finishedAt, it.rowId
+                )
             }
         )[paperId] ?: return emptyList()
         if (ids.isEmpty()) return emptyList()
@@ -591,8 +665,21 @@ internal class HistoryStore(
         )
     }
 
+    /**
+     * Deletes one attempt and repairs `question_stats` in the same
+     * transaction (section 12.3). `question_stats` means "currently stored":
+     * the affected questions are recomputed from the surviving results, and a
+     * row with no surviving result is dropped. The recompute runs before the
+     * delete because the attempt's own result rows are what identify the
+     * affected questions; every aggregate excludes them, so the outcome is
+     * the same as recomputing afterwards.
+     */
     suspend fun deleteAttempt(attemptId: Long) {
-        db.attemptDao().deleteById(attemptId)
+        db.withTransaction {
+            db.questionStatsDao().recomputeFromSurvivingResults(attemptId)
+            db.questionStatsDao().deleteInertForAttempt(attemptId)
+            db.attemptDao().deleteById(attemptId)
+        }
     }
 }
 

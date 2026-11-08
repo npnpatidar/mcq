@@ -210,9 +210,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** The header joined with its stored answers: what a resume would restore. */
     suspend fun resumeOffer(paperId: String): TestSnapshot? = testProgress.offer(paperId)
 
-    /** Persists the header and the questions whose answer just changed. */
-    suspend fun saveTestProgress(snapshot: TestSnapshot, changed: List<TestAnswer>) =
-        testProgress.save(snapshot, changed)
+    /**
+     * Persists the header and the questions whose answer just changed.
+     * [takeOver] drops the previous session's answer rows when this save is a
+     * new bounded session replacing a different one in the single slot.
+     */
+    suspend fun saveTestProgress(
+        snapshot: TestSnapshot,
+        changed: List<TestAnswer>,
+        takeOver: Boolean = false
+    ) = testProgress.save(snapshot, changed, takeOver)
 
     /** Writes a legacy snapshot's inline answers as rows, so they are not dropped. */
     suspend fun adoptTestAnswers(snapshot: TestSnapshot) = testProgress.adopt(snapshot)
@@ -794,10 +801,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         negativeMarking: Double,
         durationSeconds: Long,
         finishedAt: Long,
-        dwellSeconds: Map<String, Long> = emptyMap()
+        dwellSeconds: Map<String, Long> = emptyMap(),
+        metadata: com.mcqapp.domain.AttemptMetadata =
+            com.mcqapp.domain.AttemptMetadata()
     ): Long = historyStore.saveAttempt(
         paperId, paperTitle, questions, selections, negativeMarking,
-        durationSeconds, finishedAt, dwellSeconds
+        durationSeconds, finishedAt, dwellSeconds, metadata
     )
 
     /**
@@ -814,10 +823,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         durationSeconds: Long,
         finishedAt: Long,
         dwellSeconds: Map<String, Long> = emptyMap(),
+        metadata: com.mcqapp.domain.AttemptMetadata =
+            com.mcqapp.domain.AttemptMetadata(),
         onProgress: (stored: Int, total: Int) -> Unit = { _, _ -> }
     ): Long = historyStore.saveAttemptStreamed(
         paperId, paperTitle, order, selections, negativeMarking,
-        durationSeconds, finishedAt, dwellSeconds, onProgress
+        durationSeconds, finishedAt, dwellSeconds, metadata, onProgress
     )
     fun observeAttempts(): Flow<List<com.mcqapp.domain.Attempt>> = historyStore.observeAttempts()
     suspend fun getAttempt(attemptId: Long): com.mcqapp.domain.Attempt? =
@@ -851,9 +862,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun latestAttemptFinishedAt(paperId: String): Long? =
         db.attemptDao().getLatestFinishedAt(paperId)
     suspend fun getMistakeCounts(): Map<String, Int> = historyStore.getMistakeCounts()
+    /**
+     * Counts the mistakes inside a scoped selection. The paper-level badge
+     * counts every mistake in the paper, which would overstate a scoped
+     * pool, so the scope needs its own count.
+     */
+    suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int =
+        historyStore.getScopedMistakeCount(paperId, scopeIds)
     /** Mistaken questions as a session order: content is fetched when one is opened. */
     suspend fun getMistakenQuestionOrder(paperId: String): SessionOrder =
         SessionOrder.of(historyStore.getMistakenQuestionRefs(paperId))
+
+    /**
+     * The same order, restricted to an expanded category scope. The filter runs
+     * in SQL: a [SessionOrder] holds question ids, not categories.
+     */
+    suspend fun getMistakenQuestionOrder(
+        paperId: String,
+        scopeIds: List<String>
+    ): SessionOrder =
+        SessionOrder.of(historyStore.getScopedMistakenQuestionRefs(paperId, scopeIds))
 
     /**
      * How many of these questions have no answer key — excluded from scoring.

@@ -3,6 +3,7 @@ package com.mcqapp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -64,10 +65,14 @@ class CriticalPathTest {
         }
     }
 
-    /** The Test tap opens the duration picker; confirming starts the session. */
+    /** The Test tap opens the setup sheet; confirming starts the session. */
     private fun confirmTestStart() {
-        waitFor("Duration in minutes")
-        compose.onNodeWithText("Start test", substring = false).performClick()
+        waitFor("Start a test")
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithTag("test-setup-start")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("test-setup-start").performClick()
     }
 
     @Test

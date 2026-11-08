@@ -194,7 +194,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_16_17,
         AppDatabase.MIGRATION_17_18,
         AppDatabase.MIGRATION_18_19,
-        AppDatabase.MIGRATION_19_20
+        AppDatabase.MIGRATION_19_20,
+        AppDatabase.MIGRATION_20_21
     )
 
     private fun openMigrated(): AppDatabase =
@@ -265,6 +266,52 @@ class MigrationTest {
                     "VALUES ('p1','q1',2.5,3,1234,2,1,0,1000,'hash1')"
             )
             raw.version = 9
+        }
+    }
+
+    /**
+     * Builds a genuine v20 file by replaying the production 6->20 migrations,
+     * then seeds one pre-v21 attempt and its aggregate. A 20->21 test then
+     * proves the legacy defaults and the new indexes land without touching
+     * the old row.
+     */
+    private fun createV20WithLegacyHistory() {
+        createV6(insertPaper())
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_6_7.migrate(raw)
+            AppDatabase.MIGRATION_7_8.migrate(raw)
+            AppDatabase.MIGRATION_8_9.migrate(raw)
+            AppDatabase.MIGRATION_9_10.migrate(raw)
+            AppDatabase.MIGRATION_10_11.migrate(raw)
+            AppDatabase.MIGRATION_11_12.migrate(raw)
+            AppDatabase.MIGRATION_12_13.migrate(raw)
+            AppDatabase.MIGRATION_13_14.migrate(raw)
+            AppDatabase.MIGRATION_14_15.migrate(raw)
+            AppDatabase.MIGRATION_15_16.migrate(raw)
+            AppDatabase.MIGRATION_16_17.migrate(raw)
+            AppDatabase.MIGRATION_17_18.migrate(raw)
+            AppDatabase.MIGRATION_18_19.migrate(raw)
+            AppDatabase.MIGRATION_19_20.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO attempts (id,paperId,title,totalQuestions,correctCount," +
+                    "wrongCount,skippedCount,score,maxScore,durationSeconds,finishedAt) " +
+                    "VALUES (1,'p1','Paper',2,1,1,0,1.0,2.0,60,2000)"
+            )
+            raw.execSQL(
+                "INSERT INTO question_stats (questionId,paperId,paperTitle,categoryTitle," +
+                    "text,totalAttempts,gradedCount,correctCount,wrongCount,skipCount," +
+                    "ungradedCount,lastResultIsCorrect,lastFinishedAt) " +
+                    "VALUES ('q1','p1','Paper','Cat','Q1',2,2,1,1,0,0,1,2000)"
+            )
+            raw.version = 20
         }
     }
 
@@ -531,7 +578,7 @@ class MigrationTest {
                 .addMigrations(*ALL_MIGRATIONS)
                 .allowMainThreadQueries()
                 .build()
-            // One open exercises 3->4->...->17; Room validates the final schema.
+            // One open exercises 3->4->...->21; Room validates the final schema.
             db.cardStateDao().getByPaper("p1")
             val repository = com.mcqapp.data.repository.McqRepository(db, context)
             assertEquals("Paper", repository.getPaper("p1")!!.title)
@@ -905,6 +952,101 @@ class MigrationTest {
                 sql("index_questions_categoryId")
             )
             check.close()
+        }
+    }
+
+    @Test
+    fun `migration 20 to 21 keeps legacy rows and creates the phase one indexes`() {
+        runBlocking {
+            createV20WithLegacyHistory()
+            val db = openMigrated()
+            try {
+                // Opening ran 20->21; Room's identity check on open is what
+                // proves the migrated schema matches the entities.
+                val attempt = db.attemptDao().getAllAttempts().single()
+                assertNull("a pre-v21 attempt has no type", attempt.testType)
+                assertEquals(0, attempt.requestedCount)
+                assertEquals("", attempt.scopeCategoryIds)
+                assertEquals("", attempt.scopeKey)
+                assertEquals(1, attempt.samplingVersion)
+                assertEquals(0L, attempt.seed)
+                assertEquals("NONE", attempt.exclusionMode)
+                assertEquals("", attempt.targetTopicIds)
+                assertEquals("", attempt.compositionJson)
+                // The existing aggregate survives and starts with zero rep*.
+                val stats = db.questionStatsDao().getHardestQuestions(5).single()
+                assertEquals("q1", stats.questionId)
+                assertEquals(2, stats.attempts)
+            } finally {
+                db.close()
+            }
+
+            val check = android.database.sqlite.SQLiteDatabase.openDatabase(
+                context.getDatabasePath("migration-test.db").path,
+                null,
+                android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            )
+            val sql = { name: String ->
+                check.rawQuery(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                    arrayOf(name)
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            }
+            val partial = sql("index_question_results_questionId_id")
+            assertTrue(
+                "the graded-result partial index should exist: $partial",
+                partial != null && partial.contains("selectedOptionIds") &&
+                    partial.contains("WHERE")
+            )
+            assertTrue(sql("index_question_stats_paperId") != null)
+            assertTrue(
+                sql(
+                    "index_attempts_paperId_testType_requestedCount_scopeKey_" +
+                        "samplingVersion_exclusionMode_finishedAt"
+                ) != null
+            )
+            assertTrue(sql("index_card_state_paperId_leech_dueAt") != null)
+            check.rawQuery(
+                "SELECT repCorrect,repWrong,repSkip FROM question_stats WHERE questionId='q1'",
+                null
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+                assertEquals(0, cursor.getInt(1))
+                assertEquals(0, cursor.getInt(2))
+            }
+            check.close()
+        }
+    }
+
+    @Test
+    fun `a fresh v21 create gets the partial index from the production builder`() {
+        // Through AppDatabase.builder, not a hand-added callback: deleting the
+        // callback from the production wiring must fail this test.
+        context.deleteDatabase("fresh-create.db")
+        val fresh = AppDatabase.builder(context, "fresh-create.db")
+            .allowMainThreadQueries()
+            .build()
+        try {
+            var found = false
+            fresh.openHelper.writableDatabase
+                .query("PRAGMA index_list('question_results')")
+                .use { cursor ->
+                    val name = cursor.getColumnIndexOrThrow("name")
+                    val partial = cursor.getColumnIndexOrThrow("partial")
+                    while (cursor.moveToNext()) {
+                        if (cursor.getString(name) ==
+                            "index_question_results_questionId_id"
+                        ) {
+                            found = true
+                            assertEquals(1, cursor.getInt(partial))
+                        }
+                    }
+                }
+            assertTrue("the partial index must exist on a fresh create", found)
+        } finally {
+            fresh.close()
+            context.deleteDatabase("fresh-create.db")
         }
     }
 }

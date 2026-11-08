@@ -71,8 +71,22 @@ internal class TestProgressStore(
         return parsed
     }
 
-    /** Writes the header and the questions that just changed, serialised. */
-    suspend fun save(snapshot: TestSnapshot, changed: List<TestAnswer>) = writeLock.withLock {
+    /**
+     * Writes the header and the questions that just changed, serialised.
+     *
+     * [takeOver] is set on a bounded session's first save when the slot still
+     * holds a *different* session of the same paper (a legacy one, or another
+     * sample). Rows are keyed by paper, so they must be dropped in the same
+     * locked write: leaving them would join the abandoned session's answers
+     * into this one on the next resume (section 7.6: a new test is not a
+     * continuation of the old one).
+     */
+    suspend fun save(
+        snapshot: TestSnapshot,
+        changed: List<TestAnswer>,
+        takeOver: Boolean = false
+    ) = writeLock.withLock {
+        if (takeOver) db.testProgressDao().deleteForPaper(snapshot.paperId)
         if (changed.isNotEmpty()) writeRows(snapshot.paperId, changed)
         settings.saveTestProgress(snapshot.header().toJson())
     }

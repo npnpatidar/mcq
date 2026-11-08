@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
@@ -40,7 +39,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
@@ -97,7 +95,7 @@ internal fun categoryCountsLine(counts: CategoryCounts): String =
         } else null
     ).joinToString(" · ")
 
-/** One library card: a paper's actions, drill dialog and category management. */
+/** One library card: a paper's actions, category management. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun PaperCard(
@@ -111,14 +109,14 @@ internal fun PaperCard(
     onAddQuestion: (String) -> Unit,
     onEditPaper: () -> Unit = {},
     onScopedTest: (List<String>) -> Unit = {},
+    /** Opens the setup sheet with Mistakes preselected (§7.1); empty scope = whole paper. */
+    onPracticeMistakes: (List<String>) -> Unit = {},
     onMoveCategory: (String, Int) -> Unit = { _, _ -> },
     onNestCategory: (String) -> Unit = {},
     onPromoteCategory: (String) -> Unit = {},
     onEditCategory: (CategoryNode) -> Unit = {},
     onOpenCategory: (CategoryNode) -> Unit = {},
     onDeleteCategory: (String) -> Unit = {},
-    onPracticeMistakes: () -> Unit = {},
-    onDrill: (count: Int, minutes: Int, tickedIds: List<String>) -> Unit = { _, _, _ -> },
     onStudy: () -> Unit = {},
     onStudyLeeches: () -> Unit = {},
     mistakeCount: Int = 0,
@@ -148,25 +146,6 @@ internal fun PaperCard(
     }
     val scopeTotal = remember(rolled, ticked) { totalCategoryCounts(rolled, ticked) }
 
-    // Typed drill fields survive rotation (consolidated_bugs.md F12).
-    var showDrillDialog by rememberSaveable { mutableStateOf(false) }
-    var drillCountText by rememberSaveable { mutableStateOf("10") }
-    var drillMinutesText by rememberSaveable { mutableStateOf("5") }
-    val drillCount = drillCountText.toIntOrNull()?.takeIf { it > 0 }
-    val drillMinutes = drillMinutesText.toIntOrNull()?.takeIf { it > 0 }
-    // Asking for more questions than the scope holds used to be accepted
-    // silently: the drill just came out smaller than the dialog promised.
-    // Refuse it here instead — against the ticked branches when there are
-    // any, or the bound would lie both ways.
-    val available = if (ticked.isEmpty()) {
-        paper.totalQuestions
-    } else {
-        CategorySelection.questionCount(paper.categories, ticked)
-    }
-    val countCheck = drillCount?.let {
-        com.mcqapp.domain.Drill.checkCount(it, available)
-    }
-    val drillCountValid = countCheck is com.mcqapp.domain.Drill.CountCheck.Ok
     // One state with a mode (D1): two booleans allowed Show and Manage at
     // once, and two animated sections competed for the space.
     //
@@ -321,6 +300,22 @@ internal fun PaperCard(
                         contentDescription = stringResource(R.string.test_action)
                     )
                 }
+                if (mistakeCount > 0) {
+                    // The old Mistakes button started a legacy session; it is
+                    // now a shortcut into the same setup sheet with Mistakes
+                    // preselected (§7.1). It keeps the ticked scope.
+                    IconButton(
+                        onClick = { onPracticeMistakes(ticked) },
+                        modifier = Modifier.testTag("paper-mistakes-${paper.id}")
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = stringResource(
+                                R.string.paper_mistakes_button, mistakeCount
+                            )
+                        )
+                    }
+                }
                 if (leechCount > 0) {
                     // Used to run the identical handler as "Study", so the
                     // label promised the tricky questions and delivered the
@@ -351,37 +346,6 @@ internal fun PaperCard(
                         Icons.AutoMirrored.Filled.List,
                         contentDescription = stringResource(R.string.browse)
                     )
-                }
-                IconButton(
-                    onClick = {
-                        // Default to something the scope can actually supply:
-                        // ten where there are ten or more, otherwise everything
-                        // the selection holds. Falling back to 1 for any
-                        // shortfall made a 2-question paper open on a
-                        // single-question drill.
-                        drillCountText = minOf(10, available)
-                            .coerceAtLeast(1).toString()
-                        showDrillDialog = true
-                    },
-                    modifier = Modifier.testTag("paper-drill-${paper.id}")
-                ) {
-                    Icon(
-                        Icons.Default.Timer,
-                        contentDescription = stringResource(R.string.drill)
-                    )
-                }
-                if (mistakeCount > 0) {
-                    IconButton(onClick = {
-                        Logger.i("LIB", "Start paper: paperId=${paper.id}")
-                        onPracticeMistakes()
-                    }) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = stringResource(
-                                R.string.paper_mistakes_button, mistakeCount
-                            )
-                        )
-                    }
                 }
                 IconButton(
                     onClick = onAddCategory,
@@ -433,92 +397,6 @@ internal fun PaperCard(
                         contentDescription = stringResource(R.string.move_paper_down)
                     )
                 }
-            }
-            if (showDrillDialog) {
-                AlertDialog(
-                    onDismissRequest = { showDrillDialog = false },
-                    title = { Text(stringResource(R.string.quick_drill)) },
-                    text = {
-                        Column {
-                            OutlinedTextField(
-                                value = drillCountText,
-                                onValueChange = { drillCountText = it.filter { c -> c.isDigit() }.take(4) },
-                                label = { Text(stringResource(R.string.questions)) },
-                                singleLine = true,
-                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = drillMinutesText,
-                                onValueChange = { drillMinutesText = it.filter { c -> c.isDigit() }.take(4) },
-                                label = { Text(stringResource(R.string.minutes)) },
-                                singleLine = true,
-                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            if (ticked.isNotEmpty()) {
-                                // The bound and the sentence below describe the
-                                // selection, so the dialog has to say what it
-                                // is bound to (E9).
-                                Text(
-                                    stringResource(R.string.study_scope_many, ticked.size),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Spacer(Modifier.height(4.dp))
-                            }
-                            val tooMany = countCheck as?
-                                com.mcqapp.domain.Drill.CountCheck.TooManyForPaper
-                            val noQuestions =
-                                countCheck is com.mcqapp.domain.Drill.CountCheck.NoQuestionsAvailable
-                            val scoped = ticked.isNotEmpty()
-                            val guidance = when {
-                                noQuestions && scoped ->
-                                    stringResource(R.string.drill_scope_empty)
-                                noQuestions ->
-                                    stringResource(R.string.drill_paper_empty)
-                                tooMany != null && scoped ->
-                                    stringResource(R.string.drill_scope_shortfall, available)
-                                tooMany != null ->
-                                    pluralStringResource(
-                                        R.plurals.drill_paper_shortfall, available, available
-                                    )
-                                drillCount != null && drillMinutes != null ->
-                                    pluralStringResource(
-                                        R.plurals.drill_preview, drillCount, drillCount, drillMinutes
-                                    )
-                                else -> stringResource(R.string.drill_enter_positive)
-                            }
-                            Text(
-                                guidance,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (noQuestions || tooMany != null) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                showDrillDialog = false
-                                Logger.i("LIB", "Drill: paperId=${paper.id}, count=$drillCount, min=$drillMinutes, categories=${ticked.size}")
-                                onDrill(drillCount!!, drillMinutes!!, ticked)
-                            },
-                            enabled = drillCount != null && drillMinutes != null && drillCountValid
-                        ) { Text(stringResource(R.string.start_drill)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showDrillDialog = false }) { Text(stringResource(R.string.cancel)) }
-                    }
-                )
             }
             AnimatedVisibility(visible = expansion != CardExpansion.Collapsed) {
                 Column {

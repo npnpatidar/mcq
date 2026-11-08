@@ -117,18 +117,20 @@ class RoutesTest {
     fun thePerRunDurationRidesTheRoute() {
         // The duration picker's choice travels with the route: 0 must stay 0
         // (an intentional untimed run), not collapse into the paper default.
+        // The bounded-Test parameters follow `minutes`, so read up to the
+        // next separator rather than to the end of the route.
         assertEquals(
             "30",
-            testRoute("p1", minutes = 30).substringAfter("minutes=")
+            testRoute("p1", minutes = 30).substringAfter("minutes=").substringBefore("&")
         )
         assertEquals(
             "0",
-            testRoute("p1", minutes = 0).substringAfter("minutes=")
+            testRoute("p1", minutes = 0).substringAfter("minutes=").substringBefore("&")
         )
         // No picker (mistakes practice, drill): the sentinel, not 0.
         assertEquals(
             "-1",
-            testRoute("p1").substringAfter("minutes=")
+            testRoute("p1").substringAfter("minutes=").substringBefore("&")
         )
     }
 

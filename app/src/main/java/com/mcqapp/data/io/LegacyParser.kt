@@ -1239,6 +1239,15 @@ object LegacyParser {
             maxScore = double("maxScore"),
             durationSeconds = long("durationSeconds"),
             finishedAt = long("finishedAt"),
+            testType = obj["testType"]?.jsonPrimitive?.contentOrNull,
+            requestedCount = int("requestedCount"),
+            scopeCategoryIds = str("scopeCategoryIds"),
+            scopeKey = str("scopeKey"),
+            samplingVersion = int("samplingVersion"),
+            seed = long("seed"),
+            exclusionMode = obj["exclusionMode"]?.jsonPrimitive?.contentOrNull ?: "NONE",
+            targetTopicIds = str("targetTopicIds"),
+            compositionJson = str("compositionJson"),
             results = resultsJson.map { it.jsonObject }.map { r ->
                 AttemptResultDto(
                     questionId = r["questionId"]?.jsonPrimitive?.contentOrNull ?: "",

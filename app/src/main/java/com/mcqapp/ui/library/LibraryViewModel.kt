@@ -28,7 +28,8 @@ import kotlinx.coroutines.launch
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository: McqRepository = (application as McqApplication).repository
+    /** Exposed for the setup sheet's scoped mistake count query. */
+    val repository: McqRepository = (application as McqApplication).repository
 
     /**
      * The export the format dialog and the system save dialog are working on.
@@ -657,4 +658,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    /**
+     * Counts the mistakes inside a scoped selection. The paper-level badge
+     * counts every mistake in the paper, which would overstate a scoped
+     * pool, so the scope needs its own count.
+     */
+    suspend fun getScopedMistakeCount(paperId: String, scopeIds: List<String>): Int =
+        repository.getScopedMistakeCount(paperId, scopeIds)
 }

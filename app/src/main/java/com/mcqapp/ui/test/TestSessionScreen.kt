@@ -105,12 +105,19 @@ fun TestSessionScreen(
     drillCount: Int = 0,
     drillMinutes: Int = 0,
     durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION,
+    /** Bounded-Test selector name, or blank for a legacy deep link. */
+    testType: String = "",
+    /** Requested length, or 0 for a legacy deep link. */
+    requestedCount: Int = 0,
+    /** Exclusion rule name, or blank for NONE. */
+    exclusionMode: String = "",
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
         key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly" +
-            "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes",
+            "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes" +
+            "-type=$testType-count=$requestedCount-exclusion=$exclusionMode",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
@@ -118,7 +125,10 @@ fun TestSessionScreen(
             mistakesOnly,
             drillCount,
             drillMinutes,
-            durationMinutes
+            durationMinutes,
+            testType,
+            requestedCount,
+            exclusionMode
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -487,7 +497,48 @@ fun TestSessionScreen(
                         color = MaterialTheme.colorScheme.error
                     )
                 }
-                if (state.mistakesOnly) {
+                // A bounded Test names its type and length (§7.7); a legacy
+                // deep link keeps the old Mistakes/drill banners.
+                val boundedType = state.testType
+                if (!boundedType.isNullOrBlank() && state.requestedCount > 0) {
+                    val shown = state.questionCount
+                    val asked = state.requestedCount
+                    Text(
+                        when {
+                            shown < com.mcqapp.domain.TestPlan.MIN_LENGTH ->
+                                stringResource(R.string.test_banner_short, shown)
+                            boundedType == com.mcqapp.domain.TestType.MISTAKES.name ->
+                                stringResource(
+                                    R.string.test_banner_mistakes, minOf(asked, shown)
+                                )
+                            else ->
+                                stringResource(
+                                    R.string.test_banner_random, minOf(asked, shown)
+                                )
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    if (shown > asked) {
+                        // A passage block crossed the requested cut: whole
+                        // blocks are shown rather than splitting one.
+                        Text(
+                            stringResource(R.string.drill_overshoot_shown, asked, shown),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    } else if (shown < asked) {
+                        // A clamp, a short scope or a deleted id left the run
+                        // smaller than the request; say so instead of silently
+                        // showing a different length.
+                        Text(
+                            stringResource(R.string.test_asked_shown, asked, shown),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+                }
+                if (state.mistakesOnly && boundedType.isNullOrBlank()) {
                     Text(
                         stringResource(R.string.mistakes_round_previously_missed_questions),
                         style = MaterialTheme.typography.labelSmall,

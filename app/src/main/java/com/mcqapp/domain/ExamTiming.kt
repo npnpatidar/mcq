@@ -13,6 +13,13 @@ object ExamTiming {
     /** A week. Anything longer is a data error, not an exam. */
     const val MAX_MINUTES: Int = 7 * 24 * 60
 
+    /** The default pace for a bounded test (section 7.4). */
+    const val DEFAULT_SECONDS_PER_QUESTION: Int = 60
+
+    /** A plausible paper pace; outside this range the hint is not offered. */
+    const val MIN_SECONDS_PER_QUESTION: Int = 20
+    const val MAX_SECONDS_PER_QUESTION: Int = 180
+
     /** 0 means "no timer", which is a legitimate setting and is preserved. */
     fun minutesFrom(raw: Int?): Int {
         val value = raw ?: return 0
@@ -51,5 +58,36 @@ object ExamTiming {
             else -> paperMinutes
         }
         return secondsFrom(minutes)
+    }
+
+    /** A per-question pace clamped to the plausible 20..180 seconds. */
+    fun clampPace(secondsPerQuestion: Int): Int =
+        secondsPerQuestion.coerceIn(MIN_SECONDS_PER_QUESTION, MAX_SECONDS_PER_QUESTION)
+
+    /**
+     * The suggested duration for [count] questions at [secondsPerQuestion],
+     * rounded up to whole minutes and never below one (section 7.4).
+     */
+    fun suggestedMinutes(
+        count: Int,
+        secondsPerQuestion: Int = DEFAULT_SECONDS_PER_QUESTION
+    ): Int {
+        val seconds = count.coerceAtLeast(0).toLong() *
+            secondsPerQuestion.coerceAtLeast(0).toLong()
+        val minutes = (seconds + 59L) / 60L
+        return maxOf(1L, minutes).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    /**
+     * The paper's own seconds per question, for the "Paper pace" hint, or null
+     * when the paper cannot supply a plausible one (section 7.4). A 1,000
+     * question paper with 120 minutes works out at 7.2 s/question; offering
+     * that as a target pace would be worse than no hint.
+     */
+    fun paperPaceSeconds(paperMinutes: Int, totalQuestions: Int): Int? {
+        if (paperMinutes <= 0 || totalQuestions <= 0) return null
+        val seconds = paperMinutes.toLong() * 60L / totalQuestions
+        if (seconds < MIN_SECONDS_PER_QUESTION || seconds > MAX_SECONDS_PER_QUESTION) return null
+        return seconds.toInt()
     }
 }

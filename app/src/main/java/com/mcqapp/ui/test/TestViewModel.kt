@@ -12,18 +12,25 @@ import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.AnswerReview
+import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.AutoAdvance
+import com.mcqapp.domain.BoundedSample
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Countdown
 import com.mcqapp.domain.Dwell
+import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.SessionReviewPagingSource
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.TestAnswer
+import com.mcqapp.domain.TestPlan
+import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestSnapshot
+import com.mcqapp.domain.TestType
 import com.mcqapp.domain.TimerWarnings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
@@ -79,6 +86,10 @@ data class TestUiState(
     val isDrill: Boolean = false,
     /** The requested drill count; a passage block may push [order] past it. */
     val drillRequested: Int = 0,
+    /** The bounded-Test selector name; null on a legacy session (section 12.2). */
+    val testType: String? = null,
+    /** The plan's requested length (0 on a legacy session); [questionCount] is the shown count. */
+    val requestedCount: Int = 0,
     val resumeOffer: TestSnapshot? = null,
     val dwellSeconds: Map<String, Long> = emptyMap(),
     /** Whether the per-question clock currently accrues time. */
@@ -107,10 +118,47 @@ class TestViewModel(
     private val drillCount: Int = 0,
     private val drillMinutes: Int = 0,
     /** Per-attempt duration from the start picker; 0 = untimed. */
-    private val durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION
+    private val durationMinutes: Int = com.mcqapp.domain.ExamTiming.USE_PAPER_DURATION,
+    /**
+     * The bounded-Test selector name from the route, or blank for a legacy
+     * deep link. A missing type is legacy, never Random (section 16 C5).
+     */
+    private val routeTestType: String = "",
+    /** The plan's requested length; 0 for a legacy link. */
+    private val routeRequestedCount: Int = 0,
+    /** The route's exclusion rule name; blank means [ExclusionMode.NONE]. */
+    private val routeExclusionMode: String = ""
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /**
+     * The bounded plan this session runs, or null for a legacy deep link
+     * (whole paper, category scope, mistakes practice or drill). The plan is
+     * assembled in [load] once the paper — and therefore the expanded scope —
+     * is known, and it is what the save writes into the attempt metadata.
+     */
+    private var sessionPlan: TestPlan? = null
+
+    /** Canonical expanded scope key (section 12.1); never empty after load. */
+    private var sessionScopeKey: String = ""
+
+    /**
+     * True when this session's order is the paper's mistakes — a bounded
+     * `MISTAKES` plan or the legacy mistakes route. The banner, the resume
+     * identity and the resume recount all read this, not the raw route flag.
+     */
+    private var isMistakesSession: Boolean = false
+
+    /**
+     * Set when the resume slot holds a *different* session of this paper and
+     * this bounded session is about to take it. The first save drops the old
+     * answer rows (section 7.6): they are keyed by paper, so leaving them would
+     * join the abandoned session's answers into this one on the next resume.
+     * Merely opening the screen does not clear them — the saved session stays
+     * resumable from its own route until this one actually writes.
+     */
+    private var dropStaleAnswersOnSave: Boolean = false
 
     private val _state = MutableStateFlow(TestUiState())
     val state: StateFlow<TestUiState> = _state.asStateFlow()
@@ -219,33 +267,55 @@ class TestViewModel(
                 } else {
                     CategorySelection.orderedIds(paper?.categories.orEmpty(), categoryIds)
                 }
+                // One canonical key for the attempt metadata and the resume
+                // snapshot. The whole paper is its own constant, never the
+                // empty string; a scoped key hashes the expansion computed
+                // above, so the tick order cannot leak into it (section 12.1).
+                val scopeKey = if (categoryIds.isEmpty()) {
+                    ScopeKey.wholePaper(paperId)
+                } else {
+                    ScopeKey.ofExpanded(scopeIds)
+                }
+                sessionScopeKey = scopeKey
+                val plan = buildPlan(scopeKey)
+                sessionPlan = plan
                 Logger.d(
                     "TESTVM",
                     "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}, " +
-                        "scope=${scopeIds.size}"
+                        "scope=${scopeIds.size}, key=$scopeKey, plan=${plan?.type ?: "legacy"}"
                 )
+                // One shape for the whole session: a bounded `MISTAKES` plan is
+                // a mistakes practice even when the legacy route flag is off,
+                // so the banner, the resume identity and the ungraded recount
+                // all have to agree with the order query below.
+                val mistakesSession = plan?.type == TestType.MISTAKES || mistakesOnly
+                isMistakesSession = mistakesSession
                 // Session order only: the load streams the ids and passage
                 // membership out of the database, so a million-question paper
                 // never materialises its refs, let alone its content.
-                val order = if (mistakesOnly) {
-                    repository.getMistakenQuestionOrder(paperId)
+                val order = if (mistakesSession) {
+                    mistakenOrderInScope(scopeIds)
                 } else if (categoryIds.isEmpty()) {
                     repository.getSessionOrderForPaper(paperId)
                 } else {
                     repository.getSessionOrderForCategories(paperId, scopeIds)
                 }
                 Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
-                    if (mistakesOnly) " (mistakes only)" else "")
+                    if (mistakesSession) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
-                val seed = Random.nextLong()
+                // A bounded plan's seed is its sampling seed (recorded on the
+                // attempt); a legacy session keeps the old random seed.
+                val seed = plan?.seed ?: Random.nextLong()
                 questionShuffleEnabled = shuffleQ
                 sessionSeed = seed
                 if (shuffleQ || shuffleO) {
                     Logger.i("TESTVM", "Shuffled attempt: seed=$seed, " +
                         "questions=$shuffleQ, options=$shuffleO")
                 }
-                val isDrill = drillCount > 0
+                // A bounded plan is not a drill: its length comes from the
+                // plan's resolution, not from the legacy drill route.
+                val isDrill = plan == null && drillCount > 0
                 // Block-aware: passage members move as one block, so a
                 // comprehension set is never split by the shuffle or the cut.
                 // (A seed snapshot replays this, so the algorithm and its
@@ -254,18 +324,48 @@ class TestViewModel(
                 // The shuffle and the drill cut iterate the whole paper and
                 // allocate multi-megabyte index arrays, so they run off the
                 // main thread; only the resulting order is published to state.
-                val (shuffled, drilled) = withContext(Dispatchers.Default) {
-                    val shuffledOrder = order.shuffled(seed, shuffleQ)
-                    if (isDrill) {
-                        val sampleSeed = Random.nextLong()
-                        drillSampleSeed = sampleSeed
-                        Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffledOrder.size}, seed=$sampleSeed")
-                        // Whole blocks are taken, so the result may overshoot
-                        // the requested count when a passage does not fit.
-                        shuffledOrder to shuffledOrder.sampled(drillCount, sampleSeed)
-                    } else {
+                val (_, drilled) = withContext(Dispatchers.Default) {
+                    if (plan != null) {
+                        // The plan's requested length is resolved against the
+                        // type's pool (the base order), then sampled exactly:
+                        // a short scope runs whole, a request above the pool is
+                        // clamped, and a passage block may overshoot the target
+                        // by at most the section 9.6 limit.
+                        val target = when (val resolution = plan.resolve(order.size)) {
+                            is TestPlan.Resolution.Refused ->
+                                throw IllegalStateException(resolution.message)
+                            is TestPlan.Resolution.Ready -> resolution.count
+                        }
+                        val sampled = order.sampledBounded(
+                            target = target,
+                            max = TestPlan.MAX_LENGTH,
+                            seed = plan.seed
+                        )
+                        val selected = when (sampled) {
+                            is BoundedSample.Refused ->
+                                throw IllegalStateException(sampled.message)
+                            is BoundedSample.Selected -> sampled.order
+                        }
                         drillSampleSeed = 0L
-                        shuffledOrder to shuffledOrder
+                        Logger.i(
+                            "TESTVM",
+                            "Bounded ${plan.type}: requested=${plan.count}, target=$target, " +
+                                "shown=${selected.size}, seed=${plan.seed}"
+                        )
+                        order to selected
+                    } else {
+                        val shuffledOrder = order.shuffled(seed, shuffleQ)
+                        if (isDrill) {
+                            val sampleSeed = Random.nextLong()
+                            drillSampleSeed = sampleSeed
+                            Logger.i("TESTVM", "Drill: sampling $drillCount of ${shuffledOrder.size}, seed=$sampleSeed")
+                            // Whole blocks are taken, so the result may overshoot
+                            // the requested count when a passage does not fit.
+                            shuffledOrder to shuffledOrder.sampled(drillCount, sampleSeed)
+                        } else {
+                            drillSampleSeed = 0L
+                            shuffledOrder to shuffledOrder
+                        }
                     }
                 }
                 optionShuffleSeed = if (shuffleO) seed else 0L
@@ -284,11 +384,12 @@ class TestViewModel(
                 if (practice && !strict) Logger.i("TESTVM", "Practice mode on: live feedback enabled")
                 if (strict) Logger.i("TESTVM", "Strict exam mode on: aids hidden")
                 // Ungraded are counted by paper or by category selection — one
-                // aggregate query. Only the sampled sessions (a drill, a
-                // mistakes-only run) count by id, where the session's questions
-                // are bounded by what the user asked for.
+                // aggregate query. Only the sampled sessions (a bounded plan,
+                // a drill, a mistakes-only run) count by id, where the
+                // session's questions are bounded by what the user asked for.
                 val ungradedTotal = when {
-                    isDrill || mistakesOnly -> repository.countUngraded(drilled.idsInOrder())
+                    plan != null || isDrill || mistakesSession ->
+                        repository.countUngraded(drilled.idsInOrder())
                     categoryIds.isEmpty() -> repository.countUngradedForPaper(paperId)
                     else -> repository.countUngradedForCategories(scopeIds)
                 }
@@ -303,9 +404,11 @@ class TestViewModel(
                         practiceMode = practice,
                         strictMode = strict,
                         autoAdvance = advance,
-                        mistakesOnly = mistakesOnly,
+                        mistakesOnly = mistakesSession,
                         isDrill = isDrill,
-                        drillRequested = if (isDrill) drillCount else 0
+                        drillRequested = if (isDrill) drillCount else 0,
+                        testType = plan?.type?.name,
+                        requestedCount = plan?.count ?: 0
                     )
                 }
                 checkResumeOffer(order)
@@ -334,6 +437,96 @@ class TestViewModel(
     fun retry() {
         _state.update { it.copy(loading = true, loadError = null) }
         load()
+    }
+
+    /**
+     * The mistaken questions of this paper, restricted to the session's
+     * expanded scope. The paper-level query predates scoped Test; a bounded
+     * Mistakes plan must not sample a question outside the chosen scope.
+     *
+     * The scope filter runs in SQL by question category. A [SessionOrder]
+     * holds question ids only, so intersecting it with category ids here would
+     * drop every mistake. A ticked scope that expands to nothing is an empty
+     * scope, not the whole paper.
+     */
+    private suspend fun mistakenOrderInScope(scopeIds: List<String>): SessionOrder =
+        when {
+            categoryIds.isEmpty() -> repository.getMistakenQuestionOrder(paperId)
+            scopeIds.isEmpty() -> SessionOrder.empty()
+            else -> repository.getMistakenQuestionOrder(paperId, scopeIds)
+        }
+
+    /**
+     * The bounded plan the route describes, or null for a legacy deep link.
+     *
+     * Only a *missing* type is legacy — it is never inferred as
+     * [TestType.RANDOM] (section 16 C5). A present but unknown type, a present
+     * type with no length, and a type whose selector is not implemented yet are
+     * all refused rather than silently running a different test. The same goes
+     * for `RECENT_3`: recording a fresh sample that did not exclude anything
+     * would make the attempt comparable under a rule it never followed.
+     */
+    private fun buildPlan(scopeKey: String): TestPlan? {
+        if (routeTestType.isBlank()) return null
+        val type = TestType.fromStorage(routeTestType)
+            ?: throw IllegalStateException("Unknown test type '$routeTestType'.")
+        // The support check comes before the length check: `type=BALANCED&count=0`
+        // must report the unimplemented selector, not fall back to a legacy run.
+        if (!TestSetup.isStartableType(type)) {
+            throw IllegalStateException("This test type is not available yet.")
+        }
+        if (routeRequestedCount <= 0) {
+            throw IllegalStateException("A ${type.name.lowercase().replace('_', ' ')} test needs a length.")
+        }
+        val exclusion = if (routeExclusionMode.isBlank()) {
+            ExclusionMode.NONE
+        } else {
+            runCatching { ExclusionMode.valueOf(routeExclusionMode) }.getOrNull()
+                ?: throw IllegalStateException("Unknown exclusion rule '$routeExclusionMode'.")
+        }
+        if (exclusion != ExclusionMode.NONE) {
+            throw IllegalStateException("Avoiding recently tested questions is not available yet.")
+        }
+        return TestPlan(
+            paperId = paperId,
+            categoryIds = categoryIds,
+            type = type,
+            count = routeRequestedCount,
+            minutes = durationMinutes.coerceAtLeast(0),
+            seed = Random.nextLong(),
+            samplingVersion = TestPlan.SAMPLING_VERSION,
+            scopeKey = scopeKey,
+            exclusionMode = exclusion,
+            targetTopicIds = emptyList()
+        )
+    }
+
+    /**
+     * The nine section 12.1 fields for the attempt this session saves.
+     *
+     * A legacy session writes the legacy defaults (`testType = null`,
+     * `requestedCount = 0`, `samplingVersion = 1`) but still records the
+     * canonical scope key, so its scope is identifiable even though it is not
+     * comparable. A bounded plan writes its own type, request and sampling
+     * seed; `totalQuestions` stays the shown count.
+     *
+     * The seed is [sessionSeed], not the plan's original draw: resuming a
+     * bounded session carries the saved snapshot's seed forward (see [resume]),
+     * and the attempt must record the seed that produced the presented order.
+     */
+    private fun attemptMetadata(): AttemptMetadata {
+        val plan = sessionPlan
+        return AttemptMetadata(
+            testType = plan?.type?.name,
+            requestedCount = plan?.count ?: 0,
+            scopeCategoryIds = categoryIds.joinToString(","),
+            scopeKey = sessionScopeKey,
+            samplingVersion = plan?.samplingVersion ?: 1,
+            seed = if (plan != null) sessionSeed else 0L,
+            exclusionMode = plan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
+            targetTopicIds = plan?.targetTopicIds?.joinToString(",") ?: "",
+            compositionJson = ""
+        )
     }
 
     /**
@@ -729,6 +922,7 @@ class TestViewModel(
                         durationSeconds = durationSeconds,
                         finishedAt = System.currentTimeMillis(),
                         dwellSeconds = current.dwellSeconds,
+                        metadata = attemptMetadata(),
                         onProgress = { stored, total ->
                             _state.update { it.copy(saveDone = stored, saveTotal = total) }
                         }
@@ -784,7 +978,29 @@ class TestViewModel(
             repository.clearStaleTestAnswers(paperId)
             return
         }
-        if (!document.matches(paperId, categoryIds, drillCount > 0, mistakesOnly, drillCount)) return
+        if (!document.matches(
+                paperId = paperId,
+                categoryIds = categoryIds,
+                isDrill = sessionPlan == null && drillCount > 0,
+                mistakesOnly = isMistakesSession,
+                drillRequested = if (sessionPlan == null) drillCount else 0,
+                testType = sessionPlan?.type?.name,
+                requestedCount = sessionPlan?.count ?: 0,
+                exclusionMode = sessionPlan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
+                targetTopicIds = sessionPlan?.targetTopicIds.orEmpty(),
+                // A legacy session keeps the raw tick-set identity so a
+                // snapshot written before scopeKey existed can still resume;
+                // a bounded plan compares the canonical expanded key.
+                scopeKey = sessionPlan?.scopeKey ?: ""
+            )
+        ) {
+            // The slot holds a different session of this paper. Opening the
+            // screen must not destroy it, but a bounded session that starts
+            // here takes the slot on its first save; see
+            // [dropStaleAnswersOnSave].
+            if (sessionPlan != null) dropStaleAnswersOnSave = true
+            return
+        }
         // A document written before the answers moved to rows still carries
         // them inline; writing them as rows now is what keeps the next answer
         // from dropping everything answered before it. A row-based document has
@@ -899,9 +1115,10 @@ class TestViewModel(
         // pre-resume option shuffle; resolveCurrent would publish it as the
         // first resumed card (consolidated_bugs.md D9).
         prefetched = null
-        if (saved.isDrill || saved.mistakesOnly) {
+        if (sessionPlan != null || saved.isDrill || saved.mistakesOnly) {
             // ungradedTotal was computed for the freshly loaded order; the
-            // resumed order is the saved cut, so the count follows it.
+            // resumed order is the saved cut or the frozen bounded sample, so
+            // the count follows it.
             viewModelScope.launch {
                 try {
                     val ungraded = repository.countUngraded(ordered.idsInOrder())
@@ -957,6 +1174,17 @@ class TestViewModel(
             drillRequested = current.drillRequested,
             isDrill = current.isDrill,
             mistakesOnly = current.mistakesOnly,
+            // A bounded plan freezes its sample so a resume replays exactly
+            // these ids and never re-ranks; a legacy session keeps the seed
+            // replay (section 12.2). The key is written only for a plan, so a
+            // legacy snapshot still compares by its raw tick set.
+            selectedQuestionIds = if (sessionPlan != null) current.order.idsInOrder() else emptyList(),
+            scopeKey = sessionPlan?.scopeKey ?: "",
+            testType = sessionPlan?.type?.name,
+            requestedCount = sessionPlan?.count ?: 0,
+            samplingVersion = sessionPlan?.samplingVersion ?: 1,
+            exclusionMode = sessionPlan?.exclusionMode?.name ?: ExclusionMode.NONE.name,
+            targetTopicIds = sessionPlan?.targetTopicIds.orEmpty(),
             // Untimed sessions bank their elapsed time so a resume neither
             // restarts the clock nor counts the dead interval (D7).
             elapsedSeconds = if (current.totalSeconds > 0) {
@@ -967,19 +1195,57 @@ class TestViewModel(
             savedAt = System.currentTimeMillis()
         )
         val id = questionId ?: current.order.idAtOrNull(current.currentIndex)
-        val changed = if (id == null) emptyList() else listOf(
-            TestAnswer(
-                questionId = id,
-                selection = current.selections[id] ?: emptySet(),
-                revealed = id in current.revealed,
-                flagged = id in current.flagged,
-                dwellSeconds = dwellOf(current, id)
+        val takeOver = dropStaleAnswersOnSave
+        val changed = if (takeOver) {
+            // A takeover deletes every row of this paper, so it must rewrite
+            // every question with progress — not just the one that changed.
+            // Two saves can overlap (answer, then auto-advance) and both read
+            // the flag; a delta-only rewrite would let the second delete the
+            // first's row and lose the answer.
+            current.order.idsInOrder().mapNotNull { qid ->
+                val selection = current.selections[qid].orEmpty()
+                val revealed = qid in current.revealed
+                val flagged = qid in current.flagged
+                if (selection.isEmpty() && !revealed && !flagged &&
+                    dwellOf(current, qid) <= 0
+                ) {
+                    null
+                } else {
+                    TestAnswer(
+                        questionId = qid,
+                        selection = selection,
+                        revealed = revealed,
+                        flagged = flagged,
+                        dwellSeconds = dwellOf(current, qid)
+                    )
+                }
+            }
+        } else if (id == null) {
+            emptyList()
+        } else {
+            listOf(
+                TestAnswer(
+                    questionId = id,
+                    selection = current.selections[id] ?: emptySet(),
+                    revealed = id in current.revealed,
+                    flagged = id in current.flagged,
+                    dwellSeconds = dwellOf(current, id)
+                )
             )
-        )
+        }
         viewModelScope.launch {
             try {
-                repository.saveTestProgress(snapshot, changed)
+                repository.saveTestProgress(snapshot, changed, takeOver)
+                // Clear only after the save landed: a failed save keeps the
+                // takeover pending, so the next autosave still replaces the
+                // stale rows instead of appending beside them.
+                if (takeOver) dropStaleAnswersOnSave = false
             } catch (e: Exception) {
+                // A failed takeover may have deleted the rows before it
+                // failed; keep the flag armed so the next save replaces the
+                // full set. A takeover always rewrites every answered row, so
+                // re-arming is safe.
+                if (takeOver) dropStaleAnswersOnSave = true
                 Logger.w("TESTVM", "persistProgress failed: ${e.message}")
             }
         }

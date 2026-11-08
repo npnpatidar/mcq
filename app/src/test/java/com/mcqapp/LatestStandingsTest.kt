@@ -63,7 +63,8 @@ class LatestStandingsTest {
     /** All four questions attempted; [selected] picks right ("a") or wrong ("b"). */
     private suspend fun attempt(
         selected: (String) -> String,
-        skipped: List<String> = emptyList()
+        skipped: List<String> = emptyList(),
+        finishedAt: Long = System.currentTimeMillis()
     ): Long {
         val all = listOf("q1", "q2", "q3", "q4")
         return repository.saveAttempt(
@@ -75,7 +76,7 @@ class LatestStandingsTest {
             },
             negativeMarking = 0.0,
             durationSeconds = 60,
-            finishedAt = System.currentTimeMillis()
+            finishedAt = finishedAt
         )
     }
 
@@ -109,6 +110,23 @@ class LatestStandingsTest {
     }
 
     /**
+     * A merge import can write an older attempt after a newer one, so its
+     * results get larger ids. Recency is the attempt's `finishedAt`, not the
+     * result id: the older wrong rows must not become the standing.
+     */
+    @Test
+    fun anOlderAttemptImportedLaterDoesNotBecomeTheStanding() = runBlocking {
+        attempt(selected = { "a" }, finishedAt = 2000L)   // newer, all correct
+        attempt(selected = { "b" }, finishedAt = 1000L)   // older, imported later
+
+        assertEquals(emptyMap<String, Int>(), repository.getMistakeCounts())
+        assertEquals(
+            emptyList<String>(),
+            repository.getMistakenQuestionOrder("p1").idsInOrder()
+        )
+    }
+
+    /**
      * The SQL mistake reads (`countMistakesByPaper`,
      * `getMistakenQuestionIdsForPaper`) must agree with the in-memory standing
      * rule they replaced, paper for paper and id for id — including across two
@@ -135,7 +153,9 @@ class LatestStandingsTest {
 
         val oracle = com.mcqapp.domain.Mistakes.mistakenIdsByPaper(
             db.attemptDao().getLatestStandings().map {
-                com.mcqapp.domain.MistakeStanding(it.questionId, it.paperId, it.isCorrect, it.rowId)
+                com.mcqapp.domain.MistakeStanding(
+                    it.questionId, it.paperId, it.isCorrect, it.finishedAt, it.rowId
+                )
             }
         )
 

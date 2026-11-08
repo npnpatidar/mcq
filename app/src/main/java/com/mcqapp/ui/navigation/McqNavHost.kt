@@ -45,14 +45,17 @@ fun McqNavHost(repository: McqRepository) {
             LibraryScreen(repository = repository, navController = navController)
         }
         composable(
-            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}&minutes={minutes}",
+            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}&minutes={minutes}&type={type}&count={count}&exclusion={exclusion}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
                 navArgument("categories") { type = NavType.StringType; defaultValue = "" },
                 navArgument("mistakes") { type = NavType.BoolType; defaultValue = false },
                 navArgument("drillCount") { type = NavType.IntType; defaultValue = 0 },
                 navArgument("drillMinutes") { type = NavType.IntType; defaultValue = 0 },
-                navArgument("minutes") { type = NavType.IntType; defaultValue = -1 }
+                navArgument("minutes") { type = NavType.IntType; defaultValue = -1 },
+                navArgument("type") { type = NavType.StringType; defaultValue = "" },
+                navArgument("count") { type = NavType.IntType; defaultValue = 0 },
+                navArgument("exclusion") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
@@ -61,8 +64,12 @@ fun McqNavHost(repository: McqRepository) {
             val drillCount = entry.arguments?.getInt("drillCount") ?: 0
             val drillMinutes = entry.arguments?.getInt("drillMinutes") ?: 0
             val minutes = entry.arguments?.getInt("minutes") ?: -1
+            val type = entry.arguments?.getString("type").orEmpty()
+            val count = entry.arguments?.getInt("count") ?: 0
+            val exclusion = entry.arguments?.getString("exclusion").orEmpty()
             Logger.i("NAV", "test screen: paperId=$paperId, categories='$categories', " +
-                "mistakes=$mistakes, drill=$drillCount/${drillMinutes}min, minutes=$minutes")
+                "mistakes=$mistakes, drill=$drillCount/${drillMinutes}min, minutes=$minutes, " +
+                "type='$type', count=$count, exclusion='$exclusion'")
             TestSessionScreen(
                 repository = repository,
                 paperId = paperId,
@@ -71,6 +78,9 @@ fun McqNavHost(repository: McqRepository) {
                 drillCount = drillCount,
                 drillMinutes = drillMinutes,
                 durationMinutes = minutes,
+                testType = type,
+                requestedCount = count,
+                exclusionMode = exclusion,
                 navController = navController
             )
         }

@@ -464,6 +464,182 @@ class BackupRestoreRoundTripTest {
         assertEquals(before, rowDump())
     }
 
+    /**
+     * The bounded-Test metadata and the representative counters survive an
+     * export/wipe/import cycle: both import paths pass the restored attempt's
+     * type and sampling version to `applyQuestionStats`, so a representative
+     * attempt must not come back with `rep* = 0`.
+     */
+    /** The representative attempt both round-trip tests export. */
+    private suspend fun seedRepresentativeAttempt(
+        repository: com.mcqapp.data.repository.McqRepository
+    ) {
+        repository.saveAttempt(
+            paperId = "paper-1",
+            paperTitle = "Backup Paper",
+            questions = listOf(repository.getQuestion("q-1")!!),
+            selections = mapOf("q-1" to setOf("b")),
+            negativeMarking = 0.0,
+            durationSeconds = 60,
+            finishedAt = 1_700_000_001_000,
+            metadata = com.mcqapp.domain.AttemptMetadata(
+                testType = "RANDOM",
+                requestedCount = 20,
+                scopeCategoryIds = "cat-root",
+                scopeKey = com.mcqapp.domain.ScopeKey.wholePaper("paper-1"),
+                samplingVersion = 2,
+                seed = 42L,
+                exclusionMode = "NONE",
+                targetTopicIds = "t1,t2"
+            )
+        )
+    }
+
+    /** The nine header fields and the `rep*` counters a restore must bring back. */
+    private suspend fun assertRepresentativeRestored(target: AppDatabase) {
+        val restored = target.attemptDao().getAllAttempts()
+            .single { it.samplingVersion == 2 }
+        assertEquals("RANDOM", restored.testType)
+        assertEquals(20, restored.requestedCount)
+        assertEquals("cat-root", restored.scopeCategoryIds)
+        assertEquals("paper:paper-1", restored.scopeKey)
+        assertEquals(2, restored.samplingVersion)
+        assertEquals(42L, restored.seed)
+        assertEquals("NONE", restored.exclusionMode)
+        assertEquals("t1,t2", restored.targetTopicIds)
+        assertEquals("", restored.compositionJson)
+
+        target.query(
+            "SELECT repCorrect,repWrong,repSkip FROM question_stats " +
+                "WHERE questionId = 'q-1'",
+            null
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+            assertEquals(0, cursor.getInt(1))
+            assertEquals(0, cursor.getInt(2))
+        }
+    }
+
+    @Test
+    fun aRepresentativeAttemptRoundTripsItsMetadataAndCounters() =
+        kotlinx.coroutines.runBlocking {
+            com.mcqapp.data.io.Importer(db).import(content())
+            val context = androidx.test.core.app.ApplicationProvider
+                .getApplicationContext<android.content.Context>()
+            val repository = com.mcqapp.data.repository.McqRepository(db, context)
+            seedRepresentativeAttempt(repository)
+            val backup = buildBackup()
+
+            // A restore into a fresh database is the "wipe, then import" shape.
+            val target = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                com.mcqapp.data.backup.BackupRestorer(target)
+                    .restore(McqBackupFormat.read(backup))
+                assertRepresentativeRestored(target)
+            } finally {
+                target.close()
+            }
+        }
+
+    /**
+     * The same fixture through the streaming path: the zip is decoded as it is
+     * read, so the metadata and the representative counters have to survive the
+     * second import implementation too — a restore that loses them leaves a
+     * mock attempt in the trend with no `rep*` evidence.
+     */
+    @Test
+    fun theStreamingRestoreCarriesTheBoundedMetadataAndCounters() =
+        kotlinx.coroutines.runBlocking {
+            com.mcqapp.data.io.Importer(db).import(content())
+            val context = androidx.test.core.app.ApplicationProvider
+                .getApplicationContext<android.content.Context>()
+            val repository = com.mcqapp.data.repository.McqRepository(db, context)
+            seedRepresentativeAttempt(repository)
+            val backup = buildBackup()
+
+            val target = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                com.mcqapp.data.backup.BackupRestorer(target)
+                    .restoreStreaming(java.io.ByteArrayInputStream(backup))
+                assertRepresentativeRestored(target)
+            } finally {
+                target.close()
+            }
+        }
+
+    /**
+     * An attempt DTO written before v21 has no metadata fields at all. It must
+     * import as a legacy attempt (`testType = null`, `requestedCount = 0`,
+     * `samplingVersion = 1`) and never move `rep*`; a null type is not RANDOM.
+     */
+    @Test
+    fun anOldAttemptDtoWithoutMetadataImportsAsLegacy() =
+        kotlinx.coroutines.runBlocking {
+            val file = McqFileDto(
+                papers = listOf(
+                    PaperDto(
+                        id = "paper-1",
+                        title = "Paper",
+                        categories = listOf(
+                            CategoryDto(
+                                id = "cat-root",
+                                title = "Cat",
+                                questions = listOf(QuestionDto(id = "q-1", text = "Q 1"))
+                            )
+                        )
+                    )
+                ),
+                attempts = listOf(
+                    AttemptDto(
+                        paperId = "paper-1",
+                        title = "Paper",
+                        totalQuestions = 1,
+                        correctCount = 1,
+                        score = 1.0,
+                        maxScore = 1.0,
+                        durationSeconds = 60,
+                        finishedAt = 1_700_000_000_000,
+                        results = listOf(
+                            AttemptResultDto(
+                                questionId = "q-1",
+                                correctOptionIds = "a",
+                                selectedOptionIds = "a",
+                                isCorrect = true
+                            )
+                        )
+                    )
+                )
+            )
+            com.mcqapp.data.io.Importer(db).import(file)
+
+            val attempt = db.attemptDao().getAllAttempts().single()
+            assertNull(attempt.testType)
+            assertEquals(0, attempt.requestedCount)
+            assertEquals("", attempt.scopeCategoryIds)
+            assertEquals("", attempt.scopeKey)
+            assertEquals(1, attempt.samplingVersion)
+            assertEquals(0L, attempt.seed)
+            assertEquals("NONE", attempt.exclusionMode)
+            assertEquals("", attempt.targetTopicIds)
+            assertEquals("", attempt.compositionJson)
+
+            db.query(
+                "SELECT repCorrect,repWrong,repSkip FROM question_stats " +
+                    "WHERE questionId = 'q-1'",
+                null
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+                assertEquals(0, cursor.getInt(1))
+                assertEquals(0, cursor.getInt(2))
+            }
+        }
+
     private fun entriesOf(zip: ByteArray): List<Pair<String, ByteArray>> {
         val parts = mutableListOf<Pair<String, ByteArray>>()
         java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zip)).use { input ->

@@ -321,10 +321,42 @@ data class Attempt(
     val score: Double,
     val maxScore: Double,
     val durationSeconds: Long,
-    val finishedAt: Long
+    val finishedAt: Long,
+    /**
+     * The bounded-Test metadata (section 12.1). Every default is the legacy
+     * value, so a pre-v21 row reads as "no type, no requested count, sampling
+     * version 1" and is never comparable.
+     */
+    val testType: String? = null,
+    val requestedCount: Int = 0,
+    val scopeCategoryIds: String = "",
+    val scopeKey: String = "",
+    val samplingVersion: Int = 1,
+    val seed: Long = 0,
+    val exclusionMode: String = "NONE",
+    val targetTopicIds: String = "",
+    val compositionJson: String = ""
 ) {
     val percentage: Double get() = if (maxScore > 0) score / maxScore * 100.0 else 0.0
 }
+
+/**
+ * The bounded-Test metadata an attempt persists (section 12.1), passed to the
+ * save path as one value. Defaults are the legacy values: a caller that does
+ * not supply metadata writes a legacy attempt, which is never comparable and
+ * never moves the representative counters.
+ */
+data class AttemptMetadata(
+    val testType: String? = null,
+    val requestedCount: Int = 0,
+    val scopeCategoryIds: String = "",
+    val scopeKey: String = "",
+    val samplingVersion: Int = 1,
+    val seed: Long = 0,
+    val exclusionMode: String = "NONE",
+    val targetTopicIds: String = "",
+    val compositionJson: String = ""
+)
 
 /**
  * A result row plus its position in the **unfiltered** attempt order. Browse

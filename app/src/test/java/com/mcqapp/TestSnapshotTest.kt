@@ -49,6 +49,130 @@ class TestSnapshotTest {
         assertFalse(snapshot.matches("p1", listOf("c1", "c2", "c3")))
     }
 
+    /**
+     * A bounded Test resumes only the same plan: type, requested length,
+     * exclusion rule, target set and the canonical expanded scope. A
+     * Weakest-topics snapshot must not be offered to a Random test of the same
+     * tick set, and a legacy snapshot must not be reinterpreted as a new test.
+     */
+    @Test
+    fun matchesKeysOnThePlanAndTheExpandedScope() {
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c1"),
+            scopeKey = "expanded-key",
+            testType = "RANDOM",
+            requestedCount = 20,
+            samplingVersion = 2,
+            exclusionMode = "NONE",
+            targetTopicIds = emptyList()
+        )
+        val same = snapshot.matches(
+            paperId = "p1",
+            categoryIds = listOf("c1"),
+            testType = "RANDOM",
+            requestedCount = 20,
+            scopeKey = "expanded-key"
+        )
+        assertTrue(same)
+
+        assertFalse(
+            "a different type is a different session",
+            snapshot.matches("p1", listOf("c1"), testType = "WEAKEST_TOPICS", requestedCount = 20, scopeKey = "expanded-key")
+        )
+        assertFalse(
+            "a different requested length is a different session",
+            snapshot.matches("p1", listOf("c1"), testType = "RANDOM", requestedCount = 50, scopeKey = "expanded-key")
+        )
+        assertFalse(
+            "a different exclusion rule is a different session",
+            snapshot.matches(
+                "p1", listOf("c1"), testType = "RANDOM", requestedCount = 20,
+                exclusionMode = "RECENT_3", scopeKey = "expanded-key"
+            )
+        )
+        assertFalse(
+            "a different target set is a different session",
+            snapshot.matches(
+                "p1", listOf("c1"), testType = "RANDOM", requestedCount = 20,
+                targetTopicIds = listOf("t1"), scopeKey = "expanded-key"
+            )
+        )
+        assertFalse(
+            "the expanded scope identity decides, not the raw ticks",
+            snapshot.matches("p1", listOf("c1"), testType = "RANDOM", requestedCount = 20, scopeKey = "other-key")
+        )
+        assertFalse(
+            "a bounded snapshot is never offered to a legacy caller",
+            snapshot.matches("p1", listOf("c1"))
+        )
+        assertFalse(
+            "a legacy snapshot is never offered to a bounded plan",
+            TestSnapshot(paperId = "p1", categoryIds = listOf("c1"))
+                .matches("p1", listOf("c1"), testType = "RANDOM", requestedCount = 20, scopeKey = "expanded-key")
+        )
+    }
+
+    /**
+     * Section 12.2: a snapshot is legacy when `testType` is null **or**
+     * `samplingVersion < 2`. A type-tagged document still at version 1 is
+     * malformed (only a legacy writer leaves it there), so it must not be
+     * treated as a current bounded session.
+     */
+    @Test
+    fun aTypeTaggedSnapshotBelowSamplingVersionTwoIsNotCurrent() {
+        val malformed = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c1"),
+            scopeKey = "expanded-key",
+            testType = "RANDOM",
+            requestedCount = 20,
+            samplingVersion = 1
+        )
+        assertFalse(
+            malformed.matches(
+                "p1", listOf("c1"),
+                testType = "RANDOM", requestedCount = 20, scopeKey = "expanded-key"
+            )
+        )
+    }
+
+    /**
+     * A bounded snapshot freezes its sample: resume replays exactly those ids
+     * in presented order and never re-runs the selector, even when the saved
+     * seed would produce a different order.
+     */
+    @Test
+    fun aBoundedSnapshotResumesItsFrozenSelection() {
+        val base = bank()
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            scopeKey = "expanded-key",
+            testType = "RANDOM",
+            requestedCount = 3,
+            samplingVersion = 2,
+            selectedQuestionIds = listOf("q5", "q1", "q4"),
+            questionSeed = 12345L,
+            questionShuffle = true
+        )
+        assertEquals(
+            listOf("q5", "q1", "q4"),
+            TestSnapshot.orderOf(base, snapshot)!!.idsInOrder()
+        )
+    }
+
+    @Test
+    fun aBoundedSnapshotDropsDeletedSelectionIds() {
+        val base = SessionOrder.of(listOf(ref("q1"), ref("q4")))
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c"),
+            selectedQuestionIds = listOf("q2", "q4", "q1")
+        )
+        assertEquals(listOf("q4", "q1"), TestSnapshot.orderOf(base, snapshot)!!.idsInOrder())
+    }
+
     @Test
     fun aLegacySnapshotRestoresItsSavedOrderAndAppendsTheNew() {
         // The loaded order is the base; the saved ids move to the front in the

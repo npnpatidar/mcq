@@ -100,6 +100,30 @@ suspend fun QuestionDao.getIdCategoriesByIdsChunked(ids: List<String>): List<Que
 suspend fun QuestionDao.getIdCategoryPassageByIdsChunked(ids: List<String>): List<QuestionMoveRow> =
     ids.chunks().flatMap { getIdCategoryPassageByIds(it) }
 
+/**
+ * The scope's mistakes in one global order. Each chunk's rows are sorted, and
+ * the concatenation is re-sorted by the same recency keys, because category
+ * chunks are disjoint but not time-ordered.
+ */
+suspend fun AttemptDao.getMistakeOrderRowsInScopeChunked(
+    paperId: String,
+    scopeIds: List<String>
+): List<MistakeOrderRow> =
+    scopeIds.distinct()
+        .chunks()
+        .flatMap { getMistakeOrderRowsInScope(paperId, it) }
+        .sortedWith(
+            compareByDescending<MistakeOrderRow> { it.finishedAt }
+                .thenByDescending { it.rowId }
+        )
+
+/** The scope's mistake count, summed over disjoint chunks. */
+suspend fun AttemptDao.countMistakesInScopeChunked(
+    paperId: String,
+    scopeIds: List<String>
+): Int =
+    scopeIds.distinct().chunks().sumOf { countMistakesInScope(paperId, it) }
+
 suspend fun QuestionDao.updateCategoryChunked(ids: Collection<String>, categoryId: String): Int =
     ids.toList().chunks().sumOf { updateCategory(it, categoryId) }
 

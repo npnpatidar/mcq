@@ -203,7 +203,9 @@ data class CorrectAnswerEntity(
     indices = [
         Index("questionId"),
         Index("paperId", "dueAt"),
-        Index("paperId", "cardState", "dueAt")
+        Index("paperId", "cardState", "dueAt"),
+        // Leech/at-risk selection reads a paper's leeches by due date.
+        Index("paperId", "leech", "dueAt")
     ]
 )
 data class CardStateEntity(
@@ -317,7 +319,17 @@ data class BookmarkEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "attempts")
+@Entity(
+    tableName = "attempts",
+    // The comparability key (section 11.5) in one index: a trend lookup filters
+    // on every leading column and orders by finishedAt.
+    indices = [
+        Index(
+            "paperId", "testType", "requestedCount", "scopeKey",
+            "samplingVersion", "exclusionMode", "finishedAt"
+        )
+    ]
+)
 data class AttemptEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val paperId: String,
@@ -329,7 +341,22 @@ data class AttemptEntity(
     val score: Double,
     val maxScore: Double,
     val durationSeconds: Long,
-    val finishedAt: Long
+    val finishedAt: Long,
+    /**
+     * The bounded-Test metadata (section 12.1). Every default is the legacy
+     * value: a pre-v21 row has no type, no requested count and sampling
+     * version 1, so it is never comparable and never touches `rep*`. `null`
+     * type means "unknown design", never RANDOM.
+     */
+    val testType: String? = null,
+    val requestedCount: Int = 0,
+    val scopeCategoryIds: String = "",
+    val scopeKey: String = "",
+    val samplingVersion: Int = 1,
+    val seed: Long = 0,
+    val exclusionMode: String = "NONE",
+    val targetTopicIds: String = "",
+    val compositionJson: String = ""
 )
 
 @Entity(
@@ -344,7 +371,18 @@ data class AttemptEntity(
     ],
     // (attemptId, isCorrect) serves the results-screen tallies; the attemptId
     // prefix replaces the old standalone index.
-    indices = [Index("attemptId", "isCorrect")]
+    //
+    // (questionId, id) is declared here as an ordinary index only because
+    // Room's schema validation compares the complete index set and @Index
+    // cannot express a WHERE clause. The real index in the database is the
+    // partial `... WHERE selectedOptionIds != ''` built by
+    // AppDatabase.PARTIAL_RESULT_INDEX_SQL; SQLite reports the same name and
+    // columns, so validation passes. Keep this name and column list in sync
+    // with that statement.
+    indices = [
+        Index("attemptId", "isCorrect"),
+        Index("questionId", "id")
+    ]
 )
 data class QuestionResultEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -362,13 +400,17 @@ data class QuestionResultEntity(
 )
 
 /**
- * A question's lifetime performance across every stored attempt, maintained
- * as results are written so History's "hardest"/"weakest" cards are two
- * indexed reads instead of a whole-`question_results` scan. It is an
- * aggregate of all history, so deleting an attempt intentionally leaves it
- * untouched (matching the existing "hardest ever" semantics).
+ * A question's performance across every attempt still stored, maintained as
+ * results are written so History's "hardest"/"weakest" cards are indexed reads
+ * instead of a whole-`question_results` scan.
+ *
+ * It means "currently stored", not "ever" (section 3.1): deleting an attempt
+ * recomputes the affected rows from the surviving results, and a row with no
+ * surviving result is dropped. [repCorrect], [repWrong] and [repSkip] count
+ * only representative attempts (Random/Balanced with `samplingVersion >= 2`);
+ * `repGraded` is derived at read so it cannot drift from the three counters.
  */
-@Entity(tableName = "question_stats")
+@Entity(tableName = "question_stats", indices = [Index("paperId")])
 data class QuestionStatsEntity(
     @PrimaryKey val questionId: String,
     val paperId: String,
@@ -382,5 +424,8 @@ data class QuestionStatsEntity(
     val skipCount: Int,
     val ungradedCount: Int,
     val lastResultIsCorrect: Boolean,
-    val lastFinishedAt: Long
+    val lastFinishedAt: Long,
+    val repCorrect: Int = 0,
+    val repWrong: Int = 0,
+    val repSkip: Int = 0
 )

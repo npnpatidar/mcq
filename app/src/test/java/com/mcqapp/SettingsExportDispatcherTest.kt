@@ -7,6 +7,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,7 +37,14 @@ class SettingsExportDispatcherTest {
 
     @Test
     fun theExportBodyRunsOnTheDispatcherItIsGiven() {
-        val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "export-recording") }
+        // The worker is recorded, not looked up by name: kotlinx-coroutines
+        // decorates worker thread names with " @coroutine#<id>" whenever its
+        // debug mode is on (a per-run condition), so the name is not the
+        // contract — the thread is.
+        var worker: Thread? = null
+        val executor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "export-recording").also { worker = it }
+        }
         val dispatcher = executor.asCoroutineDispatcher()
         val viewModel = SettingsViewModel(
             ApplicationProvider.getApplicationContext() as McqApplication
@@ -61,9 +69,9 @@ class SettingsExportDispatcherTest {
                     }
                 )
             }
-            assertEquals(
+            assertSame(
                 "the export body must run on the given dispatcher, not on the caller",
-                "export-recording", openedOn?.name
+                worker, openedOn
             )
             assertNotEquals(Thread.currentThread(), openedOn)
             // The body did not just hop — the exporter walked the (empty) bank.

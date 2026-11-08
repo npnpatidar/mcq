@@ -136,6 +136,15 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            // Installs beside the release build instead of replacing it: a
+            // distinct applicationId gives the debug app its own data
+            // directory, FileProvider authority and launcher entry, so the two
+            // can coexist with separate data. The namespace (and therefore the
+            // R class and source packages) is unchanged, and the release
+            // applicationId stays `com.mcqapp`.
+            applicationIdSuffix = ".debug"
+        }
     }
 
     compileOptions {

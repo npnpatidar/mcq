@@ -77,8 +77,11 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
 ```
 
 - `/sdcard/Download/app-debug.apk` and `/sdcard/Download/app-release.apk` are always the
-  latest build; the release APK is signed with CI's throwaway key, so installing it over a
-  debug build (or vice versa) needs an uninstall first.
+  latest build. The debug variant has `applicationIdSuffix = ".debug"`, so it installs as
+  `com.mcqapp.debug` **beside** the release (`com.mcqapp`) with its own data directory and
+  FileProvider authority; the two can be installed at the same time and neither replaces
+  the other. A release APK still only installs over a release with the same signing key,
+  and the CI release is signed with a throwaway key.
 
 ## Anki interoperability
 

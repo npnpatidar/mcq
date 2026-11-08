@@ -43,7 +43,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.TestType
 import com.mcqapp.domain.Trends
+import com.mcqapp.ui.common.attemptFamilyLabel
+import com.mcqapp.ui.common.testTypeLabel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -195,6 +198,14 @@ fun HistoryScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(attempt.title, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    attemptFamilyLabel(attempt) +
+                                        TestType.fromStorage(attempt.testType)
+                                            ?.let { " · " + testTypeLabel(it) }
+                                            .orEmpty(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
                                 Text(
                                     SimpleDateFormat("dd MMM yyyy, HH:mm", LocalConfiguration.current.locales[0])
                                         .format(Date(attempt.finishedAt)),

@@ -99,6 +99,7 @@ fun SettingsScreen(
     val practiceMode by viewModel.practiceMode.collectAsStateWithLifecycle()
     val strictMode by viewModel.strictMode.collectAsStateWithLifecycle()
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
+    val avoidRecentQuestions by viewModel.avoidRecentQuestions.collectAsStateWithLifecycle()
     val loadRemoteImages by viewModel.loadRemoteImages.collectAsStateWithLifecycle()
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
     val fsrsReviewCount by viewModel.fsrsReviewCount.collectAsStateWithLifecycle()
@@ -551,6 +552,23 @@ fun SettingsScreen(
                         Switch(
                             checked = autoAdvance,
                             onCheckedChange = { viewModel.setAutoAdvance(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.avoid_recent_questions))
+                            Text(
+                                stringResource(R.string.avoid_recent_questions_help),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = avoidRecentQuestions,
+                            onCheckedChange = { viewModel.setAvoidRecentQuestions(it) }
                         )
                     }
                     Spacer(Modifier.height(4.dp))

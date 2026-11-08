@@ -51,5 +51,14 @@ enum class TestType {
             val value = raw?.trim() ?: return null
             return entries.firstOrNull { it.name == value }
         }
+
+        /**
+         * The stored names of the representative types. Repeat avoidance
+         * (section 9.8) reads these as one family: a fresh sample avoids what
+         * a strict Random or Balanced attempt asked, whichever of the two it
+         * was.
+         */
+        fun representativeNames(): List<String> =
+            entries.filter { it.isRepresentative }.map { it.name }
     }
 }

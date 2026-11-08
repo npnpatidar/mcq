@@ -255,4 +255,31 @@ class TestPlanTest {
         assertNull(TestType.fromStorage(""))
         assertNull(TestType.fromStorage("UNKNOWN"))
     }
+
+    @Test
+    fun theSamplerLimitMatchesTheBoundedSampler() {
+        // min(150, target + max(1, ceil(target/4))), the section 9.6 limit.
+        assertEquals(25, TestPlan.samplerLimit(20))
+        assertEquals(32, TestPlan.samplerLimit(25))
+        assertEquals(63, TestPlan.samplerLimit(50))
+        assertEquals(150, TestPlan.samplerLimit(150))
+        assertEquals(150, TestPlan.samplerLimit(149))
+        assertTrue(TestPlan.samplerCanStart(20, 25))
+        assertFalse(TestPlan.samplerCanStart(20, 26))
+        assertTrue(TestPlan.samplerCanStart(20, 1))
+    }
+
+    @Test
+    fun aFreshSampleNeedsTwiceTheRequestLeft() {
+        assertFalse(TestPlan.freshSampleFits(remaining = 39, requested = 20))
+        assertTrue(TestPlan.freshSampleFits(remaining = 40, requested = 20))
+        assertTrue(TestPlan.freshSampleFits(remaining = 100, requested = 20))
+        assertFalse(TestPlan.freshSampleFits(remaining = 100, requested = 0))
+    }
+
+    @Test
+    fun theSamplerMessagesNameTheWayOut() {
+        assertTrue(TestPlan.noPassageFitsMessage().contains("longer test"))
+        assertTrue(TestPlan.passageTooLargeMessage().contains("150"))
+    }
 }

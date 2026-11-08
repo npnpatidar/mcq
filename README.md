@@ -25,15 +25,15 @@ format (papers, categories, bookmarks, history) and is documented in
 |---|---|
 | Library | Paper cards with Browse / Export / Manage; **Test**, **Mistakes** (shown when the paper has any) and **Study (N due, N new)** buttons per paper; drawer with History, Bookmarks, Passages, Search, Settings, per-paper category trees (reorderable), **test- and study-by-category**, JSON import |
 | Browse | Per-paper question list with text search + filters (All, No answer, No explanation, Uncategorized); passage groups render with their shared context above the first member; edit, duplicate, delete; **selection mode** for bulk edit / move / copy (incl. cross-paper) / delete / **export the selected questions**; manual up/down reorder |
-| Test | A bounded session of up to 150 questions (20 by default; fewer when the scope is smaller) chosen on a setup sheet (Random or Mistakes in this release), with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume; passage members always carry their passage above the stem and move as one block |
+| Test | A bounded session of up to 150 questions (20 by default; fewer when the scope is smaller) chosen on a setup sheet (Random or Mistakes in this release), with shuffle, practice/strict modes, per-question navigation, palette, flagging, bookmarking, mid-test reveal, smart submit dialog with answer review, auto-submit at zero, crash resume (short and legacy snapshots are labelled before they resume); a Random test can avoid recently tested questions (a **fresh sample**); passage members always carry their passage above the stem and move as one block |
 | Study | One question at a time: answer, reveal, self-grade Again/Hard/Good/Easy. FSRS-6 schedules the next review (see below); a passage member shows its passage above the question |
-| Results / Review | Score breakdown, average time per question, per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Saved); review reachable later from History |
-| History | Per-paper score trends, weakest categories, hardest questions, attempt list; delete attempts; open any attempt in review mode |
+| Results / Review | A report — kind and comparability, scope and length, score vs accuracy, correct/wrong/skipped/ungraded with the marking, an approximate 95% margin, topics with sample sizes and not-sampled notes, where the marks went, time and time sinks, and up to five next actions — over a paged per-question review with your vs correct answers, time spent, explanations, bookmark toggles, filters (All/Correct/Wrong/Skipped/Ungraded/Slow/Saved); review reachable later from History |
+| History | Per-paper score trends, weakest categories, hardest questions, attempt list with each attempt's family and type; delete attempts; open any attempt in review mode |
 | Statistics | All papers or one, over a 7/30/90/365-day or all-time range, in six tabs — Overview, Retention, Workload, Memory, Cards, Guessing; every ranked list opens the card it names |
 | Bookmarks | Bookmark toggles in test, review, and Browse; tap a bookmark to open it in Browse; export all bookmarks in any format. Shows the question only — no explanation, which would give the answer away with no options beside it |
 | Editor | Edit everything about a question (incl. marks), with Prev/Next queue navigation (see below) |
 | Import | Import a **Word** bank or **JSON** → validation warnings → preview split into New / Changed / Duplicates → edit in place → import with a result report (incl. restored history for backups). See [Word](#import-word-documents-docx) / [JSON](#import-json-reference) |
-| Settings | Theme (system/light/dark plus 15 colour palettes, custom theme import); Test options (shuffle, practice, strict, auto-advance); full backup; Storage breakdown; export diagnostic logs; about |
+| Settings | Theme (system/light/dark plus 15 colour palettes, custom theme import); Test options (shuffle, practice, strict, auto-advance, avoid recently tested questions); full backup; Storage breakdown; export diagnostic logs; about |
 
 ## Question model
 
@@ -60,7 +60,8 @@ to 1 (never blocks saving).
 
 ## Test modes & options (Settings → Test)
 
-All default off; they compose, with strict winning contradictions:
+All default off except **Avoid recently tested questions**, and they compose, with strict
+winning contradictions:
 
 - **Shuffle question order** — random question order per attempt (seed logged). **Shuffle
   options** — random option order. Review always shows your presented order; scoring is
@@ -71,6 +72,12 @@ All default off; they compose, with strict winning contradictions:
   position counter remains); suppresses practice feedback. For a real exam feel.
 - **Auto-advance** — jumps to the next question after answering (single-answer questions
   only; multi-correct needs several taps, the last question stays put).
+- **Avoid recently tested questions** (on by default) — a Random or Balanced test skips
+  questions asked in your last three comparable tests of the same paper, scope and length,
+  when at least twice the requested number of other questions remain. Whole passages are
+  skipped together. The attempt records whether the rule applied: when it did it is a
+  **fresh sample**, compared only with another fresh sample, not with a strict Random
+  attempt; when the pool was too small it stays a strict attempt.
 - **Test** (per-paper Library button) — opens a setup sheet for a bounded test of up to 150
   questions (20 by default; fewer when the scope is smaller): type (Random or Mistakes),
   ticked-category scope, length in steps of ten, and a time (suggested, overridden or
@@ -186,7 +193,9 @@ stabilities.
   Per-question dwell time is tracked for timed and untimed papers alike.
 - **Crash resume**: progress (order, selections, reveals, flags, position, timer, dwell)
   persists on every change; killing the app offers Resume / Start-fresh next launch for
-  the same paper + categories.
+  the same paper + categories. Fewer than 20 surviving questions are offered as
+  "Resume with N questions"; a snapshot from before bounded tests resumes as a labelled
+  legacy session and is saved as legacy, not as a fresh Random test.
 - **Submit dialog** lists answered/unanswered (score-0 warning), flagged, not-scored, and
   longest-dwell counts, with Review-flagged and **Review answers** actions — the review
   lists every pick, tappable to jump, with a Back-to-submit return.
@@ -207,13 +216,31 @@ stabilities.
 
 ## Results, History & mastery
 
-- **Results header**: score, percentage bar, Correct/Wrong/Skipped (+Ungraded when present),
-  time taken, and **average time per question**. Each card shows its own time spent.
-- **Review filters**: All, Correct, Wrong, Skipped, Ungraded, Saved (bookmarked) — the
-  last two appear only when applicable.
+- **Results report**: the header names the attempt's **family** (Mock, Fresh sample,
+  Practice, Short test or Legacy attempt) and **type**, the scope and the requested vs
+  shown count, then the score, the percentage bar, Correct/Wrong/Skipped (+Ungraded when
+  present), the marking actually applied, and the time taken. A representative attempt
+  also gets an approximate 95% margin (Wilson, corrected for the scope size) and the last
+  comparable result with its own margin; a delta inside that margin is called noise.
+  Short, practice and legacy attempts get no margin and no trend.
+- **Meaning and evidence**: a *What this result means* card splits accuracy on answered
+  from the exam score, a *Where the marks went* card splits wrong answers into knowledge
+  gaps and rushed ones (plus skipped, ungraded and possible guesses), a *Topics* card
+  lists accuracy with small-sample badges and the topics in scope that were not sampled,
+  and a *Time* card gives the median pace, the wrong-vs-correct comparison and the three
+  slowest questions. Below ten timed questions the relative thresholds are replaced by
+  absolute ones and labelled as a small sample.
+- **Next actions**: up to five, each with its evidence and a working link — review the
+  wrong questions, study the weakest topic, attempt every question (or guess only with
+  elimination, depending on marking), take a longer mock (capped at 50 questions), or
+  keep going. The page states that the test did **not** change the Study schedule.
+- **Review filters**: All, Correct, Wrong, Skipped, Ungraded, Slow (2× the median or 60 s,
+  whichever is larger) and Saved (bookmarked) — the last three appear only when
+  applicable. Each card shows its own time spent.
 - **History**: per-paper **trend cards** (attempts, best, latest, ▲/▼/= delta), **weakest
   categories** with mastery bars, **hardest questions** with wrong/skip rates, then the
-  attempt list. Ungraded rows never pollute difficulty signals.
+  attempt list, each row labelled with its family and type. Ungraded rows never pollute
+  difficulty signals.
 
 ## Browse: search, filters, bulk ops
 
@@ -918,8 +945,9 @@ be deleted along with the paper, and be rebuilt from attempt history. See
 - **Timer at 0 with duration set** auto-submits; untimed papers (duration 0) never count down.
 - **Strict + practice contradict** — strict wins (no live feedback, no aids).
 - **Auto-advance** never fires on multi-correct questions or the last question.
-- **Resume** only offers for the exact same paper + category selection; submitting or
-  reinstalling clears it.
+- **Resume** only offers for the same paper, ticked scope and mistakes flag; a legacy
+  snapshot is offered as legacy and a short one as "Resume with N questions". Submitting
+  or reinstalling clears it.
 - **Dwell times exist only for attempts finished after the v6 update**; old reviews show
   no per-question times.
 - **Shuffle changes review order** — review shows your presented order, not library order,

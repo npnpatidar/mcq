@@ -89,6 +89,7 @@ import com.mcqapp.domain.ExamMode
 import com.mcqapp.domain.Feedback
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SubmitSummary
+import com.mcqapp.domain.TestPlan
 import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
@@ -167,33 +168,81 @@ fun TestSessionScreen(
         val answered = resumeOffer.selections.count { it.value.isNotEmpty() }
         val minutes = resumeOffer.remainingSeconds / 60
         val seconds = resumeOffer.remainingSeconds % 60
+        // Fewer surviving ids than a real test, or a snapshot from before the
+        // bounded-Test metadata (section 7.6): the dialog must say what the
+        // resume would actually run instead of offering it as a normal test.
+        val short = state.resumeOfferCount < TestPlan.MIN_LENGTH
+        val legacy = state.resumeOfferLegacy
         AlertDialog(
             onDismissRequest = { /* explicit choice required */ },
-            title = { Text(stringResource(R.string.resume_previous_attempt)) },
-            text = {
+            title = {
                 Text(
-                    if (resumeOffer.totalSeconds > 0) {
-                        pluralStringResource(
-                            R.plurals.resume_saved_with_time_text,
-                            answered,
-                            answered,
-                            minutes,
-                            seconds
-                        )
-                    } else {
-                        pluralStringResource(
-                            R.plurals.resume_saved_text,
-                            answered,
-                            answered
-                        )
-                    }
+                    stringResource(
+                        when {
+                            legacy -> R.string.resume_legacy_attempt
+                            short -> R.string.resume_short_attempt
+                            else -> R.string.resume_previous_attempt
+                        }
+                    )
                 )
             },
+            text = {
+                Column {
+                    Text(
+                        if (resumeOffer.totalSeconds > 0) {
+                            pluralStringResource(
+                                R.plurals.resume_saved_with_time_text,
+                                answered,
+                                answered,
+                                minutes,
+                                seconds
+                            )
+                        } else {
+                            pluralStringResource(
+                                R.plurals.resume_saved_text,
+                                answered,
+                                answered
+                            )
+                        }
+                    )
+                    if (short || legacy) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(
+                                if (legacy) {
+                                    R.string.resume_legacy_text
+                                } else {
+                                    R.string.resume_short_text
+                                },
+                                state.resumeOfferCount
+                            )
+                        )
+                    }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { viewModel.resume() }) { Text(stringResource(R.string.resume)) }
+                TextButton(onClick = { viewModel.resume() }) {
+                    Text(
+                        if (short || legacy) {
+                            stringResource(R.string.resume_with_n, state.resumeOfferCount)
+                        } else {
+                            stringResource(R.string.resume)
+                        }
+                    )
+                }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.discardResume() }) { Text(stringResource(R.string.start_fresh)) }
+                TextButton(onClick = { viewModel.discardResume() }) {
+                    Text(
+                        stringResource(
+                            if (short || legacy) {
+                                R.string.start_new_test
+                            } else {
+                                R.string.start_fresh
+                            }
+                        )
+                    )
+                }
             }
         )
     }

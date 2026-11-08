@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The debug build installs as com.mcqapp.debug beside the release build
+    (applicationIdSuffix in app/build.gradle.kts), so it needs a label the
+    user can tell apart in the launcher. Resource merging lets this build-type
+    source set override the main app_name without touching the release.
+-->
+<resources>
+    <string name="app_name">MCQ App (debug)</string>
+</resources>

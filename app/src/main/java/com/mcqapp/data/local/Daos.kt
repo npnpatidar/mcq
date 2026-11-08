@@ -522,6 +522,40 @@ interface QuestionDao {
     suspend fun countForCategories(paperId: String, categoryIds: List<String>): Int
 
     /**
+     * The smallest passage block of a whole paper, plus whether any standalone
+     * question exists. A standalone question is a block of one, so a non-zero
+     * [MinBlockRow.standalone] makes the answer 1; otherwise it is the
+     * smallest per-passage member count (or null when the paper has no
+     * passages). The setup sheet's sampler pre-check reads this (section 9.6).
+     */
+    @Query(
+        "SELECT (SELECT MIN(cnt) FROM (" +
+            "SELECT COUNT(*) AS cnt FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.passageId IS NOT NULL " +
+            "GROUP BY questions.passageId)) AS minPassage, " +
+            "(SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.passageId IS NULL) AS standalone"
+    )
+    suspend fun minBlockRowForPaper(paperId: String): MinBlockRow
+
+    /** [minBlockRowForPaper] over an explicit category selection. */
+    @Query(
+        "SELECT (SELECT MIN(cnt) FROM (" +
+            "SELECT COUNT(*) AS cnt FROM questions " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND questions.passageId IS NOT NULL " +
+            "GROUP BY questions.passageId)) AS minPassage, " +
+            "(SELECT COUNT(*) FROM questions " +
+            "WHERE questions.categoryId IN (:categoryIds) " +
+            "AND questions.passageId IS NULL) AS standalone"
+    )
+    suspend fun minBlockRowForCategories(categoryIds: List<String>): MinBlockRow
+
+    /**
      * How many of the paper's questions have no answer key — excluded from
      * scoring entirely. One aggregate query, so the submit summary of a
      * million-question paper does not count a million ids in Kotlin.
@@ -2150,7 +2184,7 @@ interface AttemptDao {
      * rare filter never decodes every heavy element/option JSON in the attempt.
      */
     @Query(
-        "SELECT id, questionId, isCorrect, correctOptionIds, selectedOptionIds " +
+        "SELECT id, questionId, isCorrect, correctOptionIds, selectedOptionIds, dwellSeconds " +
             "FROM question_results WHERE attemptId = :attemptId " +
             "AND id > :afterId ORDER BY rowid LIMIT :limit"
     )
@@ -2177,6 +2211,80 @@ interface AttemptDao {
             "GROUP BY categoryTitle ORDER BY categoryTitle"
     )
     suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow>
+
+    /**
+     * The report's per-question evidence (section 11.14), without the heavy
+     * element/option JSON: correctness, dwell, the stored as-of-attempt
+     * category title and the question's current category for a Study link.
+     * A deleted question still yields its row, with a null current id.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId, r.categoryTitle AS categoryTitle, " +
+            "q.categoryId AS currentCategoryId, r.dwellSeconds AS dwellSeconds, " +
+            "r.isCorrect AS isCorrect, r.correctOptionIds AS correctOptionIds, " +
+            "r.selectedOptionIds AS selectedOptionIds " +
+            "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
+            "WHERE r.attemptId = :attemptId ORDER BY r.rowid"
+    )
+    suspend fun getReportRows(attemptId: Long): List<ReportRowEntity>
+
+    /**
+     * Attempts under the same comparability key (section 11.5), newest first.
+     * The key is all six fields; [exclusionMode] keeps a Fresh sample from
+     * being compared with a strict attempt. The tuple comparison on
+     * `(finishedAt, id)` makes "older than this one" deterministic when two
+     * attempts share a finish time.
+     */
+    @Query(
+        "SELECT * FROM attempts WHERE paperId = :paperId AND id != :excludeId " +
+            "AND testType = :testType AND scopeKey = :scopeKey " +
+            "AND requestedCount = :requestedCount " +
+            "AND samplingVersion = :samplingVersion AND exclusionMode = :exclusionMode " +
+            "AND (finishedAt < :beforeFinishedAt " +
+            "OR (finishedAt = :beforeFinishedAt AND id < :excludeId)) " +
+            "ORDER BY finishedAt DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getComparableAttempts(
+        paperId: String,
+        excludeId: Long,
+        testType: String,
+        scopeKey: String,
+        requestedCount: Int,
+        samplingVersion: Int,
+        exclusionMode: String,
+        beforeFinishedAt: Long,
+        limit: Int
+    ): List<AttemptEntity>
+
+    /**
+     * The last [limit] representative attempts that can seed repeat avoidance
+     * (section 9.8): same paper, measurement family, canonical scope and
+     * requested length, and a shown count that is at least the minimum. The
+     * exclusion rule itself is deliberately not part of this key — a fresh
+     * sample should still avoid questions asked in a strict attempt — while
+     * practice and short attempts never count.
+     */
+    @Query(
+        "SELECT * FROM attempts WHERE paperId = :paperId " +
+            "AND testType IN (:testTypes) AND scopeKey = :scopeKey " +
+            "AND requestedCount = :requestedCount " +
+            "AND samplingVersion >= :samplingVersion " +
+            "AND totalQuestions >= :minShown " +
+            "ORDER BY finishedAt DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getRecentComparableAttempts(
+        paperId: String,
+        testTypes: List<String>,
+        scopeKey: String,
+        requestedCount: Int,
+        samplingVersion: Int,
+        minShown: Int,
+        limit: Int
+    ): List<AttemptEntity>
+
+    /** The questions a set of attempts presented, including skips. */
+    @Query("SELECT DISTINCT questionId FROM question_results WHERE attemptId IN (:attemptIds)")
+    suspend fun getResultQuestionIdsForAttempts(attemptIds: List<Long>): List<String>
 
     @Query("SELECT * FROM question_results ORDER BY rowid")
     suspend fun getAllResults(): List<QuestionResultEntity>
@@ -2530,6 +2638,22 @@ data class ResultScan(
     val questionId: String,
     val isCorrect: Boolean,
     val correctOptionIds: String,
+    val selectedOptionIds: String,
+    val dwellSeconds: Long = 0
+)
+
+/**
+ * One row of [AttemptDao.getReportRows]: the light projection the result
+ * report computes from. [currentCategoryId] is null when the question was
+ * deleted or moved out of the paper.
+ */
+data class ReportRowEntity(
+    val questionId: String,
+    val categoryTitle: String,
+    val currentCategoryId: String?,
+    val dwellSeconds: Long,
+    val isCorrect: Boolean,
+    val correctOptionIds: String,
     val selectedOptionIds: String
 )
 
@@ -2546,6 +2670,16 @@ data class CategoryBreakdownRow(
     val title: String,
     val correct: Int,
     val graded: Int
+)
+
+/**
+ * The smallest passage block in a scope. [minPassage] is null when the scope
+ * has no passages; [standalone] counts questions with no passage, each of
+ * which is a block of one.
+ */
+data class MinBlockRow(
+    val minPassage: Int? = null,
+    val standalone: Int = 0
 )
 
 /**

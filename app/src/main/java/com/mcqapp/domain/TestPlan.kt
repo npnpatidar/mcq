@@ -154,6 +154,35 @@ data class TestPlan(
         const val TARGET_MESSAGE: String = "This test type cannot record target topics."
         const val TARGET_ORDER_MESSAGE: String = "Target topics must be sorted and deduplicated."
 
+        /**
+         * The largest shown count a sample may reach for [target] (section
+         * 9.6): the exact target plus one block's overshoot, never above
+         * [max]. This is the same limit [SessionOrder.sampledBounded] uses,
+         * exposed so the setup sheet can refuse an impossible scope before it
+         * emits a route.
+         */
+        fun samplerLimit(target: Int, max: Int = MAX_LENGTH): Int =
+            minOf(max, target + maxOf(1, (target + 3) / 4))
+
+        /** Whether a block-aware sample can start when the smallest block is [minBlockSize]. */
+        fun samplerCanStart(target: Int, minBlockSize: Int, max: Int = MAX_LENGTH): Boolean =
+            target <= 0 || minBlockSize <= samplerLimit(target, max)
+
+        /**
+         * Whether repeat avoidance leaves enough alternatives (section 9.8):
+         * exclude only when the remaining pool is at least twice the request,
+         * so a small pool is not distorted.
+         */
+        fun freshSampleFits(remaining: Int, requested: Int): Boolean =
+            requested > 0 && remaining >= 2 * requested
+
+        fun noPassageFitsMessage(): String =
+            "No passage fits the requested length and overshoot limit; " +
+                "choose a longer test or split a passage."
+
+        fun passageTooLargeMessage(max: Int = MAX_LENGTH): String =
+            "Every passage is larger than $max; split one or change the scope."
+
         /** The pure form of [maxAllowed]; callable without a plan. */
         fun maxAllowedFor(available: Int): Int {
             if (available <= 0) return 0

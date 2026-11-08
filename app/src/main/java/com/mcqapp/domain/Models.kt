@@ -338,6 +338,18 @@ data class Attempt(
     val compositionJson: String = ""
 ) {
     val percentage: Double get() = if (maxScore > 0) score / maxScore * 100.0 else 0.0
+
+    /**
+     * `correct / (correct + wrong)`: how well the learner did on what they
+     * attempted. Distinct from [percentage], which scores the exam (skips are
+     * in its denominator, negative marking applies to wrong answers).
+     */
+    val accuracyOnAnswered: Double
+        get() = if (correctCount + wrongCount > 0) {
+            correctCount.toDouble() / (correctCount + wrongCount)
+        } else {
+            0.0
+        }
 }
 
 /**

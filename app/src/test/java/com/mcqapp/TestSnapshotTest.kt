@@ -135,6 +135,22 @@ class TestSnapshotTest {
                 testType = "RANDOM", requestedCount = 20, scopeKey = "expanded-key"
             )
         )
+        assertTrue("an old version is legacy", malformed.isLegacy)
+    }
+
+    @Test
+    fun legacyMeansNoTypeOrAnOldSamplingVersion() {
+        assertTrue(TestSnapshot(paperId = "p1", categoryIds = listOf("c1")).isLegacy)
+        assertFalse(
+            TestSnapshot(
+                paperId = "p1",
+                categoryIds = listOf("c1"),
+                scopeKey = "expanded-key",
+                testType = "RANDOM",
+                requestedCount = 20,
+                samplingVersion = 2
+            ).isLegacy
+        )
     }
 
     /**

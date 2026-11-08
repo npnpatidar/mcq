@@ -27,6 +27,13 @@ enum class TestComparability {
     /** A representative mock: comparable to another test of the same design. */
     COMPARABLE,
 
+    /**
+     * A Fresh sample: it avoids questions from recent comparable attempts, so
+     * it is compared only with another Fresh sample under the same rule
+     * (section 9.8).
+     */
+    FRESH,
+
     /** Practice: not comparable to a mock. */
     PRACTICE,
 
@@ -57,7 +64,15 @@ data class TestSetup(
     val requestedCount: Int = TestPlan.DEFAULT_LENGTH,
     val time: TestTime = TestTime.Suggested,
     /** The pool the selected type draws from. */
-    val available: Int
+    val available: Int,
+    /** Whether this run avoids questions from the last three comparable attempts. */
+    val exclusionMode: ExclusionMode = ExclusionMode.NONE,
+    /**
+     * The smallest passage block in the pool, or 1 when it has standalone
+     * questions (or no passage information). The sampler pre-check refuses a
+     * scope whose smallest block cannot fit the overshoot limit (section 9.6).
+     */
+    val minBlockSize: Int = 1
 ) {
 
     /**
@@ -66,7 +81,22 @@ data class TestSetup(
      * The minutes do not matter for the resolution, so it is computed from a
      * plan with a placeholder to keep the two paths apart.
      */
-    fun resolution(): TestPlan.Resolution = plan(minutes = 0).resolve(available)
+    fun resolution(): TestPlan.Resolution {
+        val resolved = plan(minutes = 0).resolve(available)
+        if (resolved !is TestPlan.Resolution.Ready) return resolved
+        val refusal = samplerRefusal(resolved.count)
+        return if (refusal == null) resolved else TestPlan.Resolution.Refused(refusal)
+    }
+
+    /** Why the sampler cannot start, or null when its smallest block fits. */
+    private fun samplerRefusal(target: Int): String? {
+        if (TestPlan.samplerCanStart(target, minBlockSize)) return null
+        return if (minBlockSize > TestPlan.MAX_LENGTH) {
+            TestPlan.passageTooLargeMessage()
+        } else {
+            TestPlan.noPassageFitsMessage()
+        }
+    }
 
     /** The plan the route carries. The session draws the sampling seed. */
     fun plan(): TestPlan = plan(minutes = minutes())
@@ -78,7 +108,8 @@ data class TestSetup(
         count = requestedCount,
         minutes = minutes,
         samplingVersion = TestPlan.SAMPLING_VERSION,
-        scopeKey = scopeKey
+        scopeKey = scopeKey,
+        exclusionMode = exclusionMode
     )
 
     /** The length the session actually runs: the request, the clamp or the short scope. */
@@ -112,6 +143,7 @@ data class TestSetup(
     /** How the attempt's numbers may be read. */
     fun comparability(): TestComparability = when {
         short() -> TestComparability.SHORT
+        exclusionMode == ExclusionMode.RECENT_3 -> TestComparability.FRESH
         type.isRepresentative -> TestComparability.COMPARABLE
         else -> TestComparability.PRACTICE
     }

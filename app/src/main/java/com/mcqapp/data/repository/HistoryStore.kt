@@ -25,8 +25,10 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.QuestionStats
+import com.mcqapp.domain.ReportRow
 import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.SessionOrder
+import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
@@ -474,12 +476,14 @@ internal class HistoryStore(
     fun resultPagingSource(
         attemptId: Long,
         filter: String,
+        slowSeconds: () -> Long = { ReviewFilters.DEFAULT_SLOW_SECONDS },
         bookmarked: () -> Set<String>
     ): PagingSource<ResultPageKey, NumberedResult> {
         val source = ResultsPagingSource(
             attemptId = attemptId,
             filter = filter,
             bookmarked = bookmarked,
+            slowSeconds = slowSeconds,
             dao = db.attemptDao(),
             map = { it.toDomainResult() }
         )
@@ -501,6 +505,74 @@ internal class HistoryStore(
 
     suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow> =
         db.attemptDao().getResultCategoryBreakdown(attemptId)
+
+    /** The report's light per-question evidence (section 11.14). */
+    suspend fun getReportRows(attemptId: Long): List<ReportRow> =
+        db.attemptDao().getReportRows(attemptId).map {
+            ReportRow(
+                questionId = it.questionId,
+                categoryTitle = it.categoryTitle,
+                currentCategoryId = it.currentCategoryId,
+                dwellSeconds = it.dwellSeconds,
+                isCorrect = it.isCorrect,
+                graded = it.correctOptionIds.isNotBlank(),
+                answered = it.selectedOptionIds.isNotBlank()
+            )
+        }
+
+    /**
+     * Same-key attempts older than [attempt], newest first. A legacy attempt
+     * has no key and is never comparable, so it returns nothing.
+     */
+    suspend fun getComparableAttempts(
+        attempt: Attempt,
+        limit: Int = 5
+    ): List<Attempt> {
+        val type = attempt.testType ?: return emptyList()
+        if (attempt.samplingVersion < TestPlan.SAMPLING_VERSION) {
+            return emptyList()
+        }
+        return db.attemptDao().getComparableAttempts(
+            paperId = attempt.paperId,
+            excludeId = attempt.id,
+            testType = type,
+            scopeKey = attempt.scopeKey,
+            requestedCount = attempt.requestedCount,
+            samplingVersion = attempt.samplingVersion,
+            exclusionMode = attempt.exclusionMode,
+            beforeFinishedAt = attempt.finishedAt,
+            limit = limit
+        ).map { it.toDomain() }
+    }
+
+    /**
+     * The questions asked in the last [limit] comparable representative
+     * attempts of this paper, scope and length (section 9.8). The exclusion
+     * rule is not part of the key: a fresh sample should avoid what a strict
+     * attempt asked too. Practice, legacy and short attempts never count.
+     */
+    suspend fun recentComparableQuestionIds(
+        paperId: String,
+        testTypes: List<String>,
+        scopeKey: String,
+        requestedCount: Int,
+        limit: Int = 3
+    ): Set<String> {
+        if (testTypes.isEmpty() || scopeKey.isBlank() || requestedCount <= 0) return emptySet()
+        val attempts = db.attemptDao().getRecentComparableAttempts(
+            paperId = paperId,
+            testTypes = testTypes,
+            scopeKey = scopeKey,
+            requestedCount = requestedCount,
+            samplingVersion = TestPlan.SAMPLING_VERSION,
+            minShown = TestPlan.MIN_LENGTH,
+            limit = limit
+        )
+        if (attempts.isEmpty()) return emptySet()
+        return db.attemptDao()
+            .getResultQuestionIdsForAttempts(attempts.map { it.id })
+            .toHashSet()
+    }
 
     suspend fun getAllQuestionResults(): List<QuestionResult> {
         Logger.d("REPO", "getAllQuestionResults()")
@@ -751,6 +823,7 @@ private class ResultsPagingSource(
     private val attemptId: Long,
     private val filter: String,
     private val bookmarked: () -> Set<String>,
+    private val slowSeconds: () -> Long,
     private val dao: AttemptDao,
     private val map: (QuestionResultEntity) -> QuestionResult
 ) : PagingSource<ResultPageKey, NumberedResult>() {
@@ -813,6 +886,7 @@ private class ResultsPagingSource(
         ReviewFilters.SKIPPED ->
             scan.selectedOptionIds.isBlank() && scan.correctOptionIds.isNotBlank()
         ReviewFilters.UNGRADED -> scan.correctOptionIds.isBlank()
+        ReviewFilters.SLOW -> scan.dwellSeconds >= slowSeconds()
         ReviewFilters.SAVED -> scan.questionId in bookmarked()
         else -> true
     }

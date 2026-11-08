@@ -236,6 +236,69 @@ class SessionOrder private constructor(
     private fun idOfRow(row: Int): String =
         String(pool, starts[row], starts[row + 1] - starts[row], Charsets.UTF_8)
 
+    /**
+     * The smallest block in this order: a passage's member count, or 1 for a
+     * standalone question. The setup sheet's sampler pre-check reads this
+     * (section 9.6); an empty order reports 1 so it does not refuse for the
+     * wrong reason.
+     */
+    fun minBlockSize(): Int {
+        if (size == 0) return 1
+        val bounds = PassageBlocks.blockBounds(size) { passageOf[order[it]] }
+        var min = Int.MAX_VALUE
+        for (block in 0 until bounds.size - 1) {
+            val blockSize = bounds[block + 1] - bounds[block]
+            if (blockSize < min) min = blockSize
+        }
+        return if (min == Int.MAX_VALUE) 1 else min
+    }
+
+    /**
+     * Drops every block that contains one of [ids] (section 9.8). A passage is
+     * indivisible, so naming one of its members removes the whole block rather
+     * than leaving a comprehension set with a hole; a standalone question is a
+     * block of its own. Ids that are not in this order are ignored.
+     *
+     * The base order this runs on is authored order, so a passage's members
+     * are contiguous; the passage index is still used for membership so the
+     * rule does not depend on that.
+     */
+    fun excludingBlocksContaining(ids: Set<String>): SessionOrder {
+        if (ids.isEmpty() || size == 0) return this
+        val targets = ids.map { it.toByteArray(Charsets.UTF_8) }
+        val excludedPassages = BooleanArray(passages.size)
+        val excludedRows = BooleanArray(size)
+        for (index in 0 until size) {
+            val row = order[index]
+            if (!matchesAny(row, targets)) continue
+            val passage = passageOf[row]
+            if (passage >= 0) {
+                excludedPassages[passage] = true
+            } else {
+                excludedRows[index] = true
+            }
+        }
+        val out = IntArray(size)
+        var written = 0
+        for (index in 0 until size) {
+            val row = order[index]
+            val passage = passageOf[row]
+            if (passage >= 0) {
+                if (excludedPassages[passage]) continue
+            } else if (excludedRows[index]) {
+                continue
+            }
+            out[written++] = row
+        }
+        if (written == size) return this
+        return SessionOrder(pool, starts, out.copyOf(written), passages, passageOf)
+    }
+
+    private fun matchesAny(row: Int, targets: List<ByteArray>): Boolean {
+        for (target in targets) if (matches(row, target)) return true
+        return false
+    }
+
     private fun matches(row: Int, target: ByteArray): Boolean {
         val start = starts[row]
         val length = starts[row + 1] - start
@@ -340,11 +403,8 @@ sealed interface BoundedSample {
         val message: String
             get() = when (reason) {
                 Reason.EMPTY_SCOPE -> TestPlan.EMPTY_SCOPE_MESSAGE
-                Reason.NO_PASSAGE_FITS ->
-                    "No passage fits the requested length and overshoot limit; " +
-                        "choose a longer test or split a passage."
-                Reason.PASSAGE_TOO_LARGE ->
-                    "Every passage is larger than $max; split one or change the scope."
+                Reason.NO_PASSAGE_FITS -> TestPlan.noPassageFitsMessage()
+                Reason.PASSAGE_TOO_LARGE -> TestPlan.passageTooLargeMessage(max)
             }
     }
 

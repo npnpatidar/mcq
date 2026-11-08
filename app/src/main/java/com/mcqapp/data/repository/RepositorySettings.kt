@@ -156,6 +156,21 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     }
 
     /**
+     * Whether a representative test avoids questions asked in the last three
+     * comparable attempts (section 9.8). On by default: a repeat-free sample
+     * is the useful default, and turning it off is what produces a strict
+     * Random attempt. The attempt records the rule it actually used.
+     */
+    private val avoidRecentQuestionsKey = booleanPreferencesKey("avoid_recent_questions")
+
+    fun avoidRecentQuestions(): Flow<Boolean> =
+        context.dataStore.data.map { it[avoidRecentQuestionsKey] ?: true }
+
+    suspend fun setAvoidRecentQuestions(enabled: Boolean) {
+        context.dataStore.edit { it[avoidRecentQuestionsKey] = enabled }
+    }
+
+    /**
      * Whether http(s) question images may be fetched over the network. Off by
      * default: a fetch hands whoever authored the bank the learner's IP and
      * the moment they opened the question. Data-URI images live inside the

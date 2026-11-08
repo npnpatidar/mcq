@@ -91,6 +91,10 @@ data class TestUiState(
     /** The plan's requested length (0 on a legacy session); [questionCount] is the shown count. */
     val requestedCount: Int = 0,
     val resumeOffer: TestSnapshot? = null,
+    /** How many saved questions still resolve; the dialog warns below 20. */
+    val resumeOfferCount: Int = 0,
+    /** Whether the offered snapshot predates the bounded-Test metadata. */
+    val resumeOfferLegacy: Boolean = false,
     val dwellSeconds: Map<String, Long> = emptyMap(),
     /** Whether the per-question clock currently accrues time. */
     val dwellActive: Boolean = false,
@@ -278,7 +282,6 @@ class TestViewModel(
                 }
                 sessionScopeKey = scopeKey
                 val plan = buildPlan(scopeKey)
-                sessionPlan = plan
                 Logger.d(
                     "TESTVM",
                     "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}, " +
@@ -293,20 +296,58 @@ class TestViewModel(
                 // Session order only: the load streams the ids and passage
                 // membership out of the database, so a million-question paper
                 // never materialises its refs, let alone its content.
-                val order = if (mistakesSession) {
+                val baseOrder = if (mistakesSession) {
                     mistakenOrderInScope(scopeIds)
                 } else if (categoryIds.isEmpty()) {
                     repository.getSessionOrderForPaper(paperId)
                 } else {
                     repository.getSessionOrderForCategories(paperId, scopeIds)
                 }
+                // Repeat avoidance (section 9.8): drop the whole blocks a
+                // recent comparable attempt asked, but only when the remaining
+                // pool is still at least twice the request. A rule that could
+                // not exclude anything is recorded as NONE, so an attempt is
+                // never labelled a fresh sample under a rule it did not follow.
+                val effectivePlan: TestPlan?
+                val order: SessionOrder
+                if (plan != null && plan.exclusionMode == ExclusionMode.RECENT_3) {
+                    val recent = if (plan.type?.supportsFreshSample == true) {
+                        repository.recentComparableQuestionIds(
+                            paperId = paperId,
+                            testTypes = TestType.representativeNames(),
+                            scopeKey = scopeKey,
+                            requestedCount = plan.count,
+                            limit = 3
+                        )
+                    } else {
+                        emptySet()
+                    }
+                    val filtered = baseOrder.excludingBlocksContaining(recent)
+                    val applied = filtered.size < baseOrder.size &&
+                        TestPlan.freshSampleFits(filtered.size, plan.count)
+                    order = if (applied) filtered else baseOrder
+                    effectivePlan = if (applied) {
+                        plan
+                    } else {
+                        plan.copy(exclusionMode = ExclusionMode.NONE)
+                    }
+                    Logger.i(
+                        "TESTVM",
+                        "Repeat avoidance: asked=${recent.size}, base=${baseOrder.size}, " +
+                            "after=${filtered.size}, applied=$applied"
+                    )
+                } else {
+                    order = baseOrder
+                    effectivePlan = plan
+                }
+                sessionPlan = effectivePlan
                 Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesSession) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
                 val shuffleO = repository.shuffleOptions().first()
                 // A bounded plan's seed is its sampling seed (recorded on the
                 // attempt); a legacy session keeps the old random seed.
-                val seed = plan?.seed ?: Random.nextLong()
+                val seed = effectivePlan?.seed ?: Random.nextLong()
                 questionShuffleEnabled = shuffleQ
                 sessionSeed = seed
                 if (shuffleQ || shuffleO) {
@@ -325,13 +366,13 @@ class TestViewModel(
                 // allocate multi-megabyte index arrays, so they run off the
                 // main thread; only the resulting order is published to state.
                 val (_, drilled) = withContext(Dispatchers.Default) {
-                    if (plan != null) {
+                    if (effectivePlan != null) {
                         // The plan's requested length is resolved against the
                         // type's pool (the base order), then sampled exactly:
                         // a short scope runs whole, a request above the pool is
                         // clamped, and a passage block may overshoot the target
                         // by at most the section 9.6 limit.
-                        val target = when (val resolution = plan.resolve(order.size)) {
+                        val target = when (val resolution = effectivePlan.resolve(order.size)) {
                             is TestPlan.Resolution.Refused ->
                                 throw IllegalStateException(resolution.message)
                             is TestPlan.Resolution.Ready -> resolution.count
@@ -339,7 +380,7 @@ class TestViewModel(
                         val sampled = order.sampledBounded(
                             target = target,
                             max = TestPlan.MAX_LENGTH,
-                            seed = plan.seed
+                            seed = effectivePlan.seed
                         )
                         val selected = when (sampled) {
                             is BoundedSample.Refused ->
@@ -349,8 +390,8 @@ class TestViewModel(
                         drillSampleSeed = 0L
                         Logger.i(
                             "TESTVM",
-                            "Bounded ${plan.type}: requested=${plan.count}, target=$target, " +
-                                "shown=${selected.size}, seed=${plan.seed}"
+                            "Bounded ${effectivePlan.type}: requested=${effectivePlan.count}, " +
+                                "target=$target, shown=${selected.size}, seed=${effectivePlan.seed}"
                         )
                         order to selected
                     } else {
@@ -388,7 +429,7 @@ class TestViewModel(
                 // a drill, a mistakes-only run) count by id, where the
                 // session's questions are bounded by what the user asked for.
                 val ungradedTotal = when {
-                    plan != null || isDrill || mistakesSession ->
+                    effectivePlan != null || isDrill || mistakesSession ->
                         repository.countUngraded(drilled.idsInOrder())
                     categoryIds.isEmpty() -> repository.countUngradedForPaper(paperId)
                     else -> repository.countUngradedForCategories(scopeIds)
@@ -407,11 +448,15 @@ class TestViewModel(
                         mistakesOnly = mistakesSession,
                         isDrill = isDrill,
                         drillRequested = if (isDrill) drillCount else 0,
-                        testType = plan?.type?.name,
-                        requestedCount = plan?.count ?: 0
+                        testType = effectivePlan?.type?.name,
+                        requestedCount = effectivePlan?.count ?: 0
                     )
                 }
-                checkResumeOffer(order)
+                // The resume rebuild replays the saved ids, so it reads the
+                // full authored base — not the repeat-avoidance filter, which
+                // describes the sample this launch would draw if it started
+                // fresh.
+                checkResumeOffer(baseOrder)
                 startElapsedMs = SystemClock.elapsedRealtime()
                 lastNavElapsedMs = startElapsedMs
                 dwellCommitted.clear()
@@ -462,9 +507,9 @@ class TestViewModel(
      * Only a *missing* type is legacy — it is never inferred as
      * [TestType.RANDOM] (section 16 C5). A present but unknown type, a present
      * type with no length, and a type whose selector is not implemented yet are
-     * all refused rather than silently running a different test. The same goes
-     * for `RECENT_3`: recording a fresh sample that did not exclude anything
-     * would make the attempt comparable under a rule it never followed.
+     * all refused rather than silently running a different test. `RECENT_3` is
+     * accepted only for the types that support a fresh sample; [TestPlan]
+     * refuses it for every other type.
      */
     private fun buildPlan(scopeKey: String): TestPlan? {
         if (routeTestType.isBlank()) return null
@@ -483,9 +528,6 @@ class TestViewModel(
         } else {
             runCatching { ExclusionMode.valueOf(routeExclusionMode) }.getOrNull()
                 ?: throw IllegalStateException("Unknown exclusion rule '$routeExclusionMode'.")
-        }
-        if (exclusion != ExclusionMode.NONE) {
-            throw IllegalStateException("Avoiding recently tested questions is not available yet.")
         }
         return TestPlan(
             paperId = paperId,
@@ -978,7 +1020,15 @@ class TestViewModel(
             repository.clearStaleTestAnswers(paperId)
             return
         }
-        if (!document.matches(
+        // A legacy snapshot on a bounded route is offered as a labelled
+        // Legacy/Short session (section 7.6): it has no type or canonical key
+        // to compare, but the paper, ticked scope and mistakes flag still
+        // identify it. Accepting it must not drop its answers — they belong to
+        // the session being resumed, not to an abandoned one.
+        val legacyMatch = sessionPlan != null && document.isLegacy &&
+            document.categoryIds.toSet() == categoryIds.toSet() &&
+            document.mistakesOnly == isMistakesSession
+        if (!legacyMatch && !document.matches(
                 paperId = paperId,
                 categoryIds = categoryIds,
                 isDrill = sessionPlan == null && drillCount > 0,
@@ -1037,8 +1087,17 @@ class TestViewModel(
         }
         resumeOrder = ordered
         Logger.i("TESTVM", "Resume available: ${saved.selections.size} answered, " +
-            "index=${saved.currentIndex}, remaining=${saved.remainingSeconds}s")
-        _state.update { it.copy(resumeOffer = saved) }
+            "index=${saved.currentIndex}, remaining=${saved.remainingSeconds}s, " +
+            "legacyMatch=$legacyMatch, legacy=${saved.isLegacy}")
+        _state.update {
+            it.copy(
+                resumeOffer = saved,
+                resumeOfferCount = ordered.size,
+                // Any pre-bounded snapshot is labelled legacy, whether it was
+                // accepted by the legacy route or by [legacyMatch].
+                resumeOfferLegacy = saved.isLegacy
+            )
+        }
     }
 
     fun resume() {
@@ -1053,6 +1112,11 @@ class TestViewModel(
             discardResume()
             return
         }
+        // A legacy snapshot resumes as itself, even when it was offered on a
+        // bounded route: stamping the fresh plan's type, count and scope over
+        // an order the plan never sampled would label it a bounded test it is
+        // not (section 7.6). The next save then writes the legacy metadata.
+        if (saved.isLegacy) sessionPlan = null
         // Carry the saved seeds forward so later autosaves rewrite the same
         // tiny snapshot instead of falling back to an id list.
         saved.questionSeed?.let { sessionSeed = it }
@@ -1098,6 +1162,10 @@ class TestViewModel(
                 isDrill = saved.isDrill,
                 mistakesOnly = saved.mistakesOnly,
                 drillRequested = saved.drillRequested,
+                // A legacy snapshot resumed on a bounded route keeps its own
+                // (absent) type: the header must not call it a Random test.
+                testType = sessionPlan?.type?.name,
+                requestedCount = sessionPlan?.count ?: 0,
                 timeWarning = null,
                 resumeOffer = null
             )
@@ -1115,7 +1183,7 @@ class TestViewModel(
         // pre-resume option shuffle; resolveCurrent would publish it as the
         // first resumed card (consolidated_bugs.md D9).
         prefetched = null
-        if (sessionPlan != null || saved.isDrill || saved.mistakesOnly) {
+        if (sessionPlan != null || saved.isDrill || saved.mistakesOnly || saved.isLegacy) {
             // ungradedTotal was computed for the freshly loaded order; the
             // resumed order is the saved cut or the frozen bounded sample, so
             // the count follows it.

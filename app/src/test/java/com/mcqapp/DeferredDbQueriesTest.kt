@@ -61,9 +61,12 @@ class DeferredDbQueriesTest {
         selections: Map<String, Set<String>>,
         dwell: Map<String, Long> = emptyMap(),
         finishedAt: Long,
-        durationSeconds: Long = 60
+        durationSeconds: Long = 60,
+        /** The bounded test's selected questions; null means the whole paper. */
+        questionIds: List<String>? = null
     ): Long {
         val questions = repository.getQuestionsForPaper("p1")
+            .filter { questionIds == null || it.id in questionIds }
         return repository.saveAttempt(
             paperId = "p1",
             paperTitle = "Paper",
@@ -80,20 +83,23 @@ class DeferredDbQueriesTest {
 
     @Test
     fun exposureCountsHowManyStoredTestsIncludedEachQuestion() = runBlocking {
+        // Bounded tests include only their selected questions, so these two
+        // attempts share q1 but only the first included q2.
         saveAttempt(
             selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("q2-a")),
-            finishedAt = 1_000L
+            finishedAt = 1_000L,
+            questionIds = listOf("q1", "q2")
         )
         saveAttempt(
             selections = mapOf("q1" to setOf("q1-a")),
-            finishedAt = 2_000L
+            finishedAt = 2_000L,
+            questionIds = listOf("q1")
         )
         val exposure = repository.testExposureByPaper("p1")
-        // q1 appeared in both tests; q2 and the untouched q3..q5 in the first.
         assertEquals(2, exposure["q1"])
         assertEquals(1, exposure["q2"])
-        assertEquals(1, exposure["q3"])
         // A question no stored test included is absent and reads as zero.
+        assertEquals(null, exposure["q3"])
         assertEquals(null, exposure["missing"])
     }
 

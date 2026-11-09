@@ -12,7 +12,9 @@ import com.mcqapp.domain.ContentElement
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -118,6 +120,86 @@ class DuplicateTableCollisionTest {
 
         assertEquals("a real duplicate should still be skipped", 1, repository.getQuestionsForPaper("p1").size)
         assertEquals(1, report.duplicateQuestions)
+    }
+
+    /**
+     * With "update answers on duplicate" on, a hash hit used to refresh the
+     * first stored row without checking it was the same question. A file that
+     * differs only in a table could therefore overwrite the stored question's
+     * key (and explanation/marks/tags) with another question's.
+     */
+    @Test
+    fun updateAnswersDoesNotWriteAKeyOntoATableCollision() = runBlockingTest {
+        Importer(db).import(LegacyParser.parse(bank("1556", "q1")))
+
+        val parsed = LegacyParser.parse(bank("1605", "q2"))
+        val category = parsed.papers[0].categories[0]
+        val question = category.questions.single().copy(correctOptionIds = listOf("b"))
+        val corrected = parsed.copy(
+            papers = listOf(
+                parsed.papers[0].copy(categories = listOf(category.copy(questions = listOf(question))))
+            )
+        )
+
+        val report = Importer(db, updateAnswersOnDuplicate = true).import(corrected)
+
+        assertEquals("the colliding question must still be imported", 2, repository.getQuestionsForPaper("p1").size)
+        val stored = repository.getQuestionsForPaper("p1").associateBy { it.id }
+        assertEquals("q1's own key was overwritten", setOf("a"), stored.getValue("q1").correctOptionIds)
+        assertEquals(setOf("b"), stored.getValue("q2").correctOptionIds)
+        assertEquals(0, report.answersRefreshed)
+    }
+
+    /**
+     * The in-file check must compare visible content the same way the
+     * stored-row check does: a flat question and the same question encoded as
+     * elements are equal only when the rich one carries no extra table or
+     * formula.
+     */
+    @Test
+    fun aFlatAndARichQuestionAreTheSameOnlyWhenTheirContentMatches() {
+        val flat = com.mcqapp.data.io.QuestionDto(
+            id = "flat",
+            text = "Who ruled in 1556?",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto("a", "Akbar"),
+                com.mcqapp.data.io.OptionDto("b", "None")
+            ),
+            correctOptionIds = listOf("a")
+        )
+        val richText = flat.copy(
+            id = "rich",
+            text = "",
+            elements = listOf(ContentElement.TextElement("Who ruled in 1556?")),
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(
+                    "a", "", listOf(ContentElement.TextElement("Akbar"))
+                ),
+                com.mcqapp.data.io.OptionDto(
+                    "b", "", listOf(ContentElement.TextElement("None"))
+                )
+            )
+        )
+        assertTrue(
+            "same visible text is the same question",
+            ContentHash.sameQuestionContent(flat, richText)
+        )
+
+        val richTable = richText.copy(
+            id = "table",
+            options = listOf(
+                com.mcqapp.data.io.OptionDto(
+                    "a", "", listOf(ContentElement.TableElement(listOf(listOf("Akbar", "1556"))))
+                ),
+                com.mcqapp.data.io.OptionDto(
+                    "b", "", listOf(ContentElement.TextElement("None"))
+                )
+            )
+        )
+        assertFalse(
+            "a table the flat question lacks is different content",
+            ContentHash.sameQuestionContent(flat, richTable)
+        )
     }
 
     @Test

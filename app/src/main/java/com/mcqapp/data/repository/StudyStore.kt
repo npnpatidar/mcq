@@ -43,6 +43,17 @@ internal class StudyStore(
     private val settings: SettingsStore
 ) {
 
+    /**
+     * Papers whose schedules this process has already checked for stale
+     * content hashes. The check is a join over the paper's whole study
+     * history, so paying it on every pull made a 250k-card paper scan 250k
+     * rows per served card. Every content-changing write (the editor, imports,
+     * passage moves) already deletes the affected schedule rows, so one pass
+     * per paper per process is enough to repair rows left by an older hash
+     * formula; a process restart checks once more.
+     */
+    private val staleChecked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /** The FSRS scheduler the whole store grades and counts with. */
     private fun fsrs(config: com.mcqapp.domain.SchedulerConfig) =
         com.mcqapp.domain.FsrsScheduler(
@@ -312,6 +323,9 @@ internal class StudyStore(
      * appends to it.
      */
     private suspend fun resetEdited(paperId: String) {
+        // One scan per paper per process; see [staleChecked]. The marker is
+        // set before the read so two concurrent pulls cannot both scan.
+        if (!staleChecked.add(paperId)) return
         val stale = db.cardStateDao().staleForPaper(paperId)
         if (stale.isEmpty()) return
         db.cardStateDao().deleteByQuestionsChunked(stale.map { it.id })

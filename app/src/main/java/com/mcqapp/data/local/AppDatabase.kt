@@ -30,7 +30,7 @@ import com.mcqapp.domain.searchableText
         PanelEntity::class,
         PanelQuestionEntity::class
     ],
-    version = 23,
+    version = 24,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -655,6 +655,17 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Stores the negative-marking rate each attempt applied. Older rows
+         * stay NULL: the report keeps its historic count-based fallback for
+         * them, because the rate cannot be recovered once the marks are gone.
+         */
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `attempts` ADD COLUMN `negativeMarking` REAL")
+            }
+        }
+
+        /**
          * Keys `question_tags` off the stored CSV in the same normalisation as
          * the runtime writers. Keyset-paged by rowid, one compiled insert per
          * batch — the backfill touches every tagged question, so peak memory
@@ -857,7 +868,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
-                    MIGRATION_22_23
+                    MIGRATION_22_23, MIGRATION_23_24
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

@@ -78,7 +78,14 @@ internal class PaperStore(
         categories: List<CategoryEntity>,
         countMap: Map<String, Int>
     ): List<CategoryNode> {
-        val byParent = categories.groupBy { it.parentId }
+        // A parent that is not a row of this paper cannot be rendered: the old
+        // grouping left its whole subtree out of the drawer, the category
+        // selection and the question totals. Treat it as a root, which is what
+        // an imported subtree's top category is meant to be.
+        val ids = categories.mapTo(HashSet()) { it.id }
+        val byParent = categories.groupBy { category ->
+            category.parentId?.takeIf { it in ids }
+        }
         fun build(parentId: String?, counts: Map<String, Int>): List<CategoryNode> =
             (byParent[parentId] ?: emptyList()).map { category ->
                 CategoryNode(

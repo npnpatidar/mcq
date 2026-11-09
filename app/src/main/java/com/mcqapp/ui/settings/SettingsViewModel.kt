@@ -481,7 +481,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     val db = repository.db()
                     val paperRows = db.paperDao().getAll()
                     val paperCreated = paperRows.map {
-                        McqBackupFormat.PaperCreated(it.id, it.createdAt)
+                        // Carry the drawer order: a restore recreates every paper
+                        // as new (each takes the top slot), so without it the
+                        // library comes back reversed and any custom order is
+                        // lost. The restore side already honours this field.
+                        McqBackupFormat.PaperCreated(it.id, it.createdAt, it.sortOrder)
                     }
                     // The session's answers are rows; the backup carries them
                     // inlined in the one document the format has always had.

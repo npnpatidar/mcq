@@ -155,6 +155,45 @@ class StudyViewModelPullTest {
         assertEquals("q2", viewModel.state.value.current!!.questionId)
     }
 
+    /**
+     * "Study again" after Stop is a live session: the first grade must persist
+     * and serve the next card, not leave the same revealed card to be graded a
+     * second time (the stopped flag was only cleared by a fresh load).
+     */
+    @Test
+    fun restartAfterStopLetsTheFirstGradeAdvance() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+        val card = viewModel.state.value.current!!
+        assertEquals("q1", card.questionId)
+        val before = runBlocking {
+            repository.db().reviewLogDao().historyForQuestion(card.questionId).size
+        }
+
+        viewModel.stop()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
+        viewModel.restart()
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
+            !viewModel.state.value.finished && viewModel.state.value.current != null
+        })
+
+        viewModel.toggleOption("${card.questionId}-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue(
+            "the graded card never advanced: state=${viewModel.state.value}",
+            awaitCondition { viewModel.state.value.current?.questionId != card.questionId }
+        )
+        runBlocking {
+            assertEquals(
+                "one tap must persist exactly one review",
+                before + 1,
+                repository.db().reviewLogDao().historyForQuestion(card.questionId).size
+            )
+        }
+    }
+
     @Test
     fun anEmptySessionOffersToTurnNewCardsOnAndHonoursTheFlip() {
         runBlocking {

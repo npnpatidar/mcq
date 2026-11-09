@@ -721,7 +721,8 @@ object StatsAggregator {
             weekdayRetention = weekdayRetention(),
             intervalRetention = intervalRetention(),
             tagRetention = tagRetention(tagsOfQuestion),
-            categoryRetention = categoryRetention(categoryOfQuestion)
+            categoryRetention = categoryRetention(categoryOfQuestion),
+            groupIsPaper = scopePaperId == null
         )
 
         /**
@@ -784,7 +785,14 @@ object StatsAggregator {
                 .take(limit)
 
         private fun countGroup(review: ReplayReview) {
-            val key = if (scopePaperId == null) review.paperId else review.questionId
+            val key = if (scopePaperId == null) {
+                review.paperId
+            } else {
+                // Scoped to one paper the paper breakdown is a single row, so
+                // the useful unit is the category. Keying by question used to
+                // render one row per question, all wearing its category title.
+                categoryOfQuestion[review.questionId] ?: UNKNOWN_GROUP
+            }
             groups.getOrPut(key) { Counts() }.add(review.passed)
         }
 
@@ -875,7 +883,8 @@ object StatsAggregator {
             val label = if (scopePaperId == null) {
                 paperTitleOf[key] ?: UNKNOWN_PAPER
             } else {
-                categoryOfQuestion[key] ?: UNKNOWN_GROUP
+                // Scoped keys are already the category label.
+                key
             }
             GroupRetention(label, counts.reviews, counts.passes)
         }

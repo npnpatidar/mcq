@@ -1,6 +1,7 @@
 package com.mcqapp.ui.study
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
@@ -139,7 +140,7 @@ data class StudyUiState(
     val dwellSeconds: Long
         get() = questionElapsedSeconds +
             if (clockRunning) {
-                (System.currentTimeMillis() - questionStartedAt).coerceAtLeast(0L) / 1000L
+                (SystemClock.elapsedRealtime() - questionStartedAt).coerceAtLeast(0L) / 1000L
             } else {
                 0L
             }
@@ -180,8 +181,11 @@ class StudyViewModel(
     /** Time already banked before the current foreground segment. */
     private var sessionBankedSeconds = 0L
 
-    /** When the current foreground segment started. */
-    private var sessionStartedAt = System.currentTimeMillis()
+    /**
+     * When the current foreground segment started, on the monotonic clock:
+     * a wall-clock jump must not turn a sitting into hours (or negative).
+     */
+    private var sessionStartedAt = SystemClock.elapsedRealtime()
     private var sessionRunning = true
 
     private var dwellJob: Job? = null
@@ -405,7 +409,7 @@ class StudyViewModel(
             val passage = question.passageId?.let { pid ->
                 repository.getPassagesByIds(listOf(pid)).firstOrNull()
             }
-            val now = System.currentTimeMillis()
+            val now = SystemClock.elapsedRealtime()
             _state.update {
                 it.copy(
                     current = card,
@@ -505,7 +509,7 @@ class StudyViewModel(
     fun pauseQuestionClock() {
         val current = _state.value
         if (!current.clockRunning) return
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         val elapsed = current.questionElapsedSeconds +
             ((now - current.questionStartedAt).coerceAtLeast(0L) / 1000L)
         _state.update {
@@ -527,7 +531,7 @@ class StudyViewModel(
         val current = _state.value
         if (current.clockRunning) return
         if (!clockCanRun(current)) return
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         _state.update { it.copy(questionStartedAt = now, clockRunning = true) }
         publishDwell()
     }
@@ -600,14 +604,14 @@ class StudyViewModel(
     }
 
     /** Banks the foreground segment and stops the sitting clock. */
-    private fun bankSessionClock(now: Long = System.currentTimeMillis()) {
+    private fun bankSessionClock(now: Long = SystemClock.elapsedRealtime()) {
         if (!sessionRunning) return
         sessionBankedSeconds +=
             ((now - sessionStartedAt).coerceAtLeast(0L) / 1000L)
         sessionRunning = false
     }
 
-    private fun resumeSessionClock(now: Long = System.currentTimeMillis()) {
+    private fun resumeSessionClock(now: Long = SystemClock.elapsedRealtime()) {
         if (sessionRunning) return
         sessionStartedAt = now
         sessionRunning = true
@@ -615,7 +619,7 @@ class StudyViewModel(
 
     private fun publishSessionSeconds() {
         val live = if (sessionRunning) {
-            (System.currentTimeMillis() - sessionStartedAt).coerceAtLeast(0L) / 1000L
+            (SystemClock.elapsedRealtime() - sessionStartedAt).coerceAtLeast(0L) / 1000L
         } else {
             0L
         }
@@ -625,7 +629,7 @@ class StudyViewModel(
     /** Resets the sitting clock for a fresh pass. */
     private fun resetSessionClock() {
         sessionBankedSeconds = 0L
-        sessionStartedAt = System.currentTimeMillis()
+        sessionStartedAt = SystemClock.elapsedRealtime()
         sessionRunning = true
         _sessionSeconds.value = 0L
     }
@@ -979,6 +983,10 @@ class StudyViewModel(
 
     /** Re-pulls from the top so a session can be repeated. */
     fun restart() {
+        // "Study again" revives a session that stop() ended. Without this the
+        // first grade persists and then the stopped guard suppresses the pull,
+        // leaving the same revealed card to be graded — and logged — again.
+        stopped.set(false)
         viewModelScope.launch {
             try {
                 // A drill restarts from the scheduler now, not from the list

@@ -190,13 +190,19 @@ class SessionOrder private constructor(
      */
     fun reorderedTo(savedIds: List<String>): SessionOrder? {
         if (savedIds.isEmpty()) return this
-        val rowById = HashMap<String, Int>(size * 2)
-        for (row in 0 until size) rowById[idOfRow(row)] = row
+        // Index only the *saved* ids, not every row: on a paper-wide session
+        // `size` is the whole paper, and a String->Int map over it cost one
+        // boxed entry and one fresh String per question — hundreds of MB at a
+        // million questions, exactly when a resume reopens the app. The row
+        // scan below still visits every row, but only the saved ones take
+        // memory.
+        val rowById = savedIndex(savedIds)
         val out = IntArray(size)
         var written = 0
         val seen = java.util.BitSet(size)
         for (id in savedIds) {
             val row = rowById[id] ?: continue
+            if (row < 0) continue
             // A malformed order can repeat an id or name one twice; without the
             // `seen` guard the repeat would write the same row again (or run
             // `written` past `size` and throw on the fill loop below).
@@ -218,19 +224,34 @@ class SessionOrder private constructor(
      */
     fun subsetInOrder(savedIds: List<String>): SessionOrder? {
         if (savedIds.isEmpty()) return this
-        val rowById = HashMap<String, Int>(size * 2)
-        for (row in 0 until size) rowById[idOfRow(row)] = row
+        val rowById = savedIndex(savedIds)
         val out = IntArray(savedIds.size)
         var written = 0
         val seen = java.util.BitSet(size)
         for (id in savedIds) {
             val row = rowById[id] ?: continue
+            if (row < 0) continue
             if (seen.get(row)) continue
             out[written++] = row
             seen.set(row)
         }
         if (written == 0) return null
         return SessionOrder(pool, starts, out.copyOf(written), passages, passageOf)
+    }
+
+    /**
+     * row index of each saved id, or -1 when the base no longer holds it.
+     * Streaming the base once keeps the structure bounded by the saved list
+     * (a bounded test's sample, or a legacy snapshot's ids), not by the paper.
+     */
+    private fun savedIndex(savedIds: List<String>): HashMap<String, Int> {
+        val rowById = HashMap<String, Int>(savedIds.size * 2)
+        for (id in savedIds) rowById[id] = -1
+        for (row in 0 until size) {
+            val id = idOfRow(row)
+            if (rowById.containsKey(id)) rowById[id] = row
+        }
+        return rowById
     }
 
     private fun idOfRow(row: Int): String =

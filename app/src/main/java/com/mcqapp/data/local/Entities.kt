@@ -389,7 +389,14 @@ data class AttemptEntity(
      * Authored difficulty attempt started from. Null for every other type and
      * for every pre-v22 row.
      */
-    val variant: String? = null
+    val variant: String? = null,
+    /**
+     * The negative-marking rate the attempt actually applied. Stored rather
+     * than re-derived: questions carry their own marks, so the old
+     * `(correct - score) / wrong` reconstruction silently assumed one mark
+     * per question. Null on pre-v24 rows, which keep the old fallback.
+     */
+    val negativeMarking: Double? = null
 )
 
 @Entity(

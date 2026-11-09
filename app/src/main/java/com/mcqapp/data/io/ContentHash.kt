@@ -147,15 +147,27 @@ object ContentHash {
      * written, so there is no row to read back.
      */
     fun sameQuestionContent(a: QuestionDto, b: QuestionDto): Boolean {
-        if (a.elements.isNotEmpty() && b.elements.isNotEmpty() && a.elements != b.elements) return false
+        // Normalise the flat side first, exactly as the stored-row variant
+        // does. Comparing elements only when *both* sides have them made the
+        // two checks disagree: a flat question and a rich one carrying the same
+        // visible text were "the same" here even when the rich one also held a
+        // table or formula.
+        val aElements = a.elements.ifEmpty { listOf(ContentElement.TextElement(a.text)) }
+        val bElements = b.elements.ifEmpty { listOf(ContentElement.TextElement(b.text)) }
+        if (aElements != bElements) return false
         if (a.image != b.image) return false
         if (a.options.size != b.options.size) return false
         return a.options.zip(b.options).all { (first, second) ->
-            optionImageSrcs(first.elements, first.image) ==
-                optionImageSrcs(second.elements, second.image) &&
-                (first.elements.isEmpty() || second.elements.isEmpty() ||
-                    first.elements.filterNot { it is ContentElement.ImageElement } ==
-                        second.elements.filterNot { it is ContentElement.ImageElement })
+            val firstElements = first.elements.ifEmpty {
+                listOf(ContentElement.TextElement(first.text))
+            }
+            val secondElements = second.elements.ifEmpty {
+                listOf(ContentElement.TextElement(second.text))
+            }
+            optionImageSrcs(firstElements, first.image) ==
+                optionImageSrcs(secondElements, second.image) &&
+                firstElements.filterNot { it is ContentElement.ImageElement } ==
+                    secondElements.filterNot { it is ContentElement.ImageElement }
         }
     }
 

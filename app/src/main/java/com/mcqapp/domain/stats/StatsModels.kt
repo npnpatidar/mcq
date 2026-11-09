@@ -614,7 +614,12 @@ data class RetentionData(
     /** Plan §6.2: per tag, a multi-tag review counting in each. */
     val tagRetention: List<GroupRetention> = emptyList(),
     /** Plan §6.3: per category across every paper; empty when scoped. */
-    val categoryRetention: List<GroupRetention> = emptyList()
+    val categoryRetention: List<GroupRetention> = emptyList(),
+    /**
+     * True when [groupRetention] lists papers (no paper selected); false when
+     * a paper is selected and the rows are its categories.
+     */
+    val groupIsPaper: Boolean = true
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

@@ -16,6 +16,7 @@ import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
+import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.util.Logger
@@ -74,6 +75,13 @@ internal class StreamingImportSession(
     private val catsInPaper = mutableListOf<CategoryEntity>()
     /** Raw file category id -> effective id we wrote, for the current paper. */
     private val effectiveCatByRawId = HashMap<String, String>()
+    /**
+     * Effective category id -> the file's raw parent id, resolved at
+     * [finishPaper] when every category of the paper is known. A child can
+     * name a parent that streams past later, and the parent may have been
+     * remapped or title-matched.
+     */
+    private val parentLinks = ArrayList<Pair<String, String?>>()
     private val pendingCategories = mutableListOf<CategoryEntity>()
     private var flushEnabled = false
     private var needsWrite = false
@@ -160,6 +168,7 @@ internal class StreamingImportSession(
         catsInPaper.removeAll { it.id == effectiveCatId }
         catsInPaper += entity
         effectiveCatByRawId[category.id] = effectiveCatId
+        parentLinks += effectiveCatId to category.parentId
         if (flushEnabled) writeCategoryRow(entity) else pendingCategories += entity
         currentCategoryId = effectiveCatId
         maxSortLoaded = false
@@ -315,6 +324,7 @@ internal class StreamingImportSession(
         catsInPaper.clear()
         catsInPaper += db.categoryDao().getByPaper(effectivePaperId)
         effectiveCatByRawId.clear()
+        parentLinks.clear()
         pendingCategories.clear()
         // A re-import always writes its categories; a brand-new paper only
         // does once a question actually needs writing. That reproduces the
@@ -359,6 +369,20 @@ internal class StreamingImportSession(
                 }
             }
         }
+        // Resolve parent links now that every category of the paper has
+        // streamed past. A remapped/title-matched parent resolves to the row
+        // this import wrote; a parent the destination paper does not hold (a
+        // subtree export, or an ancestor outside the file) makes the category
+        // a root instead of a dangling child the tree silently drops.
+        for ((categoryId, rawParentId) in parentLinks) {
+            val parentId = rawParentId?.let { raw ->
+                effectiveCatByRawId[raw]
+                    ?: db.categoryDao().getById(raw)
+                        ?.takeIf { it.paperId == effectivePaperId }?.id
+            }?.takeIf { it != categoryId }
+            db.categoryDao().updateParent(categoryId, parentId)
+        }
+        parentLinks.clear()
         paperOpen = false
     }
 
@@ -447,7 +471,12 @@ internal class StreamingImportSession(
             val inExisting = contentHash in dbHashes || contentHash in batchWritten
 
             if (inExisting && updateAnswersOnDuplicate) {
-                val candidate = candidates[contentHash]?.firstOrNull()
+                // The hash cannot see tables or formulas, so a hash hit is only
+                // a candidate: refresh a row only when its content is the same
+                // question, never write this file's key onto a different one.
+                val candidate = candidates[contentHash].orEmpty().firstOrNull {
+                    ContentHash.sameQuestionContent(it.entity, it.options, scaledQuestion)
+                }
                 val sameContentId = candidate?.entity?.id
                 if (sameContentId != null &&
                     ContentHash.nonHashedFieldsDiffer(candidate.entity, candidate.correctIds, scaledQuestion)
@@ -746,10 +775,11 @@ internal class StreamingImportSession(
                 if (strays.isEmpty()) continue
                 Logger.i("STREAMIMPORT", "Folding ${strays.size} passage member(s) of " +
                     "$passageId into ${passage.categoryId}")
-                var next = (db.questionDao().getMaxSortOrder(passage.categoryId) ?: -1) + 1
                 for (stray in strays) {
                     db.questionDao().updateCategory(listOf(stray.id), passage.categoryId)
-                    db.questionDao().updateSortOrder(stray.id, next++)
+                    // Beside the group, not at the category tail: two runs of
+                    // one passage would be read as two smaller passages.
+                    db.placeWithGroup(stray.id)
                 }
             }
         }
@@ -797,7 +827,8 @@ internal class StreamingImportSession(
                     exclusionMode = attempt.exclusionMode,
                     targetTopicIds = attempt.targetTopicIds,
                     compositionJson = attempt.compositionJson,
-                    variant = attempt.variant
+                    variant = attempt.variant,
+                    negativeMarking = attempt.negativeMarking
                 )
             )
             val restoredRows = attempt.results.map { r ->

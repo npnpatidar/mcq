@@ -172,6 +172,8 @@ data class AttemptDto(
     val compositionJson: String = "",
     /** The custom type's choice (phase 3); null on older backups. */
     val variant: String? = null,
+    /** The penalty rate the attempt applied; null on pre-v24 backups. */
+    val negativeMarking: Double? = null,
     val results: List<AttemptResultDto> = emptyList()
 )
 

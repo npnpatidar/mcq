@@ -345,3 +345,66 @@ fun likePrefixPattern(prefix: String): String =
  * returns merely over-block, which the full-table id set it replaces did too.
  */
 const val COPY_ID_PROBE = "%-copy%"
+
+/**
+ * The scope's distinct tags with their counts, summed over disjoint category
+ * chunks. Each chunk is a subset of the scope, so a tag's count adds; the
+ * merged list is re-sorted by the single-query keys (`count DESC, tagFolded`)
+ * because chunk order is not count order.
+ */
+internal suspend fun QuestionTagDao.tagCountsChunked(
+    paperId: String,
+    categoryIds: List<String>
+): List<TagCount> {
+    if (categoryIds.isEmpty()) return tagCounts(paperId, scopeAll = 1, categoryIds = emptyList())
+    return categoryIds.chunks()
+        .flatMap { tagCounts(paperId, scopeAll = 0, categoryIds = it) }
+        .groupBy { it.tagFolded }
+        .map { (folded, rows) ->
+            TagCount(rows.first().tag, folded, rows.sumOf { it.count })
+        }
+        .sortedWith(compareByDescending<TagCount> { it.count }.thenBy { it.tagFolded })
+}
+
+/**
+ * The scope's questions carrying a tag, concatenated over disjoint chunks.
+ * Both callers turn the result into a set (the custom pool), so chunk order
+ * is not observable.
+ */
+internal suspend fun QuestionTagDao.questionIdsForTagChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    tagFolded: String
+): List<String> =
+    if (categoryIds.isEmpty()) {
+        questionIdsForTag(paperId, scopeAll = 1, categoryIds = emptyList(), tagFolded = tagFolded)
+    } else {
+        categoryIds.chunks().flatMap {
+            questionIdsForTag(paperId, scopeAll = 0, categoryIds = it, tagFolded = tagFolded)
+        }
+    }
+
+/**
+ * The scope's bookmarked ids, concatenated over disjoint chunks. Both callers
+ * turn the result into a set, so the recency order is not observable.
+ */
+internal suspend fun QuestionTagDao.bookmarkedIdsInScopeChunked(
+    paperId: String,
+    categoryIds: List<String>
+): List<String> =
+    if (categoryIds.isEmpty()) {
+        bookmarkedIdsInScope(paperId, scopeAll = 1, categoryIds = emptyList())
+    } else {
+        categoryIds.chunks().flatMap { bookmarkedIdsInScope(paperId, scopeAll = 0, categoryIds = it) }
+    }
+
+/** Every timed sample of the scope; per-question grouping happens in Kotlin. */
+internal suspend fun QuestionTagDao.dwellSamplesInScopeChunked(
+    paperId: String,
+    categoryIds: List<String>
+): List<DwellSample> =
+    if (categoryIds.isEmpty()) {
+        dwellSamplesInScope(paperId, scopeAll = 1, categoryIds = emptyList())
+    } else {
+        categoryIds.chunks().flatMap { dwellSamplesInScope(paperId, scopeAll = 0, categoryIds = it) }
+    }

@@ -329,7 +329,8 @@ internal class HistoryStore(
                 exclusionMode = metadata.exclusionMode,
                 targetTopicIds = metadata.targetTopicIds,
                 compositionJson = metadata.compositionJson,
-                variant = metadata.variant
+                variant = metadata.variant,
+                negativeMarking = negativeMarking
             )
             val attemptId = db.attemptDao().insertAttempt(attempt)
             db.attemptDao().insertResults(results.map { it.copy(attemptId = attemptId) })
@@ -390,7 +391,8 @@ internal class HistoryStore(
             exclusionMode = metadata.exclusionMode,
             targetTopicIds = metadata.targetTopicIds,
             compositionJson = metadata.compositionJson,
-            variant = metadata.variant
+            variant = metadata.variant,
+            negativeMarking = negativeMarking
         )
         val attemptId = db.attemptDao().insertAttempt(attempt)
         val categoryTitles = HashMap<String, String>()
@@ -468,7 +470,8 @@ internal class HistoryStore(
         exclusionMode = exclusionMode,
         targetTopicIds = targetTopicIds,
         compositionJson = compositionJson,
-        variant = variant
+        variant = variant,
+        negativeMarking = negativeMarking
     )
 
     /**

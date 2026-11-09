@@ -41,7 +41,8 @@ class TestReportBuilderTest {
         scopeKey: String = ScopeKey.wholePaper("p1"),
         exclusion: String = ExclusionMode.NONE.name,
         finishedAt: Long = 1_000L,
-        targetTopicIds: String = ""
+        targetTopicIds: String = "",
+        negativeMarking: Double? = null
     ) = Attempt(
         id = id,
         paperId = "p1",
@@ -59,7 +60,8 @@ class TestReportBuilderTest {
         scopeKey = scopeKey,
         samplingVersion = samplingVersion,
         exclusionMode = exclusion,
-        targetTopicIds = targetTopicIds
+        targetTopicIds = targetTopicIds,
+        negativeMarking = negativeMarking
     )
 
     private fun row(
@@ -297,6 +299,42 @@ class TestReportBuilderTest {
         assertTrue(report.comparable)
         assertNotNull(report.marginPoints)
         assertEquals(0.60, report.score.accuracyAsked, 0.0001)
+    }
+
+    @Test
+    fun theMarginDescribesTheShownDenominator() {
+        // The margin is attached to the score percentage, whose denominator is
+        // the shown count; it must not pair an answered-based proportion with
+        // that sample.
+        val report = report()
+        assertEquals(
+            TestStatistics.marginPoints(
+                report.score.accuracyAsked,
+                report.score.shown,
+                report.scopeSize
+            ),
+            report.marginPoints
+        )
+    }
+
+    @Test
+    fun theStoredMarkingSurvivesUnequalQuestionMarks() {
+        // One 2-mark question right and one 4-mark question wrong at a 0.25
+        // penalty stores score = 2 - 1 = 1. Correct/wrong counts alone would
+        // reconstruct (1 - 1) / 1 = 0.
+        val report = report(
+            attempt = attempt(
+                correct = 1,
+                wrong = 1,
+                skipped = 0,
+                score = 1.0,
+                maxScore = 6.0,
+                negativeMarking = 0.25
+            ),
+            rows = emptyList()
+        )
+        assertEquals(0.25, report.negativeMarking, 0.0001)
+        assertNull("negative marking rules the correction out", report.guessing)
     }
 
     @Test

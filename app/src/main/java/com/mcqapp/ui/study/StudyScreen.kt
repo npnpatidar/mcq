@@ -76,7 +76,9 @@ import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.StudyReason
+import com.mcqapp.domain.Scoring
 import com.mcqapp.ui.StudyViewModelFactory
+import com.mcqapp.ui.haptics.rememberHaptics
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -223,6 +225,7 @@ private fun StudyBody(
             SimplifiedFooter(state = state, viewModel = viewModel)
         }
     } else {
+        val haptics = rememberHaptics()
         // Same fixed-footer shape as Simplified: the answer and the four
         // buttons never scroll away either.
         Column(modifier = Modifier.fillMaxSize()) {
@@ -262,7 +265,10 @@ private fun StudyBody(
                     }
                 } else if (!state.revealed) {
                     Button(
-                        onClick = { viewModel.reveal() },
+                        onClick = {
+                            haptics.tick()
+                            viewModel.reveal()
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(stringResource(R.string.show_answer))
@@ -296,6 +302,7 @@ private fun SimplifiedResultBlock(state: StudyUiState) {
  */
 @Composable
 private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
+    val haptics = rememberHaptics()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -330,7 +337,21 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             }
             Spacer(Modifier.height(12.dp))
             Button(
-                onClick = { viewModel.check() },
+                onClick = {
+                    // The verdict is the whole point of Check, so it gets the
+                    // outcome pulse; the tick still confirms the tap first.
+                    val question = state.question
+                    val selection = state.selection
+                    haptics.tick()
+                    viewModel.check()
+                    if (question != null && selection.isNotEmpty()) {
+                        if (Scoring.isCorrect(selection, question.correctOptionIds)) {
+                            haptics.confirm()
+                        } else {
+                            haptics.reject()
+                        }
+                    }
+                },
                 modifier = Modifier.fillMaxWidth().testTag("study-check")
             ) {
                 Text(stringResource(R.string.check))
@@ -358,7 +379,10 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 }
                 Spacer(Modifier.width(8.dp))
                 Button(
-                    onClick = { viewModel.next() },
+                    onClick = {
+                        haptics.tick()
+                        viewModel.next()
+                    },
                     modifier = Modifier.weight(1f).testTag("study-next"),
                     // The card is graded and stuck: re-tapping Next would
                     // double-persist it (consolidated_bugs.md I3).
@@ -468,6 +492,7 @@ private fun StudyStickyHeader(
     // from Resources (the OverviewSection tooltip pattern); the clock text
     // itself renders via stringResource inside its Text.
     val resources = LocalContext.current.resources
+    val haptics = rememberHaptics()
     val currentBookmarked =
         state.question?.id?.let { it in state.bookmarked } == true
 
@@ -523,7 +548,10 @@ private fun StudyStickyHeader(
                 // Test mode's, so a question saved here shows up there and on
                 // the bookmarks screen without leaving the session.
                 IconButton(
-                    onClick = onToggleBookmark,
+                    onClick = {
+                        haptics.toggle(!currentBookmarked)
+                        onToggleBookmark()
+                    },
                     enabled = state.question != null,
                     modifier = Modifier.testTag("study-bookmark")
                 ) {
@@ -615,6 +643,7 @@ private fun QuestionCard(
     passage: com.mcqapp.domain.Passage? = null,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberHaptics()
     Card(modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             // Shared context: the passage renders above every member whenever
@@ -717,7 +746,10 @@ private fun QuestionCard(
                             selected = isSelected,
                             enabled = !revealed,
                             role = Role.Checkbox,
-                        ) { onToggleOption(option.id) }
+                        ) {
+                            haptics.toggle(!isSelected)
+                            onToggleOption(option.id)
+                        }
                         .padding(8.dp)
                         .semantics { stateDescription = optionState },
                     verticalAlignment = Alignment.CenterVertically
@@ -813,8 +845,12 @@ private fun GradeButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val haptics = rememberHaptics()
     Button(
-        onClick = onClick,
+        onClick = {
+            haptics.tick()
+            onClick()
+        },
         modifier = modifier,
         enabled = enabled,
         colors = ButtonDefaults.buttonColors(containerColor = color)

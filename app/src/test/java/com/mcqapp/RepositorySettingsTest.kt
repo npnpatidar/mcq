@@ -51,6 +51,7 @@ class RepositorySettingsTest {
         runBlocking {
             store().resetSchedulerConfig()
             store().clearTestProgress()
+            store().setHapticsEnabled(true)
             // Fitted weights ride a separate key that resetSchedulerConfig
             // deliberately leaves alone; clear it here or one test's fit would
             // leak into every later assertion in the run.
@@ -81,6 +82,29 @@ class RepositorySettingsTest {
      * one, which is what this asserts by round-tripping only the FSRS-era
      * settings and confirming none of the removed fields reappear.
      */
+    @Test
+    fun hapticsAreOnByDefaultAndSurviveARoundTrip() = runBlocking {
+        assertTrue("a fresh install starts with haptics on", store().hapticsEnabled().first())
+        store().setHapticsEnabled(false)
+        assertFalse(store().hapticsEnabled().first())
+        store().setHapticsEnabled(true)
+        assertTrue(store().hapticsEnabled().first())
+    }
+
+    @Test
+    fun theHapticsPreferenceRidesTheBackup() = runBlocking {
+        store().setHapticsEnabled(false)
+        val snapshot = store().snapshot()
+        assertTrue(
+            "a settings backup must carry the haptics switch",
+            snapshot.preferences.containsKey("haptics_enabled")
+        )
+
+        store().setHapticsEnabled(true)
+        store().restore(snapshot)
+        assertFalse("restoring the backup must restore the switch", store().hapticsEnabled().first())
+    }
+
     @Test
     fun noQuotaSettingsSurviveRoundTrip() = runBlocking {
         val store = store()

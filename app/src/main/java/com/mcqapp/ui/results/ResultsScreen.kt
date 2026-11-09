@@ -131,12 +131,16 @@ fun ResultsScreen(
                                     scope.launch {
                                         val intent = viewModel.exportCsvIntent()
                                         if (intent != null) {
-                                            context.startActivity(
-                                                android.content.Intent.createChooser(
-                                                    intent,
-                                                    resources.getString(R.string.report_export_share)
+                                            try {
+                                                context.startActivity(
+                                                    android.content.Intent.createChooser(
+                                                        intent,
+                                                        resources.getString(R.string.report_export_share)
+                                                    )
                                                 )
-                                            )
+                                            } catch (_: android.content.ActivityNotFoundException) {
+                                                Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                            }
                                         } else {
                                             Toast.makeText(context, R.string.report_export_failed, Toast.LENGTH_SHORT).show()
                                         }
@@ -150,12 +154,16 @@ fun ResultsScreen(
                                     scope.launch {
                                         val intent = viewModel.exportPdfIntent()
                                         if (intent != null) {
-                                            context.startActivity(
-                                                android.content.Intent.createChooser(
-                                                    intent,
-                                                    resources.getString(R.string.report_export_share)
+                                            try {
+                                                context.startActivity(
+                                                    android.content.Intent.createChooser(
+                                                        intent,
+                                                        resources.getString(R.string.report_export_share)
+                                                    )
                                                 )
-                                            )
+                                            } catch (_: android.content.ActivityNotFoundException) {
+                                                Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                            }
                                         } else {
                                             Toast.makeText(context, R.string.report_export_failed, Toast.LENGTH_SHORT).show()
                                         }

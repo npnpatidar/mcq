@@ -1,6 +1,9 @@
 package com.mcqapp.ui.history
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -27,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -39,8 +43,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +78,10 @@ fun BookmarksScreen(
 
     var showFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
+    var shareMode by rememberSaveable { mutableStateOf(false) }
+    val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val platformContext = androidx.compose.ui.platform.LocalContext.current
     // rememberSaveable: the system save dialog recreates the activity, and a
     // plain `remember` came back null so the re-delivered URI was dropped
     // (consolidated_bugs.md F4). Enums are Serializable and save as-is.
@@ -252,6 +262,27 @@ fun BookmarksScreen(
             },
             text = {
                 Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !shareMode,
+                            onClick = { shareMode = false },
+                            label = { Text(stringResource(R.string.share_save)) }
+                        )
+                        FilterChip(
+                            selected = shareMode,
+                            onClick = { shareMode = true },
+                            label = { Text(stringResource(R.string.share_share)) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (isSharing) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.sharing))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                     ExportFormat.entries.forEach { format ->
                         Row(
                             modifier = Modifier
@@ -278,16 +309,45 @@ fun BookmarksScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showFormatDialog = false
-                    pendingFormat = exportFormat
-                    exportSaver(exportFormat).launch(
-                        PaperExporter.fileNameFor(
-                            com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
-                            exportFormat
+                TextButton(
+                    enabled = !isSharing,
+                    onClick = {
+                        if (shareMode) {
+                            scope.launch {
+                                val intent = viewModel.shareBookmarksIntent(exportFormat)
+                                showFormatDialog = false
+                                pendingFormat = null
+                                if (intent != null) {
+                                    try {
+                                        platformContext.startActivity(
+                                            Intent.createChooser(
+                                                intent,
+                                                platformContext.getString(R.string.share_chooser_title)
+                                            )
+                                        )
+                                    } catch (_: ActivityNotFoundException) {
+                                        Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            return@TextButton
+                        }
+                        showFormatDialog = false
+                        pendingFormat = exportFormat
+                        exportSaver(exportFormat).launch(
+                            PaperExporter.fileNameFor(
+                                com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                                exportFormat
+                            )
+                        )
+                    }
+                ) {
+                    Text(
+                        stringResource(
+                            if (shareMode) R.string.share_share else R.string.export
                         )
                     )
-                }) { Text(stringResource(R.string.export)) }
+                }
             },
             dismissButton = {
                 TextButton(onClick = {

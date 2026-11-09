@@ -58,8 +58,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -110,6 +112,7 @@ fun SettingsScreen(
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val feedback = LocalHapticFeedback.current
     // rememberSaveable: the pickers and confirm dialogs recreate the activity,
     // and plain `remember` dismissed the confirm and lost the picked URI and
@@ -738,6 +741,66 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            busy = true
+                            scope.launch {
+                                val intent = viewModel.shareAllIntent()
+                                busy = false
+                                if (intent != null) {
+                                    try {
+                                        context.startActivity(
+                                            android.content.Intent.createChooser(
+                                                intent,
+                                                context.getString(R.string.share_chooser_title)
+                                            )
+                                        )
+                                    } catch (_: ActivityNotFoundException) {
+                                        exportErrorTitleRes = R.string.export_failed
+                                        exportError = context.getString(R.string.share_no_app)
+                                    }
+                                } else {
+                                    exportErrorTitleRes = R.string.export_failed
+                                    exportError = context.getString(R.string.share_failed)
+                                }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.share_all_data))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            busy = true
+                            scope.launch {
+                                val intent = viewModel.shareBackupIntent()
+                                busy = false
+                                if (intent != null) {
+                                    try {
+                                        context.startActivity(
+                                            android.content.Intent.createChooser(
+                                                intent,
+                                                context.getString(R.string.share_chooser_title)
+                                            )
+                                        )
+                                    } catch (_: ActivityNotFoundException) {
+                                        exportErrorTitleRes = R.string.export_failed
+                                        exportError = context.getString(R.string.share_no_app)
+                                    }
+                                } else {
+                                    exportErrorTitleRes = R.string.backup_failed
+                                    exportError = context.getString(R.string.share_failed)
+                                }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.share_backup))
+                    }
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = { restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },

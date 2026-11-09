@@ -109,6 +109,53 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private val _isSharing = MutableStateFlow(false)
+    val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
+
+    /**
+     * Renders the bookmarks into `cacheDir/shared` and returns the raw
+     * `ACTION_SEND` intent (the screen wraps it in a chooser). Null on
+     * failure, with [exportError] set; [isSharing] drives the dialog's
+     * progress while the render runs on IO.
+     */
+    suspend fun shareBookmarksIntent(
+        format: com.mcqapp.data.export.ExportFormat
+    ): android.content.Intent? {
+        _isSharing.value = true
+        try {
+            return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val app = getApplication<Application>()
+                val stream = com.mcqapp.data.io.Exporter(repository.db()).bookmarkStream()
+                    ?: throw IllegalStateException("No bookmarked questions to export")
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir,
+                    com.mcqapp.data.export.PaperExporter.fileNameFor(
+                        com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                        format
+                    )
+                )
+                val exported = java.io.FileOutputStream(file).use { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportStream(
+                            stream,
+                            com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                            format,
+                            sink,
+                            twoColumnPdf = repository.pdfTwoColumn().first()
+                        )
+                }
+                Logger.i("BOOKVM", "Shared ${exported.fileName} (${file.length()} bytes)")
+                com.mcqapp.util.shareIntent(app, file, format.mimeType)
+            }
+        } catch (e: Exception) {
+            Logger.e("BOOKVM", "Share failed", e)
+            _exportError.value = "Export failed: ${e.message}"
+            return null
+        } finally {
+            _isSharing.value = false
+        }
+    }
+
     fun dismissError() {
         _exportError.value = null
     }

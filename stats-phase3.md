@@ -1,17 +1,18 @@
 # Phase 3 implementation plan: custom tests, reliability and export
 
-Status: **implemented on `feature/phase3-custom` (cut from `origin/main`; uncommitted, CI pending).** Phase 2 is merged to `main` (PR #51).
+Status: **implemented on `feature/phase3-custom` (cut from `origin/main`; PR #52, draft).** Phase 2 is merged to `main` (PR #51).
 
-**Implemented (slices 1–5, pending CI):**
-- **Slice 1 (data foundation):** `question_tags` index + schema v22 migration/backfill (`MIGRATION_21_22`), nullable `attempts.variant`, tag normalization (`Tags.kt`), write-path tag-index sync (QuestionStore/Importer/StreamingImportSession/bulk), exact scoped tag/bookmark/dwell reads. Generated schema `22.json`. `MigrationTest.ALL_MIGRATIONS` updated to include `21_22` (Robolectric v21→v22 fixture/assertions still a follow-up for full coverage).
+**Implemented (slices 1–5 + fixed panels):**
+- **Slice 1 (data foundation):** `question_tags` index + schema v22 migration/backfill (`MIGRATION_21_22`), nullable `attempts.variant`, tag normalization (`Tags.kt`), write-path tag-index sync (QuestionStore/Importer/StreamingImportSession/bulk), exact scoped tag/bookmark/dwell reads. Generated schema `22.json`. `MigrationTest.ALL_MIGRATIONS` includes `21_22`, with a v21→v22 fixture/assertions.
 - **Slice 2 (custom selectors):** Bookmarked/Tag/Authored difficulty/Slowest startable (practice, not `isFocus`), `variant` threaded through plan/attempt/snapshot/route/session, custom selector logic + preview (`TestSelector`, `LibraryViewModel`, `McqRepository` scoped reads), setup-sheet tag/difficulty pickers and variant-aware Start.
 - **Slice 3 (tag editing/round-trip):** editor tag-chip add/remove; tags/index sync on save paths; import/export continue to use `questions.tags` CSV as canonical.
-- **Slice 4 (reliability/item analysis):** pure domain `domain/stats/Reliability.kt` (split-half odd/even + Spearman–Brown, SEM, KR-20, point-biserial across attempts, guessing correction, NaN/zero-SD/small-sample guards) with `ReliabilityTest` (18). Tests tab shows a Reliability card (`TestProgressData.reliability`/`ReliabilitySummary`) — full family-scoped computation from per-attempt item vectors in the stats pipeline remains a follow-up; the card displays “sample too small” when no summary is provided.
-- **Slice 5 (report export):** `ReportCsv` (UTF-8, RFC 4180, header comment block, stable columns) + `ReportExportCsvTest` (5), simple `ReportPdf` (v1 table/text, no charts), Results export/share actions (CSV/PDF) via cache `reports/` + `FileProvider`.
+- **Slice 4 (reliability/item analysis):** pure domain `domain/stats/Reliability.kt` (split-half odd/even + Spearman–Brown, SEM, KR-20, point-biserial across attempts, guessing correction, NaN/zero-SD/small-sample guards) with `ReliabilityTest`. The Tests tab shows a family-scoped Reliability card (`TestProgressData.reliability`). Item discrimination is keyed by question id across same-key attempts (`≥ 5` attempts that asked it), shown on the results review row; guessing correction uses each item's own chance level (`1/C(k,c)`), is suppressed for practice/negative marking/unknown keys/below 20 answered, and appears as a result card, in the CSV header and in the PDF. Both are estimates and are labelled as such.
+- **Slice 5 (report export):** `ReportCsv` (UTF-8, RFC 4180, header comment block, stable columns) + `ReportExportCsvTest`, simple `ReportPdf` (v1 table/text, no charts), Results export/share actions (CSV/PDF) via cache `reports/` + `FileProvider`. The CSV/PDF include the guessing-corrected line when the report has one.
+- **Fixed panels (stats.md §11.15):** schema v23 adds `panels`/`panel_questions` (`MIGRATION_22_23`, generated `23.json`), a panel picker + "New panel…" in the setup sheet (saves the current preview's sample, then switches to it), a trash action per panel (with confirmation), `TestType.FIXED_PANEL` (practice, no fill from outside the panel), panel id in `variant`, and a panel-progress card in the Tests tab. A panel is a whole-paper set: it runs every member (even a size like 47 after a deletion) and is not offered under a category scope. A deleted question shrinks the panel instead of substituting another. Panels travel in `study.json` (device state, not shareable content) with their ids and frozen order, because an attempt's `variant` names its panel by id.
 
-**Deferred by plan prerequisites (not implemented):** Slice 6 adaptive next test/staged testing (needs calibrated item bank/exposure requirements) and Slice 7 exam blueprint (needs owner decision; changes plan shape). These remain deferred in §6/§9.
+**Deferred by plan prerequisites (not implemented):** Slice 6 adaptive next test/staged testing (needs a calibrated item bank; only a rule-based cross-attempt card is feasible with one user's data) and Slice 7 exam blueprint (needs owner decisions; changes plan shape). Both are documented with their open questions in [`ideas.md`](ideas.md).
 
-**Verification (local, ARM64):** `:app:compileDebugKotlin` + `:app:compileDebugUnitTestKotlin` pass; targeted pure-JVM tests pass (TagNormalizer 6, Reliability 18, ReportExportCsv 5, TestSelector 29, TestSetup 23, TestReportBuilder 36). Robolectric/SQLite + instrumented tests not run locally (CI x86_64 authoritative). **Not committed/pushed/PR’d.**
+**Verification (local, ARM64):** `:app:compileDebugKotlin` + `:app:compileDebugUnitTestKotlin` pass; the full pure-JVM suite passes (142 classes, 1245 tests, 0 failures, 2 skipped). Robolectric/SQLite + instrumented tests not run locally (CI x86_64 authoritative).
 
 It is the working plan for the phase-3 items in [`stats.md`](stats.md)
 §8.10–§8.13, §11.15 (phase 3), §12.4 and §13 (phase 3). When a slice ships,
@@ -240,7 +241,6 @@ A tag that differs only by case or surrounding spaces is the same tag.
 ## 6. Schema and migration
 
 v22 adds:
-
 ```sql
 CREATE TABLE question_tags (
   questionId TEXT NOT NULL,
@@ -258,6 +258,35 @@ pairs. `MigrationTest` asserts: a v21 database with commas, spaces, duplicates
 and mixed case migrates to the expected rows; a v22 fresh create has the table
 and index; deleting a question removes its rows; a backup restore repopulates
 them.
+
+v23 adds the fixed panels (stats.md §11.15):
+
+```sql
+CREATE TABLE panels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  paperId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  FOREIGN KEY (paperId) REFERENCES papers(id) ON DELETE CASCADE
+);
+CREATE INDEX index_panels_paperId_name ON panels(paperId, name);
+
+CREATE TABLE panel_questions (
+  panelId INTEGER NOT NULL,
+  questionId TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  PRIMARY KEY (panelId, questionId),
+  FOREIGN KEY (panelId) REFERENCES panels(id) ON DELETE CASCADE,
+  FOREIGN KEY (questionId) REFERENCES questions(id) ON DELETE CASCADE
+);
+CREATE INDEX index_panel_questions_panelId_position ON panel_questions(panelId, position);
+CREATE INDEX index_panel_questions_questionId ON panel_questions(questionId);
+```
+
+`MigrationTest` proves 22→23 on a genuine v22 file, that the panel size is a
+count (not a read of every id), that deleting a question shrinks the panel,
+and that deleting the panel removes its rows. `23.json` is generated by the
+build and committed.
 
 ## 7. Tests
 
@@ -325,9 +354,10 @@ them.
 
 ## 10. Shipped order
 
-1. Slice 1: `question_tags` + v22 migration. **Implemented on branch** (CI pending; v21→v22 Robolectric fixture/assertions follow-up).
+1. Slice 1: `question_tags` + v22 migration. **Implemented on branch** (v21→v22 Robolectric fixture/assertions included).
 2. Slice 2: four custom selectors and the setup-sheet plumbing. **Implemented on branch.**
 3. Slice 3: tag editing and round-trip. **Implemented on branch.**
-4. Slice 4: reliability and item analysis. **Implemented (domain/tests + reliability card UI; stats-pipeline computation/discrimination wiring follow-up).**
+4. Slice 4: reliability and item analysis. **Implemented** (domain/tests, reliability card, item discrimination on the review row, guessing correction card/CSV/PDF).
 5. Slice 5: CSV/PDF export. **Implemented on branch** (CSV/PDF + share action).
-6. Slice 6/7: adaptive next test and exam blueprint. **Deferred** (calibrated item bank / owner decision per §9).
+6. Fixed panels: `panels`/`panel_questions` + v23 migration, picker (with create and delete), selector, progress card. **Implemented on branch.**
+7. Slice 6/7: adaptive next test and exam blueprint. **Deferred** (calibrated item bank / owner decision); details and open questions in [`ideas.md`](ideas.md).

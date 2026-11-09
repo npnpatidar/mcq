@@ -1839,9 +1839,15 @@ question content for the whole paper, only for the attempt's questions.
 **Phase 3:**
 
 - Item analysis and reliability (split-half/Spearman–Brown, SEM).
-- Export/share the report (PDF/CSV).
+  **Done:** reliability card, item discrimination and chance-based guessing
+  correction.
+- Export/share the report (PDF/CSV). **Done:** CSV/PDF share action.
 - Adaptive next-test recommendation (which type/length to take next).
-- Fixed-panel progress for a stable question set.
+  **Deferred:** see `ideas.md`; only a rule-based cross-attempt card is
+  feasible without population data.
+- Fixed-panel progress for a stable question set. **Done:** `FIXED_PANEL`,
+  `panels`/`panel_questions`, the Tests-tab progress card, and `study.json`
+  backup/restore with ids and frozen order preserved.
 
 ### 11.16 Tests and acceptance
 
@@ -2321,14 +2327,17 @@ banks.
 ### Phase 3 — custom and advanced
 
 See [`stats-phase3.md`](stats-phase3.md) for the working plan, slices and the
-open decisions. Implementation of slices 1–3 is **in progress on `feature/phase3-custom`** (uncommitted, CI pending).
+open decisions. Slices 1–5 and fixed panels are **implemented on
+`feature/phase3-custom`** (PR #52, draft); the two deferred ideas and their open
+questions live in [`ideas.md`](ideas.md).
 
-1. Bookmarked, Tag, Authored difficulty, Slowest. **Implemented on `feature/phase3-custom` (CI pending).**
+1. Bookmarked, Tag, Authored difficulty, Slowest. **Implemented on `feature/phase3-custom`.**
 2. `question_tags` table (or delimited exact matching). **Implemented as `question_tags` index (v22).**
 3. Mixed practice composition. **Done in phase 2.**
-4. Exam blueprint (per-paper sections, counts, optional weights/time). **Deferred** (owner decision / plan-shape change).
-5. Reliability, item analysis, guessing correction, staged/adaptive tests. **Partly implemented:** `Reliability.kt` (split-half/Spearman–Brown, SEM, KR-20, point-biserial, guessing correction) + tests and reliability card UI; staged/adaptive deferred (needs calibrated item bank).
-6. Export/share the report (CSV/PDF). **Implemented on branch** (CSV + simple PDF + Results share action; CI pending).
+4. Exam blueprint (per-paper sections, counts, optional weights/time). **Deferred** (owner decision / plan-shape change); see `ideas.md`.
+5. Reliability, item analysis, guessing correction, staged/adaptive tests. **Implemented except staged/adaptive:** `Reliability.kt` (split-half/Spearman–Brown, SEM, KR-20, point-biserial across same-key attempts, chance-based guessing correction) + tests, reliability card, discrimination on the review row, guessing card/CSV/PDF. Staged/adaptive is deferred (needs calibrated item bank).
+6. Export/share the report (CSV/PDF). **Implemented on branch** (CSV + simple PDF + Results share action).
+7. Fixed-panel progress for a stable question set. **Implemented on branch** (v23 `panels`/`panel_questions`, picker with create/delete, `FIXED_PANEL` selector, Tests-tab progress card, `study.json` backup/restore).
 
 ## 14. Test plan
 

@@ -106,8 +106,9 @@ class BlueprintDbTest {
 
         val loaded = repository.blueprint(id)!!
         assertEquals("UPSC", loaded.name)
-        assertEquals(listOf("c-polity", "c-science", "c-history"), loaded.sections.map { it.categoryId })
-        val science = loaded.sections[1]
+        // Sibling order follows the paper's sortOrder: polity (0), history (1), science (2).
+        assertEquals(listOf("c-polity", "c-history", "c-science"), loaded.sections.map { it.categoryId })
+        val science = loaded.sections.first { it.categoryId == "c-science" }
         assertEquals(listOf("c-physics", "c-chem"), science.children.map { it.categoryId })
         assertEquals(listOf("c-mech", "c-opt"), science.children[0].children.map { it.categoryId })
         assertEquals(3, science.children[0].children[0].parts)
@@ -194,8 +195,8 @@ class BlueprintDbTest {
         assertTrue("physics section cascaded", "c-physics" !in allIds)
         assertTrue("mech subtree cascaded", "c-mech" !in allIds)
         assertTrue("opt subtree cascaded", "c-opt" !in allIds)
-        // science + chem remain
-        assertEquals(1, repository.blueprintsForPaper("p1").first().sectionCount.coerceAtMost(4))
+        // science + chem remain (polity, science, chem, history = 4)
+        assertEquals(4, repository.blueprintsForPaper("p1").first().sectionCount)
         val science = loaded.sections.firstOrNull { it.categoryId == "c-science" }!!
         assertEquals(listOf("c-chem"), science.children.map { it.categoryId })
     }

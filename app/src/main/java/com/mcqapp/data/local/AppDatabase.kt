@@ -28,9 +28,11 @@ import com.mcqapp.domain.searchableText
         PassageEntity::class,
         TestProgressEntity::class,
         PanelEntity::class,
-        PanelQuestionEntity::class
+        PanelQuestionEntity::class,
+        BlueprintEntity::class,
+        BlueprintSectionEntity::class
     ],
-    version = 24,
+    version = 25,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -51,6 +53,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun passageDao(): PassageDao
     abstract fun testProgressDao(): TestProgressDao
     abstract fun panelDao(): PanelDao
+    abstract fun blueprintDao(): BlueprintDao
 
     companion object {
         @Volatile
@@ -666,6 +669,59 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Exam blueprints: a named, paper-scoped tree of weighted sections.
+         * The DDL mirrors [BlueprintEntity] and [BlueprintSectionEntity]
+         * exactly: a section cascades with its category and, through the
+         * self-referencing parent pointer, the whole blueprint subtree under
+         * a deleted section leaves with it.
+         */
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `blueprints` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`paperId` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_blueprints_paperId_name` " +
+                        "ON `blueprints` (`paperId`, `name`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `blueprint_sections` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`blueprintId` INTEGER NOT NULL, `categoryId` TEXT NOT NULL, " +
+                        "`parentSectionId` INTEGER, `parts` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`blueprintId`) REFERENCES `blueprints`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE , " +
+                        "FOREIGN KEY(`categoryId`) REFERENCES `categories`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE , " +
+                        "FOREIGN KEY(`parentSectionId`) REFERENCES `blueprint_sections`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "`index_blueprint_sections_blueprintId_categoryId` " +
+                        "ON `blueprint_sections` (`blueprintId`, `categoryId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_blueprint_sections_blueprintId` " +
+                        "ON `blueprint_sections` (`blueprintId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_blueprint_sections_parentSectionId` " +
+                        "ON `blueprint_sections` (`parentSectionId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_blueprint_sections_categoryId` " +
+                        "ON `blueprint_sections` (`categoryId`)"
+                )
+            }
+        }
+
+        /**
          * Keys `question_tags` off the stored CSV in the same normalisation as
          * the runtime writers. Keyset-paged by rowid, one compiled insert per
          * batch — the backfill touches every tagged question, so peak memory
@@ -868,7 +924,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
-                    MIGRATION_22_23, MIGRATION_23_24
+                    MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

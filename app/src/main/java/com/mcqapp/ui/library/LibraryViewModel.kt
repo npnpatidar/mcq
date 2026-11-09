@@ -693,23 +693,49 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         breadth: Breadth,
         variant: String? = null
     ): SelectionPreview {
-        val scopeIds = if (categoryIds.isEmpty()) {
+        // A blueprint owns its scope: the preview plan carries the frozen
+        // section tree, and signals are read over the section union, so the
+        // preview and Start cannot disagree about what the run asks.
+        val blueprintPlan = if (type == TestType.BLUEPRINT) {
+            variant?.toLongOrNull()?.let { id ->
+                repository.blueprint(id)?.let { repository.buildPlanBlueprint(it) }
+            }
+        } else {
+            null
+        }
+        val scopedIds = if (type == TestType.BLUEPRINT) {
+            blueprintPlan?.categoryIds ?: emptyList()
+        } else if (categoryIds.isEmpty()) {
             emptyList()
         } else {
             CategorySelection.orderedIds(paper.categories, categoryIds)
         }
-        val scopeKey = if (categoryIds.isEmpty()) {
+        val scopeIds = scopedIds
+        val scopeKey = if (type == TestType.BLUEPRINT) {
+            if (blueprintPlan != null) {
+                ScopeKey.ofExpanded(
+                    CategorySelection.orderedIds(paper.categories, blueprintPlan.categoryIds)
+                )
+            } else {
+                ScopeKey.wholePaper(paper.id)
+            }
+        } else if (categoryIds.isEmpty()) {
             ScopeKey.wholePaper(paper.id)
         } else {
             ScopeKey.ofExpanded(scopeIds)
         }
         val plan = TestPlan(
             paperId = paper.id,
-            categoryIds = categoryIds,
+            categoryIds = if (type == TestType.BLUEPRINT) {
+                blueprintPlan?.categoryIds ?: emptyList()
+            } else {
+                categoryIds
+            },
             type = type,
             count = count,
             scopeKey = scopeKey,
-            variant = variant
+            variant = variant,
+            blueprint = blueprintPlan
         )
         val signals = repository.getQuestionSignals(paper.id, scopeIds)
         // The custom pools the sheet previews are the pools Start reads.
@@ -781,4 +807,37 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     /** Removes a fixed panel; its saved id set and member rows go with it. */
     suspend fun deletePanel(panelId: Long) = repository.deletePanel(panelId)
+
+    /** The paper's blueprints, for the setup sheet's Blueprint picker. */
+    suspend fun blueprintsForPaper(paperId: String) = repository.blueprintsForPaper(paperId)
+
+    /**
+     * One blueprint's section views, for the editor's prefill and the setup
+     * sheet's section preview. Empty when the blueprint no longer exists.
+     */
+    suspend fun blueprintSections(blueprintId: Long): List<com.mcqapp.domain.BlueprintSectionView> =
+        repository.blueprint(blueprintId)?.let { repository.blueprintSectionViews(it) } ?: emptyList()
+
+    /**
+     * Creates a blueprint and returns its id. Throws with a user-facing
+     * message when the repository refuses the save (duplicate name, bad shape).
+     */
+    suspend fun createBlueprint(
+        paperId: String,
+        name: String,
+        sections: List<com.mcqapp.domain.BlueprintSection>
+    ): Long = repository.createBlueprint(paperId, name, sections)
+
+    /**
+     * Replaces a blueprint's name and sections. Throws with a user-facing
+     * message when the repository refuses the save.
+     */
+    suspend fun updateBlueprint(
+        blueprintId: Long,
+        name: String,
+        sections: List<com.mcqapp.domain.BlueprintSection>
+    ) = repository.replaceBlueprint(blueprintId, name, sections)
+
+    /** Deletes a blueprint; its sections go with it. */
+    suspend fun deleteBlueprint(blueprintId: Long) = repository.deleteBlueprint(blueprintId)
 }

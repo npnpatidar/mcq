@@ -66,6 +66,7 @@ import com.mcqapp.domain.ReviewFilters
 import kotlinx.coroutines.launch
 import android.widget.Toast
 import com.mcqapp.domain.TestReport
+import com.mcqapp.domain.TestStatistics
 import com.mcqapp.domain.TestType
 import com.mcqapp.ui.ResultsViewModelFactory
 import com.mcqapp.ui.common.PagingAppendErrorItem
@@ -257,6 +258,9 @@ fun ResultsScreen(
                 }
                 if (report.errorMix.hasAnything) {
                     item(contentType = "error-mix") { ErrorMixCard(report) }
+                }
+                if (report.blueprint != null) {
+                    item(contentType = "blueprint") { BlueprintCard(report) }
                 }
                 if (report.topics.isNotEmpty()) {
                     item(contentType = "topics") { TopicsCard(report) }
@@ -636,6 +640,104 @@ private fun ErrorMixCard(report: TestReport) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline
             )
+        }
+    }
+}
+
+@Composable
+private fun BlueprintCard(report: TestReport) {
+    val blueprint = report.blueprint ?: return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.report_blueprint_title, blueprint.label),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(
+                    if (blueprint.complete) {
+                        R.string.report_blueprint_complete
+                    } else {
+                        R.string.report_blueprint_incomplete
+                    }
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (blueprint.complete) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+            )
+            BlueprintSectionRows(blueprint.sections, 0)
+            if (blueprint.unresolved > 0) {
+                Text(
+                    stringResource(R.string.report_topics_unresolved, blueprint.unresolved),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(R.string.report_blueprint_margin_note),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * The blueprint's section tree, indented by depth: asked over requested,
+ * accuracy and the 95% Wilson margin (no finite-population correction — a
+ * section is a quota, not a random sample, plan §8.4).
+ */
+@Composable
+private fun BlueprintSectionRows(sections: List<com.mcqapp.domain.BlueprintSectionResult>, depth: Int) {
+    for (section in sections) {
+        val margin = TestStatistics.marginPoints(section.accuracy, section.asked, null)
+        Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    section.title.ifBlank { "Uncategorized" },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                if (section.smallSample) {
+                    Text(
+                        stringResource(R.string.report_topic_small),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(end = 6.dp)
+                    )
+                }
+                Text(
+                    stringResource(
+                        R.string.report_blueprint_row,
+                        section.asked,
+                        section.requested,
+                        (section.accuracy * 100).roundToInt(),
+                        margin?.roundToInt() ?: 0
+                    ),
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+            if (!section.complete) {
+                Text(
+                    stringResource(
+                        R.string.report_blueprint_short,
+                        section.requested - section.asked
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            BlueprintSectionRows(section.children, depth + 1)
         }
     }
 }

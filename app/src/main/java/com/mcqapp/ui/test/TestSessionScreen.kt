@@ -583,9 +583,10 @@ fun TestSessionScreen(
                                     R.string.test_banner_mistakes, minOf(asked, shown)
                                 )
                             // Everything except a plain Random run names its
-                            // type: the focus selectors, Balanced and the
+                            // type: the focus selectors, Balanced, the
                             // phase-3 custom types (Bookmarked, Tag, Authored
-                            // difficulty, Slowest, Fixed panel). Falling
+                            // difficulty, Slowest, Fixed panel) and Blueprint.
+                            // Falling
                             // through to the Random banner mislabelled a Tag
                             // run as "Random · N questions" (plan §9.2).
                             bounded != null &&

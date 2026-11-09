@@ -165,7 +165,8 @@ class TestSetupTest {
                 TestType.TAG,
                 TestType.AUTHORED_DIFFICULTY,
                 TestType.SLOWEST,
-                TestType.FIXED_PANEL
+                TestType.FIXED_PANEL,
+                TestType.BLUEPRINT
             ),
             TestSetup.STARTABLE_TYPES
         )

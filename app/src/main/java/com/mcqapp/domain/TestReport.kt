@@ -221,6 +221,33 @@ data class RecommendedAction(
 }
 
 /**
+ * One blueprint section's tally, as asked. [requested] is the composition's
+ * quota for the node (sum of children's quotas when internal).
+ */
+data class BlueprintSectionResult(
+    val title: String,
+    val requested: Int,
+    val asked: Int,
+    val correct: Int,
+    val smallSample: Boolean,
+    val children: List<BlueprintSectionResult> = emptyList()
+) {
+    /** The quota was fully supplied by the bank. */
+    val complete: Boolean get() = asked >= requested
+    val accuracy: Double get() = if (asked > 0) correct.toDouble() / asked else 0.0
+}
+
+/** The blueprint tree card: per-section `asked / requested` over the composition. */
+data class BlueprintReport(
+    val label: String,
+    val sections: List<BlueprintSectionResult>,
+    /** Every node got its full quota. */
+    val complete: Boolean,
+    /** Rows in the attempt whose title matched no section. */
+    val unresolved: Int = 0
+)
+
+/**
  * The pure result report (section 11.14). [attempt] is the source of truth for
  * the header; everything else is derived once here so the screen never
  * recomputes a tally in Compose.
@@ -268,7 +295,9 @@ data class TestReport(
      * The guessing-corrected score, when the attempt is representative, has no
      * negative marking and every answered row carries its option key.
      */
-    val guessing: GuessingSummary? = null
+    val guessing: GuessingSummary? = null,
+    /** The blueprint tree card, null for every non-blueprint attempt. */
+    val blueprint: BlueprintReport? = null
 )
 
 /**
@@ -393,9 +422,133 @@ object TestReportBuilder {
             reviews = reviews,
             practiceTrend = practiceTrend,
             interval = bootstrapOf(attempt, input.rows),
-            guessing = guessing
+            guessing = guessing,
+            blueprint = blueprintOf(attempt, input.rows, input.paper)
         )
         return report.copy(actions = RecommendationEngine.recommend(report))
+    }
+
+    /**
+     * The blueprint tree card from the composition's section tree joined to
+     * [rows]. Each row's leaf `categoryTitle` matches a terminal by title; when
+     * the row still resolves (`currentCategoryId != null`) the current leaf id
+     * is preferred to disambiguate duplicate titles, via the terminal's scope
+     * (its categoryId itself plus, when the paper tree is present, its
+     * expanded descendants). Ancestors roll up their children's tallies;
+     * unmatched rows count as [BlueprintReport.unresolved].
+     */
+    fun blueprintOf(
+        attempt: Attempt,
+        rows: List<ReportRow>,
+        paper: Paper? = null
+    ): BlueprintReport? {
+        val composition = com.mcqapp.domain.signals.Composition.fromJson(attempt.compositionJson)
+            ?: return null
+        if (composition.sections.isEmpty()) return null
+        val terminals = collectTerminals(composition.sections)
+        if (terminals.isEmpty()) return null
+        // Terminal scope: the terminal categoryId itself plus, when the paper
+        // tree is present, its expanded descendants (the frozen scope's
+        // analogue from live categories).
+        val scopes = mutableMapOf<String, Set<String>>()
+        for (terminal in terminals) {
+            val expanded = if (paper != null) {
+                runCatching {
+                    CategorySelection.orderedIds(paper.categories, listOf(terminal.categoryId))
+                }.getOrElse { listOf(terminal.categoryId) }
+            } else {
+                listOf(terminal.categoryId)
+            }
+            // orderedIds returns an empty list when the id is absent from the
+            // live tree (deleted/moved); fall back to the id itself.
+            scopes[terminal.categoryId] = if (expanded.isEmpty()) {
+                setOf(terminal.categoryId)
+            } else {
+                expanded.toSet()
+            }
+        }
+        val askedByTerminal = mutableMapOf<String, Int>()
+        val correctByTerminal = mutableMapOf<String, Int>()
+        var unresolved = 0
+        for (row in rows) {
+            val match = matchTerminal(row, terminals, scopes)
+            if (match == null) {
+                unresolved++
+            } else {
+                askedByTerminal[match.categoryId] = (askedByTerminal[match.categoryId] ?: 0) + 1
+                if (row.graded && row.answered && row.isCorrect) {
+                    correctByTerminal[match.categoryId] = (correctByTerminal[match.categoryId] ?: 0) + 1
+                }
+            }
+        }
+        fun buildResult(section: com.mcqapp.domain.signals.CompositionSection): BlueprintSectionResult {
+            val children = section.children.map { buildResult(it) }
+            if (children.isEmpty()) {
+                val asked = askedByTerminal[section.categoryId] ?: 0
+                val correct = correctByTerminal[section.categoryId] ?: 0
+                return BlueprintSectionResult(
+                    title = section.title,
+                    requested = section.requested,
+                    asked = asked,
+                    correct = correct,
+                    smallSample = asked < SMALL_TOPIC,
+                    children = emptyList()
+                )
+            }
+            val asked = children.sumOf { it.asked }
+            val correct = children.sumOf { it.correct }
+            return BlueprintSectionResult(
+                title = section.title,
+                requested = children.sumOf { it.requested },
+                asked = asked,
+                correct = correct,
+                smallSample = asked < SMALL_TOPIC,
+                children = children
+            )
+        }
+        val sections = composition.sections.map { buildResult(it) }
+        val complete = sections.all { isCompleteRecursive(it) }
+        return BlueprintReport(
+            label = composition.label.orEmpty(),
+            sections = sections,
+            complete = complete,
+            unresolved = unresolved
+        )
+    }
+
+    private fun isCompleteRecursive(node: BlueprintSectionResult): Boolean =
+        node.complete && node.children.all { isCompleteRecursive(it) }
+
+    private fun collectTerminals(
+        sections: List<com.mcqapp.domain.signals.CompositionSection>
+    ): List<com.mcqapp.domain.signals.CompositionSection> =
+        sections.flatMap { node ->
+            if (node.children.isEmpty()) listOf(node) else collectTerminals(node.children)
+        }
+
+    private fun matchTerminal(
+        row: ReportRow,
+        terminals: List<com.mcqapp.domain.signals.CompositionSection>,
+        scopes: Map<String, Set<String>>
+    ): com.mcqapp.domain.signals.CompositionSection? {
+        val current = row.currentCategoryId
+        if (current != null) {
+            val byId = terminals.filter { current in (scopes[it.categoryId] ?: setOf(it.categoryId)) }
+            if (byId.size == 1) return byId.single()
+            if (byId.isNotEmpty()) {
+                // Overlapping scopes (should not happen after validation):
+                // keep the title to break the tie when it singles one out.
+                val byTitleAmong = byId.filter { it.title == row.categoryTitle }
+                if (byTitleAmong.size == 1) return byTitleAmong.single()
+                return null
+            }
+            // No scope match: fall back to title for deleted/moved questions
+            // whose current id no longer resolves.
+        }
+        val byTitle = terminals.filter { it.title == row.categoryTitle }
+        // Duplicate leaf titles under different parents are unresolved without
+        // a current id to disambiguate them.
+        return if (byTitle.size == 1) byTitle.single() else null
     }
 
     /**

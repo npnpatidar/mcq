@@ -5,6 +5,8 @@ import com.mcqapp.data.ZipLimitException
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.BlueprintEntity
+import com.mcqapp.data.local.BlueprintSectionEntity
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
@@ -187,6 +189,12 @@ object McqBackupFormat {
          * attempt's `variant` refers to the panel by id.
          */
         val panels: List<PanelRow> = emptyList(),
+        /**
+         * Exam blueprints: device state, like panels — a shared deck must
+         * not carry another library's weightings. The ids are preserved
+         * because an attempt's `variant` refers to the blueprint by id.
+         */
+        val blueprints: List<BlueprintRow> = emptyList(),
         val inProgressTest: String? = null
     )
 
@@ -198,6 +206,22 @@ object McqBackupFormat {
         val name: String,
         val createdAt: Long,
         val questionIds: List<String> = emptyList()
+    )
+
+    @Serializable
+    data class BlueprintRow(
+        val id: Long,
+        val paperId: String,
+        val name: String,
+        val createdAt: Long,
+        val sections: List<BlueprintSectionRow> = emptyList()
+    )
+
+    @Serializable
+    data class BlueprintSectionRow(
+        val categoryId: String,
+        val parts: Int,
+        val children: List<BlueprintSectionRow> = emptyList()
     )
 
     /** Everything one backup zip holds, decoded. */
@@ -229,6 +253,7 @@ object McqBackupFormat {
         suspend fun reviewLog(row: ReviewLogRow) {}
         suspend fun paperCreated(row: PaperCreated) {}
         suspend fun panel(row: PanelRow) {}
+        suspend fun blueprint(row: BlueprintRow) {}
         suspend fun inProgressTest(json: String?) {}
         suspend fun settings(settings: SettingsFile) {}
     }
@@ -367,6 +392,9 @@ object McqBackupFormat {
                 "panels" -> stream.readArray {
                     sink.panel(row(PanelRow.serializer(), it))
                 }
+                "blueprints" -> stream.readArray {
+                    sink.blueprint(row(BlueprintRow.serializer(), it))
+                }
                 "inProgressTest" -> sink.inProgressTest(
                     row(String.serializer().nullable, stream.readValue())
                 )
@@ -502,7 +530,8 @@ object McqBackupFormat {
         reviewLog: suspend (emit: suspend (com.mcqapp.data.local.ReviewLogEntity) -> Unit) -> Unit,
         paperCreated: List<PaperCreated>,
         inProgressTest: String?,
-        panels: List<PanelRow> = emptyList()
+        panels: List<PanelRow> = emptyList(),
+        blueprints: List<BlueprintRow> = emptyList()
     ) {
         w.write("{\"cardState\":[")
         var first = true
@@ -527,6 +556,11 @@ object McqBackupFormat {
         panels.forEachIndexed { i, row ->
             if (i > 0) w.write(",")
             w.write(json.encodeToString(PanelRow.serializer(), row))
+        }
+        w.write("],\"blueprints\":[")
+        blueprints.forEachIndexed { i, row ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(BlueprintRow.serializer(), row))
         }
         w.write("],\"inProgressTest\":")
         w.write(if (inProgressTest == null) "null" else json.encodeToString(String.serializer(), inProgressTest))
@@ -666,6 +700,7 @@ class BackupSource(private val db: AppDatabase) {
                     McqBackupFormat.PaperCreated(it.id, it.createdAt, it.sortOrder)
                 },
                 panels = panels(),
+                blueprints = backupBlueprints(),
                 inProgressTest = inProgressTest
             )
             papers = paperRows.size
@@ -706,6 +741,39 @@ class BackupSource(private val db: AppDatabase) {
                 questionIds = db.panelDao().questionIds(panel.id)
             )
         }
+
+    /**
+     * Every blueprint with its section tree, for the backup's study file.
+     * Blueprints are small (a section row per category node), so they are
+     * read as a list rather than paged; the tree is re-linked by categoryId
+     * on restore, with section ids reallocated.
+     */
+    suspend fun backupBlueprints(): List<McqBackupFormat.BlueprintRow> =
+        db.blueprintDao().all().map { bp ->
+            val rows = db.blueprintDao().sections(bp.id)
+            val byParent = rows.groupBy { it.parentSectionId }
+            fun sec(id: Long): McqBackupFormat.BlueprintSectionRow {
+                val r = rows.first { it.id == id }
+                val kids = (byParent[id] ?: emptyList())
+                    .map { sec(it.id) }
+                return McqBackupFormat.BlueprintSectionRow(
+                    categoryId = r.categoryId,
+                    parts = r.parts,
+                    children = kids
+                )
+            }
+            val top = (byParent[null] ?: emptyList()).map { sec(it.id) }
+            McqBackupFormat.BlueprintRow(
+                id = bp.id,
+                paperId = bp.paperId,
+                name = bp.name,
+                createdAt = bp.createdAt,
+                sections = top
+            )
+        }
+
+    /** Alias for [backupBlueprints] mirroring [panels]. */
+    suspend fun blueprints(): List<McqBackupFormat.BlueprintRow> = backupBlueprints()
 
     /**
      * Pages every card into [emit] in physical (`rowid`) order — the order
@@ -804,6 +872,43 @@ class BackupRestorer(private val db: AppDatabase) {
     }
 
     /**
+     * Writes one blueprint back with its original id (an attempt's `variant`
+     * names the blueprint by id) and its section tree re-linked by
+     * categoryId. Section ids are reallocated; the backup stores the tree
+     * shape, not section ids.
+     */
+    private suspend fun restoreBlueprint(row: McqBackupFormat.BlueprintRow) {
+        db.blueprintDao().insertBlueprint(
+            BlueprintEntity(
+                id = row.id,
+                paperId = row.paperId,
+                name = row.name,
+                createdAt = row.createdAt
+            )
+        )
+        suspend fun insertTree(
+            sections: List<McqBackupFormat.BlueprintSectionRow>,
+            parentSectionId: Long?
+        ) {
+            for (sec in sections) {
+                val ids = db.blueprintDao().insertSections(
+                    listOf(
+                        BlueprintSectionEntity(
+                            blueprintId = row.id,
+                            categoryId = sec.categoryId,
+                            parentSectionId = parentSectionId,
+                            parts = sec.parts
+                        )
+                    )
+                )
+                val newId = ids.single()
+                if (sec.children.isNotEmpty()) insertTree(sec.children, newId)
+            }
+        }
+        if (row.sections.isNotEmpty()) insertTree(row.sections, null)
+    }
+
+    /**
      * @param applySettings receives [McqBackupFormat.SettingsFile]; the
      *   caller owns the preference store, the core restore owns the database.
      * @param applyInProgress receives the resume snapshot (null clears it).
@@ -846,6 +951,7 @@ class BackupRestorer(private val db: AppDatabase) {
                 paper.sortOrder?.let { db.paperDao().updateSortOrder(paper.id, it) }
             }
             for (panel in backup.study.panels) restorePanel(panel)
+            for (bp in backup.study.blueprints) restoreBlueprint(bp)
         }
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read
@@ -966,6 +1072,10 @@ class BackupRestorer(private val db: AppDatabase) {
 
                     override suspend fun panel(row: McqBackupFormat.PanelRow) {
                         restorePanel(row)
+                    }
+
+                    override suspend fun blueprint(row: McqBackupFormat.BlueprintRow) {
+                        restoreBlueprint(row)
                     }
 
                     override suspend fun inProgressTest(json: String?) {

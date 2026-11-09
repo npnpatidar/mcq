@@ -288,7 +288,7 @@ class TestViewModel(
                     ScopeKey.ofExpanded(scopeIds)
                 }
                 sessionScopeKey = scopeKey
-                val plan = buildPlan(scopeKey)
+                val plan = buildPlan(paper, scopeKey)
                 Logger.d(
                     "TESTVM",
                     "Loaded paper '${paper?.title}', categories=${paper?.categories?.size ?: 0}, " +
@@ -599,7 +599,7 @@ class TestViewModel(
      * accepted only for the types that support a fresh sample; [TestPlan]
      * refuses it for every other type.
      */
-    private fun buildPlan(scopeKey: String): TestPlan? {
+    private suspend fun buildPlan(paper: Paper?, scopeKey: String): TestPlan? {
         if (routeTestType.isBlank()) return null
         val type = TestType.fromStorage(routeTestType)
             ?: throw IllegalStateException("Unknown test type '$routeTestType'.")
@@ -627,20 +627,48 @@ class TestViewModel(
                     throw IllegalStateException("This test needs a choice.")
                 }
             TestType.COVERAGE -> routeVariant.trim().takeIf { it.isNotEmpty() }
+            TestType.BLUEPRINT -> routeVariant.ifBlank {
+                throw IllegalStateException("This test needs a blueprint.")
+            }
             else -> null
+        }
+        // A blueprint is loaded once and frozen into the plan, so a resume
+        // replay and the composition never re-read the stored weights. A
+        // missing, empty or fully unavailable blueprint is refused, never
+        // started as a different test (plan §14 #1).
+        val blueprint = if (type == TestType.BLUEPRINT) {
+            val id = variant?.trim()?.toLongOrNull()
+                ?: throw IllegalStateException("This test needs a blueprint.")
+            val stored = repository.blueprint(id)
+                ?: throw IllegalStateException("That blueprint no longer exists; pick another one.")
+            val resolved = repository.buildPlanBlueprint(stored)
+                ?: throw IllegalStateException("That blueprint has no available sections.")
+            if (resolved.sections.isEmpty() || resolved.categoryIds.isEmpty()) {
+                throw IllegalStateException("That blueprint has no available sections.")
+            }
+            resolved
+        } else {
+            null
         }
         return TestPlan(
             paperId = paperId,
-            categoryIds = categoryIds,
+            categoryIds = blueprint?.categoryIds ?: categoryIds,
             type = type,
             count = routeRequestedCount,
             minutes = durationMinutes.coerceAtLeast(0),
             seed = Random.nextLong(),
             samplingVersion = TestPlan.SAMPLING_VERSION,
-            scopeKey = scopeKey,
+            scopeKey = if (blueprint != null) {
+                ScopeKey.ofExpanded(
+                    CategorySelection.orderedIds(paper?.categories.orEmpty(), blueprint.categoryIds)
+                )
+            } else {
+                scopeKey
+            },
             exclusionMode = exclusion,
             targetTopicIds = emptyList(),
-            variant = variant
+            variant = variant,
+            blueprint = blueprint
         )
     }
 

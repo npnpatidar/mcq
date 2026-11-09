@@ -31,6 +31,8 @@ enum class TestType {
     SLOWEST,
     /** A saved, stable set of question ids, repeated to track progress on it. */
     FIXED_PANEL,
+    /** A named, weighted section tree over the paper's categories; freezes at Start. */
+    BLUEPRINT,
     MIXED;
 
     /**
@@ -38,7 +40,7 @@ enum class TestType {
      * trend and the representative `rep*` counters (section 12.3). Everything
      * else is practice, whatever its label.
      */
-    val isRepresentative: Boolean get() = this == RANDOM || this == BALANCED
+    val isRepresentative: Boolean get() = this == RANDOM || this == BALANCED || this == BLUEPRINT
 
     /** Practice types never claim mock comparability (section 11.5). */
     val isPractice: Boolean get() = !isRepresentative
@@ -60,11 +62,11 @@ enum class TestType {
     val usesSignalSelector: Boolean
         get() = isFocus || this == BALANCED || this == COVERAGE ||
             this == BOOKMARKED || this == TAG || this == AUTHORED_DIFFICULTY ||
-            this == SLOWEST || this == FIXED_PANEL
+            this == SLOWEST || this == FIXED_PANEL || this == BLUEPRINT
 
     /** Only these types may record `exclusionMode = RECENT_3` (section 9.8). */
     val supportsFreshSample: Boolean
-        get() = this == RANDOM || this == BALANCED || this == EASIEST_QUESTIONS
+        get() = this == RANDOM || this == BALANCED || this == EASIEST_QUESTIONS || this == BLUEPRINT
 
     /** Only these types record a target set (section 16 C3). */
     val supportsTargets: Boolean get() = this == WEAKEST_TOPICS || this == MIXED

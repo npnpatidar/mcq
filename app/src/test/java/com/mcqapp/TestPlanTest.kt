@@ -28,7 +28,8 @@ class TestPlanTest {
         scopeKey: String = ScopeKey.wholePaper("p1"),
         exclusionMode: ExclusionMode = ExclusionMode.NONE,
         targetTopicIds: List<String> = emptyList(),
-        variant: String? = null
+        variant: String? = null,
+        blueprint: com.mcqapp.domain.PlanBlueprint? = null
     ) = TestPlan(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -39,7 +40,8 @@ class TestPlanTest {
         scopeKey = scopeKey,
         exclusionMode = exclusionMode,
         targetTopicIds = targetTopicIds,
-        variant = variant
+        variant = variant,
+        blueprint = blueprint
     )
 
     @Test
@@ -334,6 +336,239 @@ class TestPlanTest {
         assertEquals(150, TestPlan.normalizeLength(Int.MAX_VALUE))
         for (value in listOf(-1, 0, 21, 34, 77, 148, 999)) {
             assertTrue(TestPlan.isAllowedLength(TestPlan.normalizeLength(value)))
+        }
+    }
+
+    // -- Exam blueprint (exam_blueprint §5) -----------------------------------
+
+    private fun testBlueprint(label: String = "UPSC"): com.mcqapp.domain.PlanBlueprint {
+        fun section(
+            id: String,
+            parts: Int,
+            scope: List<String>,
+            children: List<com.mcqapp.domain.BlueprintSection> = emptyList()
+        ) = com.mcqapp.domain.BlueprintSection(
+            categoryId = id,
+            title = id,
+            parts = parts,
+            children = children,
+            scopeCategoryIds = scope
+        )
+        return com.mcqapp.domain.PlanBlueprint(
+            label = label,
+            sections = listOf(
+                section("h", 2, listOf("h1", "h2")),
+                section(
+                    "science", 1, emptyList(),
+                    children = listOf(
+                        section("physics", 2, listOf("physics")),
+                        section("chemistry", 1, listOf("chemistry"))
+                    )
+                )
+            )
+        )
+    }
+
+    @Test
+    fun aBlueprintIsRefusedForEveryNonBlueprintType() {
+        val blueprint = testBlueprint()
+        for (type in TestType.entries) {
+            if (type == TestType.BLUEPRINT) continue
+            // Give custom types their required variant so the blueprint rule
+            // is the one that fires.
+            val variant = when (type) {
+                TestType.TAG -> "tag"
+                TestType.FIXED_PANEL -> "7"
+                TestType.AUTHORED_DIFFICULTY -> "HARD"
+                else -> null
+            }
+            val refused = plan(type = type, variant = variant, blueprint = blueprint)
+                .validationError(100)
+            assertEquals("type=$type", TestPlan.SECTIONS_MESSAGE, refused)
+        }
+    }
+
+    @Test
+    fun aBlueprintNeedsANumericVariantAndAtLeastOneSection() {
+        val blueprint = testBlueprint()
+        val categoryIds = blueprint.categoryIds
+        val scopeKey = ScopeKey.ofExpanded(categoryIds)
+        assertEquals(
+            TestPlan.VARIANT_REQUIRED_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = null,
+                categoryIds = categoryIds,
+                scopeKey = scopeKey,
+                blueprint = blueprint
+            ).validationError(100)
+        )
+        assertEquals(
+            TestPlan.VARIANT_REQUIRED_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "UPSC",
+                categoryIds = categoryIds,
+                scopeKey = scopeKey,
+                blueprint = blueprint
+            ).validationError(100)
+        )
+        assertEquals(
+            TestPlan.SECTIONS_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "42",
+                categoryIds = categoryIds,
+                scopeKey = scopeKey,
+                blueprint = null
+            ).validationError(100)
+        )
+        assertEquals(
+            TestPlan.SECTIONS_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "42",
+                categoryIds = categoryIds,
+                scopeKey = scopeKey,
+                blueprint = com.mcqapp.domain.PlanBlueprint(label = "empty", sections = emptyList())
+            ).validationError(100)
+        )
+    }
+
+    @Test
+    fun duplicateCategoryIdsAndZeroPartsAreRefused() {
+        val blueprint = testBlueprint()
+        val dup = com.mcqapp.domain.PlanBlueprint(
+            label = "dup",
+            sections = listOf(
+                com.mcqapp.domain.BlueprintSection("h", "h", 1, scopeCategoryIds = listOf("h1")),
+                com.mcqapp.domain.BlueprintSection("h", "h", 1, scopeCategoryIds = listOf("h2"))
+            )
+        )
+        assertEquals(
+            TestPlan.SECTION_SHAPE_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "1",
+                categoryIds = dup.categoryIds,
+                scopeKey = ScopeKey.ofExpanded(dup.categoryIds),
+                blueprint = dup
+            ).validationError(100)
+        )
+        val zeroParts = com.mcqapp.domain.PlanBlueprint(
+            label = "zero",
+            sections = listOf(
+                com.mcqapp.domain.BlueprintSection("h", "h", 0, scopeCategoryIds = listOf("h1"))
+            )
+        )
+        assertEquals(
+            TestPlan.SECTION_SHAPE_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "1",
+                categoryIds = zeroParts.categoryIds,
+                scopeKey = ScopeKey.ofExpanded(zeroParts.categoryIds),
+                blueprint = zeroParts
+            ).validationError(100)
+        )
+        // A valid blueprint passes.
+        assertNull(
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "9",
+                categoryIds = blueprint.categoryIds,
+                scopeKey = ScopeKey.ofExpanded(blueprint.categoryIds),
+                blueprint = blueprint
+            ).validationError(100)
+        )
+    }
+
+    @Test
+    fun aBlueprintScopeMismatchIsRefused() {
+        val blueprint = testBlueprint()
+        // Plan ticks are a subset of the blueprint union.
+        val subset = listOf(blueprint.categoryIds.first())
+        assertEquals(
+            TestPlan.SECTION_SCOPE_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "9",
+                categoryIds = subset,
+                scopeKey = ScopeKey.ofExpanded(subset),
+                blueprint = blueprint
+            ).validationError(100)
+        )
+        // Plan ticks add an id outside the union.
+        val extra = blueprint.categoryIds + "extra"
+        assertEquals(
+            TestPlan.SECTION_SCOPE_MESSAGE,
+            plan(
+                type = TestType.BLUEPRINT,
+                variant = "9",
+                categoryIds = extra,
+                scopeKey = ScopeKey.ofExpanded(extra),
+                blueprint = blueprint
+            ).validationError(100)
+        )
+    }
+
+    @Test
+    fun blueprintResolveClampsWithoutRoundingToTen() {
+        val blueprint = testBlueprint()
+        fun blueprintPlan(count: Int = 100) = plan(
+            type = TestType.BLUEPRINT,
+            count = count,
+            variant = "9",
+            categoryIds = blueprint.categoryIds,
+            scopeKey = ScopeKey.ofExpanded(blueprint.categoryIds),
+            blueprint = blueprint
+        )
+        val shortByOne = blueprintPlan(count = 100).resolve(99) as Resolution.Ready
+        assertEquals(99, shortByOne.count)
+        assertFalse(shortByOne.short)
+        assertTrue(shortByOne.clamped)
+        assertEquals("Only 99 questions in this scope.", shortByOne.message)
+
+        val shortScope = blueprintPlan(count = 100).resolve(15) as Resolution.Ready
+        assertEquals(15, shortScope.count)
+        assertTrue(shortScope.short)
+        assertTrue(shortScope.clamped)
+
+        val exact = blueprintPlan(count = 100).resolve(150) as Resolution.Ready
+        assertEquals(100, exact.count)
+        assertFalse(exact.clamped)
+        assertNull(exact.message)
+        assertTrue(TestType.BLUEPRINT.isRepresentative)
+        assertTrue(TestType.BLUEPRINT.usesSignalSelector)
+        assertTrue(TestType.BLUEPRINT.supportsFreshSample)
+    }
+
+    @Test
+    fun nonBlueprintValidationIsUnchangedFromZeroToTwoHundred() {
+        // Regression guard (§11.1): every available in 0..200 for a non-blueprint
+        // plan behaves exactly as before. Non-blueprint plans carry blueprint=null,
+        // so the new branch is inert.
+        for (available in 0..200) {
+            val resolved = plan(count = 20).resolve(available)
+            when (available) {
+                0 -> assertEquals(
+                    "available=$available",
+                    Resolution.Refused(TestPlan.EMPTY_SCOPE_MESSAGE),
+                    resolved
+                )
+                in 1..19 -> {
+                    val ready = resolved as Resolution.Ready
+                    assertEquals("available=$available", available, ready.count)
+                    assertTrue("available=$available", ready.short)
+                }
+                else -> {
+                    val ready = resolved as Resolution.Ready
+                    // 20 fits every pool >= 20; no clamp, no short.
+                    assertEquals("available=$available", 20, ready.count)
+                    assertFalse("available=$available", ready.short)
+                    assertFalse("available=$available", ready.clamped)
+                }
+            }
         }
     }
 }

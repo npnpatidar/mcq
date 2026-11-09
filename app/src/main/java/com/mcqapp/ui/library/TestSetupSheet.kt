@@ -42,12 +42,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.BlueprintQuotas
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.ExclusionMode
+import com.mcqapp.domain.BlueprintSection
+import com.mcqapp.domain.BlueprintSectionView
+import com.mcqapp.domain.BlueprintSummary
+import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.PanelSummary
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.PlanBlueprint
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestComparability
 import com.mcqapp.domain.TestPlan
@@ -123,6 +130,19 @@ internal fun TestSetupSheet(
     onCreatePanel: suspend (String, List<String>) -> PanelSummary? = { _, _ -> null },
     /** Removes a fixed panel and its member rows. */
     onDeletePanel: suspend (Long) -> Unit = {},
+    /** The paper's blueprints for the Blueprint picker. */
+    loadBlueprints: suspend (String) -> List<BlueprintSummary> = { emptyList() },
+    /** One blueprint's section views, for the editor and the scope preview. */
+    loadBlueprintSections: suspend (Long) -> List<BlueprintSectionView> = { emptyList() },
+    /**
+     * Creates a blueprint and returns its id. Throws with a user-facing
+     * message when the repository refuses the save (e.g. duplicate name).
+     */
+    onCreateBlueprint: suspend (String, List<BlueprintSection>) -> Long = { _, _ -> 0L },
+    /** Replaces a blueprint's name and sections. Throws with a user message on refusal. */
+    onUpdateBlueprint: suspend (Long, String, List<BlueprintSection>) -> Unit = { _, _, _ -> },
+    /** Deletes a blueprint. */
+    onDeleteBlueprint: suspend (Long) -> Unit = {},
     onDismiss: () -> Unit,
     onStart: (
         type: TestType,
@@ -184,26 +204,59 @@ internal fun TestSetupSheet(
     var panelName by rememberSaveable { mutableStateOf("") }
     /** The panel awaiting delete confirmation. */
     var panelToDelete by remember { mutableStateOf<PanelSummary?>(null) }
+    /** The paper's blueprints, loaded once for the Blueprint picker. */
+    var blueprints by remember(paper.id) { mutableStateOf<List<BlueprintSummary>?>(null) }
+    LaunchedEffect(paper.id, type, blueprints == null) {
+        if (type == TestType.BLUEPRINT && blueprints == null) {
+            blueprints = runCatching { loadBlueprints(paper.id) }.getOrDefault(emptyList())
+        }
+    }
+    /** The chosen blueprint's section views (the editor's prefill and preview). */
+    var blueprintViews by remember(paper.id, variant) {
+        mutableStateOf<List<BlueprintSectionView>?>(null)
+    }
+    LaunchedEffect(paper.id, type, variant) {
+        if (type == TestType.BLUEPRINT && variant != null) {
+            val id = variant?.toLongOrNull()
+            blueprintViews = if (id != null) {
+                runCatching { loadBlueprintSections(id) }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
+        } else {
+            blueprintViews = null
+        }
+    }
+    /** The editor is open; null id means a new blueprint. */
+    var showBlueprintEditor by rememberSaveable { mutableStateOf(false) }
+    var editingBlueprintId by remember { mutableStateOf<Long?>(null) }
+    /** The blueprint awaiting delete confirmation. */
+    var blueprintToDelete by remember { mutableStateOf<BlueprintSummary?>(null) }
     val panelScope = rememberCoroutineScope()
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val expanded = remember(paper.categories, categoryIds) {
-        CategorySelection.orderedIds(paper.categories, categoryIds)
+    // A blueprint owns its scope (plan §3 #11): selecting BLUEPRINT clears
+    // the category tick-set for this sheet, and the run's scope is the
+    // chosen blueprint's section union instead. The library's own selection
+    // is left alone, so switching back to another type restores it.
+    val tickedIds = if (type == TestType.BLUEPRINT) emptyList() else categoryIds
+    val expanded = remember(paper.categories, tickedIds) {
+        CategorySelection.orderedIds(paper.categories, tickedIds)
     }
     val scopeKey = remember(paper.id, expanded) {
-        if (categoryIds.isEmpty()) {
+        if (tickedIds.isEmpty()) {
             ScopeKey.wholePaper(paper.id)
         } else {
             ScopeKey.ofExpanded(expanded)
         }
     }
     // The scope's question count: the paper's own when nothing is ticked.
-    val questionPool = remember(paper.categories, paper.totalQuestions, categoryIds) {
-        if (categoryIds.isEmpty()) {
+    val questionPool = remember(paper.categories, paper.totalQuestions, tickedIds) {
+        if (tickedIds.isEmpty()) {
             paper.totalQuestions
         } else {
-            CategorySelection.questionCount(paper.categories, categoryIds)
+            CategorySelection.questionCount(paper.categories, tickedIds)
         }
     }
 
@@ -211,19 +264,20 @@ internal fun TestSetupSheet(
     // sheet cannot say how many mistakes the scope holds.
     var scopedMistakes by remember(paper.id, expanded) { mutableStateOf<Int?>(null) }
     LaunchedEffect(paper.id, expanded) {
-        if (categoryIds.isEmpty()) {
+        if (tickedIds.isEmpty()) {
             scopedMistakes = null
         } else {
             scopedMistakes = runCatching { loadScopedMistakeCount(expanded) }.getOrDefault(0)
         }
     }
-    val mistakePool = if (categoryIds.isEmpty()) mistakeCount else scopedMistakes
+    val mistakePool = if (tickedIds.isEmpty()) mistakeCount else scopedMistakes
     val poolLoading = type == TestType.MISTAKES && mistakePool == null
     // A custom type's pool comes from the preview (computed below); until
-    // it lands the pool reads empty and Start waits.
+    // it lands the pool reads empty and Start waits. A blueprint's pool is
+    // the achievable quota sum the preview carries, not the raw scope size.
     val isCustom = type == TestType.BOOKMARKED || type == TestType.TAG ||
         type == TestType.AUTHORED_DIFFICULTY || type == TestType.SLOWEST ||
-        type == TestType.FIXED_PANEL
+        type == TestType.FIXED_PANEL || type == TestType.BLUEPRINT
 
     // A fixed panel runs its whole frozen set: its length is the panel's size,
     // not the sampled chip the other types share. The size comes from the
@@ -285,6 +339,26 @@ internal fun TestSetupSheet(
     // summary; otherwise the first frame could start the default 20 of a
     // larger panel.
     val panelsLoading = type == TestType.FIXED_PANEL && categoryIds.isEmpty() && panels == null
+    val blueprintLoading = type == TestType.BLUEPRINT && variant != null &&
+        (blueprints == null || blueprintViews == null)
+    // The frozen blueprint the chosen blueprint resolves to, built from its
+    // section views; each terminal's scope is its paper subtree. Null until
+    // the views land, so Start waits instead of starting a blueprint-less run.
+    val blueprintPlan = if (type == TestType.BLUEPRINT && variant != null) {
+        val views = blueprintViews.orEmpty()
+        val selected = blueprints?.firstOrNull { it.id.toString() == variant }
+        if (views.isNotEmpty() && selected != null) {
+            PlanBlueprint(label = selected.name, sections = views.toPlanSections(paper.categories))
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+    val blueprintName = blueprints?.firstOrNull { it.id.toString() == variant }?.name
+    // A blueprint below the minimum length cannot start: Start is refused
+    // with the short-scope message, exactly like a small scope today.
+    val blueprintTooShort = type == TestType.BLUEPRINT && available < TestPlan.MIN_LENGTH
 
     val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
         ExclusionMode.RECENT_3
@@ -292,10 +366,18 @@ internal fun TestSetupSheet(
         ExclusionMode.NONE
     }
 
+    val setupCategoryIds = blueprintPlan?.categoryIds ?: tickedIds
+    val setupScopeKey = if (blueprintPlan != null) {
+        ScopeKey.ofExpanded(
+            CategorySelection.orderedIds(paper.categories, blueprintPlan.categoryIds)
+        )
+    } else {
+        scopeKey
+    }
     val setup = TestSetup(
         paperId = paper.id,
-        categoryIds = categoryIds,
-        scopeKey = scopeKey,
+        categoryIds = setupCategoryIds,
+        scopeKey = setupScopeKey,
         type = type,
         requestedCount = requestCount,
         time = minutesOverride?.let { TestTime.Fixed(it.toIntOrNull() ?: 0) }
@@ -307,9 +389,11 @@ internal fun TestSetupSheet(
             type == TestType.COVERAGE -> effectiveVariant
             type == TestType.TAG ||
                 type == TestType.AUTHORED_DIFFICULTY ||
-                type == TestType.FIXED_PANEL -> variant
+                type == TestType.FIXED_PANEL ||
+                type == TestType.BLUEPRINT -> variant
             else -> null
         },
+        blueprint = blueprintPlan,
         minBlockSize = minBlockSize ?: 1
     )
     // The largest length this pool can actually supply. Chips above it are
@@ -381,6 +465,7 @@ internal fun TestSetupSheet(
                         TestType.AUTHORED_DIFFICULTY -> R.string.test_setup_type_authored_help
                         TestType.SLOWEST -> R.string.test_setup_type_slowest_help
                         TestType.FIXED_PANEL -> R.string.test_setup_type_fixed_panel_help
+                        TestType.BLUEPRINT -> R.string.test_setup_type_blueprint_help
                         else -> R.string.test_setup_type_random_help
                     }
                 ),
@@ -511,6 +596,74 @@ internal fun TestSetupSheet(
                         }
                     }
                 }
+                TestType.BLUEPRINT -> {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.test_setup_pick_blueprint),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.test_setup_blueprint_scope),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    if (blueprints.isNullOrEmpty()) {
+                        Text(
+                            stringResource(R.string.test_setup_no_blueprints),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            blueprints.orEmpty().forEach { blueprint ->
+                                val id = blueprint.id.toString()
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    FilterChip(
+                                        selected = variant == id,
+                                        onClick = {
+                                            variant = if (variant == id) null else id
+                                        },
+                                        label = {
+                                            Text("${blueprint.name} · ${blueprint.sectionCount}")
+                                        }
+                                    )
+                                    IconButton(onClick = { blueprintToDelete = blueprint }) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = stringResource(R.string.test_setup_blueprint_delete)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            editingBlueprintId = null
+                            showBlueprintEditor = true
+                        }) {
+                            Text(stringResource(R.string.test_setup_blueprint_new))
+                        }
+                        if (variant != null) {
+                            TextButton(onClick = {
+                                editingBlueprintId = variant?.toLongOrNull()
+                                showBlueprintEditor = true
+                            }) {
+                                Text(stringResource(R.string.test_setup_blueprint_edit))
+                            }
+                        }
+                    }
+                    // The resolved section tree and achievable count, before Start.
+                    val previewViews = blueprintViews.orEmpty()
+                    if (previewViews.isNotEmpty()) {
+                        BlueprintPreviewRows(previewViews, requestCount, 0)
+                    }
+                }
                 else -> Unit
             }
 
@@ -542,7 +695,9 @@ internal fun TestSetupSheet(
 
             // --- scope and pool ---
             Text(
-                if (categoryIds.isEmpty()) {
+                if (type == TestType.BLUEPRINT) {
+                    stringResource(R.string.test_setup_blueprint_scope)
+                } else if (categoryIds.isEmpty()) {
                     stringResource(R.string.test_setup_scope_whole_paper)
                 } else {
                     stringResource(R.string.test_setup_scope_categories, categoryIds.size)
@@ -663,7 +818,8 @@ internal fun TestSetupSheet(
                                 requestedCount = preset
                                 lengthChosen = true
                             },
-                            label = { Text(preset.toString()) }
+                            label = { Text(preset.toString()) },
+                            modifier = Modifier.testTag("test-setup-preset-$preset")
                         )
                     }
                 }
@@ -700,6 +856,10 @@ internal fun TestSetupSheet(
             Text(
                 buildString {
                     append(testTypeLabelText(type))
+                    if (type == TestType.BLUEPRINT && blueprintName != null) {
+                        append(" · ")
+                        append(blueprintName)
+                    }
                     append(" · ")
                     append(stringResource(R.string.test_setup_count_label, setup.resolvedCount()))
                     append(" · ")
@@ -728,6 +888,13 @@ internal fun TestSetupSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            if (type == TestType.BLUEPRINT && avoidRecentQuestions) {
+                Text(
+                    stringResource(R.string.test_setup_blueprint_fresh_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             val note = when {
                 poolLoading -> null
                 // The whole-paper notice above already says why a panel
@@ -735,6 +902,8 @@ internal fun TestSetupSheet(
                 panelBlocked -> null
                 type == TestType.MISTAKES && available == 0 ->
                     stringResource(R.string.test_setup_no_mistakes)
+                type == TestType.BLUEPRINT && selectionPreview != null && blueprintTooShort ->
+                    stringResource(R.string.test_setup_blueprint_short, available)
                 else -> setup.message()
             }
             if (note != null) {
@@ -749,7 +918,8 @@ internal fun TestSetupSheet(
 
             Button(
                 onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, effectiveVariant) },
-                enabled = setup.startable() && !poolLoading && !blockLoading && !panelsLoading,
+                enabled = setup.startable() && !blueprintTooShort && !blueprintLoading &&
+                    !poolLoading && !blockLoading && !panelsLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("test-setup-start")
@@ -864,6 +1034,164 @@ internal fun TestSetupSheet(
             }
         )
     }
+
+    // The blueprint editor opens over the setup sheet (plan §9.1).
+    if (showBlueprintEditor) {
+        val editing = editingBlueprintId?.let { id ->
+            blueprints?.firstOrNull { it.id == id }
+        }
+        BlueprintEditorSheet(
+            paper = paper,
+            blueprint = editing,
+            initialSections = if (editing != null) blueprintViews.orEmpty() else emptyList(),
+            requestedCount = requestCount,
+            onSave = { name, sections ->
+                if (editing != null) {
+                    onUpdateBlueprint(editing.id, name, sections)
+                    editing.id
+                } else {
+                    onCreateBlueprint(name, sections)
+                }
+            },
+            onDelete = { id ->
+                onDeleteBlueprint(id)
+                if (variant == id.toString()) variant = null
+                blueprints = blueprints.orEmpty().filterNot { it.id == id }
+            },
+            onDismiss = { showBlueprintEditor = false },
+            onSaved = { id ->
+                // Switch to the saved blueprint: the picker reloads so the
+                // edited or new blueprint is in the list.
+                variant = id.toString()
+                blueprints = null
+                blueprintViews = null
+            }
+        )
+    }
+
+    // Deleting a blueprint asks first, like panels.
+    blueprintToDelete?.let { blueprint ->
+        AlertDialog(
+            onDismissRequest = { blueprintToDelete = null },
+            title = { Text(stringResource(R.string.test_setup_blueprint_delete)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.test_setup_blueprint_delete_confirm,
+                        blueprint.name
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    blueprintToDelete = null
+                    panelScope.launch {
+                        runCatching { onDeleteBlueprint(blueprint.id) }
+                        if (variant == blueprint.id.toString()) variant = null
+                        blueprints = blueprints.orEmpty().filterNot { it.id == blueprint.id }
+                    }
+                }) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { blueprintToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+}
+
+/**
+ * The blueprint section tree the preview resolved: indented by depth, with
+ * each node's quota over its pool. A subtree whose category was moved to
+ * another paper is struck through and marked ignored. Quotas come from the
+ * same recursive allocation the selector runs, so the tree shown here is the
+ * tree Start would ask.
+ */
+@Composable
+private fun BlueprintPreviewRows(
+    views: List<BlueprintSectionView>,
+    count: Int,
+    depth: Int
+) {
+    val allocation = remember(views, count) {
+        runCatching { BlueprintQuotas.allocate(views, count) }.getOrNull()
+    }
+    for (view in views) {
+        val quota = sectionQuota(view, allocation?.perTerminal.orEmpty())
+        Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(
+                        R.string.test_setup_blueprint_section_row,
+                        view.title,
+                        quota,
+                        view.pool
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (view.available) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textDecoration = if (view.available) {
+                        TextDecoration.None
+                    } else {
+                        TextDecoration.LineThrough
+                    }
+                )
+                if (!view.available) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        stringResource(R.string.test_setup_blueprint_section_ignored),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else if (quota > view.pool) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        stringResource(
+                            R.string.test_setup_blueprint_section_short,
+                            quota - view.pool
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            BlueprintPreviewRows(view.children, count, depth + 1)
+        }
+    }
+}
+
+/** A node's quota: its terminal quota, or the sum of its children's. */
+private fun sectionQuota(
+    view: BlueprintSectionView,
+    perTerminal: Map<String, Int>
+): Int = if (view.children.isEmpty()) {
+    perTerminal[view.categoryId] ?: 0
+} else {
+    view.children.sumOf { sectionQuota(it, perTerminal) }
+}
+
+/**
+ * The plan form of a section-view tree: each terminal's scope is its paper
+ * subtree, so the plan's category union is the blueprint's own scope. A view
+ * whose category left the paper expands to nothing and drops out of the union.
+ */
+private fun List<BlueprintSectionView>.toPlanSections(
+    categories: List<CategoryNode>
+): List<BlueprintSection> = map { view ->
+    BlueprintSection(
+        categoryId = view.categoryId,
+        title = view.title,
+        parts = view.parts,
+        children = view.children.toPlanSections(categories),
+        scopeCategoryIds = if (view.children.isEmpty()) {
+            CategorySelection.orderedIds(categories, listOf(view.categoryId))
+        } else {
+            emptyList()
+        }
+    )
 }
 
 private fun breadthLabel(breadth: Breadth): Int = when (breadth) {

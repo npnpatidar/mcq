@@ -74,6 +74,7 @@ data class TestSetup(
      * plan without its variant cannot start.
      */
     val variant: String? = null,
+    val blueprint: PlanBlueprint? = null,
     /**
      * The smallest passage block in the pool, or 1 when it has standalone
      * questions (or no passage information). The sampler pre-check refuses a
@@ -117,7 +118,8 @@ data class TestSetup(
         samplingVersion = TestPlan.SAMPLING_VERSION,
         scopeKey = scopeKey,
         exclusionMode = exclusionMode,
-        variant = variant
+        variant = variant,
+        blueprint = blueprint
     )
 
     /** The length the session actually runs: the request, the clamp or the short scope. */
@@ -180,7 +182,8 @@ data class TestSetup(
             TestType.TAG,
             TestType.AUTHORED_DIFFICULTY,
             TestType.SLOWEST,
-            TestType.FIXED_PANEL
+            TestType.FIXED_PANEL,
+            TestType.BLUEPRINT
         )
 
         /** Whether [type] can be started. */

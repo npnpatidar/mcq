@@ -7,6 +7,8 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.BlueprintEntity
+import com.mcqapp.data.local.BlueprintSectionEntity
 import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
@@ -200,7 +202,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_20_21,
         AppDatabase.MIGRATION_21_22,
         AppDatabase.MIGRATION_22_23,
-        AppDatabase.MIGRATION_23_24
+        AppDatabase.MIGRATION_23_24,
+        AppDatabase.MIGRATION_24_25
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1188,6 +1191,99 @@ class MigrationTest {
                 // Deleting the panel removes its rows too.
                 db.panelDao().deletePanel(panelId)
                 assertTrue(db.panelDao().panelsForPaper("p1").isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 24 to 25 creates blueprints with subtree cascades`() {
+        runBlocking {
+            createV21WithTaggedQuestion()
+            // Bring to genuine v24 first.
+            val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name("migration-test.db")
+                .callback(object : SupportSQLiteOpenHelper.Callback(21) {
+                    override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                    override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+                })
+                .build()
+            FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+                val raw = helper.writableDatabase
+                AppDatabase.MIGRATION_21_22.migrate(raw)
+                AppDatabase.MIGRATION_22_23.migrate(raw)
+                AppDatabase.MIGRATION_23_24.migrate(raw)
+                raw.version = 24
+            }
+            val db = openMigrated()
+            try {
+                // Opening ran 24->25; Room identity check proves the schema.
+                val bpId = db.blueprintDao().insertBlueprint(
+                    BlueprintEntity(paperId = "p1", name = "UPSC", createdAt = 100L)
+                )
+                val parentIds = db.blueprintDao().insertSections(
+                    listOf(
+                        BlueprintSectionEntity(
+                            blueprintId = bpId,
+                            categoryId = "c1",
+                            parentSectionId = null,
+                            parts = 2
+                        )
+                    )
+                )
+                assertEquals(1, parentIds.size)
+                assertEquals(1, db.blueprintDao().sections(bpId).size)
+                // Deleting the blueprint cascades all its sections.
+                db.blueprintDao().delete(bpId)
+                assertTrue(db.blueprintDao().sections(bpId).isEmpty())
+                // Deleting a category cascades its section.
+                val bp2 = db.blueprintDao().insertBlueprint(
+                    BlueprintEntity(paperId = "p1", name = "SSC", createdAt = 200L)
+                )
+                db.blueprintDao().insertSections(
+                    listOf(
+                        BlueprintSectionEntity(
+                            blueprintId = bp2,
+                            categoryId = "c1",
+                            parentSectionId = null,
+                            parts = 1
+                        )
+                    )
+                )
+                db.categoryDao().deleteById("c1")
+                assertTrue(db.blueprintDao().sections(bp2).isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `full chain 23 to 25 restores a v23 file`() {
+        runBlocking {
+            createV21WithTaggedQuestion()
+            val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name("migration-test.db")
+                .callback(object : SupportSQLiteOpenHelper.Callback(21) {
+                    override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                    override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+                })
+                .build()
+            FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+                val raw = helper.writableDatabase
+                AppDatabase.MIGRATION_21_22.migrate(raw)
+                AppDatabase.MIGRATION_22_23.migrate(raw)
+                raw.version = 23
+            }
+            val db = openMigrated()
+            try {
+                // Opening ran 23->24->25 and Room validated the final schema.
+                assertTrue(db.blueprintDao().all().isEmpty())
+                val id = db.blueprintDao().insertBlueprint(
+                    BlueprintEntity(paperId = "p1", name = "State PSC", createdAt = 300L)
+                )
+                assertEquals("State PSC", db.blueprintDao().getById(id)?.name)
             } finally {
                 db.close()
             }

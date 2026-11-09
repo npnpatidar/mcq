@@ -150,8 +150,8 @@ class ExamStatsDbTest {
         )
 
         val progress = repository.getTestProgress("p1", now = 3_000L)
-        val mock = progress.exams.getValue(ExamGroup.MOCK_STRICT)
-        val practice = progress.exams.getValue(ExamGroup.PRACTICE)
+        val mock = progress.exams.getValue(ExamGroup.MOCK_STRICT).first()
+        val practice = progress.exams.getValue(ExamGroup.PRACTICE).first()
 
         assertEquals(1, mock.attempts)
         assertEquals(50.0, mock.latestPercent!!, 0.0001)

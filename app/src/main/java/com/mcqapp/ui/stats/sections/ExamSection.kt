@@ -57,7 +57,12 @@ import kotlin.math.roundToInt
 @Composable
 internal fun ExamSection(data: TestProgressData, onOpenAttempt: (Long) -> Unit) {
     var selected by rememberSaveable { mutableStateOf(defaultGroup(data)) }
-    val exam = data.exams[selected]
+    // The profiles inside the selected group (one ExamStats per comparison
+    // key, latest first). The first is the default view; the chip row below
+    // only appears when the group holds more than one.
+    var selectedProfile by remember(selected) { mutableStateOf(0) }
+    val profiles = data.exams[selected].orEmpty()
+    val exam = profiles.getOrElse(selectedProfile) { profiles.firstOrNull() }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -80,9 +85,36 @@ internal fun ExamSection(data: TestProgressData, onOpenAttempt: (Long) -> Unit) 
                 ExamGroup.entries.forEach { group ->
                     FilterChip(
                         selected = selected == group,
-                        onClick = { selected = group },
+                        onClick = {
+                            selected = group
+                            selectedProfile = 0
+                        },
                         label = { Text(stringResource(groupLabel(group))) }
                     )
+                }
+            }
+            if (profiles.size > 1) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.stats_exam_profile),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    profiles.forEachIndexed { index, profile ->
+                        val label = profile.label
+                            ?: testTypeLabel(TestType.fromStorage(profile.comparisonKey?.testType))
+                        FilterChip(
+                            selected = selectedProfile == index,
+                            onClick = { selectedProfile = index },
+                            label = { Text(label) }
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -97,7 +129,7 @@ internal fun ExamSection(data: TestProgressData, onOpenAttempt: (Long) -> Unit) 
         }
     }
 
-    val recent = exam?.recent ?: data.exams.values.firstOrNull()?.recent.orEmpty()
+    val recent = exam?.recent ?: data.exams.values.firstOrNull()?.firstOrNull()?.recent.orEmpty()
     if (recent.isNotEmpty()) {
         RecentCard(recent, onOpenAttempt)
     }
@@ -157,7 +189,7 @@ private fun KeyLine(exam: ExamStats) {
         stringResource(
             R.string.stats_exam_key,
             exam.paperTitle ?: "",
-            testTypeLabel(TestType.fromStorage(key.testType)),
+            exam.label ?: testTypeLabel(TestType.fromStorage(key.testType)),
             key.requestedCount
         ),
         style = MaterialTheme.typography.bodySmall,
@@ -375,7 +407,7 @@ private fun RecentCard(
 }
 
 private fun defaultGroup(data: TestProgressData): ExamGroup =
-    ExamGroup.entries.firstOrNull { (data.exams[it]?.familyAttempts ?: 0) > 0 }
+    ExamGroup.entries.firstOrNull { (data.exams[it]?.firstOrNull()?.familyAttempts ?: 0) > 0 }
         ?: ExamGroup.MOCK_STRICT
 
 private fun groupLabel(group: ExamGroup): Int = when (group) {

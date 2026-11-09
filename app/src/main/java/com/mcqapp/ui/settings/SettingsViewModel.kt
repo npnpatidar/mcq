@@ -537,7 +537,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                     reviewLog = { emit -> source.emitReviews(emit) },
                                     paperCreated = paperCreated,
                                     inProgressTest = inProgressTest,
-                                    panels = source.panels()
+                                    panels = source.panels(),
+                                    blueprints = source.backupBlueprints()
                                 )
                             },
                             settings = settings

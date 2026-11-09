@@ -70,8 +70,9 @@ data class TestProgressData(
      * The Exam view's comparable groups (plan §3). Each entry is built inside
      * one comparability key, so the tab can switch between them without ever
      * averaging a strict mock, a Fresh sample or a practice run together.
+     * A group carries its profiles latest-first, capped at 8 per group.
      */
-    val exams: Map<com.mcqapp.domain.stats.ExamGroup, com.mcqapp.domain.stats.ExamStats> =
+    val exams: Map<com.mcqapp.domain.stats.ExamGroup, List<com.mcqapp.domain.stats.ExamStats>> =
         emptyMap()
 )
 

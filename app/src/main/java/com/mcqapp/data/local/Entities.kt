@@ -520,3 +520,72 @@ data class PanelQuestionEntity(
     val questionId: String,
     val position: Int
 )
+
+/**
+ * A named weighting of a paper's categories (exam blueprint): a tree of
+ * relative parts over category nodes. Device state, like panels — a shared
+ * deck must not carry another library's blueprints. The broker's unique
+ * (paperId, name) index keeps two chips from reading the same label.
+ */
+@Entity(
+    tableName = "blueprints",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["paperId", "name"], unique = true)]
+)
+data class BlueprintEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val paperId: String,
+    val name: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * One section of a [BlueprintEntity]: a category node, its local weight, and
+ * an optional parent section forming the blueprint tree. Deleting a category
+ * cascades the section away (and, via the self-referencing parent pointer,
+ * its whole blueprint subtree); moving a category to another paper leaves
+ * the row and reports it unavailable in views.
+ */
+@Entity(
+    tableName = "blueprint_sections",
+    foreignKeys = [
+        ForeignKey(
+            entity = BlueprintEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["blueprintId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = CategoryEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["categoryId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = BlueprintSectionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["parentSectionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["blueprintId", "categoryId"], unique = true),
+        Index("blueprintId"),
+        Index("parentSectionId"),
+        Index("categoryId")
+    ]
+)
+data class BlueprintSectionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val blueprintId: Long,
+    val categoryId: String,
+    val parentSectionId: Long? = null,
+    val parts: Int
+)

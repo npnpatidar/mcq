@@ -11,8 +11,13 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.mcqapp.domain.AttemptMetadata
+import com.mcqapp.domain.BlueprintSection
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.ScopeKey
+import com.mcqapp.domain.TestPlan
+import com.mcqapp.domain.TestType
 import com.mcqapp.ui.navigation.McqNavHost
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -22,15 +27,20 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The blueprint paths from exam_blueprint.md §11.3, on the CI emulator:
- * create a nested blueprint (Science → Physics, Chemistry) in the editor,
- * start it, assert the session banner and the report's section tree; a
- * section larger than its pool shows the shortfall in the setup preview
- * before Start; delete the blueprint and assert the Tests tab still shows
- * the attempt's label from its composition.
+ * The blueprint paths from exam_blueprint.md §11.3, on the CI emulator, split
+ * into two tests (one test destination per test — a long
+ * library→test→results→library→stats chain leaves the test entry destroyed
+ * before CREATED at teardown):
  *
- * The bank is 15 Physics + 15 Chemistry questions under Science, so a
- * 50-question request is short by the preview's own count (30 achievable).
+ * - [createNestedBlueprintAndRunIt]: create a nested blueprint (Science →
+ *   Physics, Chemistry) in the editor, start it, assert the session banner
+ *   and the report's section tree. Ends on Results, like CriticalPathTest.
+ * - [blueprintLabelSurvivesDeletionOnTestsTab]: with a stored attempt whose
+ *   composition carries the label, delete the blueprint in the picker and
+ *   assert the Tests tab still shows the label. No test-session navigation.
+ *
+ * The bank is 15 Physics + 15 Chemistry questions under Science (30 total),
+ * so a 20-question run fits the union exactly.
  */
 @RunWith(AndroidJUnit4::class)
 class BlueprintPathsUiTest {
@@ -79,7 +89,7 @@ class BlueprintPathsUiTest {
     }
 
     @Test
-    fun createNestedBlueprintRunItAndReadItsLabelAfterDeletion() {
+    fun createNestedBlueprintAndRunIt() {
         compose.setContent { McqNavHost(repository = repository) }
 
         waitFor("UIBlueprint Paper")
@@ -110,10 +120,6 @@ class BlueprintPathsUiTest {
         waitFor("Physics · 10/15")
         compose.onNodeWithText("Physics · 10/15", substring = false).assertExists()
 
-        // The blueprint's union is 30 questions; a 20-question run fits it
-        // exactly, so Start runs the requested length. A preset above the
-        // achievable pool is disabled by design, so the asked/will-run clamp
-        // line is unreachable from this bank.
         compose.onNodeWithTag("test-setup-start").performScrollTo().performClick()
 
         // Session banner names the type and the run length.
@@ -132,9 +138,50 @@ class BlueprintPathsUiTest {
         waitFor("Blueprint · UIB")
         compose.onNodeWithText("Blueprint · UIB", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Physics", substring = true).assertIsDisplayed()
+    }
 
-        // Back to the library and delete the blueprint.
-        compose.onNodeWithContentDescription("Back").performClick()
+    @Test
+    fun blueprintLabelSurvivesDeletionOnTestsTab() {
+        val blueprintId = runBlocking {
+            repository.createBlueprint(
+                paperId,
+                "UIBlueprint",
+                listOf(
+                    BlueprintSection(
+                        scienceId,
+                        parts = 1,
+                        children = listOf(
+                            BlueprintSection(physicsId, parts = 1),
+                            BlueprintSection(chemistryId, parts = 1)
+                        )
+                    )
+                )
+            )
+        }
+        runBlocking {
+            val questions = repository.getQuestionsForPaper(paperId)
+            repository.saveAttempt(
+                paperId = paperId,
+                paperTitle = "UIBlueprint Paper",
+                questions = questions,
+                selections = questions.associate { it.id to setOf("${it.id}-a") },
+                negativeMarking = 0.0,
+                durationSeconds = 60,
+                finishedAt = 5_000L,
+                metadata = AttemptMetadata(
+                    testType = TestType.BLUEPRINT.name,
+                    requestedCount = questions.size,
+                    scopeKey = ScopeKey.wholePaper(paperId),
+                    samplingVersion = TestPlan.SAMPLING_VERSION,
+                    exclusionMode = "NONE",
+                    compositionJson = """{"version":2,"label":"UIBlueprint","sections":[],"segments":[]}""",
+                    variant = blueprintId.toString()
+                )
+            )
+        }
+
+        compose.setContent { McqNavHost(repository = repository) }
+
         waitFor("UIBlueprint Paper")
         compose.onNodeWithTag("paper-test-$paperId").performClick()
         waitFor("Start a test")
@@ -155,12 +202,5 @@ class BlueprintPathsUiTest {
         compose.onNodeWithText("Tests", substring = false).performScrollTo().performClick()
         waitFor("UIBlueprint")
         compose.onNodeWithText("UIBlueprint", substring = true).assertIsDisplayed()
-
-        // Return to the library so the back stack is settled before teardown;
-        // ending mid-navigation leaves the test destination destroyed before
-        // it reached CREATED.
-        compose.onNodeWithContentDescription("Back").performClick()
-        waitFor("UIBlueprint Paper")
-        compose.waitForIdle()
     }
 }

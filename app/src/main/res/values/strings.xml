@@ -1074,4 +1074,17 @@
     <string name="report_lifetime_mock">Mock attempts</string>
     <string name="report_lifetime_all">All attempts</string>
     <string name="report_lifetime_line">Lifetime %1$d/%2$d (%3$d%%) · %4$s</string>
+
+    <!-- Settings reorganisation: five collapsible sections -->
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_section_tests">Tests</string>
+    <string name="settings_section_study">Study / Spaced repetition</string>
+    <string name="settings_section_backup_data">Backup &amp; data</string>
+    <string name="settings_section_about">About</string>
+    <string name="storage_database_summary">Database: %1$s · %2$d papers · %3$d questions · %4$d attempts · %5$d bookmarks</string>
+    <string name="storage_paper_usage">%1$d q · %2$s</string>
+    <string name="storage_show_all_papers">Show all %1$d papers</string>
+    <string name="storage_show_fewer">Show fewer</string>
+    <string name="decrease_label">Decrease %1$s</string>
+    <string name="increase_label">Increase %1$s</string>
 </resources>

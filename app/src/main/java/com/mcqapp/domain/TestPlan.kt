@@ -44,7 +44,13 @@ data class TestPlan(
      * Authored difficulty attempt covers, or Coverage's exposure mode
      * ([EXPOSURE_VARIANT]). Null for every other type.
      */
-    val variant: String? = null
+    val variant: String? = null,
+    /**
+     * Non-null only for [TestType.BLUEPRINT]. Carries the label, the frozen
+     * section tree and each terminal's expanded scope, so the selector, the
+     * composition and a resume never re-read the stored blueprint.
+     */
+    val blueprint: PlanBlueprint? = null
 ) {
 
     /**
@@ -106,9 +112,31 @@ data class TestPlan(
         ) {
             return COVERAGE_VARIANT_MESSAGE
         }
+        // Blueprint owns its scope: a non-blueprint type cannot carry one, and
+        // a blueprint run needs a numeric id plus a well-formed section tree
+        // whose expanded union equals the plan's ticks.
+        if (type != TestType.BLUEPRINT && blueprint != null) return SECTIONS_MESSAGE
+        if (type == TestType.BLUEPRINT) {
+            if (variant?.toLongOrNull() == null) return VARIANT_REQUIRED_MESSAGE
+            val bp = blueprint ?: return SECTIONS_MESSAGE
+            if (bp.sections.isEmpty()) return SECTIONS_MESSAGE
+            val allNodes = bp.sections.flatMap { collectNodes(it) }
+            val allIds = allNodes.map { it.categoryId }
+            if (allIds.size != allIds.distinct().size) return SECTION_SHAPE_MESSAGE
+            if (allNodes.any { it.parts < 1 }) return SECTION_SHAPE_MESSAGE
+            val terminals = bp.sections.flatMap { it.terminals() }
+            val planSet = categoryIds.toSet()
+            if (terminals.any { it.scopeCategoryIds.any { id -> id !in planSet } }) {
+                return SECTION_SCOPE_MESSAGE
+            }
+            if (planSet != bp.categoryIds.toSet()) return SECTION_SCOPE_MESSAGE
+        }
         if (available <= 0) return EMPTY_SCOPE_MESSAGE
         return null
     }
+
+    private fun collectNodes(node: BlueprintSection): List<BlueprintSection> =
+        listOf(node) + node.children.flatMap { collectNodes(it) }
 
     /**
      * The session this plan starts with [available] questions in the pool.
@@ -125,6 +153,17 @@ data class TestPlan(
         if (type == TestType.FIXED_PANEL) {
             return Resolution.Ready(
                 count = available,
+                short = available < MIN_LENGTH,
+                clamped = count > available,
+                message = if (count > available) onlyNMessage(available) else null
+            )
+        }
+        // A blueprint's `available` is the achievable quota sum, not the raw
+        // scope size. It must not round to a step of ten: if a section is one
+        // question short, the run is 99.
+        if (type == TestType.BLUEPRINT) {
+            return Resolution.Ready(
+                count = minOf(count, available),
                 short = available < MIN_LENGTH,
                 clamped = count > available,
                 message = if (count > available) onlyNMessage(available) else null
@@ -212,6 +251,9 @@ data class TestPlan(
         const val EXPOSURE_VARIANT: String = "EXPOSURE"
         const val PANEL_SCOPE_MESSAGE: String =
             "A fixed panel is a whole-paper set; clear the category selection to run it."
+        const val SECTIONS_MESSAGE: String = "This test cannot use a blueprint."
+        const val SECTION_SCOPE_MESSAGE: String = "Blueprint sections do not match the scope."
+        const val SECTION_SHAPE_MESSAGE: String = "Blueprint sections are invalid."
 
         /**
          * The largest shown count a sample may reach for [target] (section

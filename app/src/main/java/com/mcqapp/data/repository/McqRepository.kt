@@ -13,6 +13,9 @@ import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.local.TagCount
 import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
+import com.mcqapp.data.local.BlueprintEntity
+import com.mcqapp.data.local.BlueprintSectionEntity
+import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.data.local.getTagsByIdsChunked
@@ -21,6 +24,13 @@ import com.mcqapp.data.local.dwellSamplesInScopeChunked
 import com.mcqapp.data.local.questionIdsForTagChunked
 import com.mcqapp.data.local.tagCountsChunked
 import com.mcqapp.domain.FsrsFitResult
+import com.mcqapp.domain.Blueprint
+import com.mcqapp.domain.BlueprintSection
+import com.mcqapp.domain.BlueprintSectionView
+import com.mcqapp.domain.BlueprintSummary
+import com.mcqapp.domain.PlanBlueprint
+import com.mcqapp.domain.CategorySelection
+import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Panel
 import com.mcqapp.domain.PanelSummary
 import com.mcqapp.domain.Paper
@@ -30,6 +40,7 @@ import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.signals.Signals
 import com.mcqapp.domain.signals.TestSelector
+import com.mcqapp.domain.signals.Composition
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.CardsData
@@ -37,6 +48,7 @@ import com.mcqapp.domain.stats.ExamCategoryTotal
 import com.mcqapp.domain.stats.ExamCounterTotals
 import com.mcqapp.domain.stats.ExamDwellTotals
 import com.mcqapp.domain.stats.ExamGroup
+import com.mcqapp.domain.stats.ExamComparisonKey
 import com.mcqapp.domain.stats.ExamStats
 import com.mcqapp.domain.stats.ExamStatsBuilder
 import com.mcqapp.domain.stats.GuessingData
@@ -688,6 +700,292 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** Deletes a panel and its rows; the questions are untouched. */
     suspend fun deletePanel(panelId: Long) = db.panelDao().deletePanel(panelId)
 
+    // --- blueprints (exam_blueprint §6) ---
+
+    suspend fun blueprintsForPaper(paperId: String): List<BlueprintSummary> =
+        db.blueprintDao().forPaper(paperId).map { entity ->
+            BlueprintSummary(
+                id = entity.id,
+                name = entity.name,
+                sectionCount = db.blueprintDao().sections(entity.id).size
+            )
+        }
+
+    suspend fun blueprint(id: Long): Blueprint? {
+        val entity = db.blueprintDao().getById(id) ?: return null
+        val rows = db.blueprintDao().sections(id)
+        val categories = db.categoryDao().getByPaper(entity.paperId)
+        val sortOrder = mutableMapOf<String, Int>()
+        categories.forEach { sortOrder[it.id] = it.sortOrder }
+        rows.map { it.categoryId }.distinct().filter { it !in sortOrder }.forEach { cid ->
+            db.categoryDao().getById(cid)?.let { sortOrder[it.id] = it.sortOrder }
+        }
+        return buildBlueprint(entity, rows, sortOrder)
+    }
+
+    private fun buildBlueprint(
+        entity: BlueprintEntity,
+        rows: List<BlueprintSectionEntity>,
+        sortOrder: Map<String, Int>
+    ): Blueprint {
+        val byParent: Map<Long?, List<BlueprintSectionEntity>> =
+            rows.groupBy { it.parentSectionId }
+        fun build(rowId: Long): BlueprintSection {
+            val row = rows.first { it.id == rowId }
+            val children = (byParent[rowId] ?: emptyList())
+                .sortedBy { sortOrder[it.categoryId] ?: Int.MAX_VALUE }
+                .map { build(it.id) }
+            return BlueprintSection(
+                categoryId = row.categoryId,
+                title = "",
+                parts = row.parts,
+                children = children
+            )
+        }
+        val top = (byParent[null] ?: emptyList())
+            .sortedBy { sortOrder[it.categoryId] ?: Int.MAX_VALUE }
+            .map { build(it.id) }
+        return Blueprint(
+            id = entity.id,
+            paperId = entity.paperId,
+            name = entity.name,
+            sections = top,
+            createdAt = entity.createdAt
+        )
+    }
+
+    private fun validateBlueprintTree(
+        paperId: String,
+        name: String,
+        sections: List<BlueprintSection>,
+        categories: List<CategoryEntity>
+    ) {
+        val trimmed = name.trim()
+        require(trimmed.isNotEmpty()) { "Blueprint name must not be blank" }
+        require(trimmed.length <= 60) { "Blueprint name must be at most 60 characters" }
+        require(sections.isNotEmpty()) { "Blueprint must have at least one section" }
+        val parentOf = categories.associate { it.id to it.parentId }
+        val idsInPaper = categories.mapTo(HashSet()) { it.id }
+        fun isStrictAncestor(ancestor: String, descendant: String): Boolean {
+            var cur: String? = parentOf[descendant]
+            val seen = HashSet<String>()
+            while (cur != null) {
+                if (cur == ancestor) return true
+                if (!seen.add(cur)) return false
+                cur = parentOf[cur]
+            }
+            return false
+        }
+        val seenIds = HashSet<String>()
+        fun walk(list: List<BlueprintSection>, parentCategoryId: String?) {
+            for (node in list) {
+                require(node.parts >= 1) {
+                    "Blueprint section parts must be at least 1"
+                }
+                require(node.categoryId in idsInPaper) {
+                    "Blueprint section category is not in this paper"
+                }
+                require(seenIds.add(node.categoryId)) {
+                    "Blueprint section category ids must be unique"
+                }
+                if (parentCategoryId != null) {
+                    require(isStrictAncestor(parentCategoryId, node.categoryId)) {
+                        "Blueprint section must be a strict descendant of its parent"
+                    }
+                }
+                walk(node.children, node.categoryId)
+            }
+            // sibling (and top-level) subtrees must be disjoint
+            for (i in list.indices) {
+                for (j in i + 1 until list.size) {
+                    val a = list[i].categoryId
+                    val b = list[j].categoryId
+                    require(!isStrictAncestor(a, b) && !isStrictAncestor(b, a)) {
+                        "Blueprint sibling sections must not overlap"
+                    }
+                }
+            }
+        }
+        walk(sections, null)
+    }
+
+    private suspend fun insertSectionTree(
+        blueprintId: Long,
+        sections: List<BlueprintSection>,
+        parentSectionId: Long?,
+        categoriesForOrder: List<CategoryEntity>
+    ) {
+        // Keep the input order; the read path re-sorts by sortOrder.
+        for (section in sections) {
+            val ids = db.blueprintDao().insertSections(
+                listOf(
+                    BlueprintSectionEntity(
+                        blueprintId = blueprintId,
+                        categoryId = section.categoryId,
+                        parentSectionId = parentSectionId,
+                        parts = section.parts
+                    )
+                )
+            )
+            val newId = ids.single()
+            if (section.children.isNotEmpty()) {
+                insertSectionTree(blueprintId, section.children, newId, categoriesForOrder)
+            }
+        }
+    }
+
+    suspend fun createBlueprint(
+        paperId: String,
+        name: String,
+        sections: List<BlueprintSection>
+    ): Long {
+        val categories = db.categoryDao().getByPaper(paperId)
+        validateBlueprintTree(paperId, name, sections, categories)
+        return db.withTransaction {
+            val id = db.blueprintDao().insertBlueprint(
+                BlueprintEntity(paperId = paperId, name = name.trim())
+            )
+            if (sections.isNotEmpty()) {
+                insertSectionTree(id, sections, null, categories)
+            }
+            id
+        }
+    }
+
+    suspend fun replaceBlueprint(
+        id: Long,
+        name: String,
+        sections: List<BlueprintSection>
+    ) {
+        val existing = db.blueprintDao().getById(id)
+            ?: throw IllegalArgumentException("Blueprint not found")
+        val categories = db.categoryDao().getByPaper(existing.paperId)
+        validateBlueprintTree(existing.paperId, name, sections, categories)
+        db.withTransaction {
+            db.blueprintDao().updateName(id, name.trim())
+            db.blueprintDao().clearSections(id)
+            if (sections.isNotEmpty()) {
+                insertSectionTree(id, sections, null, categories)
+            }
+        }
+    }
+
+    suspend fun deleteBlueprint(id: Long) = db.blueprintDao().delete(id)
+
+    private fun categoryNodesOf(
+        categories: List<CategoryEntity>,
+        counts: Map<String, Int>
+    ): List<CategoryNode> {
+        val ids = categories.mapTo(HashSet()) { it.id }
+        val byParent = categories.groupBy { it.parentId?.takeIf { p -> p in ids } }
+        fun build(parentId: String?): List<CategoryNode> =
+            (byParent[parentId] ?: emptyList()).map { category ->
+                CategoryNode(
+                    id = category.id,
+                    paperId = category.paperId,
+                    title = category.title,
+                    parentId = category.parentId,
+                    children = build(category.id),
+                    questionCount = counts[category.id] ?: 0
+                )
+            }
+        return build(null)
+    }
+
+    suspend fun blueprintSectionViews(blueprint: Blueprint): List<BlueprintSectionView> {
+        val categories = db.categoryDao().getByPaper(blueprint.paperId)
+        val counts = if (categories.isEmpty()) emptyMap()
+        else db.questionDao().categoryCountsForPaper(blueprint.paperId)
+            .associate { it.categoryId to it.cnt }
+        // subtree pool per paper category id, post-order
+        val childrenOfCat: Map<String, List<CategoryEntity>> =
+            categories.groupBy { it.parentId ?: "" }
+        val poolByCategory = HashMap<String, Int>()
+        fun poolOfCategory(catId: String, visited: MutableSet<String>): Int {
+            if (catId in poolByCategory) return poolByCategory.getValue(catId)
+            if (!visited.add(catId)) return 0
+            var total = counts[catId] ?: 0
+            for (child in (childrenOfCat[catId] ?: emptyList())) {
+                total += poolOfCategory(child.id, visited)
+            }
+            visited.remove(catId)
+            poolByCategory[catId] = total
+            return total
+        }
+        categories.forEach { poolOfCategory(it.id, HashSet()) }
+        val catById = categories.associateBy { it.id }
+        // Categories referenced by the blueprint but not in this paper (moved)
+        val missingIds = blueprint.allCategoryIds.filter { it !in catById }.distinct()
+        val extraById = HashMap<String, CategoryEntity>()
+        for (mid in missingIds) {
+            db.categoryDao().getById(mid)?.let { extraById[mid] = it }
+        }
+        fun titleOf(id: String, fallback: String): String =
+            catById[id]?.title ?: extraById[id]?.title ?: fallback
+        fun view(section: BlueprintSection, parentAvailable: Boolean): BlueprintSectionView {
+            val cat = catById[section.categoryId] ?: extraById[section.categoryId]
+            val ownAvailable = cat != null && cat.paperId == blueprint.paperId
+            val available = ownAvailable && parentAvailable
+            val title = titleOf(section.categoryId, section.title)
+            if (section.children.isNotEmpty()) {
+                val kids = section.children.map { view(it, available) }
+                // internal pool is sum of children's pools
+                val pool = kids.sumOf { it.pool }
+                return BlueprintSectionView(
+                    categoryId = section.categoryId,
+                    title = title,
+                    parts = section.parts,
+                    pool = pool,
+                    available = available,
+                    children = kids
+                )
+            }
+            val pool = if (ownAvailable) (poolByCategory[section.categoryId] ?: 0) else 0
+            return BlueprintSectionView(
+                categoryId = section.categoryId,
+                title = title,
+                parts = section.parts,
+                pool = pool,
+                available = available,
+                children = emptyList()
+            )
+        }
+        return blueprint.sections.map { view(it, true) }
+    }
+
+    suspend fun buildPlanBlueprint(blueprint: Blueprint): PlanBlueprint? {
+        val views = blueprintSectionViews(blueprint)
+        val categories = db.categoryDao().getByPaper(blueprint.paperId)
+        val counts = if (categories.isEmpty()) emptyMap()
+        else db.questionDao().categoryCountsForPaper(blueprint.paperId)
+            .associate { it.categoryId to it.cnt }
+        val nodes = categoryNodesOf(categories, counts)
+        fun convert(section: BlueprintSection, view: BlueprintSectionView): BlueprintSection? {
+            if (!view.available) return null
+            val pairs = section.children.zip(view.children)
+            val convertedChildren = pairs.mapNotNull { (s, v) -> convert(s, v) }
+            if (convertedChildren.isEmpty()) {
+                val scope = CategorySelection.orderedIds(nodes, listOf(section.categoryId))
+                if (scope.isEmpty()) return null
+                return section.copy(
+                    title = view.title,
+                    children = emptyList(),
+                    scopeCategoryIds = scope
+                )
+            }
+            return section.copy(
+                title = view.title,
+                children = convertedChildren,
+                scopeCategoryIds = emptyList()
+            )
+        }
+        val converted = blueprint.sections.zip(views).mapNotNull { (s, v) -> convert(s, v) }
+        if (converted.isEmpty()) return null
+        val plan = PlanBlueprint(label = blueprint.name, sections = converted)
+        if (plan.categoryIds.isEmpty()) return null
+        return plan
+    }
+
     /**
      * The median dwell seconds of every scope question with at least
      * [TestSelector.SLOWEST_MIN_SAMPLES] timed answers (phase 3): the Slowest
@@ -1281,19 +1579,34 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
      * The Exam view's three comparable groups (plan §3). Attempt headers are
      * already small; the expensive reads are aggregate-only (category tallies,
      * dwell) and are restricted to the exact attempt ids behind each group's
-     * headline figures.
+     * headline figures. Each group carries its profiles latest-first, capped
+     * at 8, each built from its own comparison key.
      */
     private suspend fun buildExamStats(
         attempts: List<com.mcqapp.domain.Attempt>,
         paperId: String?
-    ): Map<ExamGroup, ExamStats> {
+    ): Map<ExamGroup, List<ExamStats>> {
         val counters = db.questionStatsDao().getExamCounterTotals(paperId)
+        // Global recent, exactly as ExamStatsBuilder builds it (all attempts).
+        val globalRecent = attempts
+            .sortedWith(compareByDescending<com.mcqapp.domain.Attempt> { it.finishedAt }.thenByDescending { it.id })
+            .take(5)
+            .map {
+                com.mcqapp.domain.stats.ExamRecentAttempt(
+                    attemptId = it.id,
+                    title = it.title,
+                    testType = it.testType,
+                    percent = it.percentage,
+                    correct = it.correctCount,
+                    shown = it.totalQuestions,
+                    finishedAt = it.finishedAt,
+                    family = com.mcqapp.domain.TestReportBuilder.familyOf(it)
+                )
+            }
         return ExamGroup.entries.associateWith { group ->
-            val comparable = ExamStatsBuilder.comparableAttempts(attempts, group)
-            val ids = comparable.map { it.id }
-            val population = comparable.lastOrNull()
-                ?.let { db.questionDao().countQuestionsInScope(it.paperId) }
-                ?: 0
+            val family = attempts
+                .filter { com.mcqapp.domain.TestReportBuilder.familyOf(it) == group.family }
+                .sortedWith(compareBy({ it.finishedAt }, { it.id }))
             val lifetime = if (group == ExamGroup.PRACTICE) {
                 ExamCounterTotals(
                     correct = counters.correct,
@@ -1307,15 +1620,62 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                     skip = counters.repSkip
                 )
             }
-            ExamStatsBuilder.build(
-                attempts = attempts,
-                group = group,
-                categoryTotals = examCategoryTotals(ids),
-                dwell = examDwellTotals(ids),
-                lifetime = lifetime,
-                population = population
-            )
+            if (family.isEmpty()) {
+                // Keep the old empty shape: one empty profile so the tab can
+                // show its empty state and the global recent list.
+                val empty = ExamStatsBuilder.build(
+                    attempts = attempts,
+                    group = group,
+                    categoryTotals = emptyList(),
+                    dwell = ExamDwellTotals(),
+                    lifetime = lifetime,
+                    population = 0
+                )
+                return@associateWith listOf(empty.copy(recent = globalRecent))
+            }
+            // Distinct keys latest-first.
+            val latestByKey = family
+                .groupBy { ExamComparisonKey.of(it) }
+                .mapValues { (_, runs) ->
+                    runs.sortedWith(compareBy({ it.finishedAt }, { it.id })).last()
+                }
+            val keys = latestByKey.entries
+                .sortedWith(
+                    compareByDescending<Map.Entry<ExamComparisonKey, com.mcqapp.domain.Attempt>> { it.value.finishedAt }
+                        .thenByDescending { it.value.id }
+                )
+                .map { it.key }
+                .take(8)
+            keys.map { key ->
+                val comparable = family.filter { ExamComparisonKey.of(it) == key }
+                val ids = comparable.map { it.id }
+                val population = comparable.lastOrNull()
+                    ?.let { db.questionDao().countQuestionsInScope(it.paperId) }
+                    ?: 0
+                val base = ExamStatsBuilder.build(
+                    attempts = comparable,
+                    group = group,
+                    categoryTotals = examCategoryTotals(ids),
+                    dwell = examDwellTotals(ids),
+                    lifetime = lifetime,
+                    population = population
+                )
+                val latest = comparable.last()
+                base.copy(
+                    label = compositionLabel(latest.compositionJson),
+                    familyAttempts = family.size,
+                    recent = globalRecent
+                )
+            }
         }
+    }
+
+    /**
+     * The label a profile shows: the blueprint name recorded in the latest
+     * attempt's composition.
+     */
+    private fun compositionLabel(raw: String?): String? {
+        return Composition.fromJson(raw)?.label?.takeIf { it.isNotBlank() }
     }
 
     /** Category tallies over [attemptIds], merged across bind-safe chunks. */

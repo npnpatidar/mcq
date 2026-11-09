@@ -37,7 +37,9 @@ class ExamStatsTest {
         exclusion: String = ExclusionMode.NONE.name,
         scopeKey: String = ScopeKey.wholePaper(paperId),
         samplingVersion: Int = TestPlan.SAMPLING_VERSION,
-        duration: Long = 600
+        duration: Long = 600,
+        variant: String? = null,
+        compositionJson: String = ""
     ) = Attempt(
         id = id,
         paperId = paperId,
@@ -54,7 +56,9 @@ class ExamStatsTest {
         requestedCount = requested,
         scopeKey = scopeKey,
         samplingVersion = samplingVersion,
-        exclusionMode = exclusion
+        exclusionMode = exclusion,
+        variant = variant,
+        compositionJson = compositionJson
     )
 
     @Test
@@ -283,5 +287,102 @@ class ExamStatsTest {
         val comparable = ExamStatsBuilder.comparableAttempts(attempts, ExamGroup.MOCK_STRICT)
         assertEquals(listOf(2L, 3L), comparable.map { it.id })
         assertFalse(comparable.any { it.requestedCount == 20 })
+    }
+
+    // -- Exam blueprint comparability (exam_blueprint §8) ---------------------
+
+    private fun blueprintAttempt(
+        id: Long,
+        variant: String,
+        label: String,
+        finishedAt: Long = id * day
+    ): Attempt = attempt(
+        id = id,
+        type = TestType.BLUEPRINT.name,
+        finishedAt = finishedAt,
+        variant = variant,
+        compositionJson = com.mcqapp.domain.signals.Composition(
+            label = label,
+            segments = listOf(
+                com.mcqapp.domain.signals.CompositionSegment("BLUEPRINT", 20)
+            )
+        ).toJson()
+    )
+
+    @Test
+    fun examComparisonKeySeparatesBlueprintsWithTheSameUnion() {
+        val upsc = blueprintAttempt(1, variant = "101", label = "UPSC")
+        val ssc = blueprintAttempt(2, variant = "102", label = "SSC")
+        val upscLater = blueprintAttempt(3, variant = "101", label = "UPSC")
+        val upscKey = com.mcqapp.domain.stats.ExamComparisonKey.of(upsc)
+        val sscKey = com.mcqapp.domain.stats.ExamComparisonKey.of(ssc)
+        assertTrue(upscKey != sscKey)
+        assertEquals("101", upscKey.variant)
+        assertEquals("102", sscKey.variant)
+        // Same blueprint id, two runs: one key.
+        assertEquals(upscKey, com.mcqapp.domain.stats.ExamComparisonKey.of(upscLater))
+        // The builder keeps the two blueprints in separate comparable keys.
+        val stats = ExamStatsBuilder.build(
+            listOf(upsc, ssc, upscLater),
+            ExamGroup.MOCK_STRICT
+        )
+        assertEquals(3, stats.familyAttempts)
+        assertEquals(2, stats.attempts)
+        assertEquals("101", stats.comparisonKey!!.variant)
+    }
+
+    @Test
+    fun aV24RandomAttemptKeepsItsKeyWithNullVariant() {
+        val random = attempt(1, type = TestType.RANDOM.name)
+        val key = com.mcqapp.domain.stats.ExamComparisonKey.of(random)
+        assertNull(key.variant)
+        // The pre-change key shape (without variant) is the current key with null.
+        val manual = com.mcqapp.domain.stats.ExamComparisonKey(
+            paperId = "p1",
+            testType = TestType.RANDOM.name,
+            variant = null,
+            scopeKey = ScopeKey.wholePaper("p1"),
+            requestedCount = 20,
+            samplingVersion = TestPlan.SAMPLING_VERSION,
+            exclusionMode = ExclusionMode.NONE.name
+        )
+        assertEquals(manual, key)
+        assertTrue(TestType.RANDOM.isRepresentative)
+        assertTrue(TestType.BLUEPRINT.isRepresentative)
+        assertTrue("BLUEPRINT" in TestType.representativeNames())
+    }
+
+    @Test
+    fun profileLabelIsReadFromTheCompositionAndSurvivesDeletion() {
+        // The label lives on the attempt's composition, not on a blueprint row,
+        // so deleting the stored blueprint does not erase history.
+        val upsc = blueprintAttempt(1, variant = "101", label = "UPSC")
+        val stats = ExamStatsBuilder.build(listOf(upsc), ExamGroup.MOCK_STRICT)
+        assertEquals("UPSC", stats.label)
+        val random = attempt(2, type = TestType.RANDOM.name)
+        assertNull(ExamStatsBuilder.build(listOf(random), ExamGroup.MOCK_STRICT).label)
+    }
+
+    @Test
+    fun examsProfilesAreLatestFirstAndCappedAtEight() {
+        val attempts = (1L..10L).map { id ->
+            blueprintAttempt(id, variant = id.toString(), label = "BP$id")
+        }
+        val profiles = ExamStatsBuilder.profiles(attempts, ExamGroup.MOCK_STRICT)
+        assertEquals(8, profiles.size)
+        // Latest first by last run of each key.
+        assertEquals("BP10", profiles.first().label)
+        assertEquals("BP3", profiles.last().label)
+        assertEquals(10, profiles.first().familyAttempts)
+        // Two runs on one blueprint collapse to one profile, newest first.
+        val repeated = listOf(
+            blueprintAttempt(1, variant = "1", label = "UPSC", finishedAt = day),
+            blueprintAttempt(2, variant = "2", label = "SSC", finishedAt = 2 * day),
+            blueprintAttempt(3, variant = "1", label = "UPSC", finishedAt = 3 * day)
+        )
+        val two = ExamStatsBuilder.profiles(repeated, ExamGroup.MOCK_STRICT)
+        assertEquals(2, two.size)
+        assertEquals("UPSC", two.first().label)
+        assertEquals(2, two.first().attempts)
     }
 }

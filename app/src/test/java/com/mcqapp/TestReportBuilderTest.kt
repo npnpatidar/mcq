@@ -42,7 +42,9 @@ class TestReportBuilderTest {
         exclusion: String = ExclusionMode.NONE.name,
         finishedAt: Long = 1_000L,
         targetTopicIds: String = "",
-        negativeMarking: Double? = null
+        negativeMarking: Double? = null,
+        compositionJson: String = "",
+        variant: String? = null
     ) = Attempt(
         id = id,
         paperId = "p1",
@@ -61,7 +63,9 @@ class TestReportBuilderTest {
         samplingVersion = samplingVersion,
         exclusionMode = exclusion,
         targetTopicIds = targetTopicIds,
-        negativeMarking = negativeMarking
+        negativeMarking = negativeMarking,
+        compositionJson = compositionJson,
+        variant = variant
     )
 
     private fun row(
@@ -987,4 +991,175 @@ class TestReportBuilderTest {
         cardState = com.mcqapp.domain.CardStateKind.REVIEW,
         retention = 0.8
     )
+
+    // -- Exam blueprint report (exam_blueprint §8.4) --------------------------
+
+    private fun blueprintComposition(): com.mcqapp.domain.signals.Composition =
+        com.mcqapp.domain.signals.Composition(
+            label = "UPSC",
+            sections = listOf(
+                com.mcqapp.domain.signals.CompositionSection("polity", "Polity", 1, 10),
+                com.mcqapp.domain.signals.CompositionSection(
+                    categoryId = "science",
+                    title = "Science & Tech",
+                    parts = 1,
+                    requested = 10,
+                    children = listOf(
+                        com.mcqapp.domain.signals.CompositionSection("physics", "Physics", 1, 6),
+                        com.mcqapp.domain.signals.CompositionSection("chemistry", "Chemistry", 1, 4)
+                    )
+                ),
+                com.mcqapp.domain.signals.CompositionSection("history", "History", 1, 5)
+            ),
+            segments = listOf(
+                com.mcqapp.domain.signals.CompositionSegment("BLUEPRINT", 25)
+            )
+        )
+
+    private fun blueprintAttempt(
+        total: Int = 25,
+        correct: Int = 15
+    ) = attempt(
+        testType = "BLUEPRINT",
+        total = total,
+        requested = 25,
+        correct = correct,
+        wrong = total - correct,
+        skipped = 0,
+        score = correct.toDouble(),
+        maxScore = total.toDouble(),
+        variant = "42",
+        compositionJson = blueprintComposition().toJson()
+    )
+
+    private fun blueprintRows(): List<ReportRow> = buildList {
+        // Polity: 10 asked, 8 correct, matched by title, current id null.
+        repeat(8) { add(row("p$it", correct = true, dwell = 10, title = "Polity", current = null)) }
+        repeat(2) { add(row("pw$it", correct = false, dwell = 10, title = "Polity", current = null)) }
+        // Physics: 4 asked (short by 2), 3 correct, matched by current id.
+        repeat(3) { add(row("ph$it", correct = true, dwell = 10, title = "Physics", current = "physics")) }
+        add(row("phw", correct = false, dwell = 10, title = "Physics", current = "physics"))
+        // Chemistry: 4 asked, 2 correct, matched by current id.
+        repeat(2) { add(row("ch$it", correct = true, dwell = 10, title = "Chemistry", current = "chemistry")) }
+        repeat(2) { add(row("chw$it", correct = false, dwell = 10, title = "Chemistry", current = "chemistry")) }
+        // History: 3 asked, all correct (small sample).
+        repeat(3) { add(row("h$it", correct = true, dwell = 10, title = "History", current = "history")) }
+        // Unmatched title counts as unresolved.
+        add(row("x0", correct = true, dwell = 10, title = "Unknown", current = null))
+    }
+
+    @Test
+    fun blueprintReportRollsRowsUpTheTree() {
+        val report = TestReportBuilder.build(
+            TestReportInput(attempt = blueprintAttempt(), rows = blueprintRows(), paper = null)
+        )
+        val blueprint = report.blueprint!!
+        assertEquals("UPSC", blueprint.label)
+        assertEquals(1, blueprint.unresolved)
+        val polity = blueprint.sections.first { it.title == "Polity" }
+        assertEquals(10, polity.requested)
+        assertEquals(10, polity.asked)
+        assertEquals(8, polity.correct)
+        assertTrue(polity.complete)
+        assertEquals(0.8, polity.accuracy, 0.0001)
+        val science = blueprint.sections.first { it.title == "Science & Tech" }
+        assertEquals(10, science.requested)
+        assertEquals(8, science.asked)
+        assertEquals(5, science.correct)
+        assertTrue(!science.complete)
+        val physics = science.children.first { it.title == "Physics" }
+        assertEquals(6, physics.requested)
+        assertEquals(4, physics.asked)
+        assertEquals(3, physics.correct)
+        assertTrue(!physics.complete)
+        // Top-level requested sums to the run length; asked reconciles with rows.
+        assertEquals(25, blueprint.sections.sumOf { it.requested })
+        assertEquals(21, blueprint.sections.sumOf { it.asked })
+    }
+
+    @Test
+    fun blueprintReportMarksShortNodesAndSmallSamples() {
+        val report = TestReportBuilder.build(
+            TestReportInput(attempt = blueprintAttempt(), rows = blueprintRows(), paper = null)
+        )
+        val blueprint = report.blueprint!!
+        val history = blueprint.sections.first { it.title == "History" }
+        assertEquals(5, history.requested)
+        assertEquals(3, history.asked)
+        assertTrue(history.smallSample)
+        assertTrue(!history.complete)
+        // Physics asked 4 (< 5) is also a small sample.
+        val science = blueprint.sections.first { it.title == "Science & Tech" }
+        val physics = science.children.first { it.title == "Physics" }
+        assertTrue(physics.smallSample)
+        assertTrue(!blueprint.complete)
+    }
+
+    @Test
+    fun aNonBlueprintReportHasNoBlueprintCard() {
+        val report = TestReportBuilder.build(
+            TestReportInput(attempt = attempt(), rows = standardRows(), paper = paper())
+        )
+        assertNull(report.blueprint)
+    }
+
+    @Test
+    fun blueprintCurrentIdDisambiguatesDuplicateTitles() {
+        val composition = com.mcqapp.domain.signals.Composition(
+            label = "SSC",
+            sections = listOf(
+                com.mcqapp.domain.signals.CompositionSection("a1", "Shared", 1, 2),
+                com.mcqapp.domain.signals.CompositionSection("b1", "Shared", 1, 2)
+            ),
+            segments = listOf(com.mcqapp.domain.signals.CompositionSegment("BLUEPRINT", 4))
+        )
+        val rows = listOf(
+            row("q1", correct = true, dwell = 10, title = "Shared", current = "a1"),
+            row("q2", correct = false, dwell = 10, title = "Shared", current = "a1"),
+            row("q3", correct = true, dwell = 10, title = "Shared", current = "b1"),
+            row("q4", correct = true, dwell = 10, title = "Shared", current = "b1")
+        )
+        val report = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(
+                    testType = "BLUEPRINT",
+                    total = 4,
+                    requested = 20,
+                    correct = 3,
+                    wrong = 1,
+                    skipped = 0,
+                    score = 3.0,
+                    maxScore = 4.0,
+                    compositionJson = composition.toJson()
+                ),
+                rows = rows,
+                paper = null
+            )
+        )
+        val blueprint = report.blueprint!!
+        assertEquals(0, blueprint.unresolved)
+        assertEquals(2, blueprint.sections[0].asked)
+        assertEquals(1, blueprint.sections[0].correct)
+        assertEquals(2, blueprint.sections[1].asked)
+        assertEquals(2, blueprint.sections[1].correct)
+        // A duplicate title with no current id does not guess: unresolved.
+        val ambiguous = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(
+                    testType = "BLUEPRINT",
+                    total = 1,
+                    requested = 20,
+                    correct = 1,
+                    wrong = 0,
+                    skipped = 0,
+                    score = 1.0,
+                    maxScore = 1.0,
+                    compositionJson = composition.toJson()
+                ),
+                rows = listOf(row("z", correct = true, dwell = 10, title = "Shared", current = null)),
+                paper = null
+            )
+        )
+        assertEquals(1, ambiguous.blueprint!!.unresolved)
+    }
 }

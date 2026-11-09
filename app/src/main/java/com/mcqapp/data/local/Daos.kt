@@ -3362,3 +3362,45 @@ interface PanelDao {
     @Query("DELETE FROM panels WHERE id = :panelId")
     suspend fun deletePanel(panelId: Long)
 }
+
+/**
+ * Exam blueprints (exam_blueprint §6.2): named, paper-scoped trees of
+ * weighted sections. A blueprint is a rule over the paper's category tree,
+ * not a frozen set: sections follow the live tree, so deleting a category
+ * cascades its section (and, via the self-referencing parent pointer, its
+ * whole blueprint subtree). The plain [sections] query is used by the
+ * repository's tree build and by the backup; ordering inside the tree is
+ * rebuilt in Kotlin by the paper's category sortOrder.
+ */
+@Dao
+interface BlueprintDao {
+    @Insert
+    suspend fun insertBlueprint(row: BlueprintEntity): Long
+
+    @Insert
+    suspend fun insertSections(rows: List<BlueprintSectionEntity>): List<Long>
+
+    @Query("DELETE FROM blueprint_sections WHERE id = :id")
+    suspend fun deleteSection(id: Long)
+
+    @Query("DELETE FROM blueprint_sections WHERE blueprintId = :id")
+    suspend fun clearSections(id: Long)
+
+    @Query("DELETE FROM blueprints WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("SELECT * FROM blueprints WHERE paperId = :paperId ORDER BY createdAt, id")
+    suspend fun forPaper(paperId: String): List<BlueprintEntity>
+
+    @Query("SELECT * FROM blueprints ORDER BY createdAt, id")
+    suspend fun all(): List<BlueprintEntity>
+
+    @Query("SELECT * FROM blueprint_sections WHERE blueprintId = :id ORDER BY categoryId")
+    suspend fun sections(id: Long): List<BlueprintSectionEntity>
+
+    @Query("SELECT * FROM blueprints WHERE id = :id")
+    suspend fun getById(id: Long): BlueprintEntity?
+
+    @Query("UPDATE blueprints SET name = :name WHERE id = :id")
+    suspend fun updateName(id: Long, name: String)
+}

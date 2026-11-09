@@ -4,6 +4,7 @@ import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.ReportFamily
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestReportBuilder
+import com.mcqapp.domain.signals.Composition
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -44,6 +45,8 @@ enum class ExamGroup(val family: ReportFamily) {
 data class ExamComparisonKey(
     val paperId: String,
     val testType: String?,
+    /** The named object's id for BLUEPRINT; null for every other type. */
+    val variant: String? = null,
     val scopeKey: String,
     val requestedCount: Int,
     val samplingVersion: Int,
@@ -56,6 +59,7 @@ data class ExamComparisonKey(
         fun of(attempt: Attempt): ExamComparisonKey = ExamComparisonKey(
             paperId = attempt.paperId,
             testType = attempt.testType,
+            variant = attempt.variant,
             scopeKey = attempt.scopeKey,
             requestedCount = attempt.requestedCount,
             samplingVersion = attempt.samplingVersion,
@@ -151,6 +155,8 @@ data class ExamStats(
     val comparisonKey: ExamComparisonKey? = null,
     /** The paper behind [comparisonKey], as the attempt recorded it. */
     val paperTitle: String? = null,
+    /** Blueprint/profile label read from the latest attempt's composition. */
+    val label: String? = null,
     /** Attempts in the comparable key behind the headline figures. */
     val attempts: Int = 0,
     /** All attempts in the selected family/scope, including other keys. */
@@ -275,6 +281,7 @@ object ExamStatsBuilder {
             group = group,
             comparisonKey = latest?.let { ExamComparisonKey.of(it) },
             paperTitle = latest?.title,
+            label = latest?.compositionJson?.let { Composition.fromJson(it)?.label },
             attempts = comparable.size,
             familyAttempts = familyAttempts.size,
             latestPercent = latestPercent,
@@ -338,6 +345,43 @@ object ExamStatsBuilder {
             lifetime = lifetime,
             lifetimeIsRepresentative = representative
         )
+    }
+
+    /** Maximum profiles carried per group, latest first (§8.3). */
+    const val MAX_PROFILES: Int = 8
+
+    /**
+     * One [ExamStats] per distinct comparison key in [group], latest first,
+     * capped at [MAX_PROFILES]. Pure analogue of the repository's per-key
+     * walk: each profile is built inside its own key via [build] on that
+     * key's attempts.
+     */
+    fun profiles(
+        attempts: List<Attempt>,
+        group: ExamGroup,
+        population: Int = 0,
+        categoryLimit: Int = 15,
+        recentLimit: Int = 5
+    ): List<ExamStats> {
+        val family = attempts
+            .filter { TestReportBuilder.familyOf(it) == group.family }
+        if (family.isEmpty()) return emptyList()
+        val byKey = family.groupBy { ExamComparisonKey.of(it) }
+        val rankedRuns = byKey.values
+            .map { it.sortedWith(compareBy({ a: Attempt -> a.finishedAt }, { a: Attempt -> a.id })) }
+            .sortedWith(
+                compareByDescending { runs: List<Attempt> -> runs.last().finishedAt }
+                    .thenByDescending { runs: List<Attempt> -> runs.last().id }
+            )
+        return rankedRuns.take(MAX_PROFILES).map { runs ->
+            build(
+                attempts = runs,
+                group = group,
+                population = population,
+                categoryLimit = categoryLimit,
+                recentLimit = recentLimit
+            ).copy(familyAttempts = family.size)
+        }
     }
 
     /**

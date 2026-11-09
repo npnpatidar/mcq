@@ -1,6 +1,11 @@
 package com.mcqapp.domain.signals
 
+import com.mcqapp.domain.BlueprintQuotas
+import com.mcqapp.domain.BlueprintSection
+import com.mcqapp.domain.BlueprintSectionPreview
+import com.mcqapp.domain.BlueprintSectionView
 import com.mcqapp.domain.Difficulty
+import com.mcqapp.domain.PlanBlueprint
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestType
 import kotlinx.serialization.Serializable
@@ -47,6 +52,10 @@ enum class FillSource {
     SLOWEST,
     /** A fixed panel: the same frozen ids, never a fill from outside. */
     PANEL,
+    /** A blueprint terminal's own quota block. */
+    BLUEPRINT,
+    /** Rounding/shortfall fill inside the blueprint union. */
+    BLUEPRINT_FILL,
     RANDOM
 }
 
@@ -57,6 +66,18 @@ data class CompositionSegment(
     val count: Int
 )
 
+/** One blueprint section in the recorded composition tree (exam blueprint §4.3). */
+@Serializable
+data class CompositionSection(
+    val categoryId: String,
+    /** As-of-attempt title; the report joins rows on this. */
+    val title: String,
+    val parts: Int,
+    /** Quota for this node (sum of children's quotas when internal). */
+    val requested: Int,
+    val children: List<CompositionSection> = emptyList()
+)
+
 /**
  * The composition an attempt records in `compositionJson` (stats.md §7.7).
  * The version lets a later reader ignore a shape it does not understand rather
@@ -65,14 +86,17 @@ data class CompositionSegment(
 @Serializable
 data class Composition(
     val version: Int = VERSION,
+    /** "UPSC" for a blueprint attempt; null for every other type. */
+    val label: String? = null,
+    val sections: List<CompositionSection> = emptyList(),
     val segments: List<CompositionSegment> = emptyList()
 ) {
-    val isEmpty: Boolean get() = segments.isEmpty()
+    val isEmpty: Boolean get() = segments.isEmpty() && sections.isEmpty()
 
     fun toJson(): String = Json.encodeToString(this)
 
     companion object {
-        const val VERSION: Int = 1
+        const val VERSION: Int = 2
 
         /** Parses a recorded composition, or null for empty/unknown/invalid. */
         fun fromJson(raw: String?): Composition? {
@@ -80,7 +104,7 @@ data class Composition(
             if (text.isEmpty()) return null
             return runCatching {
                 Json.decodeFromString<Composition>(text)
-            }.getOrNull()?.takeIf { it.version == VERSION && it.segments.isNotEmpty() }
+            }.getOrNull()?.takeIf { it.version in 1..VERSION && (it.segments.isNotEmpty() || it.sections.isNotEmpty()) }
         }
 
         fun of(vararg segments: Pair<FillSource, Int>): Composition = Composition(
@@ -126,7 +150,8 @@ data class SelectionPreview(
      * The ids the same request would select, in presented order. The setup
      * sheet uses them to save a sample as a fixed panel; display-only.
      */
-    val ids: List<String> = emptyList()
+    val ids: List<String> = emptyList(),
+    val sections: List<BlueprintSectionPreview> = emptyList()
 )
 
 /**
@@ -181,6 +206,7 @@ object TestSelector {
         TestType.AUTHORED_DIFFICULTY -> authored(plan, signals)
         TestType.SLOWEST -> slowest(plan, signals, medianDwellSeconds)
         TestType.FIXED_PANEL -> fixedPanel(plan, signals, customPool)
+        TestType.BLUEPRINT -> blueprint(plan, signals)
         else -> null
     }
 
@@ -191,7 +217,9 @@ object TestSelector {
         /** The custom choice whose pool is counted (phase 3). */
         variant: String? = null,
         customPool: Set<String> = emptySet(),
-        medianDwellSeconds: Map<String, Long> = emptyMap()
+        medianDwellSeconds: Map<String, Long> = emptyMap(),
+        /** The frozen blueprint whose union bounds a blueprint pool. */
+        blueprint: PlanBlueprint? = null
     ): Int = when (type) {
         TestType.TRICKY -> signals.count { it.trickiness > 0.0 || it.leech }
         TestType.AT_RISK -> signals.count { it.atRisk }
@@ -203,6 +231,10 @@ object TestSelector {
             signals.count { it.authoredDifficulty == chosen }
         }
         TestType.SLOWEST -> slowestEligible(signals, medianDwellSeconds).size
+        TestType.BLUEPRINT -> {
+            val union = blueprint?.union ?: return signals.size
+            signals.count { it.categoryId in union }
+        }
         else -> signals.size
     }
 
@@ -229,6 +261,32 @@ object TestSelector {
                 asked = rows.sumOf { it.answered },
                 correct = rows.sumOf { it.correct },
                 poolSize = rows.size
+            )
+        }
+        if (plan.type == TestType.BLUEPRINT) {
+            val bp = plan.blueprint
+            if (bp == null) {
+                return SelectionPreview(
+                    pool = 0,
+                    composition = selection?.composition ?: Composition(),
+                    targets = targets,
+                    ids = selection?.ids.orEmpty(),
+                    sections = emptyList()
+                )
+            }
+            val views = bp.sections.map { node -> viewOf(node, signals) }
+            val allocation = BlueprintQuotas.allocate(views, plan.count, plan.seed)
+            val previews = buildPreviews(views, allocation)
+            return SelectionPreview(
+                pool = allocation.achievable,
+                composition = selection?.composition ?: Composition(
+                    label = bp.label,
+                    sections = blueprintTreeOf(bp, allocation),
+                    segments = Composition.of(FillSource.BLUEPRINT to (selection?.ids?.size ?: 0)).segments
+                ),
+                targets = targets,
+                ids = selection?.ids.orEmpty(),
+                sections = previews
             )
         }
         return SelectionPreview(
@@ -647,6 +705,118 @@ object TestSelector {
     }
 
     private fun shareOf(n: Int, percent: Int): Int = ceil(n * percent / 100.0).toInt()
+
+    /**
+     * Exam blueprint (exam blueprint §7): a terminal's own quota plus a fill
+     * that never leaves the blueprint union. Empty pools yield an empty
+     * selection; never throws, never falls back to Random or the whole paper.
+     */
+    private fun blueprint(plan: TestPlan, signals: List<Signals>): Selection {
+        val bp = plan.blueprint ?: return Selection(emptyList())
+        val inScope = signals.filter { it.categoryId in bp.union }
+        val views = bp.sections.map { node -> viewOf(node, signals) }
+        val allocation = BlueprintQuotas.allocate(views, plan.count, plan.seed)
+        val perTerminal = bp.terminals.mapNotNull { terminal ->
+            val need = allocation.perTerminal[terminal.categoryId] ?: 0
+            if (need <= 0) return@mapNotNull null
+            val scope = terminal.scopeCategoryIds.toSet()
+            signals.filter { it.categoryId in scope }
+                .shuffled(Random(plan.seed xor terminal.categoryId.hashCode().toLong()))
+                .take(need)
+        }
+        val interleaved = interleave(perTerminal)
+        val (ids, fill) = fillWith(
+            selected = interleaved,
+            target = plan.count,
+            seed = plan.seed,
+            pool = inScope,
+            stages = listOf(FillSource.BLUEPRINT_FILL to inScope)
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition(
+                label = bp.label,
+                sections = blueprintTreeOf(bp, allocation),
+                segments = Composition.of(
+                    FillSource.BLUEPRINT to interleaved.size,
+                    *fill.toTypedArray()
+                ).segments
+            )
+        )
+    }
+
+    private fun viewOf(node: BlueprintSection, signals: List<Signals>): BlueprintSectionView {
+        val children = node.children.map { viewOf(it, signals) }
+        val pool = if (children.isEmpty()) {
+            val scope = node.scopeCategoryIds.toSet()
+            signals.count { it.categoryId in scope }
+        } else {
+            children.sumOf { it.pool }
+        }
+        return BlueprintSectionView(
+            categoryId = node.categoryId,
+            title = node.title,
+            parts = node.parts,
+            pool = pool,
+            available = true,
+            children = children
+        )
+    }
+
+    private fun blueprintTreeOf(
+        bp: PlanBlueprint,
+        allocation: BlueprintQuotas.Allocation
+    ): List<CompositionSection> = bp.sections.map { node -> compositionOf(node, allocation) }
+
+    private fun compositionOf(
+        node: BlueprintSection,
+        allocation: BlueprintQuotas.Allocation
+    ): CompositionSection {
+        val children = node.children.map { compositionOf(it, allocation) }
+        val requested = if (children.isEmpty()) {
+            allocation.perTerminal[node.categoryId] ?: 0
+        } else {
+            children.sumOf { it.requested }
+        }
+        return CompositionSection(
+            categoryId = node.categoryId,
+            title = node.title,
+            parts = node.parts,
+            requested = requested,
+            children = children
+        )
+    }
+
+    private fun buildPreviews(
+        views: List<BlueprintSectionView>,
+        allocation: BlueprintQuotas.Allocation
+    ): List<BlueprintSectionPreview> = views.map { view -> previewOf(view, allocation) }
+
+    private fun previewOf(
+        view: BlueprintSectionView,
+        allocation: BlueprintQuotas.Allocation
+    ): BlueprintSectionPreview {
+        val children = view.children.map { previewOf(it, allocation) }
+        // Children are rebuilt here so the preview tree mirrors the view tree;
+        // the requested value for internal nodes is the sum below them.
+        val requested = if (view.children.isEmpty()) {
+            allocation.perTerminal[view.categoryId] ?: 0
+        } else {
+            // Sum of descendant terminal quotas: recompute from allocation via
+            // the view subtree's terminal ids.
+            terminalsOf(view).sumOf { allocation.perTerminal[it] ?: 0 }
+        }
+        val rebuilt = if (view.children.isEmpty()) {
+            view
+        } else {
+            view.copy(children = children.map { it.view })
+        }
+        return BlueprintSectionPreview(view = rebuilt, requested = requested)
+    }
+
+    private fun terminalsOf(view: BlueprintSectionView): List<String> =
+        if (view.isTerminal) listOf(view.categoryId)
+        else view.children.flatMap { terminalsOf(it) }
 
     /** Timed answers a question needs to qualify for Slowest (stats.md §8.13). */
     const val SLOWEST_MIN_SAMPLES: Int = 2

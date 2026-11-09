@@ -481,27 +481,47 @@ fun LibraryScreen(
                 viewModel.createPanel(request.paper.id, name, questionIds)
             },
             onDeletePanel = { panelId -> viewModel.deletePanel(panelId) },
+            loadBlueprints = { paperId -> viewModel.blueprintsForPaper(paperId) },
+            loadBlueprintSections = { blueprintId -> viewModel.blueprintSections(blueprintId) },
+            onCreateBlueprint = { name, sections ->
+                viewModel.createBlueprint(request.paper.id, name, sections)
+            },
+            onUpdateBlueprint = { blueprintId, name, sections ->
+                viewModel.updateBlueprint(blueprintId, name, sections)
+            },
+            onDeleteBlueprint = { blueprintId -> viewModel.deleteBlueprint(blueprintId) },
             onDismiss = { pendingTestSetup = null },
             onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
                 pendingTestSetup = null
                 // Plan §10: the next setup sheet starts from this length.
                 viewModel.rememberTestLength(requestedCount)
-                Logger.i(
-                    "LIB",
-                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}, variant=${variant ?: ""}"
-                )
-                navController.navigate(
-                    com.mcqapp.ui.navigation.testRoute(
-                        request.paper.id,
-                        request.categoryIds,
-                        minutes = minutes,
-                        type = type.name,
-                        count = requestedCount,
-                        exclusion = exclusion.name,
-                        breadth = breadth.name,
-                        variant = variant ?: ""
+                // A blueprint's route carries its section union, not the
+                // ticked categories: the session derives its scope from it.
+                scope.launch {
+                    val routeCategories = if (type == TestType.BLUEPRINT) {
+                        val blueprint = variant?.toLongOrNull()?.let { repository.blueprint(it) }
+                        blueprint?.let { repository.buildPlanBlueprint(it)?.categoryIds }
+                            ?: request.categoryIds
+                    } else {
+                        request.categoryIds
+                    }
+                    Logger.i(
+                        "LIB",
+                        "Test: paperId=${request.paper.id}, type=${type.name}, categories=${routeCategories.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}, variant=${variant ?: ""}"
                     )
-                )
+                    navController.navigate(
+                        com.mcqapp.ui.navigation.testRoute(
+                            request.paper.id,
+                            routeCategories,
+                            minutes = minutes,
+                            type = type.name,
+                            count = requestedCount,
+                            exclusion = exclusion.name,
+                            breadth = breadth.name,
+                            variant = variant ?: ""
+                        )
+                    )
+                }
             }
         )
     }

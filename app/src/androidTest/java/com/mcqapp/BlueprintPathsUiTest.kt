@@ -155,5 +155,6 @@ class BlueprintPathsUiTest {
         compose.onNodeWithText("Tests", substring = false).performScrollTo().performClick()
         waitFor("UIBlueprint")
         compose.onNodeWithText("UIBlueprint", substring = true).assertIsDisplayed()
+        compose.waitForIdle()
     }
 }

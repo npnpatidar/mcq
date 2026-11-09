@@ -371,6 +371,13 @@ gap boundary, histogram buckets, empty inputs, in-memory vs streamed equality.
 Acceptance: Workload tab adds due-tomorrow/due-this-week, grade-mix trend and
 session summary.
 
+Shipped in `feature/remaining-plan`: `ForecastData.dueTomorrow`/`dueThisWeek`,
+`GradeMixPoint` and `SessionSummary` (+`SessionBin`), the accumulator's grade
+counters, due-window counters and 30-minute-gap sitting state, the Forecast
+footnotes, the "Grade mix over time" stacked chart and the "Study sessions"
+card. `WorkloadAdditionsTest` covers the pure rules; `StatsTabsStreamTest`
+already asserts the whole `WorkloadData` is equal on both build paths.
+
 ## 8. Smaller additions
 
 1. **KPI deltas on Progress** — signed deltas on the Progress KPI grid only;
@@ -556,7 +563,7 @@ or is re-scoped.
 - [x] Progress shows introductions, graduations, relapses, Again rate and a
       previous-period comparison; the All range hides the comparison.
 - [x] Retention adds interval-band, tag and all-papers category slices.
-- [ ] Workload adds due-tomorrow/due-this-week, grade mix and sessions.
+- [x] Workload adds due-tomorrow/due-this-week, grade mix and sessions.
 - [ ] Memory shows per-paper means; the card sheet shows Again rate and mean
       time.
 - [ ] In-memory and streamed builds are equal in tests.

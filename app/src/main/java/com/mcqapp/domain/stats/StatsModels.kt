@@ -162,7 +162,11 @@ data class ForecastData(
     /** Cards due today, backlog excluded. */
     val dueToday: Int,
     /** Sum of 1/interval over scheduled cards: the long-run reviews per day. */
-    val dailyLoad: Double
+    val dailyLoad: Double,
+    /** Scheduled cards due in the next study day (plan §7). */
+    val dueTomorrow: Int = 0,
+    /** Scheduled cards due in the next seven days, backlog excluded. */
+    val dueThisWeek: Int = 0
 ) {
     /** Cumulative due count per day if the backlog is never touched. */
     val cumulativeIfSkipped: List<Int>
@@ -579,6 +583,33 @@ data class RetentionData(
     val categoryRetention: List<GroupRetention> = emptyList()
 )
 
+/** Grade mix in one bucket (plan §7); the four counts always add to [total]. */
+data class GradeMixPoint(
+    val label: String,
+    val again: Int,
+    val hard: Int,
+    val good: Int,
+    val easy: Int
+) {
+    val total: Int get() = again + hard + good + easy
+}
+
+/**
+ * Sittings split by a 30-minute gap (plan §7). Lengths are wall-clock minutes
+ * from a sitting's first review to its last; [meanSecondsPerReview] uses the
+ * timed reviews only. The histogram buckets the reviews in each sitting.
+ */
+data class SessionSummary(
+    val count: Int = 0,
+    val meanReviews: Double? = null,
+    val meanMinutes: Double? = null,
+    val longestMinutes: Double? = null,
+    val meanSecondsPerReview: Double? = null,
+    val histogram: List<SessionBin> = emptyList()
+) {
+    data class SessionBin(val label: String, val count: Int)
+}
+
 /** Workload tab: how the review volume and pace are distributed. */
 data class WorkloadData(
     val forecast: ForecastData,
@@ -586,7 +617,11 @@ data class WorkloadData(
     val timePerDay: List<SeriesPoint>,
     val answerButtons: AnswerButtonsData,
     val hourly: List<HourlyStat>,
-    val responseTime: ResponseTimeData
+    val responseTime: ResponseTimeData,
+    /** Plan §7: Again/Hard/Good/Easy per bucket, same granularity rule. */
+    val ratingTrend: List<GradeMixPoint> = emptyList(),
+    /** Plan §7: sitting summary, separate from the guessing tab's buckets. */
+    val sessions: SessionSummary = SessionSummary()
 )
 
 /** Memory tab: where the collection sits in the FSRS state space. */

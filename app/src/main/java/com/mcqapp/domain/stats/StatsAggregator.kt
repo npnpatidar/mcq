@@ -990,6 +990,8 @@ object StatsAggregator {
         private class DayBucket {
             /** LEARNING, REVIEW, RELEARNING, unknown — the chart's legend order. */
             val kinds = IntArray(4)
+            /** Again, Hard, Good, Easy — the grade-mix chart's order. */
+            val grades = IntArray(4)
             var reviews = 0
             var seconds = 0L
             var timedReviews = 0
@@ -1003,6 +1005,7 @@ object StatsAggregator {
                     ReplayReview.ReviewKind.RELEARNING -> kinds[2]++
                     null -> kinds[3]++
                 }
+                if (review.rating in 1..4) grades[review.rating - 1]++
                 seconds += review.elapsedSeconds ?: 0L
                 review.elapsedSeconds?.let {
                     timedReviews++
@@ -1025,6 +1028,30 @@ object StatsAggregator {
         private val forecastReview = IntArray(FORECAST_DAYS)
         private var forecastOverdue = 0
         private var forecastLoad = 0.0
+
+        /** Plan §7 near-term counts; backlog is excluded from both. */
+        private var dueTomorrow = 0
+        private var dueThisWeek = 0
+
+        /**
+         * Plan §7 session state. The log is fed in the same order the guessing
+         * accumulator sees, so the same 30-minute gap rule applies: a gap of
+         * 30 minutes or more, or a backwards clock, starts a new sitting.
+         */
+        private var lastReviewAt = Long.MIN_VALUE
+        private var sessionReviews = 0
+        private var sessionFirstAt = 0L
+        private var sessionLastAt = 0L
+        private var sessionTimedSeconds = 0L
+        private var sessionTimedReviews = 0
+
+        private var sessionCount = 0
+        private var sessionReviewSum = 0L
+        private var sessionMinutesSum = 0.0
+        private var sessionLongestMinutes = 0.0
+        private var sessionSecondsSum = 0L
+        private var sessionTimedReviewSum = 0L
+        private val sessionHistogram = IntArray(SESSION_LABELS.size)
 
         /** Answer-button counts per [AnswerButtonsData.Kind], first-seen order. */
         private val answerKinds = LinkedHashMap<AnswerButtonsData.Kind, IntArray>()
@@ -1049,6 +1076,7 @@ object StatsAggregator {
             if (rangeStart != null && review.reviewedAt < rangeStart) return
             val seen = earliest
             if (seen == null || review.reviewedAt < seen) earliest = review.reviewedAt
+            countSession(review)
             days.getOrPut(studyEpochDay(review.reviewedAt, cfg, zone)) { DayBucket() }.add(review)
             countAnswerButtons(review)
             val hour = (Math.floorMod(review.reviewedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
@@ -1073,6 +1101,15 @@ object StatsAggregator {
             val state = snapshot.state
             if (state.leech) leechQuestions += state.questionId
             if (state.state == CardStateKind.NEW || state.dueAt == 0L) return
+            // Plan §7: backlog excluded from both near-term counts.
+            if (state.dueAt >= todayStart) {
+                if (state.dueAt >= todayStart + DayBoundary.DAY_MS &&
+                    state.dueAt < todayStart + 2 * DayBoundary.DAY_MS
+                ) {
+                    dueTomorrow++
+                }
+                if (state.dueAt < todayStart + 7 * DayBoundary.DAY_MS) dueThisWeek++
+            }
             forecastLoad += if (state.intervalDays <= 0) 1.0 else 1.0 / state.intervalDays
             val dayIndex = Math.floorDiv(state.dueAt - todayStart, DayBoundary.DAY_MS)
             when {
@@ -1095,8 +1132,94 @@ object StatsAggregator {
             timePerDay = timePerDay(),
             answerButtons = answerButtons(),
             hourly = hourly(),
-            responseTime = responseTime()
+            responseTime = responseTime(),
+            ratingTrend = ratingTrend(),
+            sessions = sessions()
         )
+
+        /**
+         * Plan §7. A gap of 30 minutes or more — or a backwards clock — starts
+         * a new sitting, the same rule the guessing tab uses.
+         */
+        private fun countSession(review: ReplayReview) {
+            val gap = review.reviewedAt - lastReviewAt
+            if (lastReviewAt == Long.MIN_VALUE || gap < 0 || gap > SITTING_GAP_MS) {
+                finishSession()
+                sessionFirstAt = review.reviewedAt
+                sessionReviews = 0
+                sessionTimedSeconds = 0L
+                sessionTimedReviews = 0
+            }
+            lastReviewAt = review.reviewedAt
+            sessionLastAt = review.reviewedAt
+            sessionReviews++
+            review.elapsedSeconds?.let {
+                sessionTimedSeconds += it
+                sessionTimedReviews++
+            }
+        }
+
+        /** Folds the open sitting into the summary; safe to call more than once. */
+        private fun finishSession() {
+            if (sessionReviews == 0) return
+            sessionCount++
+            sessionReviewSum += sessionReviews
+            val minutes = (sessionLastAt - sessionFirstAt) / 60_000.0
+            sessionMinutesSum += minutes
+            if (minutes > sessionLongestMinutes) sessionLongestMinutes = minutes
+            sessionSecondsSum += sessionTimedSeconds
+            sessionTimedReviewSum += sessionTimedReviews
+            var bin = SESSION_EDGES.indexOfFirst { sessionReviews < it }
+            if (bin < 0) bin = SESSION_LABELS.size - 1
+            sessionHistogram[bin]++
+            sessionReviews = 0
+        }
+
+        private fun sessions(): SessionSummary {
+            finishSession()
+            return SessionSummary(
+                count = sessionCount,
+                meanReviews = if (sessionCount == 0) {
+                    null
+                } else {
+                    sessionReviewSum.toDouble() / sessionCount
+                },
+                meanMinutes = if (sessionCount == 0) null else sessionMinutesSum / sessionCount,
+                longestMinutes = if (sessionCount == 0) null else sessionLongestMinutes,
+                meanSecondsPerReview = if (sessionTimedReviewSum == 0L) {
+                    null
+                } else {
+                    sessionSecondsSum.toDouble() / sessionTimedReviewSum
+                },
+                histogram = SESSION_LABELS.mapIndexed { i, label ->
+                    SessionSummary.SessionBin(label, sessionHistogram[i])
+                }
+            )
+        }
+
+        private fun ratingTrend(): List<GradeMixPoint> {
+            val windowStart = rangeStart ?: earliest ?: return emptyList()
+            val granularity = granularityFor(windowStart, todayDay, cfg, zone)
+            val buckets = bucketList(
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+            )
+            val gradesByBucket = HashMap<Long, IntArray>()
+            days.forEach { (day, bucket) ->
+                val key = bucketKeyOf(day, granularity)
+                val grades = gradesByBucket.getOrPut(key) { IntArray(4) }
+                for (i in 0 until 4) grades[i] += bucket.grades[i]
+            }
+            return buckets.map { b ->
+                val grades = gradesByBucket[b.key]
+                GradeMixPoint(
+                    label = b.label,
+                    again = grades?.get(0) ?: 0,
+                    hard = grades?.get(1) ?: 0,
+                    good = grades?.get(2) ?: 0,
+                    easy = grades?.get(3) ?: 0
+                )
+            }
+        }
 
         private fun countAnswerButtons(review: ReplayReview) {
             val kind = when {
@@ -1146,7 +1269,9 @@ object StatsAggregator {
                 },
                 overdue = forecastOverdue,
                 dueToday = forecastLearning[0] + forecastReview[0],
-                dailyLoad = forecastLoad
+                dailyLoad = forecastLoad,
+                dueTomorrow = dueTomorrow,
+                dueThisWeek = dueThisWeek
             )
         }
 
@@ -1282,6 +1407,10 @@ object StatsAggregator {
 
         private companion object {
             const val FORECAST_DAYS = 30
+            /** A pause this long between reviews starts a new sitting (plan §7). */
+            const val SITTING_GAP_MS = 30 * 60 * 1000L
+            val SESSION_EDGES = listOf(2, 5, 10, 20, 50)
+            val SESSION_LABELS = listOf("1", "2–4", "5–9", "10–19", "20–49", "50+")
             val RESPONSE_EDGES = listOf(5L, 10L, 20L, 30L, 60L, 120L)
             val RESPONSE_LABELS =
                 listOf("0–5s", "5–10s", "10–20s", "20–30s", "30–60s", "1–2m", "2m+")

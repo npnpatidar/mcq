@@ -72,7 +72,13 @@ object StatsAggregator {
          * guessed questions only. The guessing tab's baseline reads it; every
          * other section may pass an empty map.
          */
-        val chanceOfQuestion: Map<String, Double> = emptyMap()
+        val chanceOfQuestion: Map<String, Double> = emptyMap(),
+        /**
+         * questionId → its tags, for the retention tab's tag slice (plan §6.2).
+         * A streamed build fills it for the reviewed ids only; every other
+         * section may pass an empty map.
+         */
+        val tagsOfQuestion: Map<String, List<String>> = emptyMap()
     )
 
     /**
@@ -187,7 +193,10 @@ object StatsAggregator {
             categoryOfQuestion = ctx.input.categoryOfQuestion
         )
         ctx.inScope.forEach(accumulator::add)
-        return accumulator.toData()
+        return accumulator.toData(
+            tagsOfQuestion = ctx.input.tagsOfQuestion,
+            categoryOfQuestion = ctx.input.categoryOfQuestion
+        )
     }
 
     private fun workloadOf(ctx: Context): WorkloadData {
@@ -632,6 +641,11 @@ object StatsAggregator {
                 reviews++
                 if (passed) passes++
             }
+
+            fun addAll(other: Counts) {
+                reviews += other.reviews
+                passes += other.passes
+            }
         }
 
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
@@ -648,6 +662,16 @@ object StatsAggregator {
 
         /** Group key → every in-range review of it, in first-seen order. */
         private val groups = LinkedHashMap<String, Counts>()
+
+        /**
+         * Every in-range review per question (plan §6.2/§6.3). Bounded by the
+         * log's working set, not by the library, and folded into tag/category
+         * counts only after the pass.
+         */
+        private val questionCounts = LinkedHashMap<String, Counts>()
+
+        /** Plan §6.1: the whole-day interval carried into each review. */
+        private val intervalBands = Array(IntervalBand.entries.size) { Counts() }
 
         private var earliestInRange: Long? = null
 
@@ -671,6 +695,8 @@ object StatsAggregator {
             if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
             countGroup(review)
             countCalibration(review)
+            intervalBands[bandOf(review).ordinal].add(review.passed)
+            questionCounts.getOrPut(review.questionId) { Counts() }.add(review.passed)
             // The true-retention rule, through the shared cursor: a first
             // exposure carries no whole-day interval to qualify with, and only
             // the day's first qualifying review counts.
@@ -680,13 +706,81 @@ object StatsAggregator {
             weekdays[weekdayOf(day)].add(review.passed)
         }
 
-        /** The tab's four charts. */
-        fun toData(): RetentionData = RetentionData(
+        /** The reviewed questions, for the post-pass tag/category lookups. */
+        fun reviewedQuestionIds(): Set<String> = questionCounts.keys
+
+        /** The tab's charts; tags and categories need the post-pass maps. */
+        fun toData(
+            tagsOfQuestion: Map<String, List<String>> = emptyMap(),
+            categoryOfQuestion: Map<String, String> = emptyMap()
+        ): RetentionData = RetentionData(
             retentionTrend = trend(),
             calibration = calibration(),
             groupRetention = groupRetention(),
-            weekdayRetention = weekdayRetention()
+            weekdayRetention = weekdayRetention(),
+            intervalRetention = intervalRetention(),
+            tagRetention = tagRetention(tagsOfQuestion),
+            categoryRetention = categoryRetention(categoryOfQuestion)
         )
+
+        /**
+         * Plan §6.1. A review's band is the whole-day interval carried into
+         * it; [FIRST] is the first logged review of a card. A same-day
+         * relearning step carries 0 days and sits with 1–7d rather than
+         * inventing a band the plan does not define.
+         */
+        private fun bandOf(review: ReplayReview): IntervalBand {
+            val days = review.intervalBeforeDays ?: return IntervalBand.FIRST
+            return when {
+                days <= 7 -> IntervalBand.D1_7
+                days <= 21 -> IntervalBand.D8_21
+                days <= 60 -> IntervalBand.D22_60
+                days <= 180 -> IntervalBand.D61_180
+                else -> IntervalBand.D181_PLUS
+            }
+        }
+
+        private fun intervalRetention(): List<IntervalBandRetention> =
+            IntervalBand.entries.map { band ->
+                val counts = intervalBands[band.ordinal]
+                IntervalBandRetention(band, counts.reviews, counts.passes)
+            }
+
+        /**
+         * Plan §6.2. A question's reviews are counted once per tag it carries,
+         * so a multi-tag question contributes to each tag — the card says so.
+         */
+        private fun tagRetention(tagsOfQuestion: Map<String, List<String>>): List<GroupRetention> {
+            if (tagsOfQuestion.isEmpty()) return emptyList()
+            val byTag = LinkedHashMap<String, Counts>()
+            questionCounts.forEach { (questionId, counts) ->
+                tagsOfQuestion[questionId]?.forEach { tag ->
+                    byTag.getOrPut(tag) { Counts() }.addAll(counts)
+                }
+            }
+            return weakestFirst(byTag, 15)
+        }
+
+        /**
+         * Plan §6.3. The scoped view already breaks down by category; the
+         * all-papers view keeps papers as [groupRetention] and adds this
+         * category slice so section-level weakness is visible without picking
+         * a paper first.
+         */
+        private fun categoryRetention(categoryOfQuestion: Map<String, String>): List<GroupRetention> {
+            if (scopePaperId != null || categoryOfQuestion.isEmpty()) return emptyList()
+            val byCategory = LinkedHashMap<String, Counts>()
+            questionCounts.forEach { (questionId, counts) ->
+                val label = categoryOfQuestion[questionId] ?: return@forEach
+                byCategory.getOrPut(label) { Counts() }.addAll(counts)
+            }
+            return weakestFirst(byCategory, 15)
+        }
+
+        private fun weakestFirst(byLabel: Map<String, Counts>, limit: Int): List<GroupRetention> =
+            byLabel.map { (label, counts) -> GroupRetention(label, counts.reviews, counts.passes) }
+                .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))
+                .take(limit)
 
         private fun countGroup(review: ReplayReview) {
             val key = if (scopePaperId == null) review.paperId else review.questionId

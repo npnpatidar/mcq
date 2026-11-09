@@ -341,6 +341,13 @@ slice, empty inputs, in-memory vs streamed equality.
 Acceptance: Retention tab adds interval-band, tag and all-papers category
 slices; the tag slice uses the index and stays bounded by the reviewed set.
 
+Shipped in `feature/remaining-plan`: `IntervalBand`/`IntervalBandRetention`,
+`RetentionData.intervalRetention`/`tagRetention`/`categoryRetention`, the
+accumulator's per-question fold and post-pass lookups, the
+`question_tags`/`categories` reviewed-id queries, and the three cards.
+`RetentionAdditionsTest` covers the pure rules; `StatsRetentionStreamTest`
+seeds tags and categories so both build paths must agree on all three slices.
+
 ## 7. Workload additions
 
 Extend `WorkloadAccumulator` from the cards it already pages and the log it
@@ -548,7 +555,7 @@ or is re-scoped.
 - [x] Coverage shows studied/unseen/bookmarked and per-paper unseen.
 - [x] Progress shows introductions, graduations, relapses, Again rate and a
       previous-period comparison; the All range hides the comparison.
-- [ ] Retention adds interval-band, tag and all-papers category slices.
+- [x] Retention adds interval-band, tag and all-papers category slices.
 - [ ] Workload adds due-tomorrow/due-this-week, grade mix and sessions.
 - [ ] Memory shows per-paper means; the card sheet shows Again rate and mean
       time.

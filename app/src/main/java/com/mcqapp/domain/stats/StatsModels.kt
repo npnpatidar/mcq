@@ -295,6 +295,22 @@ data class WeekdayRetention(val weekday: Int, val reviews: Int, val passes: Int)
 }
 
 /**
+ * The whole-day interval a card carried into a review (plan §6.1). [FIRST] is
+ * a card's first logged review, which has no interval to qualify with.
+ */
+enum class IntervalBand { FIRST, D1_7, D8_21, D22_60, D61_180, D181_PLUS }
+
+/** Retention counts for one [IntervalBand]; every band is always reported. */
+data class IntervalBandRetention(
+    val band: IntervalBand,
+    val reviews: Int,
+    val passes: Int
+) {
+    val retention: Double?
+        get() = if (reviews == 0) null else passes.toDouble() / reviews
+}
+
+/**
  * A card ranked by how often it is forgotten. [lapses] counts Again grades in
  * the log; [againRate] is lapses over reviews and is the ranking key.
  */
@@ -554,7 +570,13 @@ data class RetentionData(
     val retentionTrend: RetentionTrendData,
     val calibration: CalibrationData,
     val groupRetention: List<GroupRetention>,
-    val weekdayRetention: List<WeekdayRetention>
+    val weekdayRetention: List<WeekdayRetention>,
+    /** Plan §6.1: every band, weakest first is left to the UI's fixed order. */
+    val intervalRetention: List<IntervalBandRetention> = emptyList(),
+    /** Plan §6.2: per tag, a multi-tag review counting in each. */
+    val tagRetention: List<GroupRetention> = emptyList(),
+    /** Plan §6.3: per category across every paper; empty when scoped. */
+    val categoryRetention: List<GroupRetention> = emptyList()
 )
 
 /** Workload tab: how the review volume and pace are distributed. */

@@ -3,7 +3,9 @@ package com.mcqapp.data.repository
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.local.getCategoryTitlesByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.tagsForQuestionsChunked
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
@@ -99,7 +101,22 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
         )
         replayInto(scheduler, accumulator::add)
-        return accumulator.toData()
+        // Plan §6.2/§6.3: the tag and all-papers category slices look up only
+        // the reviewed ids, after the pass, so they stay bounded by the log's
+        // working set rather than the whole bank.
+        val reviewedIds = accumulator.reviewedQuestionIds().toList()
+        val tagsOfQuestion = if (reviewedIds.isEmpty()) {
+            emptyMap()
+        } else {
+            db.questionTagDao().tagsForQuestionsChunked(reviewedIds)
+        }
+        val categoriesForSlice = if (scopePaperId != null || reviewedIds.isEmpty()) {
+            // The scoped map above already labels the per-question groups.
+            emptyMap()
+        } else {
+            db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds)
+        }
+        return accumulator.toData(tagsOfQuestion, categoriesForSlice)
     }
 
     /**

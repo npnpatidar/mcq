@@ -1076,6 +1076,16 @@ interface QuestionDao {
     suspend fun getTagsByIds(ids: List<String>): List<QuestionTagRow>
 
     /**
+     * Current category titles for a set of reviewed questions, for the
+     * all-papers category slice (plan §6.3). Bounded by the reviewed ids.
+     */
+    @Query(
+        "SELECT q.id AS questionId, c.title AS title FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId WHERE q.id IN (:ids)"
+    )
+    suspend fun getCategoryTitlesByIds(ids: List<String>): List<QuestionCategoryTitleRow>
+
+    /**
      * Per-paper question counts in one grouped read. The storage report used
      * to filter a fully materialised question list per paper.
      */
@@ -2152,6 +2162,13 @@ interface QuestionTagDao {
     suspend fun deleteByQuestions(questionIds: Collection<String>): Int
 
     /**
+     * The exact tags of [questionIds], straight from the index — the retention
+     * tag slice reads only the reviewed set (plan §6.2), never a LIKE scan.
+     */
+    @Query("SELECT questionId, tag FROM question_tags WHERE questionId IN (:questionIds)")
+    suspend fun tagsForQuestions(questionIds: List<String>): List<QuestionTagNameRow>
+
+    /**
      * The distinct tags of the scope, most used first. `MIN(tag)` keeps a
      * deterministic spelling when questions disagree only on case.
      */
@@ -3136,6 +3153,18 @@ data class QuestionHashRow(
 data class QuestionTagRow(
     val id: String,
     val tags: String
+)
+
+/** One index tag of one question, for the retention tag slice (plan §6.2). */
+data class QuestionTagNameRow(
+    val questionId: String,
+    val tag: String
+)
+
+/** A reviewed question's current category title (plan §6.3). */
+data class QuestionCategoryTitleRow(
+    val questionId: String,
+    val title: String
 )
 
 /** One question's lifetime counters, all-attempt and representative. */

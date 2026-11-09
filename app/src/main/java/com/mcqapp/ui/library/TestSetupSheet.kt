@@ -206,7 +206,7 @@ internal fun TestSetupSheet(
     var panelToDelete by remember { mutableStateOf<PanelSummary?>(null) }
     /** The paper's blueprints, loaded once for the Blueprint picker. */
     var blueprints by remember(paper.id) { mutableStateOf<List<BlueprintSummary>?>(null) }
-    LaunchedEffect(paper.id, type) {
+    LaunchedEffect(paper.id, type, blueprints == null) {
         if (type == TestType.BLUEPRINT && blueprints == null) {
             blueprints = runCatching { loadBlueprints(paper.id) }.getOrDefault(emptyList())
         }

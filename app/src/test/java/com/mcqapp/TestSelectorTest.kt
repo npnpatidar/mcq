@@ -17,6 +17,7 @@ import com.mcqapp.domain.signals.Signals
 import com.mcqapp.domain.signals.TestRanking
 import com.mcqapp.domain.signals.TestSelector
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -279,6 +280,30 @@ class TestSelectorTest {
     )
 
     @Test
+    fun balancedRotatesTheSubsetWhenTheRequestIsBelowTheTopicCount() {
+        // 30 topics, a 20-question Balanced run: the fixed largest-remainder
+        // order would always take the same 20. The attempt seed rotates the
+        // included subset and remains the reproducibility state.
+        val signals = (0 until 30).flatMap { topic ->
+            (0 until 5).map { q -> signal("c${topic}q$q", "c$topic") }
+        }
+        val first = TestSelector.select(plan(TestType.BALANCED, 20, seed = 1L), signals)!!
+        val second = TestSelector.select(plan(TestType.BALANCED, 20, seed = 2L), signals)!!
+        assertEquals(20, first.ids.size)
+        val firstTopics = first.ids.map { it.substringBefore('q') }.toSet()
+        val secondTopics = second.ids.map { it.substringBefore('q') }.toSet()
+        assertEquals(20, firstTopics.size)
+        assertEquals(20, secondTopics.size)
+        assertNotEquals(firstTopics, secondTopics)
+        // The same seed reproduces the same sample.
+        assertEquals(
+            first.ids,
+            TestSelector.select(plan(TestType.BALANCED, 20, seed = 1L), signals)!!.ids
+        )
+        assertEquals(FillSource.BALANCED.name, first.composition.segments.first().source)
+    }
+
+    @Test
     fun largestRemainderMatchesTheSpecExample() {
         val allocation = TestSelector.allocate(
             20,
@@ -449,6 +474,78 @@ class TestSelectorTest {
             selection.composition.segments.first().source
         )
         assertEquals(20, selection.composition.segments.first().count)
+    }
+
+    @Test
+    fun coverageAllocatesEquallyAcrossTopics() {
+        val signals = buildList {
+            repeat(30) { add(signal("a$it", "a")) }
+            repeat(10) { add(signal("b$it", "b")) }
+            repeat(10) { add(signal("c$it", "c")) }
+        }
+        val selection = TestSelector.select(plan(TestType.COVERAGE, 20), signals)!!
+        assertEquals(20, selection.ids.size)
+        val counts = listOf("a", "b", "c").map { prefix ->
+            selection.ids.count { it.startsWith(prefix) }
+        }
+        // 20 does not divide by 3: every topic gets six or seven, so the two
+        // ten-question topics are not crowded out by the thirty-question one.
+        assertTrue("unequal coverage: $counts", counts.all { it == 6 || it == 7 })
+        assertEquals(FillSource.COVERAGE.name, selection.composition.segments.first().source)
+        assertEquals(20, selection.composition.segments.sumOf { it.count })
+        assertTrue(selection.targets.isEmpty())
+    }
+
+    @Test
+    fun coverageRedistributesAShortTopicsSurplus() {
+        val signals = buildList {
+            repeat(30) { add(signal("a$it", "a")) }
+            repeat(2) { add(signal("b$it", "b")) }
+        }
+        val selection = TestSelector.select(plan(TestType.COVERAGE, 20), signals)!!
+        assertEquals(20, selection.ids.size)
+        // The two-question topic takes both, and the surplus returns to the
+        // large topic instead of leaving the run short.
+        assertEquals(2, selection.ids.count { it.startsWith("b") })
+        assertEquals(18, selection.ids.count { it.startsWith("a") })
+    }
+
+    @Test
+    fun coverageBelowTheTopicCountPicksOnePerTopicDeterministically() {
+        val signals = buildList {
+            repeat(5) { add(signal("a$it", "a")) }
+            repeat(5) { add(signal("b$it", "b")) }
+            repeat(5) { add(signal("c$it", "c")) }
+        }
+        val plan = plan(TestType.COVERAGE, 2)
+        val selection = TestSelector.select(plan, signals)!!
+        assertEquals(2, selection.ids.size)
+        assertEquals(2, selection.ids.distinct().size)
+        assertEquals(FillSource.COVERAGE.name, selection.composition.segments.first().source)
+        assertEquals(2, selection.composition.segments.first().count)
+        // Reproducible from the seed: the same plan picks the same two topics.
+        assertEquals(selection.ids, TestSelector.select(plan, signals)!!.ids)
+    }
+
+    @Test
+    fun exposureWeightedCoveragePrefersTheLeastTestedQuestion() {
+        val signals = listOf(
+            signal("tested", "a", correct = 0),
+            signal("fresh", "a", correct = 0)
+        )
+        val weighted = plan(TestType.COVERAGE, 1)
+            .copy(variant = TestPlan.EXPOSURE_VARIANT)
+        val selection = TestSelector.select(
+            weighted, signals, exposure = mapOf("tested" to 5)
+        )!!
+        assertEquals(listOf("fresh"), selection.ids)
+        assertEquals(
+            FillSource.COVERAGE_EXPOSURE.name,
+            selection.composition.segments.first().source
+        )
+        // The plain mode keeps the same type but records an unweighted block.
+        val plain = TestSelector.select(weighted.copy(variant = null), signals)!!
+        assertEquals(FillSource.COVERAGE.name, plain.composition.segments.first().source)
     }
 
     @Test

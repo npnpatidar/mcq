@@ -7,7 +7,10 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.QuestionTagEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.local.getCategoryTitlesByIdsChunked
+import com.mcqapp.data.local.tagsForQuestionsChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
@@ -80,6 +83,24 @@ class StatsRetentionStreamTest {
     private suspend fun seedLog() {
         db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
         db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Paper Two"))
+        // Categories and tags so the new §6.2/§6.3 slices have data on both
+        // build paths: q1 carries two tags, q2 one, q3 none.
+        db.categoryDao().upsert(CategoryEntity("c1", "p1", "Alpha"))
+        db.categoryDao().upsert(CategoryEntity("c2", "p2", "Beta"))
+        db.questionDao().upsertAll(
+            listOf(
+                QuestionEntity("q1", "c1", text = "", searchText = "", searchTextFolded = "", tags = "tag-a,tag-b", tagsFolded = "tag-a tag-b"),
+                QuestionEntity("q2", "c1", text = "", searchText = "", searchTextFolded = "", tags = "tag-a", tagsFolded = "tag-a"),
+                QuestionEntity("q3", "c2", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = "")
+            )
+        )
+        db.questionTagDao().insertIgnore(
+            listOf(
+                QuestionTagEntity("q1", "tag-a", "tag-a"),
+                QuestionTagEntity("q1", "tag-b", "tag-b"),
+                QuestionTagEntity("q2", "tag-a", "tag-a")
+            )
+        )
         val tenDaysAgo = todayStart - 10 * day + 2 * hour
         log("q1", rating = 3, reviewedAt = tenDaysAgo)
         log("q1", rating = 1, reviewedAt = tenDaysAgo + hour)
@@ -96,13 +117,14 @@ class StatsRetentionStreamTest {
     /** The same payload built the way every list-based tab builds it. */
     private suspend fun inMemory(scopePaperId: String?, range: StatsAggregator.Range): RetentionData {
         val library = repository.statsLibrary()
+        val reviews = repository.statsReviews()
+        // The post-pass lookups the streamed build performs (plan §6.2/§6.3).
+        val reviewedIds = reviews.map { it.questionId }.distinct()
         return StatsAggregator.buildRetention(
             StatsAggregator.Input(
-                reviews = repository.statsReviews(),
+                reviews = reviews,
                 cards = library.cards,
-                // The fixture has no categories; the scoped labels fall back to
-                // the same "unknown group" the streamed build produces.
-                categoryOfQuestion = emptyMap(),
+                categoryOfQuestion = db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds),
                 paperTitleOf = library.paperTitleOf,
                 scheduler = FsrsScheduler(
                     desiredRetention = library.config.desiredRetention,
@@ -110,7 +132,8 @@ class StatsRetentionStreamTest {
                 ),
                 config = library.config,
                 now = now,
-                zoneOffsetMillis = DayBoundary.zoneOffset(now)
+                zoneOffsetMillis = DayBoundary.zoneOffset(now),
+                tagsOfQuestion = db.questionTagDao().tagsForQuestionsChunked(reviewedIds)
             ),
             scopePaperId,
             range
@@ -135,6 +158,10 @@ class StatsRetentionStreamTest {
             assertTrue(streamed.weekdayRetention.any { it.reviews > 0 })
             assertTrue(streamed.calibration.samples > 0)
             assertTrue(streamed.groupRetention.isNotEmpty())
+            assertTrue(streamed.intervalRetention.sumOf { it.reviews } > 0)
+            assertTrue(streamed.tagRetention.isNotEmpty())
+            // The category slice only exists when no paper is selected.
+            assertEquals(scope == null, streamed.categoryRetention.isNotEmpty())
         }
     }
 
@@ -144,8 +171,8 @@ class StatsRetentionStreamTest {
         val everyPaper = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
         val scoped = repository.statsRetention("p1", StatsAggregator.Range.ALL, now)
         // Unscoped the breakdown is one row per paper; scoped to p1 it is one
-        // per question of that paper — both labelled "—", since the fixture has
-        // no categories — and p2's card no longer contributes.
+        // per question of that paper — both in Alpha — and p2's card no longer
+        // contributes.
         assertEquals(
             setOf("Paper One", "Paper Two"),
             everyPaper.groupRetention.map { it.label }.toSet()

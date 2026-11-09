@@ -28,12 +28,16 @@ import kotlin.math.roundToInt
  * here averages a practice score into a mock score.
  */
 @Composable
-internal fun TestsSection(data: TestProgressData) {
+internal fun TestsSection(
+    data: TestProgressData,
+    onOpenAttempt: (Long) -> Unit = {}
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        item(contentType = "exam") { ExamSection(data, onOpenAttempt) }
         item(contentType = "families") { FamiliesCard(data) }
         item(contentType = "reliability") { ReliabilityCard(data) }
         item(contentType = "practice") { PracticeCard(data) }
@@ -227,13 +231,13 @@ private fun ScopeCard(data: TestProgressData) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                stringResource(R.string.stats_progress_title),
+                stringResource(R.string.stats_scope_title),
                 style = MaterialTheme.typography.titleSmall
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 stringResource(
-                    R.string.stats_progress_line,
+                    R.string.stats_scope_line,
                     data.scopeSize,
                     data.unseen,
                     data.leeches,
@@ -242,7 +246,7 @@ private fun ScopeCard(data: TestProgressData) {
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                stringResource(R.string.stats_progress_help),
+                stringResource(R.string.stats_scope_help),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -4,6 +4,7 @@ import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestPlan.Resolution
+import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +27,8 @@ class TestPlanTest {
         samplingVersion: Int = TestPlan.SAMPLING_VERSION,
         scopeKey: String = ScopeKey.wholePaper("p1"),
         exclusionMode: ExclusionMode = ExclusionMode.NONE,
-        targetTopicIds: List<String> = emptyList()
+        targetTopicIds: List<String> = emptyList(),
+        variant: String? = null
     ) = TestPlan(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -36,7 +38,8 @@ class TestPlanTest {
         samplingVersion = samplingVersion,
         scopeKey = scopeKey,
         exclusionMode = exclusionMode,
-        targetTopicIds = targetTopicIds
+        targetTopicIds = targetTopicIds,
+        variant = variant
     )
 
     @Test
@@ -248,6 +251,36 @@ class TestPlanTest {
     }
 
     @Test
+    fun coverageIsPracticeAndUsesTheSignalSelector() {
+        // Plan §10: equal allocation over-represents small topics, so Coverage
+        // must never feed the mock trend or the `rep*` counters.
+        assertFalse(TestType.COVERAGE.isRepresentative)
+        assertTrue(TestType.COVERAGE.isPractice)
+        assertTrue(TestType.COVERAGE.usesSignalSelector)
+        assertFalse(TestType.COVERAGE.supportsFreshSample)
+        assertTrue(TestSetup.isStartableType(TestType.COVERAGE))
+        val coverage = plan(type = TestType.COVERAGE)
+        assertNull(coverage.validationError(100))
+        assertEquals(
+            Resolution.Ready(count = 20, short = false, clamped = false, message = null),
+            coverage.resolve(100)
+        )
+    }
+
+    @Test
+    fun coverageOnlyAcceptsTheExposureMode() {
+        assertNull(plan(type = TestType.COVERAGE).validationError(100))
+        assertNull(
+            plan(type = TestType.COVERAGE, variant = TestPlan.EXPOSURE_VARIANT)
+                .validationError(100)
+        )
+        assertEquals(
+            TestPlan.COVERAGE_VARIANT_MESSAGE,
+            plan(type = TestType.COVERAGE, variant = "OTHER").validationError(100)
+        )
+    }
+
+    @Test
     fun aStoredTypeIsNullWhenUnknownOrMissing() {
         assertEquals(TestType.RANDOM, TestType.fromStorage("RANDOM"))
         assertEquals(TestType.MIXED, TestType.fromStorage(" MIXED "))
@@ -281,5 +314,26 @@ class TestPlanTest {
     fun theSamplerMessagesNameTheWayOut() {
         assertTrue(TestPlan.noPassageFitsMessage().contains("longer test"))
         assertTrue(TestPlan.passageTooLargeMessage().contains("150"))
+    }
+
+    @Test
+    fun aRestoredLengthSnapsIntoTheAllowedRange() {
+        // Plan §10: a stored length may predate the current step, or be
+        // corrupt; it can never reach the plan unchanged.
+        assertEquals(20, TestPlan.normalizeLength(Int.MIN_VALUE))
+        assertEquals(20, TestPlan.normalizeLength(-40))
+        assertEquals(20, TestPlan.normalizeLength(0))
+        assertEquals(20, TestPlan.normalizeLength(20))
+        assertEquals(20, TestPlan.normalizeLength(24))
+        assertEquals(30, TestPlan.normalizeLength(25))
+        assertEquals(30, TestPlan.normalizeLength(26))
+        assertEquals(70, TestPlan.normalizeLength(70))
+        assertEquals(150, TestPlan.normalizeLength(145))
+        assertEquals(150, TestPlan.normalizeLength(149))
+        assertEquals(150, TestPlan.normalizeLength(150))
+        assertEquals(150, TestPlan.normalizeLength(Int.MAX_VALUE))
+        for (value in listOf(-1, 0, 21, 34, 77, 148, 999)) {
+            assertTrue(TestPlan.isAllowedLength(TestPlan.normalizeLength(value)))
+        }
     }
 }

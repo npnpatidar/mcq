@@ -130,6 +130,13 @@ suspend fun QuestionDao.getExistingIdsChunked(ids: Collection<String>): List<Str
 suspend fun QuestionDao.getTagsByIdsChunked(ids: List<String>): Map<String, String> =
     ids.chunks().flatMap { getTagsByIds(it) }.associate { it.id to it.tags }
 
+suspend fun QuestionDao.getCategoryTitlesByIdsChunked(ids: List<String>): Map<String, String> =
+    ids.chunks().flatMap { getCategoryTitlesByIds(it) }.associate { it.questionId to it.title }
+
+suspend fun QuestionTagDao.tagsForQuestionsChunked(ids: List<String>): Map<String, List<String>> =
+    ids.chunks().flatMap { tagsForQuestions(it) }
+        .groupBy({ it.questionId }, { it.tag })
+
 suspend fun BookmarkDao.removeAllChunked(questionIds: Collection<String>) {
     questionIds.toList().chunks().forEach { removeAll(it) }
 }

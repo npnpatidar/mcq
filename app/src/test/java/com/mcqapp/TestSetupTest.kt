@@ -139,6 +139,11 @@ class TestSetupTest {
             TestComparability.PRACTICE,
             setup(type = TestType.MISTAKES, available = 100).comparability()
         )
+        // Plan §10: equal allocation is a practice sample, never a mock.
+        assertEquals(
+            TestComparability.PRACTICE,
+            setup(type = TestType.COVERAGE, available = 100).comparability()
+        )
     }
 
     @Test
@@ -147,6 +152,7 @@ class TestSetupTest {
             listOf(
                 TestType.RANDOM,
                 TestType.BALANCED,
+                TestType.COVERAGE,
                 TestType.MISTAKES,
                 TestType.WEAKEST_TOPICS,
                 TestType.TOUGHEST_QUESTIONS,

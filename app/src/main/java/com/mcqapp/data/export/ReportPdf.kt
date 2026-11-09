@@ -15,6 +15,10 @@ import kotlin.math.roundToInt
 /**
  * Slice 5: a simple v1 report PDF (tables/text, no charts). Honest and small;
  * the CSV carries the per-question detail.
+ *
+ * The text is laid out by the pure [lines] function and the PDF writer only
+ * draws it, so the report's content is testable on a JVM even where
+ * `PdfDocument` is unavailable (see `PdfPaperWriterTest`).
  */
 object ReportPdf {
 
@@ -22,6 +26,100 @@ object ReportPdf {
     private const val PAGE_H = 842
     private const val MARGIN = 40f
     private const val LINE = 14f
+
+    /** How a laid-out line is drawn. */
+    enum class Style { TITLE, HEADING, BODY }
+
+    /** One line of the report, before wrapping. */
+    data class ReportLine(val text: String, val style: Style = Style.BODY)
+
+    /**
+     * The report's text in draw order. [generatedAt] is injectable so tests
+     * can pin the timestamp line.
+     */
+    fun lines(
+        report: TestReport,
+        generatedAt: Long = System.currentTimeMillis()
+    ): List<ReportLine> {
+        val out = mutableListOf<ReportLine>()
+        fun heading(text: String) = out.add(ReportLine(text, Style.HEADING))
+        fun body(text: String) = out.add(ReportLine(text, Style.BODY))
+
+        out.add(ReportLine("MCQ Report", Style.TITLE))
+        heading("Paper: ${report.attempt.title}")
+        body("Attempt: ${report.attempt.id} · ${report.family} · ${report.type ?: "legacy"}")
+        body(
+            "Finished: " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+                .format(Date(report.attempt.finishedAt))
+        )
+
+        heading("Score")
+        val pct = (report.score.accuracy * 100).roundToInt()
+        body("${report.score.correct}/${report.score.shown} correct · $pct% accuracy")
+        body(
+            "Correct ${report.score.correct}, wrong ${report.score.wrong}, " +
+                "skipped ${report.score.skipped}, ungraded ${report.score.ungraded}"
+        )
+        report.marginPoints?.let {
+            body(
+                "Approx. margin: ±${String.format(Locale.US, "%.1f", it)} points " +
+                    "(comparable sample)"
+            )
+        }
+        report.guessing?.let { guessing ->
+            body(
+                "Guessing-corrected: ${(guessing.correctedAccuracy * 100).roundToInt()}% " +
+                    "(raw ${(guessing.rawAccuracy * 100).roundToInt()}%, " +
+                    "chance ${(guessing.chance * 100).roundToInt()}%, estimate)"
+            )
+        }
+
+        heading("Error mix")
+        body(
+            "Knowledge gap ${report.errorMix.knowledgeGap}, rushed ${report.errorMix.rushed}, " +
+                "skipped ${report.errorMix.skipped}, possible guess " +
+                "${report.errorMix.possibleGuess}, ungraded ${report.errorMix.ungraded}"
+        )
+        if (report.errorMix.smallSample) body("(Timing split based on a small sample.)")
+
+        heading("Timing")
+        if (report.timing.hasDwell) {
+            body(
+                "Median dwell ${report.timing.medianSeconds}s · slow threshold " +
+                    "${report.timing.slowThresholdSeconds}s · avg correct " +
+                    "${report.timing.correctAverageSeconds}s · avg wrong " +
+                    "${report.timing.wrongAverageSeconds}s"
+            )
+        } else {
+            body("No timing data recorded.")
+        }
+
+        if (report.topics.isNotEmpty()) {
+            heading("Topics")
+            report.topics.take(20).forEach { topic ->
+                body(
+                    "${topic.title}: ${topic.correct}/${topic.asked} " +
+                        "(${(topic.accuracy * 100).roundToInt()}%)" +
+                        if (topic.smallSample) " · small sample" else ""
+                )
+            }
+        }
+
+        if (report.actions.isNotEmpty()) {
+            heading("Recommended actions")
+            report.actions.take(5).forEach { action ->
+                val label = action.rule::class.simpleName ?: "Action"
+                body("• $label (${action.kind})")
+            }
+        }
+
+        body("Test schedule unchanged. Study scheduling is separate from mock/practice tests.")
+        body(
+            "Generated " + SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+                .format(Date(generatedAt))
+        )
+        return out
+    }
 
     fun write(report: TestReport, out: OutputStream) {
         val doc = PdfDocument()
@@ -79,59 +177,21 @@ object ReportPdf {
 
             fun blank(gap: Float = 8f) { y += gap }
 
-            canvas.drawText("MCQ Report", MARGIN, y, titlePaint)
-            y += 22f
-            line("Paper: ${report.attempt.title}", boldPaint)
-            line("Attempt: ${report.attempt.id} · ${report.family} · ${report.type ?: "legacy"}")
-            line("Finished: ${SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(report.attempt.finishedAt))}")
-            blank()
-
-            line("Score", boldPaint)
-            val pct = (report.score.accuracy * 100).roundToInt()
-            line("${report.score.correct}/${report.score.shown} correct · $pct% accuracy")
-            line("Correct ${report.score.correct}, wrong ${report.score.wrong}, skipped ${report.score.skipped}, ungraded ${report.score.ungraded}")
-            report.marginPoints?.let { line("Approx. margin: ±${String.format(Locale.US, "%.1f", it)} points (comparable sample)") }
-            report.guessing?.let { guessing ->
-                line(
-                    "Guessing-corrected: ${(guessing.correctedAccuracy * 100).roundToInt()}% " +
-                        "(raw ${(guessing.rawAccuracy * 100).roundToInt()}%, " +
-                        "chance ${(guessing.chance * 100).roundToInt()}%, estimate)"
-                )
-            }
-            blank()
-
-            line("Error mix", boldPaint)
-            line("Knowledge gap ${report.errorMix.knowledgeGap}, rushed ${report.errorMix.rushed}, skipped ${report.errorMix.skipped}, possible guess ${report.errorMix.possibleGuess}, ungraded ${report.errorMix.ungraded}")
-            if (report.errorMix.smallSample) line("(Timing split based on a small sample.)")
-            blank()
-
-            line("Timing", boldPaint)
-            if (report.timing.hasDwell) {
-                line("Median dwell ${report.timing.medianSeconds}s · slow threshold ${report.timing.slowThresholdSeconds}s · avg correct ${report.timing.correctAverageSeconds}s · avg wrong ${report.timing.wrongAverageSeconds}s")
-            } else {
-                line("No timing data recorded.")
-            }
-            blank()
-
-            if (report.topics.isNotEmpty()) {
-                line("Topics", boldPaint)
-                report.topics.take(20).forEach { topic ->
-                    line("${topic.title}: ${topic.correct}/${topic.asked} (${(topic.accuracy * 100).roundToInt()}%)${if (topic.smallSample) " · small sample" else ""}")
+            var previous: Style? = null
+            lines(report).forEach { entry ->
+                // A blank line before every section, as the hand-written
+                // layout had.
+                if (entry.style == Style.HEADING && previous != null) blank()
+                when (entry.style) {
+                    Style.TITLE -> {
+                        canvas.drawText(entry.text, MARGIN, y, titlePaint)
+                        y += 22f
+                    }
+                    Style.HEADING -> line(entry.text, boldPaint)
+                    Style.BODY -> line(entry.text, bodyPaint)
                 }
-                blank()
+                previous = entry.style
             }
-
-            if (report.actions.isNotEmpty()) {
-                line("Recommended actions", boldPaint)
-                report.actions.take(5).forEach { action ->
-                    val label = action.rule::class.simpleName ?: "Action"
-                    line("• $label (${action.kind})")
-                }
-                blank()
-            }
-
-            line("Test schedule unchanged. Study scheduling is separate from mock/practice tests.", bodyPaint)
-            line("Generated ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}", bodyPaint)
 
             doc.finishPage(page)
             doc.writeTo(out)

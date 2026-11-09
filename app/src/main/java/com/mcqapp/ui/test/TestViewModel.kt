@@ -386,8 +386,17 @@ class TestViewModel(
                     } else {
                         emptyMap()
                     }
+                    // Exposure-weighted Coverage reads stored test appearances
+                    // (plan §10); the mode is carried by the plan's variant.
+                    val exposure = if (effectivePlan.type == TestType.COVERAGE &&
+                        effectivePlan.variant == TestPlan.EXPOSURE_VARIANT
+                    ) {
+                        repository.testExposureByPaper(paperId)
+                    } else {
+                        emptyMap()
+                    }
                     TestSelector.select(
-                        effectivePlan, pool, breadth, customPool, medianDwellSeconds
+                        effectivePlan, pool, breadth, customPool, medianDwellSeconds, exposure
                     )
                 } else {
                     null
@@ -610,12 +619,14 @@ class TestViewModel(
         }
         // The variant is the custom type's choice (phase 3): a folded tag or
         // a difficulty name. A Tag/Authored route without one cannot start,
-        // and Start on the setup sheet already refuses without it.
+        // and Start on the setup sheet already refuses without it. Coverage's
+        // variant is its optional exposure mode, so a blank one is valid.
         val variant = when (type) {
             TestType.TAG, TestType.AUTHORED_DIFFICULTY, TestType.FIXED_PANEL ->
                 routeVariant.ifBlank {
                     throw IllegalStateException("This test needs a choice.")
                 }
+            TestType.COVERAGE -> routeVariant.trim().takeIf { it.isNotEmpty() }
             else -> null
         }
         return TestPlan(

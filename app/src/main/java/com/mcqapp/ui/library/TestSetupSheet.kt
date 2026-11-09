@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -104,6 +106,12 @@ internal fun TestSetupSheet(
      * name, or null.
      */
     loadPreview: suspend (TestType, Int, Breadth, String?) -> SelectionPreview,
+    /**
+     * The length the learner last started a test with (plan §10). It is only a
+     * starting point: [TestPlan.normalizeLength] snaps it to a selectable step
+     * and the pool clamps it further.
+     */
+    loadLastLength: suspend () -> Int = { TestPlan.DEFAULT_LENGTH },
     /** The scope's distinct tags for the phase-3 Tag picker. */
     loadTags: suspend () -> List<com.mcqapp.data.local.TagCount> = { emptyList() },
     /** The paper's fixed panels for the phase-3 panel picker. */
@@ -127,9 +135,36 @@ internal fun TestSetupSheet(
 ) {
     var type by rememberSaveable(initialType) { mutableStateOf(initialType) }
     var requestedCount by rememberSaveable { mutableIntStateOf(TestPlan.DEFAULT_LENGTH) }
+    /** Set once the stored length has been read, so a rotation cannot re-apply it. */
+    var lengthRestored by rememberSaveable { mutableStateOf(false) }
+    /** A length the learner picked this time is never overridden by the pool clamp. */
+    var lengthChosen by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!lengthRestored) {
+            requestedCount = TestPlan.normalizeLength(
+                runCatching { loadLastLength() }.getOrDefault(TestPlan.DEFAULT_LENGTH)
+            )
+            lengthRestored = true
+        }
+    }
     var breadth by rememberSaveable { mutableStateOf(Breadth.MEDIUM) }
     /** The custom choice (phase 3): folded tag for `TAG`, difficulty name else. */
     var variant by rememberSaveable { mutableStateOf<String?>(null) }
+    /** Coverage's exposure mode (plan §10); the plan carries it as the variant. */
+    var weightByExposure by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(type) {
+        if (type != TestType.COVERAGE) weightByExposure = false
+    }
+    /**
+     * What the route and the preview carry: the custom choice, or Coverage's
+     * exposure mode. Keeping one value means the preview and Start cannot
+     * disagree about the mode.
+     */
+    val effectiveVariant = if (type == TestType.COVERAGE && weightByExposure) {
+        TestPlan.EXPOSURE_VARIANT
+    } else {
+        variant
+    }
     /** The scope's distinct tags, loaded once for the Tag picker. */
     var tags by remember(paper.id, categoryIds) { mutableStateOf<List<com.mcqapp.data.local.TagCount>?>(null) }
     LaunchedEffect(paper.id, categoryIds, type) {
@@ -212,7 +247,7 @@ internal fun TestSetupSheet(
         mutableStateOf<SelectionPreview?>(null)
     }
     var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
-    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, variant) {
+    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, effectiveVariant) {
         if (!type.usesSignalSelector || panelBlocked) {
             selectionPreview = null
             previewLoading = false
@@ -220,7 +255,7 @@ internal fun TestSetupSheet(
         }
         previewLoading = true
         selectionPreview = runCatching {
-            loadPreview(type, requestCount, breadth, variant)
+            loadPreview(type, requestCount, breadth, effectiveVariant)
         }.getOrNull()
         previewLoading = false
     }
@@ -267,10 +302,14 @@ internal fun TestSetupSheet(
             ?: TestTime.Suggested,
         available = available,
         exclusionMode = exclusionMode,
-        variant = if (!panelBlocked && (type == TestType.TAG ||
+        variant = when {
+            panelBlocked -> null
+            type == TestType.COVERAGE -> effectiveVariant
+            type == TestType.TAG ||
                 type == TestType.AUTHORED_DIFFICULTY ||
-                type == TestType.FIXED_PANEL)
-        ) variant else null,
+                type == TestType.FIXED_PANEL -> variant
+            else -> null
+        },
         minBlockSize = minBlockSize ?: 1
     )
     // The largest length this pool can actually supply. Chips above it are
@@ -278,6 +317,17 @@ internal fun TestSetupSheet(
     // still covers a length carried over from a larger scope or type.
     val maxSelectable = TestPlan.maxAllowedFor(available)
     val maxLengthIndex = TestPlan.LENGTHS.indexOf(maxSelectable).coerceAtLeast(0)
+
+    // A restored length is clamped to the current pool (plan §10). A length
+    // the learner picked this time keeps the existing "asked/run" message
+    // instead of being silently lowered.
+    LaunchedEffect(maxSelectable, lengthRestored, lengthChosen) {
+        if (lengthRestored && !lengthChosen &&
+            maxSelectable >= TestPlan.MIN_LENGTH && requestedCount > maxSelectable
+        ) {
+            requestedCount = maxSelectable
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -321,6 +371,7 @@ internal fun TestSetupSheet(
                         TestType.TOUGHEST_QUESTIONS -> R.string.test_setup_type_toughest_help
                         TestType.EASIEST_QUESTIONS -> R.string.test_setup_type_easiest_help
                         TestType.BALANCED -> R.string.test_setup_type_balanced_help
+                        TestType.COVERAGE -> R.string.test_setup_type_coverage_help
                         TestType.TRICKY -> R.string.test_setup_type_tricky_help
                         TestType.AT_RISK -> R.string.test_setup_type_at_risk_help
                         TestType.UNSEEN -> R.string.test_setup_type_unseen_help
@@ -336,6 +387,27 @@ internal fun TestSetupSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // Coverage's exposure mode (plan §10). The type stays Coverage;
+            // only the within-topic order changes, so the score is still a
+            // practice sample, not a mock.
+            if (type == TestType.COVERAGE) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = weightByExposure,
+                        onCheckedChange = { weightByExposure = it }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.test_setup_coverage_exposure),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    stringResource(R.string.test_setup_coverage_exposure_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             // A custom type needs its choice before Start is offered.
             when (type) {
                 TestType.TAG -> {
@@ -574,6 +646,7 @@ internal fun TestSetupSheet(
                         onValueChange = {
                             val index = it.roundToInt().coerceIn(0, maxLengthIndex)
                             requestedCount = TestPlan.LENGTHS[index]
+                            lengthChosen = true
                         },
                         valueRange = 0f..maxLengthIndex.toFloat(),
                         // One stop between the selectable lengths: the slider
@@ -586,7 +659,10 @@ internal fun TestSetupSheet(
                         FilterChip(
                             selected = requestedCount == preset,
                             enabled = preset <= maxSelectable,
-                            onClick = { requestedCount = preset },
+                            onClick = {
+                                requestedCount = preset
+                                lengthChosen = true
+                            },
                             label = { Text(preset.toString()) }
                         )
                     }
@@ -672,7 +748,7 @@ internal fun TestSetupSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, variant) },
+                onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, effectiveVariant) },
                 enabled = setup.startable() && !poolLoading && !blockLoading && !panelsLoading,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -806,6 +882,8 @@ private fun fillSourceLabel(source: String): String = when (source.uppercase()) 
     "AT_RISK" -> stringResource(R.string.test_setup_fill_at_risk)
     "UNSEEN" -> stringResource(R.string.test_setup_fill_unseen)
     "BALANCED" -> stringResource(R.string.test_setup_fill_balanced)
+    "COVERAGE" -> stringResource(R.string.test_setup_fill_coverage)
+    "COVERAGE_EXPOSURE" -> stringResource(R.string.test_setup_fill_coverage_exposure)
     "MIXED" -> stringResource(R.string.test_setup_fill_mixed)
     "BOOKMARKED" -> stringResource(R.string.test_setup_fill_bookmarked)
     "TAG" -> stringResource(R.string.test_setup_fill_tag)

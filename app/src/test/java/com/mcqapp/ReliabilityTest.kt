@@ -244,4 +244,37 @@ class ReliabilityTest {
         assertNull(Reliability.sem(Double.NaN, Double.NaN))
         assertNull(Reliability.kr20(listOf(listOf(Double.NaN, 1.0), listOf(1.0, Double.NaN))))
     }
+
+    /**
+     * Plan §9.3: the two internal-consistency estimators are cross-checked on
+     * one matrix where both are defined. The documented tolerance is 0.10
+     * points; the Guttman pattern below puts them 0.045 apart.
+     */
+    @Test
+    fun `KR-20 and the across-attempt split-half agree within ten points`() {
+        // 20 attempts, 20 items; attempt i answers the first i+1 items
+        // correctly. Hand-computed: KR-20 = 0.9474, split-half = 0.9925.
+        val matrix = (0 until 20).map { i ->
+            (0 until 20).map { j -> if (j <= i) 1.0 else 0.0 }
+        }
+        val kr = Reliability.kr20(matrix)!!
+        val split = Reliability.splitHalfAcrossAttempts(matrix)!!
+        assertEquals(0.9474, kr, 1e-3)
+        assertEquals(0.9925, split, 1e-3)
+        assertTrue(
+            "KR-20 $kr and split-half $split differ by more than 0.10",
+            abs(kr - split) <= 0.10
+        )
+    }
+
+    @Test
+    fun `the across-attempt split-half is null when a half has no variance`() {
+        // Everyone answers everything: neither half varies across attempts.
+        val flat = List(5) { List(20) { 1.0 } }
+        assertNull(Reliability.splitHalfAcrossAttempts(flat))
+        assertNull(Reliability.kr20(flat))
+        // Too few attempts, or ragged rows, are not estimable either.
+        assertNull(Reliability.splitHalfAcrossAttempts(listOf(List(20) { 1.0 })))
+        assertNull(Reliability.splitHalfAcrossAttempts(listOf(List(20) { 1.0 }, List(19) { 1.0 })))
+    }
 }

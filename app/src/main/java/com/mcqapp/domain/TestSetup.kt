@@ -69,8 +69,9 @@ data class TestSetup(
     val exclusionMode: ExclusionMode = ExclusionMode.NONE,
     /**
      * A custom type's choice (phase 3): the folded tag for `TAG`, or the
-     * difficulty name for `AUTHORED_DIFFICULTY`. Null for every other type;
-     * a custom plan without its variant cannot start.
+     * difficulty name for `AUTHORED_DIFFICULTY`; for `COVERAGE`, the exposure
+     * mode ([TestPlan.EXPOSURE_VARIANT]). Null for every other type; a custom
+     * plan without its variant cannot start.
      */
     val variant: String? = null,
     /**
@@ -166,6 +167,7 @@ data class TestSetup(
         val STARTABLE_TYPES: List<TestType> = listOf(
             TestType.RANDOM,
             TestType.BALANCED,
+            TestType.COVERAGE,
             TestType.MISTAKES,
             TestType.WEAKEST_TOPICS,
             TestType.TOUGHEST_QUESTIONS,

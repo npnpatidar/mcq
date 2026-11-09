@@ -62,11 +62,23 @@ object StatsAggregator {
         /** The device's UTC offset at [now], in ms. */
         val zoneOffsetMillis: Long,
         /**
+         * Row-based coverage (plan §4). The pure aggregator cannot derive it
+         * from the card list: an unseen question has no card at all. The
+         * database path supplies the same value, so both builds agree.
+         */
+        val coverage: CoverageStats = CoverageStats(),
+        /**
          * questionId → chance a uniform random pick is exactly right, for the
          * guessed questions only. The guessing tab's baseline reads it; every
          * other section may pass an empty map.
          */
-        val chanceOfQuestion: Map<String, Double> = emptyMap()
+        val chanceOfQuestion: Map<String, Double> = emptyMap(),
+        /**
+         * questionId → its tags, for the retention tab's tag slice (plan §6.2).
+         * A streamed build fills it for the reviewed ids only; every other
+         * section may pass an empty map.
+         */
+        val tagsOfQuestion: Map<String, List<String>> = emptyMap()
     )
 
     /**
@@ -113,7 +125,8 @@ object StatsAggregator {
             workload = workloadOf(ctx),
             memory = memoryOf(ctx, overview.kpis()),
             cards = cardsOf(ctx),
-            guessing = guessingOf(ctx)
+            guessing = guessingOf(ctx),
+            progress = progressOf(ctx)
         )
     }
 
@@ -138,6 +151,10 @@ object StatsAggregator {
     /** The cards tab on its own. */
     fun buildCards(input: Input, scopePaperId: String?, range: Range): CardsData =
         cardsOf(Context.of(input, scopePaperId, range))
+
+    /** The progress tab on its own (plan §5). */
+    fun buildProgress(input: Input, scopePaperId: String?, range: Range): ProgressData =
+        progressOf(Context.of(input, scopePaperId, range))
 
     /**
      * The overview pass: the scope-filtered log and the scope-filtered cards
@@ -176,7 +193,10 @@ object StatsAggregator {
             categoryOfQuestion = ctx.input.categoryOfQuestion
         )
         ctx.inScope.forEach(accumulator::add)
-        return accumulator.toData()
+        return accumulator.toData(
+            tagsOfQuestion = ctx.input.tagsOfQuestion,
+            categoryOfQuestion = ctx.input.categoryOfQuestion
+        )
     }
 
     private fun workloadOf(ctx: Context): WorkloadData {
@@ -201,7 +221,8 @@ object StatsAggregator {
             now = ctx.input.now,
             cfg = ctx.cfg,
             zone = ctx.zone,
-            scheduler = ctx.input.scheduler
+            scheduler = ctx.input.scheduler,
+            paperTitleOf = ctx.input.paperTitleOf
         )
         ctx.input.reviews.forEach(accumulator::add)
         ctx.input.cards.forEach(accumulator::addCard)
@@ -217,6 +238,20 @@ object StatsAggregator {
         // The cards first: the leech roll-up can only recognise a leech once
         // its card has been seen.
         ctx.input.cards.forEach(accumulator::addCard)
+        ctx.input.reviews.forEach(accumulator::add)
+        return accumulator.toData(coverage = ctx.input.coverage)
+    }
+
+    private fun progressOf(ctx: Context): ProgressData {
+        val accumulator = ProgressAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone
+        )
+        // The whole log: the accumulator applies the scope and the range
+        // itself, and the streamed build pages the same rows.
         ctx.input.reviews.forEach(accumulator::add)
         return accumulator.toData()
     }
@@ -607,6 +642,11 @@ object StatsAggregator {
                 reviews++
                 if (passed) passes++
             }
+
+            fun addAll(other: Counts) {
+                reviews += other.reviews
+                passes += other.passes
+            }
         }
 
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
@@ -623,6 +663,16 @@ object StatsAggregator {
 
         /** Group key → every in-range review of it, in first-seen order. */
         private val groups = LinkedHashMap<String, Counts>()
+
+        /**
+         * Every in-range review per question (plan §6.2/§6.3). Bounded by the
+         * log's working set, not by the library, and folded into tag/category
+         * counts only after the pass.
+         */
+        private val questionCounts = LinkedHashMap<String, Counts>()
+
+        /** Plan §6.1: the whole-day interval carried into each review. */
+        private val intervalBands = Array(IntervalBand.entries.size) { Counts() }
 
         private var earliestInRange: Long? = null
 
@@ -646,6 +696,8 @@ object StatsAggregator {
             if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
             countGroup(review)
             countCalibration(review)
+            intervalBands[bandOf(review).ordinal].add(review.passed)
+            questionCounts.getOrPut(review.questionId) { Counts() }.add(review.passed)
             // The true-retention rule, through the shared cursor: a first
             // exposure carries no whole-day interval to qualify with, and only
             // the day's first qualifying review counts.
@@ -655,13 +707,81 @@ object StatsAggregator {
             weekdays[weekdayOf(day)].add(review.passed)
         }
 
-        /** The tab's four charts. */
-        fun toData(): RetentionData = RetentionData(
+        /** The reviewed questions, for the post-pass tag/category lookups. */
+        fun reviewedQuestionIds(): Set<String> = questionCounts.keys
+
+        /** The tab's charts; tags and categories need the post-pass maps. */
+        fun toData(
+            tagsOfQuestion: Map<String, List<String>> = emptyMap(),
+            categoryOfQuestion: Map<String, String> = emptyMap()
+        ): RetentionData = RetentionData(
             retentionTrend = trend(),
             calibration = calibration(),
             groupRetention = groupRetention(),
-            weekdayRetention = weekdayRetention()
+            weekdayRetention = weekdayRetention(),
+            intervalRetention = intervalRetention(),
+            tagRetention = tagRetention(tagsOfQuestion),
+            categoryRetention = categoryRetention(categoryOfQuestion)
         )
+
+        /**
+         * Plan §6.1. A review's band is the whole-day interval carried into
+         * it; [FIRST] is the first logged review of a card. A same-day
+         * relearning step carries 0 days and sits with 1–7d rather than
+         * inventing a band the plan does not define.
+         */
+        private fun bandOf(review: ReplayReview): IntervalBand {
+            val days = review.intervalBeforeDays ?: return IntervalBand.FIRST
+            return when {
+                days <= 7 -> IntervalBand.D1_7
+                days <= 21 -> IntervalBand.D8_21
+                days <= 60 -> IntervalBand.D22_60
+                days <= 180 -> IntervalBand.D61_180
+                else -> IntervalBand.D181_PLUS
+            }
+        }
+
+        private fun intervalRetention(): List<IntervalBandRetention> =
+            IntervalBand.entries.map { band ->
+                val counts = intervalBands[band.ordinal]
+                IntervalBandRetention(band, counts.reviews, counts.passes)
+            }
+
+        /**
+         * Plan §6.2. A question's reviews are counted once per tag it carries,
+         * so a multi-tag question contributes to each tag — the card says so.
+         */
+        private fun tagRetention(tagsOfQuestion: Map<String, List<String>>): List<GroupRetention> {
+            if (tagsOfQuestion.isEmpty()) return emptyList()
+            val byTag = LinkedHashMap<String, Counts>()
+            questionCounts.forEach { (questionId, counts) ->
+                tagsOfQuestion[questionId]?.forEach { tag ->
+                    byTag.getOrPut(tag) { Counts() }.addAll(counts)
+                }
+            }
+            return weakestFirst(byTag, 15)
+        }
+
+        /**
+         * Plan §6.3. The scoped view already breaks down by category; the
+         * all-papers view keeps papers as [groupRetention] and adds this
+         * category slice so section-level weakness is visible without picking
+         * a paper first.
+         */
+        private fun categoryRetention(categoryOfQuestion: Map<String, String>): List<GroupRetention> {
+            if (scopePaperId != null || categoryOfQuestion.isEmpty()) return emptyList()
+            val byCategory = LinkedHashMap<String, Counts>()
+            questionCounts.forEach { (questionId, counts) ->
+                val label = categoryOfQuestion[questionId] ?: return@forEach
+                byCategory.getOrPut(label) { Counts() }.addAll(counts)
+            }
+            return weakestFirst(byCategory, 15)
+        }
+
+        private fun weakestFirst(byLabel: Map<String, Counts>, limit: Int): List<GroupRetention> =
+            byLabel.map { (label, counts) -> GroupRetention(label, counts.reviews, counts.passes) }
+                .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))
+                .take(limit)
 
         private fun countGroup(review: ReplayReview) {
             val key = if (scopePaperId == null) review.paperId else review.questionId
@@ -871,6 +991,8 @@ object StatsAggregator {
         private class DayBucket {
             /** LEARNING, REVIEW, RELEARNING, unknown — the chart's legend order. */
             val kinds = IntArray(4)
+            /** Again, Hard, Good, Easy — the grade-mix chart's order. */
+            val grades = IntArray(4)
             var reviews = 0
             var seconds = 0L
             var timedReviews = 0
@@ -884,6 +1006,7 @@ object StatsAggregator {
                     ReplayReview.ReviewKind.RELEARNING -> kinds[2]++
                     null -> kinds[3]++
                 }
+                if (review.rating in 1..4) grades[review.rating - 1]++
                 seconds += review.elapsedSeconds ?: 0L
                 review.elapsedSeconds?.let {
                     timedReviews++
@@ -906,6 +1029,30 @@ object StatsAggregator {
         private val forecastReview = IntArray(FORECAST_DAYS)
         private var forecastOverdue = 0
         private var forecastLoad = 0.0
+
+        /** Plan §7 near-term counts; backlog is excluded from both. */
+        private var dueTomorrow = 0
+        private var dueThisWeek = 0
+
+        /**
+         * Plan §7 session state. The log is fed in the same order the guessing
+         * accumulator sees, so the same 30-minute gap rule applies: a gap of
+         * 30 minutes or more, or a backwards clock, starts a new sitting.
+         */
+        private var lastReviewAt = Long.MIN_VALUE
+        private var sessionReviews = 0
+        private var sessionFirstAt = 0L
+        private var sessionLastAt = 0L
+        private var sessionTimedSeconds = 0L
+        private var sessionTimedReviews = 0
+
+        private var sessionCount = 0
+        private var sessionReviewSum = 0L
+        private var sessionMinutesSum = 0.0
+        private var sessionLongestMinutes = 0.0
+        private var sessionSecondsSum = 0L
+        private var sessionTimedReviewSum = 0L
+        private val sessionHistogram = IntArray(SESSION_LABELS.size)
 
         /** Answer-button counts per [AnswerButtonsData.Kind], first-seen order. */
         private val answerKinds = LinkedHashMap<AnswerButtonsData.Kind, IntArray>()
@@ -930,6 +1077,7 @@ object StatsAggregator {
             if (rangeStart != null && review.reviewedAt < rangeStart) return
             val seen = earliest
             if (seen == null || review.reviewedAt < seen) earliest = review.reviewedAt
+            countSession(review)
             days.getOrPut(studyEpochDay(review.reviewedAt, cfg, zone)) { DayBucket() }.add(review)
             countAnswerButtons(review)
             val hour = (Math.floorMod(review.reviewedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
@@ -954,6 +1102,15 @@ object StatsAggregator {
             val state = snapshot.state
             if (state.leech) leechQuestions += state.questionId
             if (state.state == CardStateKind.NEW || state.dueAt == 0L) return
+            // Plan §7: backlog excluded from both near-term counts.
+            if (state.dueAt >= todayStart) {
+                if (state.dueAt >= todayStart + DayBoundary.DAY_MS &&
+                    state.dueAt < todayStart + 2 * DayBoundary.DAY_MS
+                ) {
+                    dueTomorrow++
+                }
+                if (state.dueAt < todayStart + 7 * DayBoundary.DAY_MS) dueThisWeek++
+            }
             forecastLoad += if (state.intervalDays <= 0) 1.0 else 1.0 / state.intervalDays
             val dayIndex = Math.floorDiv(state.dueAt - todayStart, DayBoundary.DAY_MS)
             when {
@@ -976,8 +1133,94 @@ object StatsAggregator {
             timePerDay = timePerDay(),
             answerButtons = answerButtons(),
             hourly = hourly(),
-            responseTime = responseTime()
+            responseTime = responseTime(),
+            ratingTrend = ratingTrend(),
+            sessions = sessions()
         )
+
+        /**
+         * Plan §7. A gap of 30 minutes or more — or a backwards clock — starts
+         * a new sitting, the same rule the guessing tab uses.
+         */
+        private fun countSession(review: ReplayReview) {
+            val gap = review.reviewedAt - lastReviewAt
+            if (lastReviewAt == Long.MIN_VALUE || gap < 0 || gap > SITTING_GAP_MS) {
+                finishSession()
+                sessionFirstAt = review.reviewedAt
+                sessionReviews = 0
+                sessionTimedSeconds = 0L
+                sessionTimedReviews = 0
+            }
+            lastReviewAt = review.reviewedAt
+            sessionLastAt = review.reviewedAt
+            sessionReviews++
+            review.elapsedSeconds?.let {
+                sessionTimedSeconds += it
+                sessionTimedReviews++
+            }
+        }
+
+        /** Folds the open sitting into the summary; safe to call more than once. */
+        private fun finishSession() {
+            if (sessionReviews == 0) return
+            sessionCount++
+            sessionReviewSum += sessionReviews
+            val minutes = (sessionLastAt - sessionFirstAt) / 60_000.0
+            sessionMinutesSum += minutes
+            if (minutes > sessionLongestMinutes) sessionLongestMinutes = minutes
+            sessionSecondsSum += sessionTimedSeconds
+            sessionTimedReviewSum += sessionTimedReviews
+            var bin = SESSION_EDGES.indexOfFirst { sessionReviews < it }
+            if (bin < 0) bin = SESSION_LABELS.size - 1
+            sessionHistogram[bin]++
+            sessionReviews = 0
+        }
+
+        private fun sessions(): SessionSummary {
+            finishSession()
+            return SessionSummary(
+                count = sessionCount,
+                meanReviews = if (sessionCount == 0) {
+                    null
+                } else {
+                    sessionReviewSum.toDouble() / sessionCount
+                },
+                meanMinutes = if (sessionCount == 0) null else sessionMinutesSum / sessionCount,
+                longestMinutes = if (sessionCount == 0) null else sessionLongestMinutes,
+                meanSecondsPerReview = if (sessionTimedReviewSum == 0L) {
+                    null
+                } else {
+                    sessionSecondsSum.toDouble() / sessionTimedReviewSum
+                },
+                histogram = SESSION_LABELS.mapIndexed { i, label ->
+                    SessionSummary.SessionBin(label, sessionHistogram[i])
+                }
+            )
+        }
+
+        private fun ratingTrend(): List<GradeMixPoint> {
+            val windowStart = rangeStart ?: earliest ?: return emptyList()
+            val granularity = granularityFor(windowStart, todayDay, cfg, zone)
+            val buckets = bucketList(
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+            )
+            val gradesByBucket = HashMap<Long, IntArray>()
+            days.forEach { (day, bucket) ->
+                val key = bucketKeyOf(day, granularity)
+                val grades = gradesByBucket.getOrPut(key) { IntArray(4) }
+                for (i in 0 until 4) grades[i] += bucket.grades[i]
+            }
+            return buckets.map { b ->
+                val grades = gradesByBucket[b.key]
+                GradeMixPoint(
+                    label = b.label,
+                    again = grades?.get(0) ?: 0,
+                    hard = grades?.get(1) ?: 0,
+                    good = grades?.get(2) ?: 0,
+                    easy = grades?.get(3) ?: 0
+                )
+            }
+        }
 
         private fun countAnswerButtons(review: ReplayReview) {
             val kind = when {
@@ -1027,7 +1270,9 @@ object StatsAggregator {
                 },
                 overdue = forecastOverdue,
                 dueToday = forecastLearning[0] + forecastReview[0],
-                dailyLoad = forecastLoad
+                dailyLoad = forecastLoad,
+                dueTomorrow = dueTomorrow,
+                dueThisWeek = dueThisWeek
             )
         }
 
@@ -1163,6 +1408,10 @@ object StatsAggregator {
 
         private companion object {
             const val FORECAST_DAYS = 30
+            /** A pause this long between reviews starts a new sitting (plan §7). */
+            const val SITTING_GAP_MS = 30 * 60 * 1000L
+            val SESSION_EDGES = listOf(2, 5, 10, 20, 50)
+            val SESSION_LABELS = listOf("1", "2–4", "5–9", "10–19", "20–49", "50+")
             val RESPONSE_EDGES = listOf(5L, 10L, 20L, 30L, 60L, 120L)
             val RESPONSE_LABELS =
                 listOf("0–5s", "5–10s", "10–20s", "20–30s", "30–60s", "1–2m", "2m+")
@@ -1194,12 +1443,26 @@ object StatsAggregator {
         private val now: Long,
         private val cfg: SchedulerConfig,
         private val zone: Long,
-        private val scheduler: FsrsScheduler
+        private val scheduler: FsrsScheduler,
+        private val paperTitleOf: Map<String, String> = emptyMap()
     ) {
         private val stability = Values()
         private val difficulty = Values()
         private val retrievability = Values()
         private val intervals = Values()
+
+        /** Per-paper sums for the unscoped means (plan §8.3). */
+        private class PaperSums {
+            var cards = 0
+            var stabilitySum = 0.0
+            var stabilityCount = 0
+            var difficultySum = 0.0
+            var difficultyCount = 0
+            var retrievabilitySum = 0.0
+            var retrievabilityCount = 0
+        }
+
+        private val paperSums = LinkedHashMap<String, PaperSums>()
 
         /** Contributing reviews seen per question, capped at the last bucket. */
         private val contributing = HashMap<String, Int>()
@@ -1226,6 +1489,20 @@ object StatsAggregator {
         fun addCard(snapshot: CardSnapshot) {
             if (scopePaperId != null && snapshot.paperId != scopePaperId) return
             val state = snapshot.state
+            if (scopePaperId == null) {
+                val sums = paperSums.getOrPut(snapshot.paperId) { PaperSums() }
+                sums.cards++
+                if (state.stability > 0.0) {
+                    sums.stabilitySum += state.stability
+                    sums.stabilityCount++
+                    sums.retrievabilitySum += scheduler.retention(state, now)
+                    sums.retrievabilityCount++
+                }
+                if (state.difficulty > 0.0) {
+                    sums.difficultySum += state.difficulty
+                    sums.difficultyCount++
+                }
+            }
             if (state.stability > 0.0) {
                 stability.add(state.stability)
                 retrievability.add(scheduler.retention(state, now))
@@ -1241,8 +1518,36 @@ object StatsAggregator {
             difficulty = difficultyDistribution(difficulty),
             retrievability = retrievabilityDistribution(retrievability),
             intervals = histogram(intervals, INTERVAL_EDGES, INTERVAL_LABELS),
-            memoryGrowth = memoryGrowth()
+            memoryGrowth = memoryGrowth(),
+            byPaper = byPaper()
         )
+
+        /** Plan §8.3: one row per paper, only when no paper is selected. */
+        private fun byPaper(): List<PaperMemory> {
+            if (scopePaperId != null) return emptyList()
+            return paperSums.map { (paperId, sums) ->
+                PaperMemory(
+                    paperId = paperId,
+                    label = paperTitleOf[paperId] ?: UNKNOWN_PAPER,
+                    cards = sums.cards,
+                    meanStability = if (sums.stabilityCount == 0) {
+                        null
+                    } else {
+                        sums.stabilitySum / sums.stabilityCount
+                    },
+                    meanDifficulty = if (sums.difficultyCount == 0) {
+                        null
+                    } else {
+                        sums.difficultySum / sums.difficultyCount
+                    },
+                    meanRetrievability = if (sums.retrievabilityCount == 0) {
+                        null
+                    } else {
+                        sums.retrievabilitySum / sums.retrievabilityCount
+                    }
+                )
+            }.sortedWith(compareBy({ it.label }, { it.paperId }))
+        }
 
         private fun memoryGrowth(): MemoryGrowthData {
             val points = (1..CAPPED_NUMBERS).map { number ->
@@ -1397,11 +1702,12 @@ object StatsAggregator {
         }
 
         /** The cards tab's slice. */
-        fun toData(): CardsData = CardsData(
+        fun toData(coverage: CoverageStats = CoverageStats()): CardsData = CardsData(
             cardCounts = CardCountsData(learning, relearning, young, mature, leechCount),
             overdueAge = overdueAge(),
             paperCounts = if (scopePaperId == null) paperCounts() else emptyList(),
-            leeches = leeches()
+            leeches = leeches(),
+            coverage = coverage
         )
 
         private fun overdueAge(): OverdueAgeData = OverdueAgeData(
@@ -1767,6 +2073,160 @@ object StatsAggregator {
             const val SITTING_GAP_MS = 30 * 60 * 1000L
             /** Below this many guesses a card's hit rate is noise. */
             const val SHAKY_MIN_GUESSES = 2
+        }
+    }
+
+    // --- progress accumulator ------------------------------------------------
+
+    /**
+     * The Progress tab as one bounded pass (plan §5). Introductions need the
+     * first-ever logged review per card, so the accumulator keeps a set of
+     * seen (paper, question) keys — bounded by the card library, not the log.
+     * Every other figure is a counter, and the per-day buckets are the only
+     * per-day state.
+     *
+     * The in-memory and the streamed build feed this same accumulator, so the
+     * two cannot drift apart.
+     */
+    class ProgressAccumulator(
+        private val scopePaperId: String?,
+        private val range: Range,
+        private val now: Long,
+        private val cfg: SchedulerConfig,
+        private val zone: Long
+    ) {
+        private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
+        private val todayDay = studyEpochDay(todayStart, cfg, zone)
+
+        /** First day of the selected window; null for the All range. */
+        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+
+        /** First day of the equal-length window before it; null for All. */
+        private val previousStart = range.days?.let { rangeStart!! - it * DayBoundary.DAY_MS }
+
+        private class Counts {
+            var reviews = 0
+            var passes = 0
+            var introduced = 0
+            var graduated = 0
+            var relapsed = 0
+            var again = 0
+            var timedSeconds = 0L
+            var timedCount = 0
+            val days = HashSet<Long>()
+
+            fun add(review: ReplayReview, firstEver: Boolean) {
+                reviews++
+                if (review.passed) passes++ else again++
+                review.elapsedSeconds?.let {
+                    timedSeconds += it
+                    timedCount++
+                }
+                if (firstEver) introduced++
+                if (review.passed) {
+                    when (review.stateBefore) {
+                        CardStateKind.NEW, CardStateKind.LEARNING, CardStateKind.RELEARNING ->
+                            graduated++
+                        else -> Unit
+                    }
+                } else if (review.stateBefore == CardStateKind.REVIEW) {
+                    relapsed++
+                }
+            }
+
+            val passRate: Double? get() = if (reviews == 0) null else passes.toDouble() / reviews
+            val avgSeconds: Double? get() =
+                if (timedCount == 0) null else timedSeconds.toDouble() / timedCount
+        }
+
+        private val totals = Counts()
+        private val current = Counts()
+        private val previous = Counts()
+
+        /** (paper, question) keys whose first logged review has been seen. */
+        private val seenCards = HashSet<String>()
+
+        /** Study day → that day's counts; bucketed in [toData]. */
+        private val trendDays = HashMap<Long, Counts>()
+
+        private var earliestInRange: Long? = null
+
+        /**
+         * Feeds one replayed review. Rows before the previous window are
+         * dropped, but the seen-set is updated first so a card introduced long
+         * ago is never counted as an introduction when it is reviewed again.
+         */
+        fun add(review: ReplayReview) {
+            if (scopePaperId != null && review.paperId != scopePaperId) return
+            val firstEver = seenCards.add(review.paperId + '\u0000' + review.questionId)
+            val reviewedAt = review.reviewedAt
+            if (previousStart != null && reviewedAt < previousStart) return
+            val inCurrent = rangeStart == null || reviewedAt >= rangeStart
+            val counts = if (inCurrent) current else previous
+            counts.add(review, firstEver)
+            val day = studyEpochDay(reviewedAt, cfg, zone)
+            counts.days.add(day)
+            if (!inCurrent) return
+            totals.add(review, firstEver)
+            totals.days.add(day)
+            val earliest = earliestInRange
+            if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
+            trendDays.getOrPut(day) { Counts() }.add(review, firstEver)
+        }
+
+        fun toData(): ProgressData = ProgressData(
+            totals = ProgressSlice(
+                label = "range",
+                reviews = totals.reviews,
+                introduced = totals.introduced,
+                graduated = totals.graduated,
+                relapsed = totals.relapsed,
+                again = totals.again
+            ),
+            comparison = if (range.days == null) {
+                null
+            } else {
+                ProgressComparison(
+                    currentReviews = current.reviews,
+                    previousReviews = previous.reviews,
+                    currentPassRate = current.passRate,
+                    previousPassRate = previous.passRate,
+                    currentAvgSeconds = current.avgSeconds,
+                    previousAvgSeconds = previous.avgSeconds,
+                    currentStudyDays = current.days.size,
+                    previousStudyDays = previous.days.size
+                )
+            },
+            trend = trend()
+        )
+
+        private fun trend(): List<ProgressSlice> {
+            if (trendDays.isEmpty() && rangeStart == null) return emptyList()
+            val windowStart = rangeStart ?: earliestInRange ?: now
+            val granularity = granularityFor(windowStart, todayDay, cfg, zone)
+            val buckets = bucketList(
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+            )
+            val byBucket = HashMap<Long, Counts>()
+            trendDays.forEach { (day, counts) ->
+                val bucket = byBucket.getOrPut(bucketKeyOf(day, granularity)) { Counts() }
+                bucket.reviews += counts.reviews
+                bucket.introduced += counts.introduced
+                bucket.graduated += counts.graduated
+                bucket.relapsed += counts.relapsed
+                bucket.again += counts.again
+            }
+            return buckets.map { bucket ->
+                val counts = byBucket[bucket.key]
+                ProgressSlice(
+                    label = bucket.label,
+                    reviews = counts?.reviews ?: 0,
+                    introduced = counts?.introduced ?: 0,
+                    graduated = counts?.graduated ?: 0,
+                    relapsed = counts?.relapsed ?: 0,
+                    again = counts?.again ?: 0
+                )
+            }
         }
     }
 

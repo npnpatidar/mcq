@@ -6,6 +6,7 @@ import com.mcqapp.R
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.ReportFamily
 import com.mcqapp.domain.TestReportBuilder
+import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestType
 
 /**
@@ -16,6 +17,7 @@ import com.mcqapp.domain.TestType
 fun testTypeLabel(type: TestType?): String = when (type) {
     TestType.RANDOM -> stringResource(R.string.report_type_random)
     TestType.BALANCED -> stringResource(R.string.report_type_balanced)
+    TestType.COVERAGE -> stringResource(R.string.report_type_coverage)
     TestType.WEAKEST_TOPICS -> stringResource(R.string.report_type_weakest_topics)
     TestType.TOUGHEST_QUESTIONS -> stringResource(R.string.report_type_toughest)
     TestType.EASIEST_QUESTIONS -> stringResource(R.string.report_type_easiest)
@@ -35,7 +37,8 @@ fun testTypeLabel(type: TestType?): String = when (type) {
 /**
  * The attempt's type line, with the custom choice appended (phase 3): a Tag
  * run reads `Tag · polity`, an Authored difficulty run reads
- * `Authored difficulty · hard`. Every other type reads its plain label.
+ * `Authored difficulty · hard`, and an exposure-weighted Coverage run reads
+ * `Coverage · exposure`. Every other type reads its plain label.
  */
 @Composable
 fun attemptTypeLine(attempt: Attempt): String {
@@ -46,6 +49,12 @@ fun attemptTypeLine(attempt: Attempt): String {
         TestType.TAG -> stringResource(R.string.report_type_tag_variant, variant)
         TestType.AUTHORED_DIFFICULTY ->
             stringResource(R.string.report_type_difficulty_variant, variant.lowercase())
+        TestType.COVERAGE ->
+            if (variant == TestPlan.EXPOSURE_VARIANT) {
+                stringResource(R.string.report_type_coverage_exposure)
+            } else {
+                base
+            }
         else -> base
     }
 }

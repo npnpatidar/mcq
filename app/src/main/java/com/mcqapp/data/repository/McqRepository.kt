@@ -3,6 +3,7 @@ package com.mcqapp.data.repository
 import android.content.Context
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.chunks
 import com.mcqapp.data.local.countUngradedForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
@@ -28,9 +29,16 @@ import com.mcqapp.domain.signals.TestSelector
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.ExamCategoryTotal
+import com.mcqapp.domain.stats.ExamCounterTotals
+import com.mcqapp.domain.stats.ExamDwellTotals
+import com.mcqapp.domain.stats.ExamGroup
+import com.mcqapp.domain.stats.ExamStats
+import com.mcqapp.domain.stats.ExamStatsBuilder
 import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ProgressData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
@@ -90,6 +98,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     fun pdfTwoColumn(): Flow<Boolean> = settings.pdfTwoColumn()
     suspend fun setPdfTwoColumn(enabled: Boolean) = settings.setPdfTwoColumn(enabled)
+
+    /** The last length the learner started a test with (plan §10). */
+    fun lastTestLength(): Flow<Int> = settings.lastTestLength()
+    suspend fun setLastTestLength(length: Int) = settings.setLastTestLength(length)
 
     fun practiceMode(): Flow<Boolean> = settings.practiceMode()
     suspend fun setPracticeMode(enabled: Boolean) = settings.setPracticeMode(enabled)
@@ -205,6 +217,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         range: StatsAggregator.Range,
         now: Long
     ): CardsData = statsStore.loadCards(scopePaperId, range, now)
+
+    /**
+     * The progress tab alone, streamed: introductions, graduations, relapses
+     * and the Again rate, plus the previous-window comparison.
+     */
+    internal suspend fun statsProgress(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): ProgressData = statsStore.loadProgress(scopePaperId, range, now)
 
     /**
      * The guessing tab alone, streamed: flagged reviews into counters, then the
@@ -682,6 +704,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             .mapValues { (_, samples) -> samples.map { it.dwellSeconds }.sorted() }
             .filter { it.value.size >= TestSelector.SLOWEST_MIN_SAMPLES }
             .mapValues { (_, samples) -> samples[(samples.size - 1) / 2] }
+
+    /**
+     * Stored test appearances per question in [paperId] (plan §10), for the
+     * exposure-weighted Coverage mode: how many stored result rows included
+     * it, answered or skipped. A question no stored test included is absent
+     * and reads as zero exposure.
+     */
+    suspend fun testExposureByPaper(paperId: String): Map<String, Int> =
+        db.attemptDao().getExposureByPaper(paperId).associate { it.questionId to it.count }
 
     /**
      * The smallest passage block in a scope (section 9.6). The setup sheet's
@@ -1238,8 +1269,94 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             panels = com.mcqapp.domain.TestProgress.panels(
                 panels = if (paperId == null) allPanels() else panelsForPaper(paperId),
                 attempts = attempts
-            )
+            ),
+            exams = buildExamStats(attempts, paperId)
         )
+    }
+
+    /**
+     * The Exam view's three comparable groups (plan §3). Attempt headers are
+     * already small; the expensive reads are aggregate-only (category tallies,
+     * dwell) and are restricted to the exact attempt ids behind each group's
+     * headline figures.
+     */
+    private suspend fun buildExamStats(
+        attempts: List<com.mcqapp.domain.Attempt>,
+        paperId: String?
+    ): Map<ExamGroup, ExamStats> {
+        val counters = db.questionStatsDao().getExamCounterTotals(paperId)
+        return ExamGroup.entries.associateWith { group ->
+            val comparable = ExamStatsBuilder.comparableAttempts(attempts, group)
+            val ids = comparable.map { it.id }
+            val population = comparable.lastOrNull()
+                ?.let { db.questionDao().countQuestionsInScope(it.paperId) }
+                ?: 0
+            val lifetime = if (group == ExamGroup.PRACTICE) {
+                ExamCounterTotals(
+                    correct = counters.correct,
+                    wrong = counters.wrong,
+                    skip = counters.skip
+                )
+            } else {
+                ExamCounterTotals(
+                    correct = counters.repCorrect,
+                    wrong = counters.repWrong,
+                    skip = counters.repSkip
+                )
+            }
+            ExamStatsBuilder.build(
+                attempts = attempts,
+                group = group,
+                categoryTotals = examCategoryTotals(ids),
+                dwell = examDwellTotals(ids),
+                lifetime = lifetime,
+                population = population
+            )
+        }
+    }
+
+    /** Category tallies over [attemptIds], merged across bind-safe chunks. */
+    private suspend fun examCategoryTotals(attemptIds: List<Long>): List<ExamCategoryTotal> {
+        if (attemptIds.isEmpty()) return emptyList()
+        val merged = LinkedHashMap<String, MutableCategory>()
+        for (chunk in attemptIds.chunks()) {
+            for (row in db.attemptDao().getExamCategoryTotals(chunk)) {
+                val total = merged.getOrPut(row.title) { MutableCategory(row.title) }
+                total.asked += row.asked
+                total.correct += row.correct
+                total.unresolved += row.unresolved
+                if (total.currentCategoryId == null) total.currentCategoryId = row.currentCategoryId
+            }
+        }
+        return merged.values.map {
+            ExamCategoryTotal(
+                title = it.title,
+                asked = it.asked,
+                correct = it.correct,
+                currentCategoryId = it.currentCategoryId,
+                unresolved = it.unresolved
+            )
+        }
+    }
+
+    /** Measured dwell over [attemptIds]; chunks are disjoint, so sums add. */
+    private suspend fun examDwellTotals(attemptIds: List<Long>): ExamDwellTotals {
+        if (attemptIds.isEmpty()) return ExamDwellTotals()
+        var totalSeconds = 0L
+        var timedRows = 0
+        for (chunk in attemptIds.chunks()) {
+            val row = db.attemptDao().getExamDwellTotals(chunk)
+            totalSeconds += row.totalSeconds
+            timedRows += row.timedRows
+        }
+        return ExamDwellTotals(totalSeconds, timedRows)
+    }
+
+    private class MutableCategory(val title: String) {
+        var asked = 0
+        var correct = 0
+        var unresolved = 0
+        var currentCategoryId: String? = null
     }
 
     private suspend fun computeReliabilitySummary(

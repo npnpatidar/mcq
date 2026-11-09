@@ -45,6 +45,9 @@ internal fun MemorySection(bundle: MemoryData) {
         item(contentType = "distribution") { DistributionCard(bundle.stability, R.string.stats_stability, R.string.stats_stability_help) }
         item(contentType = "distribution") { DistributionCard(bundle.difficulty, R.string.stats_difficulty, R.string.stats_difficulty_help) }
         item(contentType = "retrievability") { RetrievabilityCard(bundle) }
+        if (bundle.byPaper.isNotEmpty()) {
+            item(contentType = "memory-by-paper") { PaperMemoryCard(bundle) }
+        }
         item(contentType = "interval") { IntervalCard(bundle) }
         item(contentType = "growth") { GrowthCard(bundle) }
     }
@@ -107,6 +110,30 @@ private fun RetrievabilityCard(bundle: MemoryData) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun PaperMemoryCard(bundle: MemoryData) {
+    ChartCard(
+        testTag = "stats-memory-by-paper",
+        title = { ChartTitle(R.string.stats_memory_by_paper) },
+        subtitle = { ChartSubtitle(R.string.stats_memory_by_paper_help) }
+    ) {
+        bundle.byPaper.forEach { paper ->
+            Text(
+                stringResource(
+                    R.string.stats_memory_paper_row,
+                    paper.label,
+                    paper.cards,
+                    paper.meanStability?.let { oneDecimal(it) } ?: "—",
+                    paper.meanDifficulty?.let { oneDecimal(it) } ?: "—",
+                    paper.meanRetrievability?.let { formatPct(it) } ?: "—"
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 2.dp)
+            )
+        }
     }
 }
 

@@ -103,6 +103,40 @@ data class ReviewHistoryEntry(
     val intervalDaysAfter: Int?
 )
 
+/**
+ * The per-card sheet's headline figures (plan §8.2), computed from the history
+ * the sheet already loaded — no extra query. [meanSeconds] uses the timed
+ * reviews only.
+ */
+data class CardHistorySummary(
+    val reviews: Int = 0,
+    val again: Int = 0,
+    val meanSeconds: Double? = null
+) {
+    val againRate: Double? get() = if (reviews == 0) null else again.toDouble() / reviews
+
+    companion object {
+        fun of(history: List<ReviewHistoryEntry>): CardHistorySummary {
+            if (history.isEmpty()) return CardHistorySummary()
+            var again = 0
+            var timedSeconds = 0L
+            var timedCount = 0
+            history.forEach { entry ->
+                if (entry.rating == ReviewGrade.AGAIN.ordinal + 1) again++
+                entry.elapsedSeconds?.let {
+                    timedSeconds += it
+                    timedCount++
+                }
+            }
+            return CardHistorySummary(
+                reviews = history.size,
+                again = again,
+                meanSeconds = if (timedCount == 0) null else timedSeconds.toDouble() / timedCount
+            )
+        }
+    }
+}
+
 /** Chartable single-value point; [value] null draws a gap, [count] backs tooltips. */
 data class SeriesPoint(val label: String, val value: Double?, val count: Int = 0)
 
@@ -162,7 +196,11 @@ data class ForecastData(
     /** Cards due today, backlog excluded. */
     val dueToday: Int,
     /** Sum of 1/interval over scheduled cards: the long-run reviews per day. */
-    val dailyLoad: Double
+    val dailyLoad: Double,
+    /** Scheduled cards due in the next study day (plan §7). */
+    val dueTomorrow: Int = 0,
+    /** Scheduled cards due in the next seven days, backlog excluded. */
+    val dueThisWeek: Int = 0
 ) {
     /** Cumulative due count per day if the backlog is never touched. */
     val cumulativeIfSkipped: List<Int>
@@ -290,6 +328,22 @@ data class GroupRetention(val label: String, val reviews: Int, val passes: Int) 
 
 /** Retention by weekday; [weekday] is 0=Monday .. 6=Sunday. */
 data class WeekdayRetention(val weekday: Int, val reviews: Int, val passes: Int) {
+    val retention: Double?
+        get() = if (reviews == 0) null else passes.toDouble() / reviews
+}
+
+/**
+ * The whole-day interval a card carried into a review (plan §6.1). [FIRST] is
+ * a card's first logged review, which has no interval to qualify with.
+ */
+enum class IntervalBand { FIRST, D1_7, D8_21, D22_60, D61_180, D181_PLUS }
+
+/** Retention counts for one [IntervalBand]; every band is always reported. */
+data class IntervalBandRetention(
+    val band: IntervalBand,
+    val reviews: Int,
+    val passes: Int
+) {
     val retention: Double?
         get() = if (reviews == 0) null else passes.toDouble() / reviews
 }
@@ -531,7 +585,8 @@ data class StatsBundle(
     val paperCounts: List<PaperCardCounts>,
     val weakest: List<WeakCard>,
     val leeches: List<WeakCard>,
-    val guessing: GuessingData
+    val guessing: GuessingData,
+    val progress: ProgressData
 )
 
 /**
@@ -553,8 +608,41 @@ data class RetentionData(
     val retentionTrend: RetentionTrendData,
     val calibration: CalibrationData,
     val groupRetention: List<GroupRetention>,
-    val weekdayRetention: List<WeekdayRetention>
+    val weekdayRetention: List<WeekdayRetention>,
+    /** Plan §6.1: every band, weakest first is left to the UI's fixed order. */
+    val intervalRetention: List<IntervalBandRetention> = emptyList(),
+    /** Plan §6.2: per tag, a multi-tag review counting in each. */
+    val tagRetention: List<GroupRetention> = emptyList(),
+    /** Plan §6.3: per category across every paper; empty when scoped. */
+    val categoryRetention: List<GroupRetention> = emptyList()
 )
+
+/** Grade mix in one bucket (plan §7); the four counts always add to [total]. */
+data class GradeMixPoint(
+    val label: String,
+    val again: Int,
+    val hard: Int,
+    val good: Int,
+    val easy: Int
+) {
+    val total: Int get() = again + hard + good + easy
+}
+
+/**
+ * Sittings split by a 30-minute gap (plan §7). Lengths are wall-clock minutes
+ * from a sitting's first review to its last; [meanSecondsPerReview] uses the
+ * timed reviews only. The histogram buckets the reviews in each sitting.
+ */
+data class SessionSummary(
+    val count: Int = 0,
+    val meanReviews: Double? = null,
+    val meanMinutes: Double? = null,
+    val longestMinutes: Double? = null,
+    val meanSecondsPerReview: Double? = null,
+    val histogram: List<SessionBin> = emptyList()
+) {
+    data class SessionBin(val label: String, val count: Int)
+}
 
 /** Workload tab: how the review volume and pace are distributed. */
 data class WorkloadData(
@@ -563,7 +651,11 @@ data class WorkloadData(
     val timePerDay: List<SeriesPoint>,
     val answerButtons: AnswerButtonsData,
     val hourly: List<HourlyStat>,
-    val responseTime: ResponseTimeData
+    val responseTime: ResponseTimeData,
+    /** Plan §7: Again/Hard/Good/Easy per bucket, same granularity rule. */
+    val ratingTrend: List<GradeMixPoint> = emptyList(),
+    /** Plan §7: sitting summary, separate from the guessing tab's buckets. */
+    val sessions: SessionSummary = SessionSummary()
 )
 
 /** Memory tab: where the collection sits in the FSRS state space. */
@@ -573,7 +665,23 @@ data class MemoryData(
     val difficulty: Distribution,
     val retrievability: Distribution,
     val intervals: Distribution,
-    val memoryGrowth: MemoryGrowthData
+    val memoryGrowth: MemoryGrowthData,
+    /** Plan §8.3: per-paper means, unscoped only. */
+    val byPaper: List<PaperMemory> = emptyList()
+)
+
+/**
+ * One paper's mean memory state (plan §8.3). Each mean is over the cards that
+ * carry that value, so a paper with no graduated card still reports [cards]
+ * and a null mean rather than a fabricated zero.
+ */
+data class PaperMemory(
+    val paperId: String,
+    val label: String,
+    val cards: Int,
+    val meanStability: Double?,
+    val meanDifficulty: Double?,
+    val meanRetrievability: Double?
 )
 
 /** Cards tab: the collection's shape and the cards that need attention. */
@@ -581,7 +689,67 @@ data class CardsData(
     val cardCounts: CardCountsData,
     val overdueAge: OverdueAgeData,
     val paperCounts: List<PaperCardCounts>,
-    val leeches: List<WeakCard>
+    val leeches: List<WeakCard>,
+    /** Row-based studied/unseen/bookmarked coverage (plan §4). */
+    val coverage: CoverageStats = CoverageStats()
+)
+
+/**
+ * One progress bucket (plan §5.1): counts, not rates, so buckets pool
+ * correctly. [introduced] is the card's first-ever logged review landing in
+ * the bucket; [graduated] is a pass from NEW/LEARNING/RELEARNING; [relapsed]
+ * is an Again on a REVIEW card.
+ */
+data class ProgressSlice(
+    val label: String,
+    val reviews: Int = 0,
+    val introduced: Int = 0,
+    val graduated: Int = 0,
+    val relapsed: Int = 0,
+    val again: Int = 0
+) {
+    val againRate: Double? get() = if (reviews == 0) null else again.toDouble() / reviews
+    val lapseRate: Double? get() = if (reviews == 0) null else relapsed.toDouble() / reviews
+}
+
+/**
+ * The selected window against the equal-length window immediately before it
+ * (plan §5.1). Null for [StatsAggregator.Range.ALL], which has no previous
+ * window. Pass rate treats Again as a fail.
+ */
+data class ProgressComparison(
+    val currentReviews: Int,
+    val previousReviews: Int,
+    val currentPassRate: Double?,
+    val previousPassRate: Double?,
+    val currentAvgSeconds: Double?,
+    val previousAvgSeconds: Double?,
+    val currentStudyDays: Int,
+    val previousStudyDays: Int
+) {
+    val reviewsDelta: Int get() = currentReviews - previousReviews
+    val passRateDelta: Double?
+        get() = pair(currentPassRate, previousPassRate)?.let { it.first - it.second }
+    val avgSecondsDelta: Double?
+        get() = pair(currentAvgSeconds, previousAvgSeconds)?.let { it.first - it.second }
+    val studyDaysDelta: Int get() = currentStudyDays - previousStudyDays
+
+    /**
+     * Again rate is the inverse of the pass rate, so its signed change is the
+     * pass-rate delta negated (plan §8.1).
+     */
+    val againRateDelta: Double?
+        get() = passRateDelta?.let { -it }
+
+    private fun pair(a: Double?, b: Double?): Pair<Double, Double>? =
+        if (a != null && b != null) a to b else null
+}
+
+/** Progress tab: introductions, graduations, relapses and the Again rate. */
+data class ProgressData(
+    val totals: ProgressSlice,
+    val comparison: ProgressComparison?,
+    val trend: List<ProgressSlice>
 )
 
 /**
@@ -595,7 +763,8 @@ data class StatsSections(
     val workload: WorkloadData,
     val memory: MemoryData,
     val cards: CardsData,
-    val guessing: GuessingData
+    val guessing: GuessingData,
+    val progress: ProgressData
 )
 
 /** Flattens the per-tab slices back into the whole-page payload. */
@@ -625,5 +794,6 @@ fun StatsSections.toBundle(): StatsBundle = StatsBundle(
     paperCounts = cards.paperCounts,
     weakest = overview.weakest,
     leeches = cards.leeches,
-    guessing = guessing
+    guessing = guessing,
+    progress = progress
 )

@@ -3,6 +3,7 @@ package com.mcqapp
 import android.content.Context
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.backup.McqBackupFormat
@@ -10,6 +11,7 @@ import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.StudyMode
+import com.mcqapp.domain.TestPlan
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -54,6 +56,9 @@ class RepositorySettingsTest {
             // leak into every later assertion in the run.
             ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
                 it.remove(stringPreferencesKey("fsrs_parameters"))
+                // The last test length is a plain preference, not scheduler
+                // state: clear it too so one test's 60 cannot seed the next.
+                it.remove(intPreferencesKey("last_test_length"))
             }
         }
     }
@@ -265,5 +270,19 @@ class RepositorySettingsTest {
         val config = store.schedulerConfigNow()
         assertEquals(0.95, config.desiredRetention, 0.0001)
         assertEquals(fitted, config.fsrsParameters)
+    }
+
+    /**
+     * Plan §10: the setup sheet starts from the last accepted length, and a
+     * fresh install keeps the documented default of 20.
+     */
+    @Test
+    fun theLastTestLengthRoundTripsAndDefaultsToTwenty() = runBlocking {
+        val store = store()
+        assertEquals(TestPlan.DEFAULT_LENGTH, store.lastTestLength().first())
+        store.setLastTestLength(60)
+        assertEquals(60, store.lastTestLength().first())
+        store.setLastTestLength(20)
+        assertEquals(20, store.lastTestLength().first())
     }
 }

@@ -30,7 +30,9 @@ import kotlin.math.roundToInt
 internal data class KpiItem(
     @StringRes val labelRes: Int,
     val value: String,
-    val valueColor: Color? = null
+    val valueColor: Color? = null,
+    /** A signed change against the previous window, when one exists. */
+    val delta: String? = null
 )
 
 /** A compact grid of [KpiItem]s, [columns] per row. */
@@ -66,6 +68,14 @@ private fun KpiTile(item: KpiItem, modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+        item.delta?.let { delta ->
+            Text(
+                delta,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 

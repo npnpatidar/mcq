@@ -41,7 +41,8 @@ data class TestPlan(
     val compositionJson: String = "",
     /**
      * The custom type's choice (phase 3): the tag or difficulty name a Tag /
-     * Authored difficulty attempt covers. Null for every other type.
+     * Authored difficulty attempt covers, or Coverage's exposure mode
+     * ([EXPOSURE_VARIANT]). Null for every other type.
      */
     val variant: String? = null
 ) {
@@ -97,6 +98,13 @@ data class TestPlan(
             Difficulty.entries.none { it.name == variant?.trim() }
         ) {
             return VARIANT_REQUIRED_MESSAGE
+        }
+        // Coverage's only mode is exposure weighting; any other variant would
+        // silently run an unweighted sample under a different label.
+        if (type == TestType.COVERAGE && !variant.isNullOrBlank() &&
+            variant != EXPOSURE_VARIANT
+        ) {
+            return COVERAGE_VARIANT_MESSAGE
         }
         if (available <= 0) return EMPTY_SCOPE_MESSAGE
         return null
@@ -193,6 +201,15 @@ data class TestPlan(
         const val TARGET_MESSAGE: String = "This test type cannot record target topics."
         const val TARGET_ORDER_MESSAGE: String = "Target topics must be sorted and deduplicated."
         const val VARIANT_REQUIRED_MESSAGE: String = "Choose a tag or difficulty for this test."
+        const val COVERAGE_VARIANT_MESSAGE: String =
+            "Coverage only supports the exposure-weighted mode."
+
+        /**
+         * The Coverage mode that prefers questions with fewer stored test
+         * appearances (plan §10). It is a mode, not a type: the attempt still
+         * reads as Coverage, and the composition records the weighting.
+         */
+        const val EXPOSURE_VARIANT: String = "EXPOSURE"
         const val PANEL_SCOPE_MESSAGE: String =
             "A fixed panel is a whole-paper set; clear the category selection to run it."
 
@@ -235,6 +252,20 @@ data class TestPlan(
 
         fun isAllowedLength(count: Int): Boolean =
             count in MIN_LENGTH..MAX_LENGTH && count % STEP == 0
+
+        /**
+         * The nearest selectable length to [value], for a value restored from
+         * settings (plan §10): below 20 becomes 20, above 150 becomes 150, and
+         * anything between snaps to the nearest step of ten. A corrupt or
+         * legacy value therefore can never reach the plan unchanged.
+         */
+        fun normalizeLength(value: Int): Int {
+            if (value <= MIN_LENGTH) return MIN_LENGTH
+            if (value >= MAX_LENGTH) return MAX_LENGTH
+            val index = ((value - MIN_LENGTH + STEP / 2) / STEP)
+                .coerceIn(0, LENGTHS.lastIndex)
+            return LENGTHS[index]
+        }
 
         /** The stored form of a target set: sorted and deduplicated. */
         fun canonicalTargets(ids: Collection<String>): List<String> = ids.distinct().sorted()

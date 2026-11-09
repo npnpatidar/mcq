@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.stats.GroupRetention
+import com.mcqapp.domain.stats.IntervalBand
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.ui.stats.charts.CalibrationChart
 import com.mcqapp.ui.stats.charts.ChartCard
@@ -49,6 +51,13 @@ internal fun RetentionSection(bundle: RetentionData) {
         item(contentType = "calibration") { CalibrationCard(bundle) }
         if (bundle.groupRetention.isNotEmpty()) {
             item(contentType = "group-retention") { GroupRetentionCard(bundle) }
+        }
+        item(contentType = "interval") { IntervalCard(bundle) }
+        if (bundle.tagRetention.isNotEmpty()) {
+            item(contentType = "tag-retention") { SliceCard(bundle.tagRetention, R.string.stats_by_tag, R.string.stats_by_tag_help, "stats-tag-retention") }
+        }
+        if (bundle.categoryRetention.isNotEmpty()) {
+            item(contentType = "category-retention") { SliceCard(bundle.categoryRetention, R.string.stats_by_category_all, R.string.stats_by_category_all_help, "stats-category-retention") }
         }
         item(contentType = "weekday") { WeekdayCard(bundle) }
     }
@@ -156,6 +165,57 @@ private fun GroupRetentionCard(bundle: RetentionData) {
                 label = group.label,
                 reviews = group.reviews,
                 retention = group.retention
+            )
+        }
+    }
+}
+
+@Composable
+private fun IntervalCard(bundle: RetentionData) {
+    ChartCard(
+        testTag = "stats-interval-retention",
+        title = { ChartTitle(R.string.stats_by_interval) },
+        subtitle = { ChartSubtitle(R.string.stats_by_interval_help) }
+    ) {
+        bundle.intervalRetention.forEach { band ->
+            RetentionBar(
+                label = intervalLabel(band.band),
+                reviews = band.reviews,
+                retention = band.retention
+            )
+        }
+    }
+}
+
+/** The plan's six bands, in their fixed order (plan §6.1). */
+@Composable
+private fun intervalLabel(band: IntervalBand): String = when (band) {
+    IntervalBand.FIRST -> stringResource(R.string.stats_interval_first)
+    IntervalBand.D1_7 -> stringResource(R.string.stats_interval_1_7)
+    IntervalBand.D8_21 -> stringResource(R.string.stats_interval_8_21)
+    IntervalBand.D22_60 -> stringResource(R.string.stats_interval_22_60)
+    IntervalBand.D61_180 -> stringResource(R.string.stats_interval_61_180)
+    IntervalBand.D181_PLUS -> stringResource(R.string.stats_interval_181_plus)
+}
+
+/** A weakest-first slice (tags or all-papers categories, plan §6.2/§6.3). */
+@Composable
+private fun SliceCard(
+    rows: List<GroupRetention>,
+    @StringRes titleRes: Int,
+    @StringRes helpRes: Int,
+    testTag: String
+) {
+    ChartCard(
+        testTag = testTag,
+        title = { ChartTitle(titleRes) },
+        subtitle = { ChartSubtitle(helpRes) }
+    ) {
+        rows.forEach { row ->
+            RetentionBar(
+                label = row.label,
+                reviews = row.reviews,
+                retention = row.retention
             )
         }
     }

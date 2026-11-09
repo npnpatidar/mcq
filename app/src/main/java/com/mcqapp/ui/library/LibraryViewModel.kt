@@ -730,8 +730,17 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         } else {
             emptyMap()
         }
+        // Exposure-weighted Coverage reads how often each question has
+        // appeared in a stored test (plan §10). Every other mode stays empty.
+        val exposure = if (type == TestType.COVERAGE &&
+            variant == TestPlan.EXPOSURE_VARIANT
+        ) {
+            repository.testExposureByPaper(paper.id)
+        } else {
+            emptyMap()
+        }
         return TestSelector.preview(
-            plan, signals, breadth, customPool, medianDwellSeconds
+            plan, signals, breadth, customPool, medianDwellSeconds, exposure
         )
     }
 
@@ -743,6 +752,16 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     /** The paper's fixed panels, for the phase-3 panel picker. */
     suspend fun panelsForPaper(paperId: String) = repository.panelsForPaper(paperId)
+
+    /** The length the setup sheet should start from (plan §10). */
+    suspend fun lastTestLength(): Int = repository.lastTestLength().first()
+
+    /** Records the accepted length for the next setup sheet. */
+    fun rememberTestLength(count: Int) {
+        viewModelScope.launch {
+            runCatching { repository.setLastTestLength(count) }
+        }
+    }
 
     /**
      * Saves [questionIds] as a named fixed panel. The ids are the preview's

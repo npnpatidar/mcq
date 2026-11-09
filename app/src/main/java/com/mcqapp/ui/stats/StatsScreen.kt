@@ -45,6 +45,7 @@ import com.mcqapp.ui.stats.sections.CardsSection
 import com.mcqapp.ui.stats.sections.GuessingSection
 import com.mcqapp.ui.stats.sections.MemorySection
 import com.mcqapp.ui.stats.sections.OverviewSection
+import com.mcqapp.ui.stats.sections.ProgressSection
 import com.mcqapp.ui.stats.sections.RetentionSection
 import com.mcqapp.ui.stats.sections.TestsSection
 import com.mcqapp.ui.stats.sections.WorkloadSection
@@ -113,7 +114,8 @@ fun StatsScreen(
                     R.string.tab_memory,
                     R.string.tab_cards,
                     R.string.tab_guessing,
-                    R.string.tab_tests
+                    R.string.tab_tests,
+                    R.string.tab_progress
                 ).forEachIndexed { index, titleRes ->
                     val section = StatsViewModel.Tab.entries[index]
                     Tab(
@@ -189,7 +191,17 @@ fun StatsScreen(
                                 )
                             }
                             StatsViewModel.Tab.TESTS -> state.testProgress?.let { data ->
-                                TestsSection(data)
+                                TestsSection(
+                                    data = data,
+                                    onOpenAttempt = { attemptId ->
+                                        navController.navigate(
+                                            com.mcqapp.ui.navigation.resultsRoute(attemptId)
+                                        )
+                                    }
+                                )
+                            }
+                            StatsViewModel.Tab.PROGRESS -> state.progress?.let { data ->
+                                ProgressSection(data)
                             }
                         }
                     }

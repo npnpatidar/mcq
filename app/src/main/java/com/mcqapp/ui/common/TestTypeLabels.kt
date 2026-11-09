@@ -17,6 +17,7 @@ fun testTypeLabelRes(type: TestType?): Int = when (type) {
     TestType.TOUGHEST_QUESTIONS -> R.string.test_setup_type_toughest
     TestType.EASIEST_QUESTIONS -> R.string.test_setup_type_easiest
     TestType.BALANCED -> R.string.test_setup_type_balanced
+    TestType.COVERAGE -> R.string.test_setup_type_coverage
     TestType.TRICKY -> R.string.test_setup_type_tricky
     TestType.AT_RISK -> R.string.test_setup_type_at_risk
     TestType.UNSEEN -> R.string.test_setup_type_unseen
@@ -41,6 +42,7 @@ fun testTypeLabelText(type: TestType?): String = when (type) {
     TestType.TOUGHEST_QUESTIONS -> stringResource(R.string.test_setup_type_toughest)
     TestType.EASIEST_QUESTIONS -> stringResource(R.string.test_setup_type_easiest)
     TestType.BALANCED -> stringResource(R.string.test_setup_type_balanced)
+    TestType.COVERAGE -> stringResource(R.string.test_setup_type_coverage)
     TestType.TRICKY -> stringResource(R.string.test_setup_type_tricky)
     TestType.AT_RISK -> stringResource(R.string.test_setup_type_at_risk)
     TestType.UNSEEN -> stringResource(R.string.test_setup_type_unseen)

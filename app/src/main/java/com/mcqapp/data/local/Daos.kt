@@ -1076,6 +1076,16 @@ interface QuestionDao {
     suspend fun getTagsByIds(ids: List<String>): List<QuestionTagRow>
 
     /**
+     * Current category titles for a set of reviewed questions, for the
+     * all-papers category slice (plan §6.3). Bounded by the reviewed ids.
+     */
+    @Query(
+        "SELECT q.id AS questionId, c.title AS title FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId WHERE q.id IN (:ids)"
+    )
+    suspend fun getCategoryTitlesByIds(ids: List<String>): List<QuestionCategoryTitleRow>
+
+    /**
      * Per-paper question counts in one grouped read. The storage report used
      * to filter a fully materialised question list per paper.
      */
@@ -1161,6 +1171,27 @@ interface QuestionDao {
             "AND s.contentHash = q.contentHash AND s.cardState != 'NEW')"
     )
     suspend fun countUnseenInScope(paperId: String?): Int
+
+    /**
+     * Row-based coverage per paper (plan §4.2): a question is studied when a
+     * `card_state` row exists, not when its schedule says NEW. The grouped
+     * query never materialises a question row; the bookmark join is a set
+     * membership test on a unique key.
+     */
+    @Query(
+        "SELECT p.id AS paperId, p.title AS label, " +
+            "COUNT(q.id) AS questions, " +
+            "COUNT(cs.questionId) AS studied, " +
+            "COUNT(b.questionId) AS bookmarked " +
+            "FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "INNER JOIN papers p ON p.id = c.paperId " +
+            "LEFT JOIN card_state cs ON cs.paperId = p.id AND cs.questionId = q.id " +
+            "LEFT JOIN bookmarks b ON b.questionId = q.id " +
+            "WHERE (:paperId IS NULL OR c.paperId = :paperId) " +
+            "GROUP BY p.id, p.title"
+    )
+    suspend fun getCoverageByPaper(paperId: String?): List<CoverageRow>
 
     /**
      * Per-category counts for one paper's categories.
@@ -2131,6 +2162,13 @@ interface QuestionTagDao {
     suspend fun deleteByQuestions(questionIds: Collection<String>): Int
 
     /**
+     * The exact tags of [questionIds], straight from the index — the retention
+     * tag slice reads only the reviewed set (plan §6.2), never a LIKE scan.
+     */
+    @Query("SELECT questionId, tag FROM question_tags WHERE questionId IN (:questionIds)")
+    suspend fun tagsForQuestions(questionIds: List<String>): List<QuestionTagNameRow>
+
+    /**
      * The distinct tags of the scope, most used first. `MIN(tag)` keeps a
      * deterministic spelling when questions disagree only on case.
      */
@@ -2245,6 +2283,20 @@ interface AttemptDao {
 
     @Query("SELECT * FROM attempts WHERE id = :id")
     suspend fun getById(id: Long): AttemptEntity?
+
+    /**
+     * Stored test appearances per question in [paperId] (plan §10): how many
+     * result rows included it across every stored attempt, answered or
+     * skipped. Coverage's exposure mode prefers the least-tested questions; a
+     * question no stored test included is absent and reads as zero exposure.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId, COUNT(*) AS count " +
+            "FROM question_results r " +
+            "INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE a.paperId = :paperId GROUP BY r.questionId"
+    )
+    suspend fun getExposureByPaper(paperId: String): List<QuestionExposureRow>
 
     /**
      * Each question's most recent graded result across every attempt, by
@@ -2408,6 +2460,33 @@ interface AttemptDao {
             "GROUP BY categoryTitle ORDER BY categoryTitle"
     )
     suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow>
+
+    /**
+     * The Exam tab's category aggregate over a set of comparable attempts.
+     * Grouping by the stored `categoryTitle` keeps every row as-of-attempt; the
+     * `questions` join only resolves a current category for the Study link and
+     * counts the rows whose question no longer exists. It is aggregate-only, so
+     * the page never materialises every result row.
+     */
+    @Query(
+        "SELECT r.categoryTitle AS title, COUNT(*) AS asked, " +
+            "COALESCE(SUM(CASE WHEN r.correctOptionIds != '' " +
+            "AND r.selectedOptionIds != '' AND r.isCorrect THEN 1 ELSE 0 END), 0) AS correct, " +
+            "MIN(q.categoryId) AS currentCategoryId, " +
+            "COALESCE(SUM(CASE WHEN q.id IS NULL THEN 1 ELSE 0 END), 0) AS unresolved " +
+            "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
+            "WHERE r.attemptId IN (:attemptIds) " +
+            "GROUP BY r.categoryTitle ORDER BY r.categoryTitle"
+    )
+    suspend fun getExamCategoryTotals(attemptIds: List<Long>): List<ExamCategoryTotalRow>
+
+    /** The Exam tab's measured dwell over a set of comparable attempts. */
+    @Query(
+        "SELECT COALESCE(SUM(dwellSeconds), 0) AS totalSeconds, " +
+            "COALESCE(SUM(CASE WHEN dwellSeconds > 0 THEN 1 ELSE 0 END), 0) AS timedRows " +
+            "FROM question_results WHERE attemptId IN (:attemptIds)"
+    )
+    suspend fun getExamDwellTotals(attemptIds: List<Long>): ExamDwellRow
 
     /**
      * The report's per-question evidence (section 11.14), without the heavy
@@ -2690,6 +2769,22 @@ interface QuestionStatsDao {
             "repSkip AS repSkip FROM question_stats WHERE questionId IN (:ids)"
     )
     suspend fun getCountersByIds(ids: List<String>): List<QuestionCounterRow>
+
+    /**
+     * Lifetime totals for the Exam tab's counter-source line, scoped to one
+     * paper or every paper. The caller picks the representative or the
+     * all-attempt columns according to the family it is showing.
+     */
+    @Query(
+        "SELECT COALESCE(SUM(correctCount), 0) AS correct, " +
+            "COALESCE(SUM(wrongCount), 0) AS wrong, " +
+            "COALESCE(SUM(skipCount), 0) AS skip, " +
+            "COALESCE(SUM(repCorrect), 0) AS repCorrect, " +
+            "COALESCE(SUM(repWrong), 0) AS repWrong, " +
+            "COALESCE(SUM(repSkip), 0) AS repSkip " +
+            "FROM question_stats WHERE (:paperId IS NULL OR paperId = :paperId)"
+    )
+    suspend fun getExamCounterTotals(paperId: String?): ExamCounterTotalsRow
 
     /**
      * Hardest first: highest wrong rate, then most graded attempts, then text.
@@ -2999,6 +3094,48 @@ data class CategoryBreakdownRow(
 )
 
 /**
+ * One as-of-attempt category row for the Exam tab. [currentCategoryId] is null
+ * when no stored result in the group still resolves to a question;
+ * [unresolved] counts the result rows whose question was deleted.
+ */
+data class ExamCategoryTotalRow(
+    val title: String,
+    val asked: Int,
+    val correct: Int,
+    val currentCategoryId: String?,
+    val unresolved: Int
+)
+
+/** The Exam tab's dwell aggregate over one chunk of attempt ids. */
+data class ExamDwellRow(
+    val totalSeconds: Long,
+    val timedRows: Int
+)
+
+/** One paper's row-based coverage in [QuestionDao.getCoverageByPaper]. */
+data class CoverageRow(
+    val paperId: String,
+    val label: String,
+    val questions: Int,
+    val studied: Int,
+    val bookmarked: Int
+)
+
+/**
+ * Lifetime counters for the Exam tab's source line: the all-attempt set and
+ * the representative subset side by side, so the caller labels which one it
+ * reads instead of conflating them.
+ */
+data class ExamCounterTotalsRow(
+    val correct: Int,
+    val wrong: Int,
+    val skip: Int,
+    val repCorrect: Int,
+    val repWrong: Int,
+    val repSkip: Int
+)
+
+/**
  * The smallest passage block in a scope. [minPassage] is null when the scope
  * has no passages; [standalone] counts questions with no passage, each of
  * which is a block of one.
@@ -3030,6 +3167,18 @@ data class QuestionHashRow(
 data class QuestionTagRow(
     val id: String,
     val tags: String
+)
+
+/** One index tag of one question, for the retention tag slice (plan §6.2). */
+data class QuestionTagNameRow(
+    val questionId: String,
+    val tag: String
+)
+
+/** A reviewed question's current category title (plan §6.3). */
+data class QuestionCategoryTitleRow(
+    val questionId: String,
+    val title: String
 )
 
 /** One question's lifetime counters, all-attempt and representative. */
@@ -3126,6 +3275,12 @@ data class LatestStanding(
 data class StandingRow(
     val questionId: String,
     val isCorrect: Boolean
+)
+
+/** One row of [AttemptDao.getExposureByPaper]: a question and its test count. */
+data class QuestionExposureRow(
+    val questionId: String,
+    val count: Int
 )
 
 /** One row of [AttemptDao.countMistakesByPaper]: a paper and its mistake count. */

@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.domain.TestPlan
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -111,6 +112,23 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
 
     suspend fun setPdfTwoColumn(enabled: Boolean) {
         context.dataStore.edit { it[pdfTwoColumnKey] = enabled }
+    }
+
+    private val lastTestLengthKey = intPreferencesKey("last_test_length")
+
+    /**
+     * The length the learner last started a test with (plan §10). It is only
+     * a starting point: the setup sheet snaps it to a selectable length and
+     * clamps it to the current pool, so a smaller scope never inherits an
+     * impossible request.
+     */
+    fun lastTestLength(): Flow<Int> =
+        context.dataStore.data.map {
+            it[lastTestLengthKey] ?: TestPlan.DEFAULT_LENGTH
+        }
+
+    suspend fun setLastTestLength(length: Int) {
+        context.dataStore.edit { it[lastTestLengthKey] = length }
     }
 
     private val practiceModeKey = booleanPreferencesKey("practice_mode")

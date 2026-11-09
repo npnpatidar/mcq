@@ -33,8 +33,10 @@ import com.mcqapp.ui.stats.charts.LegendDot
 import com.mcqapp.ui.stats.charts.LineChart
 import com.mcqapp.ui.stats.charts.LineSeries
 import com.mcqapp.ui.stats.charts.StackedBarChart
+import com.mcqapp.ui.stats.charts.formatCount
 import com.mcqapp.ui.stats.charts.formatDuration
 import com.mcqapp.ui.stats.charts.formatPct
+import com.mcqapp.ui.stats.charts.formatSeconds
 import com.mcqapp.ui.stats.charts.seriesColors
 import kotlin.math.roundToInt
 
@@ -55,8 +57,10 @@ internal fun WorkloadSection(
     ) {
         item(contentType = "forecast") { ForecastCard(bundle) }
         item(contentType = "reviews-per-day") { ReviewsPerDayCard(bundle) }
+        item(contentType = "grade-mix") { GradeMixCard(bundle) }
         item(contentType = "time-per-day") { TimePerDayCard(bundle) }
         item(contentType = "answer-buttons") { AnswerButtonsCard(bundle) }
+        item(contentType = "sessions") { SessionsCard(bundle) }
         item(contentType = "hourly") { HourlyCard(bundle) }
         item(contentType = "response-time") { ResponseTimeCard(bundle, questionText, onOpenCard) }
     }
@@ -114,6 +118,23 @@ private fun ForecastCard(bundle: WorkloadData) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
+                stringResource(R.string.stats_due_tomorrow_value, forecast.dueTomorrow),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                stringResource(R.string.stats_due_this_week_value, forecast.dueThisWeek),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
                 stringResource(
                     R.string.stats_daily_load_value,
                     String.format(java.util.Locale.ENGLISH, "%.1f", forecast.dailyLoad)
@@ -147,6 +168,111 @@ private fun ReviewsPerDayCard(bundle: WorkloadData) {
             LegendEntry(colors[2], R.string.stats_relearning)
             LegendEntry(colors[3], R.string.stats_unknown_kind)
         }
+    }
+}
+
+@Composable
+private fun GradeMixCard(bundle: WorkloadData) {
+    ChartCard(
+        testTag = "stats-grade-mix",
+        title = { ChartTitle(R.string.stats_grade_mix) },
+        subtitle = { ChartSubtitle(R.string.stats_grade_mix_help) }
+    ) {
+        val colors = seriesColors()
+        StackedBarChart(
+            points = bundle.ratingTrend.map { point ->
+                StackedPoint(
+                    label = point.label,
+                    segments = listOf(
+                        point.again.toDouble(),
+                        point.hard.toDouble(),
+                        point.good.toDouble(),
+                        point.easy.toDouble()
+                    ),
+                    total = point.total
+                )
+            },
+            segmentCount = 4,
+            emptyText = { ChartEmpty(R.string.stats_no_data) }
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            LegendEntry(colors[0], R.string.grade_again)
+            LegendEntry(colors[1], R.string.grade_hard)
+            LegendEntry(colors[2], R.string.grade_good)
+            LegendEntry(colors[3], R.string.grade_easy)
+        }
+    }
+}
+
+@Composable
+private fun SessionsCard(bundle: WorkloadData) {
+    val sessions = bundle.sessions
+    ChartCard(
+        testTag = "stats-sessions",
+        title = { ChartTitle(R.string.stats_sessions) },
+        subtitle = { ChartSubtitle(R.string.stats_sessions_help) }
+    ) {
+        if (sessions.count == 0) {
+            ChartEmpty(R.string.stats_no_data)
+            return@ChartCard
+        }
+        Text(
+            stringResource(R.string.stats_sessions_count, sessions.count),
+            style = MaterialTheme.typography.bodySmall
+        )
+        sessions.meanReviews?.let {
+            Text(
+                stringResource(R.string.stats_sessions_mean_reviews, formatCount(it)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        sessions.meanMinutes?.let {
+            Text(
+                stringResource(
+                    R.string.stats_sessions_mean_minutes,
+                    formatDuration(it * 60.0)
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        sessions.longestMinutes?.let {
+            Text(
+                stringResource(
+                    R.string.stats_sessions_longest_minutes,
+                    formatDuration(it * 60.0)
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        sessions.meanSecondsPerReview?.let {
+            Text(
+                stringResource(
+                    R.string.stats_sessions_seconds,
+                    formatSeconds(it)
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.stats_sessions_histogram),
+            style = MaterialTheme.typography.labelMedium
+        )
+        StackedBarChart(
+            points = sessions.histogram.map { bin ->
+                StackedPoint(bin.label, listOf(bin.count.toDouble()), bin.count)
+            },
+            segmentCount = 1
+        )
     }
 }
 

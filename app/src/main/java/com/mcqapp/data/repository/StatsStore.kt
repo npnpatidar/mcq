@@ -3,7 +3,9 @@ package com.mcqapp.data.repository
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.local.getCategoryTitlesByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.local.tagsForQuestionsChunked
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
@@ -11,10 +13,13 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
 import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.CoveragePaper
+import com.mcqapp.domain.stats.CoverageStatsBuilder
 import com.mcqapp.domain.stats.FsrsReplay
 import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ProgressData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.Reliability
 import com.mcqapp.domain.stats.RetentionData
@@ -96,7 +101,22 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
         )
         replayInto(scheduler, accumulator::add)
-        return accumulator.toData()
+        // Plan §6.2/§6.3: the tag and all-papers category slices look up only
+        // the reviewed ids, after the pass, so they stay bounded by the log's
+        // working set rather than the whole bank.
+        val reviewedIds = accumulator.reviewedQuestionIds().toList()
+        val tagsOfQuestion = if (reviewedIds.isEmpty()) {
+            emptyMap()
+        } else {
+            db.questionTagDao().tagsForQuestionsChunked(reviewedIds)
+        }
+        val categoriesForSlice = if (scopePaperId != null || reviewedIds.isEmpty()) {
+            // The scoped map above already labels the per-question groups.
+            emptyMap()
+        } else {
+            db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds)
+        }
+        return accumulator.toData(tagsOfQuestion, categoriesForSlice)
     }
 
     /**
@@ -184,7 +204,13 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             now = now,
             cfg = config,
             zone = zone,
-            scheduler = scheduler
+            scheduler = scheduler,
+            // The per-paper means only exist unscoped; skip the read otherwise.
+            paperTitleOf = if (scopePaperId == null) {
+                db.paperDao().getAll().associate { it.id to it.title }
+            } else {
+                emptyMap()
+            }
         )
         replayInto(scheduler) { review ->
             overview.add(review)
@@ -215,6 +241,41 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
         )
         pageCardsInto(accumulator::addCard)
+        replayInto(scheduler, accumulator::add)
+        val coverage = CoverageStatsBuilder.build(
+            rows = db.questionDao().getCoverageByPaper(scopePaperId).map {
+                CoveragePaper(
+                    paperId = it.paperId,
+                    label = it.label,
+                    questions = it.questions,
+                    studied = it.studied,
+                    bookmarked = it.bookmarked
+                )
+            },
+            scoped = scopePaperId != null
+        )
+        return accumulator.toData(coverage)
+    }
+
+    /**
+     * The progress tab, streamed: one pass of the log into counters plus the
+     * bounded seen-card set and the per-day buckets. Neither the log nor the
+     * library is ever listed.
+     */
+    suspend fun loadProgress(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): ProgressData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.ProgressAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now)
+        )
         replayInto(scheduler, accumulator::add)
         return accumulator.toData()
     }

@@ -46,6 +46,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestType
 import com.mcqapp.domain.Trends
 import com.mcqapp.ui.common.attemptFamilyLabel
+import com.mcqapp.ui.common.attemptTypeLine
 import com.mcqapp.ui.common.testTypeLabel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -199,10 +200,7 @@ fun HistoryScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(attempt.title, style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    attemptFamilyLabel(attempt) +
-                                        TestType.fromStorage(attempt.testType)
-                                            ?.let { " · " + testTypeLabel(it) }
-                                            .orEmpty(),
+                                    attemptFamilyLabel(attempt) + " · " + attemptTypeLine(attempt),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.tertiary
                                 )

@@ -161,6 +161,33 @@ data class OptionEntity(
     val sortOrder: Int = 0
 )
 
+/**
+ * The exact-tag index derived from [QuestionEntity.tags] (phase 3).
+ *
+ * The CSV stays canonical for search and export; this table exists so the
+ * Tag test can filter on whole tags instead of a `LIKE '%tag%'` scan. Every
+ * write of `tags` rewrites the rows through [com.mcqapp.domain.TagNormalizer].
+ * Cascading with the question keeps the index exact across delete.
+ */
+@Entity(
+    tableName = "question_tags",
+    primaryKeys = ["questionId", "tagFolded"],
+    foreignKeys = [
+        ForeignKey(
+            entity = QuestionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["questionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("tagFolded", "questionId")]
+)
+data class QuestionTagEntity(
+    val questionId: String,
+    val tag: String,
+    val tagFolded: String
+)
+
 @Entity(
     tableName = "correct_answers",
     primaryKeys = ["questionId", "optionId"],
@@ -356,7 +383,13 @@ data class AttemptEntity(
     val seed: Long = 0,
     val exclusionMode: String = "NONE",
     val targetTopicIds: String = "",
-    val compositionJson: String = ""
+    val compositionJson: String = "",
+    /**
+     * The custom type's choice (phase 3): the tag or difficulty name a Tag /
+     * Authored difficulty attempt started from. Null for every other type and
+     * for every pre-v22 row.
+     */
+    val variant: String? = null
 )
 
 @Entity(
@@ -428,4 +461,55 @@ data class QuestionStatsEntity(
     val repCorrect: Int = 0,
     val repWrong: Int = 0,
     val repSkip: Int = 0
+)
+
+/**
+ * A fixed panel: a named, stable set of question ids, so progress on the same
+ * questions can be read across attempts without resampling noise. The ids are
+ * frozen when the panel is created; editing the bank does not silently swap
+ * them (a deleted question cascades out and shrinks the panel instead).
+ */
+@Entity(
+    tableName = "panels",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("paperId", "name")]
+)
+data class PanelEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val paperId: String,
+    val name: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/** One frozen member of a [PanelEntity], in the order the panel asks it. */
+@Entity(
+    tableName = "panel_questions",
+    primaryKeys = ["panelId", "questionId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PanelEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["panelId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = QuestionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["questionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("panelId", "position"), Index("questionId")]
+)
+data class PanelQuestionEntity(
+    val panelId: Long,
+    val questionId: String,
+    val position: Int
 )

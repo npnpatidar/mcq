@@ -49,6 +49,41 @@ class TestSnapshotTest {
         assertFalse(snapshot.matches("p1", listOf("c1", "c2", "c3")))
     }
 
+    @Test
+    fun aFixedPanelSnapshotOnlyResumesItsOwnPanel() {
+        val snapshot = TestSnapshot(
+            paperId = "p1",
+            categoryIds = listOf("c1"),
+            scopeKey = "expanded-key",
+            testType = "FIXED_PANEL",
+            requestedCount = 20,
+            samplingVersion = 2,
+            variant = "7"
+        )
+        assertTrue(
+            snapshot.matches(
+                "p1", listOf("c1"),
+                testType = "FIXED_PANEL", requestedCount = 20,
+                scopeKey = "expanded-key", variant = "7"
+            )
+        )
+        assertFalse(
+            "another panel is a different session",
+            snapshot.matches(
+                "p1", listOf("c1"),
+                testType = "FIXED_PANEL", requestedCount = 20,
+                scopeKey = "expanded-key", variant = "8"
+            )
+        )
+        assertFalse(
+            snapshot.matches(
+                "p1", listOf("c1"),
+                testType = "FIXED_PANEL", requestedCount = 20,
+                scopeKey = "expanded-key", variant = null
+            )
+        )
+    }
+
     /**
      * A bounded Test resumes only the same plan: type, requested length,
      * exclusion rule, target set and the canonical expanded scope. A

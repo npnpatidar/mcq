@@ -27,8 +27,27 @@ fun testTypeLabel(type: TestType?): String = when (type) {
     TestType.TAG -> stringResource(R.string.report_type_tag)
     TestType.AUTHORED_DIFFICULTY -> stringResource(R.string.report_type_difficulty)
     TestType.SLOWEST -> stringResource(R.string.report_type_slowest)
+    TestType.FIXED_PANEL -> stringResource(R.string.report_type_fixed_panel)
     TestType.MIXED -> stringResource(R.string.report_type_mixed)
     null -> stringResource(R.string.report_legacy_attempt)
+}
+
+/**
+ * The attempt's type line, with the custom choice appended (phase 3): a Tag
+ * run reads `Tag · polity`, an Authored difficulty run reads
+ * `Authored difficulty · hard`. Every other type reads its plain label.
+ */
+@Composable
+fun attemptTypeLine(attempt: Attempt): String {
+    val type = TestType.fromStorage(attempt.testType)
+    val base = testTypeLabel(type)
+    val variant = attempt.variant?.trim()?.takeIf { it.isNotEmpty() } ?: return base
+    return when (type) {
+        TestType.TAG -> stringResource(R.string.report_type_tag_variant, variant)
+        TestType.AUTHORED_DIFFICULTY ->
+            stringResource(R.string.report_type_difficulty_variant, variant.lowercase())
+        else -> base
+    }
 }
 
 /** The attempt family's short label: Mock, Fresh sample, Practice, Short or Legacy. */

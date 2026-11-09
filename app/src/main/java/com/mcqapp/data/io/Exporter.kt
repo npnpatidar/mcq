@@ -111,6 +111,7 @@ class Exporter(private val db: AppDatabase) {
                         exclusionMode = attempt.exclusionMode,
                         targetTopicIds = attempt.targetTopicIds,
                         compositionJson = attempt.compositionJson,
+                        variant = attempt.variant,
                         results = results.map { r ->
                             AttemptResultDto(
                                 questionId = r.questionId,
@@ -206,6 +207,7 @@ class Exporter(private val db: AppDatabase) {
                 exclusionMode = attempt.exclusionMode,
                 targetTopicIds = attempt.targetTopicIds,
                 compositionJson = attempt.compositionJson,
+                variant = attempt.variant,
                 results = results.map { r ->
                     AttemptResultDto(
                         questionId = r.questionId,

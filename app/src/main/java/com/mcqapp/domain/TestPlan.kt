@@ -38,7 +38,12 @@ data class TestPlan(
     /** Sorted, deduped targets; empty unless [TestType.supportsTargets]. */
     val targetTopicIds: List<String> = emptyList(),
     /** The recorded fill composition (stats.md §9.7); empty on older plans. */
-    val compositionJson: String = ""
+    val compositionJson: String = "",
+    /**
+     * The custom type's choice (phase 3): the tag or difficulty name a Tag /
+     * Authored difficulty attempt covers. Null for every other type.
+     */
+    val variant: String? = null
 ) {
 
     /**
@@ -58,7 +63,20 @@ data class TestPlan(
     fun validationError(available: Int): String? {
         if (type == null) return NO_TYPE_MESSAGE
         if (samplingVersion < SAMPLING_VERSION) return OLD_VERSION_MESSAGE
-        if (!isAllowedLength(count)) return LENGTH_MESSAGE
+        // A fixed panel runs its whole saved set, so its length is the panel's
+        // size, not one of the sampled steps (a deleted question can make it
+        // 47). Every sampled type keeps the 20..150 step-of-ten rule.
+        if (type == TestType.FIXED_PANEL) {
+            if (count !in 1..MAX_LENGTH) return LENGTH_MESSAGE
+        } else if (!isAllowedLength(count)) {
+            return LENGTH_MESSAGE
+        }
+        // A panel is a whole-paper frozen set. Running it under a category
+        // scope would drop members, so two runs of "the same" panel would not
+        // be the same set.
+        if (type == TestType.FIXED_PANEL && categoryIds.isNotEmpty()) {
+            return PANEL_SCOPE_MESSAGE
+        }
         if (scopeKey.isBlank()) return SCOPE_MESSAGE
         if (categoryIds.isEmpty() && scopeKey != ScopeKey.wholePaper(paperId)) {
             return WHOLE_PAPER_KEY_MESSAGE
@@ -71,6 +89,15 @@ data class TestPlan(
         }
         if (targetTopicIds != canonicalTargets(targetTopicIds)) return TARGET_ORDER_MESSAGE
         if (targetTopicIds.isNotEmpty() && type?.supportsTargets != true) return TARGET_MESSAGE
+        // A custom type without its choice cannot start: a Tag run needs the
+        // tag, an Authored difficulty run needs the label.
+        if (type == TestType.TAG && variant.isNullOrBlank()) return VARIANT_REQUIRED_MESSAGE
+        if (type == TestType.FIXED_PANEL && variant.isNullOrBlank()) return VARIANT_REQUIRED_MESSAGE
+        if (type == TestType.AUTHORED_DIFFICULTY &&
+            Difficulty.entries.none { it.name == variant?.trim() }
+        ) {
+            return VARIANT_REQUIRED_MESSAGE
+        }
         if (available <= 0) return EMPTY_SCOPE_MESSAGE
         return null
     }
@@ -85,6 +112,16 @@ data class TestPlan(
      */
     fun resolve(available: Int): Resolution {
         validationError(available)?.let { return Resolution.Refused(it) }
+        // A fixed panel is not a sampled length: it runs its whole frozen set,
+        // even when a deleted question left a size that is not a step of ten.
+        if (type == TestType.FIXED_PANEL) {
+            return Resolution.Ready(
+                count = available,
+                short = available < MIN_LENGTH,
+                clamped = count > available,
+                message = if (count > available) onlyNMessage(available) else null
+            )
+        }
         if (available < MIN_LENGTH) {
             return Resolution.Ready(
                 count = available,
@@ -155,6 +192,9 @@ data class TestPlan(
         const val FRESH_MESSAGE: String = "This test type cannot avoid recently tested questions."
         const val TARGET_MESSAGE: String = "This test type cannot record target topics."
         const val TARGET_ORDER_MESSAGE: String = "Target topics must be sorted and deduplicated."
+        const val VARIANT_REQUIRED_MESSAGE: String = "Choose a tag or difficulty for this test."
+        const val PANEL_SCOPE_MESSAGE: String =
+            "A fixed panel is a whole-paper set; clear the category selection to run it."
 
         /**
          * The largest shown count a sample may reach for [target] (section

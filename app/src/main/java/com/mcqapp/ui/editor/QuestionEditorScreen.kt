@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -28,6 +30,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -36,6 +39,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -347,13 +354,50 @@ fun QuestionEditorScreen(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = state.tags,
-                onValueChange = viewModel::updateTags,
-                label = { Text(stringResource(R.string.tags_comma_separated)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Text(stringResource(R.string.tags_comma_separated), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            // Phase-3 tag chips: the comma string stays the state, but adding
+            // and removing one label at a time keeps the editor's intent
+            // explicit; the same list is what the Tag test filters on.
+            var newTag by remember { mutableStateOf("") }
+            val tagLabels = remember(state.tags) {
+                com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
+            }
+            if (tagLabels.isNotEmpty()) {
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    tagLabels.forEach { label ->
+                        InputChip(
+                            selected = false,
+                            onClick = { viewModel.removeTag(label.tag) },
+                            label = { Text(label.tag) },
+                            trailingIcon = { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.remove_tag, label.tag)) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = newTag,
+                    onValueChange = { newTag = it },
+                    label = { Text(stringResource(R.string.add_tag)) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { viewModel.addTag(newTag); newTag = "" },
+                    enabled = newTag.trim().isNotEmpty()
+                ) {
+                    Text(stringResource(R.string.add_tag_button))
+                }
+            }
 
             // A failed save/delete is reported here instead of crashing
             // (consolidated_bugs.md J7).

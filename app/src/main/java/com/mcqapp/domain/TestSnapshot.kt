@@ -66,6 +66,8 @@ data class TestSnapshot(
     val targetTopicIds: List<String> = emptyList(),
     /** The recorded fill composition (stats.md §9.7); empty on legacy snapshots. */
     val compositionJson: String = "",
+    /** The custom type's choice (phase 3: tag or difficulty name). */
+    val variant: String? = null,
     /** Seconds already spent in an untimed session, banked on every autosave
      *  so a kill does not shrink the recorded duration (D7). */
     val elapsedSeconds: Int = 0,
@@ -91,7 +93,8 @@ data class TestSnapshot(
         requestedCount: Int = 0,
         exclusionMode: String = "NONE",
         targetTopicIds: List<String> = emptyList(),
-        scopeKey: String = ""
+        scopeKey: String = "",
+        variant: String? = null
     ): Boolean {
         // New snapshots carry the canonical expanded scope; a legacy snapshot
         // (and a legacy caller) has no key, so it keeps the raw tick-set
@@ -119,6 +122,10 @@ data class TestSnapshot(
             (!isDrill || this.drillRequested == drillRequested) &&
             this.testType == testType && this.requestedCount == requestedCount &&
             this.exclusionMode == exclusionMode &&
+            // A panel's id (and a Tag's tag) is part of the session's shape:
+            // resuming a panel run under another panel would keep this order
+            // but adopt the other panel's meaning.
+            this.variant == variant &&
             targetsMatch
     }
 

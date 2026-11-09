@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.countUngradedForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
@@ -8,15 +9,22 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.minBlockSizeForCategoriesChunked
 import com.mcqapp.data.local.minBlockSizeForPaper
 import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.TagCount
+import com.mcqapp.data.local.PanelEntity
+import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
+import com.mcqapp.data.local.getTagsByIdsChunked
 import com.mcqapp.domain.FsrsFitResult
+import com.mcqapp.domain.Panel
+import com.mcqapp.domain.PanelSummary
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
 import com.mcqapp.domain.signals.Signals
+import com.mcqapp.domain.signals.TestSelector
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.stats.CardsData
@@ -545,6 +553,137 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): List<Signals> = signalStore.signals(paperId, scopeIds, now)
 
     /**
+     * The scope's distinct tags with their counts (phase 3), most used first.
+     * [categoryIds] are the ticked branches; empty means the whole paper.
+     */
+    suspend fun tagCountsForScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<TagCount> = db.questionTagDao().tagCounts(
+        paperId = paperId,
+        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+        categoryIds = categoryIds
+    )
+
+    /**
+     * The ids of the scope's questions carrying exactly a tag (phase 3): the
+     * Tag selector's pool. [foldedTag] is [TagNormalizer.fold]'s output.
+     */
+    suspend fun questionIdsForTagInScope(
+        paperId: String,
+        categoryIds: List<String>,
+        foldedTag: String
+    ): List<String> = db.questionTagDao().questionIdsForTag(
+        paperId = paperId,
+        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+        categoryIds = categoryIds,
+        tagFolded = foldedTag
+    )
+
+    /** The scope's bookmarked question ids, most recently bookmarked first. */
+    suspend fun bookmarkedIdsInScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<String> = db.questionTagDao().bookmarkedIdsInScope(
+        paperId = paperId,
+        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+        categoryIds = categoryIds
+    )
+
+    /**
+     * The paper's fixed panels, oldest first (phase 3). The size comes from a
+     * count join, so listing panels never materialises their ids.
+     */
+    suspend fun panelsForPaper(paperId: String): List<PanelSummary> =
+        db.panelDao().panelsWithCountsForPaper(paperId).map { row ->
+            PanelSummary(
+                id = row.panel.id,
+                paperId = row.panel.paperId,
+                name = row.panel.name,
+                size = row.questionCount
+            )
+        }
+
+    /** The paper's fixed panels with their real, frozen question ids. */
+    suspend fun panelsWithQuestions(paperId: String): List<Panel> =
+        db.panelDao().panelsForPaper(paperId).map { entity ->
+            Panel(
+                id = entity.id,
+                paperId = entity.paperId,
+                name = entity.name,
+                questionIds = db.panelDao().questionIds(entity.id)
+            )
+        }
+
+    /** Every paper's panels, for the whole-library Statistics scope. */
+    suspend fun allPanels(): List<PanelSummary> =
+        db.panelDao().allPanelsWithCounts().map { row ->
+            PanelSummary(
+                id = row.panel.id,
+                paperId = row.panel.paperId,
+                name = row.panel.name,
+                size = row.questionCount
+            )
+        }
+
+    /** One panel with its frozen ids, or null after it was deleted. */
+    suspend fun panel(panelId: Long): Panel? {
+        val entity = db.panelDao().panel(panelId) ?: return null
+        return Panel(
+            id = entity.id,
+            paperId = entity.paperId,
+            name = entity.name,
+            questionIds = db.panelDao().questionIds(panelId)
+        )
+    }
+
+    /**
+     * Creates a panel from [questionIds], in the given order, and returns its
+     * id. Blank ids are dropped and duplicates keep their first position: a
+     * panel is a set, and the order is the order it asks.
+     */
+    suspend fun createPanel(paperId: String, name: String, questionIds: List<String>): Long {
+        val ids = questionIds.filter { it.isNotBlank() }.distinct()
+        return db.withTransaction {
+            val panelId = db.panelDao().insertPanel(
+                PanelEntity(paperId = paperId, name = name.trim())
+            )
+            if (ids.isNotEmpty()) {
+                db.panelDao().insertQuestions(
+                    ids.mapIndexed { index, questionId ->
+                        PanelQuestionEntity(panelId = panelId, questionId = questionId, position = index)
+                    }
+                )
+            }
+            panelId
+        }
+    }
+
+    /** Deletes a panel and its rows; the questions are untouched. */
+    suspend fun deletePanel(panelId: Long) = db.panelDao().deletePanel(panelId)
+
+    /**
+     * The median dwell seconds of every scope question with at least
+     * [TestSelector.SLOWEST_MIN_SAMPLES] timed answers (phase 3): the Slowest
+     * selector's input. A median of an even sample list is the lower median,
+     * so the values are exact stored seconds, never a blended number.
+     */
+    suspend fun medianDwellSecondsInScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): Map<String, Long> =
+        db.questionTagDao()
+            .dwellSamplesInScope(
+                paperId = paperId,
+                scopeAll = if (categoryIds.isEmpty()) 1 else 0,
+                categoryIds = categoryIds
+            )
+            .groupBy { it.questionId }
+            .mapValues { (_, samples) -> samples.map { it.dwellSeconds }.sorted() }
+            .filter { it.value.size >= TestSelector.SLOWEST_MIN_SAMPLES }
+            .mapValues { (_, samples) -> samples[(samples.size - 1) / 2] }
+
+    /**
      * The smallest passage block in a scope (section 9.6). The setup sheet's
      * sampler pre-check uses it before it emits a route; a standalone question
      * makes the answer 1.
@@ -914,11 +1053,49 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** The result report's light per-question evidence (section 11.14). */
     suspend fun getReportRows(attemptId: Long): List<com.mcqapp.domain.ReportRow> =
         historyStore.getReportRows(attemptId)
+    /** Raw result entities for report export. */
+    suspend fun getAttemptResultEntities(attemptId: Long) =
+        historyStore.getAttemptResultEntities(attemptId)
+    /** Question tags by id, for report export. */
+    suspend fun getQuestionTagsByIds(ids: List<String>): Map<String, String> =
+        db.questionDao().getTagsByIdsChunked(ids)
     /** Same-key attempts older than [attempt], newest first (section 11.5). */
     suspend fun getComparableAttempts(
         attempt: com.mcqapp.domain.Attempt,
         limit: Int = 5
     ): List<com.mcqapp.domain.Attempt> = historyStore.getComparableAttempts(attempt, limit)
+
+    /**
+     * Per-question discrimination across same-key attempts (slice 4). Only a
+     * representative attempt gets one: a practice set is chosen on the
+     * dependent variable, so its item statistics are biased by design. Below
+     * [com.mcqapp.domain.stats.Reliability.MIN_DISCRIMINATION_ATTEMPTS] the map
+     * is empty rather than a noisy r.
+     */
+    suspend fun getItemDiscrimination(
+        attempt: com.mcqapp.domain.Attempt,
+        limit: Int = 30
+    ): Map<String, com.mcqapp.domain.stats.Reliability.ItemDiscrimination> {
+        val family = com.mcqapp.domain.TestReportBuilder.familyOf(attempt)
+        if (family != com.mcqapp.domain.ReportFamily.MOCK &&
+            family != com.mcqapp.domain.ReportFamily.FRESH_SAMPLE
+        ) {
+            return emptyMap()
+        }
+        val attempts = listOf(attempt) + getComparableAttempts(attempt, limit)
+        if (attempts.size < com.mcqapp.domain.stats.Reliability.MIN_DISCRIMINATION_ATTEMPTS) {
+            return emptyMap()
+        }
+        val vectors = attempts.map { candidate ->
+            val rows = historyStore.getAttemptResultEntities(candidate.id)
+                .filter { it.correctOptionIds.isNotBlank() }
+            com.mcqapp.domain.stats.Reliability.AttemptVector(
+                questionIds = rows.map { it.questionId },
+                scores = rows.map { if (it.isCorrect) 1.0 else 0.0 }
+            )
+        }
+        return com.mcqapp.domain.stats.Reliability.discriminationByQuestion(vectors)
+    }
 
     /**
      * The phase-2 report evidence (sections 11.8, 11.10). Read-only: it reads
@@ -1056,7 +1233,62 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             atRisk = db.cardStateDao().countAtRisk(paperId, now),
             unseen = db.questionDao().countUnseenInScope(paperId),
             scopeSize = db.questionDao().countQuestionsInScope(paperId),
-            scopeIsWholeLibrary = paperId == null
+            scopeIsWholeLibrary = paperId == null,
+            reliability = computeReliabilitySummary(attempts),
+            panels = com.mcqapp.domain.TestProgress.panels(
+                panels = if (paperId == null) allPanels() else panelsForPaper(paperId),
+                attempts = attempts
+            )
+        )
+    }
+
+    private suspend fun computeReliabilitySummary(
+        attempts: List<com.mcqapp.domain.Attempt>
+    ): com.mcqapp.domain.ReliabilitySummary? {
+        val comparable = attempts.filter {
+            val family = com.mcqapp.domain.TestReportBuilder.familyOf(it)
+            family == com.mcqapp.domain.ReportFamily.MOCK ||
+                family == com.mcqapp.domain.ReportFamily.FRESH_SAMPLE
+        }
+        if (comparable.size < 2) return null
+        val group = comparable
+            .groupBy { listOf(it.paperId, it.testType, it.scopeKey, it.requestedCount.toString()) }
+            .values
+            .maxByOrNull { it.size }
+            ?: return null
+        if (group.size < 2) return null
+        val sample = group.sortedByDescending { it.finishedAt }.take(30)
+        val vectors = sample.map { attempt ->
+            val rows = historyStore.getAttemptResultEntities(attempt.id)
+            val ids = rows.map { it.questionId }
+            val scores = rows.map { if (it.isCorrect) 1.0 else 0.0 }
+            ids to scores
+        }
+        if (vectors.isEmpty()) return null
+        val n = vectors.first().second.size
+        if (n < com.mcqapp.domain.stats.Reliability.MIN_ATTEMPTED) return null
+        val sameForm = vectors.all { it.first == vectors.first().first && it.second.size == n }
+        val scoreMatrix = vectors.map { it.second }
+        val splitRels = scoreMatrix.mapNotNull { scores ->
+            when (val r = com.mcqapp.domain.stats.Reliability.splitHalf(scores)) {
+                is com.mcqapp.domain.stats.Reliability.SplitHalfResult.Value -> r.reliability
+                is com.mcqapp.domain.stats.Reliability.SplitHalfResult.TooSmall -> null
+            }
+        }
+        if (splitRels.isEmpty() && !sameForm) return null
+        val meanRel = if (splitRels.isNotEmpty()) splitRels.average() else 0.0
+        val totals = scoreMatrix.map { it.sum() }
+        val sd = if (totals.size >= 2) {
+            val mean = totals.average()
+            kotlin.math.sqrt(totals.sumOf { (it - mean) * (it - mean) } / totals.size)
+        } else 0.0
+        val sem = com.mcqapp.domain.stats.Reliability.sem(sd, meanRel)?.semPoints ?: 0.0
+        val kr20 = if (sameForm) com.mcqapp.domain.stats.Reliability.kr20(scoreMatrix) else null
+        return com.mcqapp.domain.ReliabilitySummary(
+            reliability = if (meanRel.isFinite()) meanRel else 0.0,
+            semPoints = if (sem.isFinite()) sem else 0.0,
+            kr20 = kr20,
+            attempted = n
         )
     }
     /** Wall-clock finish of the paper's latest attempt, or null when it has none. */

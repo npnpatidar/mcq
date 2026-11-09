@@ -467,15 +467,25 @@ fun LibraryScreen(
                     else -> viewModel.repository.getMinBlockSize(request.paper.id, scopeIds)
                 }
             },
-            loadPreview = { type, count, breadth ->
-                viewModel.previewSelection(request.paper, request.categoryIds, type, count, breadth)
+            loadPreview = { type, count, breadth, variant ->
+                viewModel.previewSelection(request.paper, request.categoryIds, type, count, breadth, variant)
             },
+            loadTags = {
+                viewModel.tagsForScope(request.paper.id, request.categoryIds)
+            },
+            loadPanels = {
+                viewModel.panelsForPaper(request.paper.id)
+            },
+            onCreatePanel = { name, questionIds ->
+                viewModel.createPanel(request.paper.id, name, questionIds)
+            },
+            onDeletePanel = { panelId -> viewModel.deletePanel(panelId) },
             onDismiss = { pendingTestSetup = null },
-            onStart = { type, requestedCount, minutes, exclusion, breadth ->
+            onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
                 pendingTestSetup = null
                 Logger.i(
                     "LIB",
-                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}"
+                    "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}, variant=${variant ?: ""}"
                 )
                 navController.navigate(
                     com.mcqapp.ui.navigation.testRoute(
@@ -485,7 +495,8 @@ fun LibraryScreen(
                         type = type.name,
                         count = requestedCount,
                         exclusion = exclusion.name,
-                        breadth = breadth.name
+                        breadth = breadth.name,
+                        variant = variant ?: ""
                     )
                 )
             }

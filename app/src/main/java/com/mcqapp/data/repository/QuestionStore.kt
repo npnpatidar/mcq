@@ -17,6 +17,7 @@ import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.removeAllChunked
+import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.data.io.CardContent
@@ -24,6 +25,8 @@ import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
 import com.mcqapp.domain.searchableText
+import com.mcqapp.data.local.QuestionTagEntity
+import com.mcqapp.domain.TagNormalizer
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -280,6 +283,7 @@ internal class QuestionStore(
                 )
             )
             Logger.d("REPO", "saveQuestion(id=${question.id}): question row upserted")
+            db.questionTagDao().replaceQuestionTags(question.id, question.tags)
             db.optionDao().deleteByQuestion(question.id)
             db.optionDao().upsertAll(
                 question.options.mapIndexed { index, o ->
@@ -375,6 +379,14 @@ internal class QuestionStore(
         db.questionDao().upsertAll(questions)
         db.optionDao().upsertAll(options)
         db.correctAnswerDao().upsertAll(answers)
+        val cloneIds = clones.map { it.id }
+        db.questionTagDao().deleteByQuestionsChunked(cloneIds)
+        val tagRows = clones.flatMap { clone ->
+            TagNormalizer.fromList(clone.tags).map {
+                QuestionTagEntity(clone.id, it.tag, it.folded)
+            }
+        }
+        if (tagRows.isNotEmpty()) db.questionTagDao().insertIgnore(tagRows)
     }
 
     suspend fun deleteQuestion(questionId: String) {
@@ -526,6 +538,17 @@ internal class QuestionStore(
             // to a differently-cased or non-ASCII tag cannot leave the folded
             // twin stale (see MIGRATION_17_18's contract).
             val tagsCsv = tags?.joinToString(",")
+            if (tags != null) {
+                db.questionTagDao().deleteByQuestionsChunked(questionIds)
+                val rows = TagNormalizer.fromList(tags)
+                if (rows.isNotEmpty()) {
+                    db.questionTagDao().insertIgnore(
+                        questionIds.toList().flatMap { id ->
+                            rows.map { QuestionTagEntity(id, it.tag, it.folded) }
+                        }
+                    )
+                }
+            }
             val count = db.questionDao().updateBulkFieldsChunked(
                 questionIds,
                 marks,

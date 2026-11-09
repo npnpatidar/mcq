@@ -16,6 +16,7 @@ import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
+import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
@@ -570,6 +571,7 @@ internal class StreamingImportSession(
                 json = json
             )
             db.questionDao().upsert(entity)
+            db.questionTagDao().replaceQuestionTags(effectiveQuestionId, questionForWrite.tags)
             writtenById[dto.id] = entity
             batchWritten.getOrPut(contentHash) { mutableListOf() }.add(questionForWrite)
 
@@ -794,7 +796,8 @@ internal class StreamingImportSession(
                     seed = attempt.seed,
                     exclusionMode = attempt.exclusionMode,
                     targetTopicIds = attempt.targetTopicIds,
-                    compositionJson = attempt.compositionJson
+                    compositionJson = attempt.compositionJson,
+                    variant = attempt.variant
                 )
             )
             val restoredRows = attempt.results.map { r ->

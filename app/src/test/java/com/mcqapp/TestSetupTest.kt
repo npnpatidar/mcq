@@ -28,7 +28,8 @@ class TestSetupTest {
         time: TestTime = TestTime.Suggested,
         categoryIds: List<String> = emptyList(),
         exclusionMode: ExclusionMode = ExclusionMode.NONE,
-        minBlockSize: Int = 1
+        minBlockSize: Int = 1,
+        variant: String? = null
     ) = TestSetup(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -42,6 +43,7 @@ class TestSetupTest {
         time = time,
         available = available,
         exclusionMode = exclusionMode,
+        variant = variant,
         minBlockSize = minBlockSize
     )
 
@@ -140,7 +142,7 @@ class TestSetupTest {
     }
 
     @Test
-    fun phaseTwoShipsTheFocusTypesWithRandomAndMistakes() {
+    fun phaseThreeShipsAllCustomTypesWithRandomAndMistakes() {
         assertEquals(
             listOf(
                 TestType.RANDOM,
@@ -152,23 +154,16 @@ class TestSetupTest {
                 TestType.TRICKY,
                 TestType.AT_RISK,
                 TestType.UNSEEN,
-                TestType.MIXED
+                TestType.MIXED,
+                TestType.BOOKMARKED,
+                TestType.TAG,
+                TestType.AUTHORED_DIFFICULTY,
+                TestType.SLOWEST,
+                TestType.FIXED_PANEL
             ),
             TestSetup.STARTABLE_TYPES
         )
-        assertTrue(TestSetup.isStartableType(TestType.RANDOM))
-        assertTrue(TestSetup.isStartableType(TestType.MISTAKES))
-        assertTrue(TestSetup.isStartableType(TestType.WEAKEST_TOPICS))
-        assertTrue(TestSetup.isStartableType(TestType.TOUGHEST_QUESTIONS))
-        assertTrue(TestSetup.isStartableType(TestType.EASIEST_QUESTIONS))
-        assertTrue(TestSetup.isStartableType(TestType.BALANCED))
-        assertTrue(TestSetup.isStartableType(TestType.TRICKY))
-        assertTrue(TestSetup.isStartableType(TestType.AT_RISK))
-        assertTrue(TestSetup.isStartableType(TestType.UNSEEN))
-        assertTrue(TestSetup.isStartableType(TestType.MIXED))
-        // Phase 3 keeps the custom types unstartable.
-        assertFalse(TestSetup.isStartableType(TestType.BOOKMARKED))
-        assertFalse(TestSetup.isStartableType(TestType.TAG))
+        TestType.entries.forEach { assertTrue(TestSetup.isStartableType(it)) }
     }
 
     @Test
@@ -227,5 +222,106 @@ class TestSetupTest {
             exclusionMode = ExclusionMode.RECENT_3
         )
         assertEquals(TestComparability.SHORT, shortFresh.comparability())
+    }
+
+
+
+    @Test
+    fun aTagSetupWithoutATagCannotStart() {
+        val noVariant = setup(type = TestType.TAG, available = 100)
+        assertFalse(noVariant.startable())
+        assertEquals(TestPlan.VARIANT_REQUIRED_MESSAGE, noVariant.message())
+    }
+
+    @Test
+    fun aTagSetupWithATagStarts() {
+        val good = setup(type = TestType.TAG, available = 100, variant = "polity")
+        assertTrue(good.startable())
+        assertEquals("polity", good.plan().variant)
+    }
+
+    @Test
+    fun aFixedPanelSetupNeedsAChosenPanel() {
+        val noVariant = setup(type = TestType.FIXED_PANEL, available = 50)
+        assertFalse(noVariant.startable())
+        assertEquals(TestPlan.VARIANT_REQUIRED_MESSAGE, noVariant.message())
+
+        val chosen = setup(type = TestType.FIXED_PANEL, available = 50, variant = "7")
+        assertTrue(chosen.startable())
+        assertEquals("7", chosen.plan().variant)
+        // Practice, never a mock.
+        assertEquals(TestComparability.PRACTICE, chosen.comparability())
+    }
+
+    @Test
+    fun aFixedPanelIsWholePaperOnly() {
+        // A category scope would silently drop panel members, so the plan
+        // refuses it even though the panel itself is valid.
+        val scoped = setup(
+            type = TestType.FIXED_PANEL,
+            requested = 47,
+            available = 47,
+            categoryIds = listOf("c1"),
+            variant = "7"
+        )
+        assertFalse(scoped.startable())
+        assertEquals(TestPlan.PANEL_SCOPE_MESSAGE, scoped.message())
+    }
+
+    @Test
+    fun aFixedPanelRunsItsWholeSetEvenAtAnOddSize() {
+        // A deleted question can leave a panel of 47. The run is the panel,
+        // not the nearest step of ten (which would sample 40 of the 47 anew
+        // each time and stop being a stable set).
+        val odd = setup(
+            type = TestType.FIXED_PANEL,
+            requested = 47,
+            available = 47,
+            variant = "7"
+        )
+        assertTrue(odd.startable())
+        assertEquals(47, odd.resolvedCount())
+        assertEquals(47, odd.plan().resolve(47).let { (it as TestPlan.Resolution.Ready).count })
+        // Shrunk after the sheet read the size: still the whole remaining set.
+        assertEquals(46, odd.plan().resolve(46).let { (it as TestPlan.Resolution.Ready).count })
+        // A panel below the normal minimum is a labelled short run, not a
+        // refusal.
+        val tiny = setup(type = TestType.FIXED_PANEL, requested = 7, available = 7, variant = "7")
+        assertTrue(tiny.startable())
+        assertTrue(tiny.short())
+        assertEquals(7, tiny.resolvedCount())
+    }
+
+    @Test
+    fun anAuthoredSetupWithoutADifficultyCannotStart() {
+        val noVariant = setup(type = TestType.AUTHORED_DIFFICULTY, available = 100)
+        assertFalse(noVariant.startable())
+        assertEquals(TestPlan.VARIANT_REQUIRED_MESSAGE, noVariant.message())
+    }
+
+    @Test
+    fun anAuthoredSetupWithAnUnknownDifficultyCannotStart() {
+        val bad = setup(type = TestType.AUTHORED_DIFFICULTY, available = 100, variant = "extreme")
+        assertFalse(bad.startable())
+        assertEquals(TestPlan.VARIANT_REQUIRED_MESSAGE, bad.message())
+    }
+
+    @Test
+    fun anAuthoredSetupWithADifficultyStarts() {
+        val good = setup(type = TestType.AUTHORED_DIFFICULTY, available = 100, variant = "HARD")
+        assertTrue(good.startable())
+        assertEquals("HARD", good.plan().variant)
+    }
+
+    @Test
+    fun bookmarkedAndSlowestNeedNoVariant() {
+        assertTrue(setup(type = TestType.BOOKMARKED, available = 100).startable())
+        assertTrue(setup(type = TestType.SLOWEST, available = 100).startable())
+    }
+
+    @Test
+    fun aNonCustomSetupIgnoresAnUnsetVariant() {
+        val random = setup(type = TestType.RANDOM, available = 1000)
+        assertNull(random.plan().variant)
     }
 }

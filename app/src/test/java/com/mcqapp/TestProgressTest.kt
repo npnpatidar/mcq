@@ -22,7 +22,8 @@ class TestProgressTest {
         total: Int = 20,
         requested: Int = 20,
         exclusion: String = ExclusionMode.NONE.name,
-        targetTopicIds: String = ""
+        targetTopicIds: String = "",
+        variant: String? = null
     ) = Attempt(
         id = id,
         paperId = "p1",
@@ -42,7 +43,8 @@ class TestProgressTest {
         exclusionMode = exclusion,
         targetTopicIds = targetTopicIds.ifEmpty {
             if (type == TestType.WEAKEST_TOPICS.name) "c1,c2" else ""
-        }
+        },
+        variant = variant
     )
 
     @Test
@@ -148,5 +150,32 @@ class TestProgressTest {
         val families = TestProgress.families(attempts)
         assertEquals(2, families.size)
         assertTrue(families.any { it.family == ReportFamily.FRESH_SAMPLE })
+    }
+
+    @Test
+    fun panelProgressMatchesRunsByPanelIdNotTypeAlone() {
+        val panels = listOf(
+            com.mcqapp.domain.PanelSummary(1L, "p1", "Half", 50),
+            com.mcqapp.domain.PanelSummary(2L, "p1", "Quick", 10),
+            com.mcqapp.domain.PanelSummary(3L, "p1", "Never run", 5)
+        )
+        val attempts = listOf(
+            attempt(1, TestType.FIXED_PANEL.name, 10.0, 100, variant = "1"),
+            attempt(2, TestType.FIXED_PANEL.name, 15.0, 300, variant = "1"),
+            attempt(3, TestType.FIXED_PANEL.name, 8.0, 200, variant = "2"),
+            // A fixed-panel attempt with no panel id is not any panel's run.
+            attempt(4, TestType.FIXED_PANEL.name, 20.0, 400, variant = null)
+        )
+        val progress = TestProgress.panels(panels, attempts)
+        assertEquals(listOf(1L, 2L), progress.map { it.panelId })
+        val half = progress.first()
+        assertEquals("Half", half.name)
+        assertEquals(50, half.size)
+        assertEquals(2, half.attempts)
+        assertEquals(75.0, half.latestPercent, 0.0001)
+        assertEquals(62.5, half.averagePercent, 0.0001)
+        assertEquals(1, progress[1].attempts)
+        // Never run: no line rather than a zero.
+        assertTrue(progress.none { it.panelId == 3L })
     }
 }

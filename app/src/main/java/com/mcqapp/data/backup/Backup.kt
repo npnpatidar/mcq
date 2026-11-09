@@ -6,6 +6,8 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
+import com.mcqapp.data.local.PanelEntity
+import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.io.Importer
 import com.mcqapp.util.ImportTooLargeException
@@ -178,7 +180,24 @@ object McqBackupFormat {
          * not look like it was born during the restore.
          */
         val paperCreated: List<PaperCreated> = emptyList(),
+        /**
+         * User-created fixed panels (phase 3). They are device state, not
+         * importable content: a shared deck should not carry another
+         * library's named question sets. The ids are preserved because an
+         * attempt's `variant` refers to the panel by id.
+         */
+        val panels: List<PanelRow> = emptyList(),
         val inProgressTest: String? = null
+    )
+
+    /** One fixed panel with its frozen ids, in creation order. */
+    @Serializable
+    data class PanelRow(
+        val id: Long,
+        val paperId: String,
+        val name: String,
+        val createdAt: Long,
+        val questionIds: List<String> = emptyList()
     )
 
     /** Everything one backup zip holds, decoded. */
@@ -209,6 +228,7 @@ object McqBackupFormat {
         suspend fun cardState(row: CardStateRow) {}
         suspend fun reviewLog(row: ReviewLogRow) {}
         suspend fun paperCreated(row: PaperCreated) {}
+        suspend fun panel(row: PanelRow) {}
         suspend fun inProgressTest(json: String?) {}
         suspend fun settings(settings: SettingsFile) {}
     }
@@ -344,6 +364,9 @@ object McqBackupFormat {
                 "paperCreated" -> stream.readArray {
                     sink.paperCreated(row(PaperCreated.serializer(), it))
                 }
+                "panels" -> stream.readArray {
+                    sink.panel(row(PanelRow.serializer(), it))
+                }
                 "inProgressTest" -> sink.inProgressTest(
                     row(String.serializer().nullable, stream.readValue())
                 )
@@ -478,7 +501,8 @@ object McqBackupFormat {
         cardState: suspend (emit: suspend (com.mcqapp.data.local.CardStateEntity) -> Unit) -> Unit,
         reviewLog: suspend (emit: suspend (com.mcqapp.data.local.ReviewLogEntity) -> Unit) -> Unit,
         paperCreated: List<PaperCreated>,
-        inProgressTest: String?
+        inProgressTest: String?,
+        panels: List<PanelRow> = emptyList()
     ) {
         w.write("{\"cardState\":[")
         var first = true
@@ -498,6 +522,11 @@ object McqBackupFormat {
         paperCreated.forEachIndexed { i, row ->
             if (i > 0) w.write(",")
             w.write(json.encodeToString(PaperCreated.serializer(), row))
+        }
+        w.write("],\"panels\":[")
+        panels.forEachIndexed { i, row ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(PanelRow.serializer(), row))
         }
         w.write("],\"inProgressTest\":")
         w.write(if (inProgressTest == null) "null" else json.encodeToString(String.serializer(), inProgressTest))
@@ -636,6 +665,7 @@ class BackupSource(private val db: AppDatabase) {
                 paperCreated = paperRows.map {
                     McqBackupFormat.PaperCreated(it.id, it.createdAt, it.sortOrder)
                 },
+                panels = panels(),
                 inProgressTest = inProgressTest
             )
             papers = paperRows.size
@@ -660,6 +690,22 @@ class BackupSource(private val db: AppDatabase) {
             settings = McqBackupFormat.SettingsFile()
         )
     }
+
+    /**
+     * Every fixed panel with its frozen ids, for the backup's study file.
+     * Panels are small (one row per question id, at most a test's length),
+     * so they are read as a list rather than paged.
+     */
+    suspend fun panels(): List<McqBackupFormat.PanelRow> =
+        db.panelDao().allPanels().map { panel ->
+            McqBackupFormat.PanelRow(
+                id = panel.id,
+                paperId = panel.paperId,
+                name = panel.name,
+                createdAt = panel.createdAt,
+                questionIds = db.panelDao().questionIds(panel.id)
+            )
+        }
 
     /**
      * Pages every card into [emit] in physical (`rowid`) order — the order
@@ -736,6 +782,28 @@ class BackupSource(private val db: AppDatabase) {
 class BackupRestorer(private val db: AppDatabase) {
 
     /**
+     * Writes one fixed panel back with its original id (an attempt's
+     * `variant` names the panel by id) and its frozen member order.
+     */
+    private suspend fun restorePanel(row: McqBackupFormat.PanelRow) {
+        db.panelDao().insertPanel(
+            PanelEntity(
+                id = row.id,
+                paperId = row.paperId,
+                name = row.name,
+                createdAt = row.createdAt
+            )
+        )
+        if (row.questionIds.isNotEmpty()) {
+            db.panelDao().insertQuestions(
+                row.questionIds.mapIndexed { index, questionId ->
+                    PanelQuestionEntity(row.id, questionId, index)
+                }
+            )
+        }
+    }
+
+    /**
      * @param applySettings receives [McqBackupFormat.SettingsFile]; the
      *   caller owns the preference store, the core restore owns the database.
      * @param applyInProgress receives the resume snapshot (null clears it).
@@ -777,6 +845,7 @@ class BackupRestorer(private val db: AppDatabase) {
                 // Missing on pre-v20 backups: leave the importer's order.
                 paper.sortOrder?.let { db.paperDao().updateSortOrder(paper.id, it) }
             }
+            for (panel in backup.study.panels) restorePanel(panel)
         }
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read
@@ -893,6 +962,10 @@ class BackupRestorer(private val db: AppDatabase) {
                     override suspend fun paperCreated(row: McqBackupFormat.PaperCreated) {
                         db.paperDao().updateCreatedAt(row.id, row.createdAt)
                         row.sortOrder?.let { db.paperDao().updateSortOrder(row.id, it) }
+                    }
+
+                    override suspend fun panel(row: McqBackupFormat.PanelRow) {
+                        restorePanel(row)
                     }
 
                     override suspend fun inProgressTest(json: String?) {

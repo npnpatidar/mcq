@@ -326,11 +326,11 @@ class TestPlanSessionTest {
     }
 
     @Test
-    fun anUnimplementedTypeIsRefused() {
+    fun aCustomTypeWithoutAVariantIsRefused() {
         seed(25)
         val viewModel = TestViewModel(
             app, "p1", listOf("c1"),
-            routeTestType = "BOOKMARKED",
+            routeTestType = "TAG",
             routeRequestedCount = 20
         )
         assertTrue(
@@ -338,8 +338,8 @@ class TestPlanSessionTest {
             awaitCondition { !viewModel.state.value.loading }
         )
         val error = viewModel.state.value.loadError
-        assertNotNull("BOOKMARKED has no selector yet", error)
-        assertTrue("got: $error", error!!.contains("not available", ignoreCase = true))
+        assertNotNull("a TAG route without a tag cannot start", error)
+        assertTrue("got: $error", error!!.contains("needs a choice", ignoreCase = true))
     }
 
     /**

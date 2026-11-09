@@ -114,13 +114,15 @@ fun TestSessionScreen(
     exclusionMode: String = "",
     /** Weakest/Mixed breadth name, or blank for the medium default. */
     breadth: String = "",
+    /** Custom type's choice (phase 3: tag or difficulty name). */
+    variant: String = "",
     navController: NavController
 ) {
     val context = LocalContext.current
     val viewModel: TestViewModel = viewModel(
         key = "test-$paperId-${categoryIds.joinToString(",")}-mistakes=$mistakesOnly" +
             "-drill=$drillCount/$drillMinutes-minutes=$durationMinutes" +
-            "-type=$testType-count=$requestedCount-exclusion=$exclusionMode-breadth=$breadth",
+            "-type=$testType-count=$requestedCount-exclusion=$exclusionMode-breadth=$breadth-variant=$variant",
         factory = TestViewModelFactory(
             context.applicationContext as Application,
             paperId,
@@ -132,7 +134,8 @@ fun TestSessionScreen(
             testType,
             requestedCount,
             exclusionMode,
-            breadth
+            breadth,
+            variant
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -572,7 +575,8 @@ fun TestSessionScreen(
                                 stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
                                 minOf(asked, shown)
                             )
-                            bounded == com.mcqapp.domain.TestType.BALANCED -> stringResource(
+                            bounded == com.mcqapp.domain.TestType.BALANCED ||
+                                bounded == com.mcqapp.domain.TestType.FIXED_PANEL -> stringResource(
                                 R.string.test_banner_practice,
                                 stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
                                 minOf(asked, shown)

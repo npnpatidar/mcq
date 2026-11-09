@@ -13,6 +13,7 @@ import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
+import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
@@ -548,6 +549,7 @@ class Importer(
                                 json = json
                             )
                         )
+                        db.questionTagDao().replaceQuestionTags(effectiveQuestionId, questionForWrite.tags)
                         existingHashes.add(contentHash)
                         // A later question in this same file carrying the same
                         // content must collapse onto this one, as it did when
@@ -654,7 +656,8 @@ class Importer(
                         seed = attempt.seed,
                         exclusionMode = attempt.exclusionMode,
                         targetTopicIds = attempt.targetTopicIds,
-                        compositionJson = attempt.compositionJson
+                        compositionJson = attempt.compositionJson,
+                        variant = attempt.variant
                     )
                 )
                 val restoredRows = attempt.results.map { r ->

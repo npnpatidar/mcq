@@ -12,6 +12,7 @@ import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestReportBuilder
 import com.mcqapp.domain.TestReportInput
 import com.mcqapp.domain.TestStatistics
+import com.mcqapp.domain.stats.Reliability
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -68,7 +69,9 @@ class TestReportBuilderTest {
         graded: Boolean = true,
         answered: Boolean = true,
         title: String = "Cat",
-        current: String? = "c1"
+        current: String? = "c1",
+        optionCount: Int = 0,
+        correctCount: Int = 0
     ) = ReportRow(
         questionId = id,
         categoryTitle = title,
@@ -76,7 +79,9 @@ class TestReportBuilderTest {
         dwellSeconds = dwell,
         isCorrect = correct,
         graded = graded,
-        answered = answered
+        answered = answered,
+        optionCount = optionCount,
+        correctCount = correctCount
     )
 
     /** 12 correct, 4 wrong, 2 skipped, 2 ungraded; one correct is a 2-second guess. */
@@ -146,6 +151,134 @@ class TestReportBuilderTest {
         }
         val report = report(attempt = attempt, rows = rows)
         assertEquals(1.0 / 3.0, report.negativeMarking, 0.001)
+    }
+
+    @Test
+    fun theGuessingCorrectionUsesEachItemsOwnChanceLevel() {
+        // 20 answered, 10 correct. Ten single-correct 4-option items (chance
+        // 1/4) and ten "pick 2 of 4" items (chance 1/6) average 0.2083.
+        val rows = buildList {
+            repeat(10) { i -> add(row("s$i", correct = i < 5, dwell = 30, optionCount = 4, correctCount = 1)) }
+            repeat(10) { i -> add(row("m$i", correct = i < 5, dwell = 30, optionCount = 4, correctCount = 2)) }
+        }
+        val report = report(
+            // 10 right, 10 wrong, no penalty: markingOf infers 0 from the score,
+            // so only the chance level can suppress this estimate.
+            attempt = attempt(correct = 10, wrong = 10, skipped = 0, score = 10.0, maxScore = 20.0),
+            rows = rows
+        )
+        val guessing = report.guessing!!
+        assertEquals(20, guessing.scored)
+        assertEquals(0.5, guessing.rawAccuracy, 0.0001)
+        assertEquals((0.25 + 1.0 / 6.0) / 2.0, guessing.chance, 0.0001)
+        assertEquals(
+            (0.5 - guessing.chance) / (1.0 - guessing.chance),
+            guessing.correctedAccuracy,
+            0.0001
+        )
+    }
+
+    @Test
+    fun guessingIsSuppressedForPracticePenaltyAndUnknownKeys() {
+        val rows = (0 until 20).map {
+            row("q$it", correct = it < 10, dwell = 30, optionCount = 4, correctCount = 1)
+        }
+        // A practice set is selected on the dependent variable.
+        val practice = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(
+                    testType = "MIXED",
+                    correct = 10,
+                    wrong = 10,
+                    skipped = 0,
+                    score = 10.0,
+                    maxScore = 20.0
+                ),
+                rows = rows,
+                paper = paper().copy(negativeMarking = 0.0)
+            )
+        )
+        assertNull(practice.guessing)
+        // Negative marking breaks the "a wrong answer costs nothing" assumption.
+        // The score (8 of 10 right, 10 wrong) implies 0.2 lost per wrong answer.
+        val penalised = report(
+            attempt = attempt(
+                correct = 10,
+                wrong = 10,
+                skipped = 0,
+                score = 8.0,
+                maxScore = 20.0
+            ),
+            rows = rows,
+            paper = paper()
+        )
+        assertNull(penalised.guessing)
+        // One row without an option key would make it a subset estimate.
+        val unknown = rows.toMutableList().also { it[0] = it[0].copy(optionCount = 0) }
+        assertNull(
+            report(
+                attempt = attempt(
+                    correct = 10,
+                    wrong = 10,
+                    skipped = 0,
+                    score = 10.0,
+                    maxScore = 20.0
+                ),
+                rows = unknown,
+                paper = paper().copy(negativeMarking = 0.0)
+            ).guessing
+        )
+    }
+
+    @Test
+    fun guessingBelowTwentyAnsweredIsNotAnEstimate() {
+        val rows = (0 until 19).map {
+            row("q$it", correct = it < 10, dwell = 30, optionCount = 4, correctCount = 1)
+        }
+        assertNull(
+            report(
+                attempt = attempt(
+                    correct = 10,
+                    wrong = 9,
+                    skipped = 0,
+                    score = 10.0,
+                    maxScore = 19.0
+                ),
+                rows = rows,
+                paper = paper().copy(negativeMarking = 0.0)
+            ).guessing
+        )
+    }
+
+    @Test
+    fun discriminationReachesTheReviewRowWhenTheSampleSupportsIt() {
+        val rows = standardRows()
+        val disc = mapOf(
+            "c0" to Reliability.ItemDiscrimination(
+                "c0",
+                0.42,
+                Reliability.Discrimination.Flag.OK
+            ),
+            "w1" to Reliability.ItemDiscrimination(
+                "w1",
+                -0.2,
+                Reliability.Discrimination.Flag.REVIEW
+            )
+        )
+        val report = TestReportBuilder.build(
+            TestReportInput(
+                attempt = attempt(),
+                rows = rows,
+                paper = paper(),
+                discrimination = disc
+            )
+        )
+        assertEquals(0.42, report.reviews.getValue("c0").discrimination!!, 0.0001)
+        assertEquals(
+            Reliability.Discrimination.Flag.REVIEW,
+            report.reviews.getValue("w1").discriminationFlag
+        )
+        assertNull("a question with no estimate says nothing", report.reviews.getValue("c1").discrimination)
     }
 
     @Test

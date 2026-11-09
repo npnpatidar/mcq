@@ -62,6 +62,197 @@ class TestSelectorTest {
         now = 1_000L
     )
 
+    // ------------------------------------------------------------------
+    // Phase 3 custom selectors (stats-phase3.md).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun aBookmarkedSelectionSamplesFromThePoolAndFillsRandomly() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val selection = TestSelector.select(
+            plan(TestType.BOOKMARKED, 6),
+            signals,
+            customPool = setOf("q1", "q2", "q3")
+        )!!
+        assertEquals(6, selection.ids.size)
+        assertTrue(selection.ids.all { it in signals.map { s -> s.questionId } })
+        // Deterministic for the seed.
+        val again = TestSelector.select(
+            plan(TestType.BOOKMARKED, 6),
+            signals,
+            customPool = setOf("q1", "q2", "q3")
+        )!!
+        assertEquals(selection.ids, again.ids)
+        // The pool is smaller than the request, so fill happens.
+        assertEquals(3, selection.composition.segments.first().count)
+        assertEquals("BOOKMARKED", selection.composition.segments.first().source)
+        assertEquals("RANDOM", selection.composition.segments.last().source)
+    }
+
+    @Test
+    fun aBookmarkedSelectionWithToSmallPoolFillsRandomly() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val selection = TestSelector.select(
+            plan(TestType.BOOKMARKED, 6),
+            signals,
+            customPool = setOf("q1", "q2")
+        )!!
+        assertEquals(6, selection.ids.size)
+        assertEquals(2, selection.composition.segments.first().count)
+    }
+
+    @Test
+    fun anEmptyCustomPoolFillsEntirelyRandomly() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val selection = TestSelector.select(
+            plan(TestType.TAG, 4),
+            signals,
+            customPool = emptySet()
+        )!!
+        assertEquals(4, selection.ids.size)
+        // Nothing from the pool, so the composition is a pure random fill.
+        assertEquals(listOf("RANDOM"), selection.composition.segments.map { it.source })
+    }
+
+    @Test
+    fun aFixedPanelNeverFillsFromOutsideThePanel() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val pool = setOf("q2", "q5", "q7")
+        val selection = TestSelector.select(
+            plan(TestType.FIXED_PANEL, 5),
+            signals,
+            customPool = pool
+        )!!
+        // Three members, three asked: a short panel shrinks instead of
+        // topping up from the rest of the scope.
+        assertEquals(3, selection.ids.size)
+        assertTrue(selection.ids.all { it in pool })
+        assertEquals(listOf("PANEL"), selection.composition.segments.map { it.source })
+        assertEquals(3, selection.composition.segments.single().count)
+        // Deterministic for the seed.
+        assertEquals(
+            selection.ids,
+            TestSelector.select(
+                plan(TestType.FIXED_PANEL, 5),
+                signals,
+                customPool = pool
+            )!!.ids
+        )
+        // No panel chosen yet: nothing runs, not a random sample.
+        val empty = TestSelector.select(
+            plan(TestType.FIXED_PANEL, 5),
+            signals,
+            customPool = emptySet()
+        )!!
+        assertTrue(empty.ids.isEmpty())
+    }
+
+    @Test
+    fun anAuthoredDifficultySelectionUsesTheChosenLabel() {
+        val signals = (0 until 10).map { index ->
+            signal(
+                "q$index", "c1",
+                authored = when (index % 3) {
+                    0 -> Difficulty.EASY
+                    1 -> Difficulty.MEDIUM
+                    else -> Difficulty.HARD
+                }
+            )
+        }
+        val easyIds = signals.filter { it.authoredDifficulty == Difficulty.EASY }.map { it.questionId }
+        val selection = TestSelector.select(
+            plan(TestType.AUTHORED_DIFFICULTY, 3).copy(variant = "EASY"),
+            signals
+        )!!
+        assertEquals(3, selection.ids.size)
+        assertTrue("selection must come from the chosen label: ${selection.ids}", selection.ids.all { it in easyIds })
+        assertEquals("AUTHORED_EASY", selection.composition.segments.first().source)
+    }
+
+    @Test
+    fun anAuthoredDifficultySelectionFillsFromAdjacentLabel() {
+        val signals = (0 until 10).map { index ->
+            signal(
+                "q$index", "c1",
+                authored = when (index) {
+                    0 -> Difficulty.HARD
+                    else -> Difficulty.MEDIUM
+                }
+            )
+        }
+        // Only one HARD; the other two must come from MEDIUM (the adjacent label).
+        val selection = TestSelector.select(
+            plan(TestType.AUTHORED_DIFFICULTY, 3).copy(variant = "HARD"),
+            signals
+        )!!
+        assertEquals(3, selection.ids.size)
+        val sources = selection.composition.segments.map { it.source }
+        assertEquals("AUTHORED_HARD", sources.first())
+        assertTrue("adjacent fill must be from MEDIUM: $sources", "AUTHORED_MEDIUM" in sources)
+    }
+
+    @Test
+    fun anAuthoredDifficultySelectionWithoutVariantIsEmpty() {
+        val signals = (0 until 10).map { signal("q$it", "c1", authored = Difficulty.EASY) }
+        val selection = TestSelector.select(
+            plan(TestType.AUTHORED_DIFFICULTY, 4),
+            signals
+        )!!
+        assertEquals(0, selection.ids.size)
+    }
+
+    @Test
+    fun aSlowestSelectionTakesTheTopPercentileSlowest() {
+        val signals = (0 until 20).map { signal("q$it", "c1") }
+        val dwell = (0 until 20).associate { "q$it" to (it + 1) * 10L }
+        val selection = TestSelector.select(
+            plan(TestType.SLOWEST, 5),
+            signals,
+            medianDwellSeconds = dwell
+        )!!
+        // Medians are 10..200; the top 25% are 160..200 (5 questions).
+        val expected = setOf("q15", "q16", "q17", "q18", "q19")
+        assertEquals(expected, selection.ids.toSet())
+        assertEquals("SLOWEST", selection.composition.segments.first().source)
+    }
+
+    @Test
+    fun aSlowestSelectionSupportsSmallEligibleSets() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val dwell = mapOf("q7" to 55L, "q3" to 90L)
+        val selection = TestSelector.select(
+            plan(TestType.SLOWEST, 20),
+            signals,
+            medianDwellSeconds = dwell
+        )!!
+        // The 75th percentile of {55, 90} is 55 at index floor(0.75) = 0 -> 55,
+        // so both are eligible; the rest is Toughest/Random fill.
+        assertEquals(10, selection.ids.size)
+        assertTrue(selection.ids.containsAll(listOf("q7", "q3")))
+    }
+
+    @Test
+    fun aSlowestSelectionWithNoDwellIsEmpty() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val selection = TestSelector.select(
+            plan(TestType.SLOWEST, 5),
+            signals,
+            medianDwellSeconds = emptyMap()
+        )!!
+        assertEquals(0, selection.ids.size)
+    }
+
+    @Test
+    fun previewReportsTheCustomPool() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val preview = TestSelector.preview(
+            plan(TestType.BOOKMARKED, 4),
+            signals,
+            customPool = setOf("q1", "q2", "q3")
+        )
+        assertEquals(3, preview.pool)
+    }
+
     private fun category(id: String, count: Int, title: String = id): CategorySignals =
         CategorySignals(
             categoryId = id,

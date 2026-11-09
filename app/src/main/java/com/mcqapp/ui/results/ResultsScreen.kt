@@ -19,9 +19,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -35,6 +38,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +55,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import android.app.Application
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.QuestionResult
@@ -55,11 +63,14 @@ import com.mcqapp.domain.QuestionReview
 import com.mcqapp.domain.ReportFamily
 import com.mcqapp.domain.ReviewTag
 import com.mcqapp.domain.ReviewFilters
+import kotlinx.coroutines.launch
+import android.widget.Toast
 import com.mcqapp.domain.TestReport
 import com.mcqapp.domain.TestType
 import com.mcqapp.ui.ResultsViewModelFactory
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingRefreshErrorItem
+import com.mcqapp.ui.common.attemptTypeLine
 import com.mcqapp.ui.common.testTypeLabel
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
@@ -86,6 +97,14 @@ fun ResultsScreen(
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val resources = LocalResources.current
+    var showExportMenu by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -93,6 +112,56 @@ fun ResultsScreen(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                actions = {
+                    if (state.report != null) {
+                        IconButton(onClick = { showExportMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.report_export))
+                        }
+                        DropdownMenu(
+                            expanded = showExportMenu,
+                            onDismissRequest = { showExportMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.report_export_csv)) },
+                                onClick = {
+                                    showExportMenu = false
+                                    scope.launch {
+                                        val intent = viewModel.exportCsvIntent()
+                                        if (intent != null) {
+                                            context.startActivity(
+                                                android.content.Intent.createChooser(
+                                                    intent,
+                                                    resources.getString(R.string.report_export_share)
+                                                )
+                                            )
+                                        } else {
+                                            Toast.makeText(context, R.string.report_export_failed, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.report_export_pdf)) },
+                                onClick = {
+                                    showExportMenu = false
+                                    scope.launch {
+                                        val intent = viewModel.exportPdfIntent()
+                                        if (intent != null) {
+                                            context.startActivity(
+                                                android.content.Intent.createChooser(
+                                                    intent,
+                                                    resources.getString(R.string.report_export_share)
+                                                )
+                                            )
+                                        } else {
+                                            Toast.makeText(context, R.string.report_export_failed, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -168,6 +237,9 @@ fun ResultsScreen(
             }
             if (report != null) {
                 item(contentType = "meaning") { MeaningCard(report) }
+                if (report.guessing != null) {
+                    item(contentType = "guessing") { GuessingCard(report) }
+                }
                 if (report.practice != null) {
                     item(contentType = "practice") { PracticeCard(report) }
                 }
@@ -520,6 +592,32 @@ private fun MeaningCard(report: TestReport) {
 }
 
 @Composable
+private fun GuessingCard(report: TestReport) {
+    val guessing = report.guessing ?: return
+    ReportSection(R.string.report_guessing_title) {
+        Text(
+            stringResource(
+                R.string.report_guessing_line,
+                (guessing.correctedAccuracy * 100).roundToInt(),
+                (guessing.rawAccuracy * 100).roundToInt(),
+                (guessing.chance * 100).roundToInt()
+            ),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(
+            stringResource(R.string.report_guessing_help),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            stringResource(R.string.report_guessing_sample, guessing.scored),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
 private fun ErrorMixCard(report: TestReport) {
     val mix = report.errorMix
     ReportSection(R.string.report_error_mix_title) {
@@ -825,18 +923,18 @@ private fun headerLine(report: TestReport): String {
     val length = when {
         report.family == ReportFamily.SHORT ->
             stringResource(R.string.report_short_test) + " · " +
-                (report.type?.let { testTypeLabel(it) + " · " } ?: "") +
+                attemptTypeLine(report.attempt) + " · " +
                 stringResource(R.string.report_header_questions, report.shownCount)
         report.family == ReportFamily.LEGACY ->
             stringResource(R.string.report_legacy_attempt) + " · " +
                 stringResource(R.string.report_header_questions, report.shownCount)
         report.family == ReportFamily.PRACTICE ->
             stringResource(R.string.report_practice) + " · " +
-                testTypeLabel(report.type) + " · " +
+                attemptTypeLine(report.attempt) + " · " +
                 stringResource(R.string.report_header_questions, report.shownCount)
         report.scopeSize > 0 ->
             stringResource(reportKind(report.family)) + " · " +
-                testTypeLabel(report.type) + " · " +
+                attemptTypeLine(report.attempt) + " · " +
                 stringResource(
                     R.string.report_header_of_scope,
                     report.shownCount,
@@ -844,7 +942,7 @@ private fun headerLine(report: TestReport): String {
                 )
         else ->
             stringResource(reportKind(report.family)) + " · " +
-                testTypeLabel(report.type) + " · " +
+                attemptTypeLine(report.attempt) + " · " +
                 stringResource(R.string.report_header_questions, report.shownCount)
     }
     val badge = when {
@@ -1230,6 +1328,24 @@ private fun ResultCard(
                             }
                         )
                     ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            val discrimination = review?.discrimination
+            val discriminationFlag = review?.discriminationFlag
+            if (discrimination != null) {
+                // An estimate from repeated same-family attempts, not a verdict
+                // on the question: the label never says "bad".
+                val flag = when (discriminationFlag) {
+                    com.mcqapp.domain.stats.Reliability.Discrimination.Flag.REVIEW ->
+                        stringResource(R.string.report_discrimination_review)
+                    com.mcqapp.domain.stats.Reliability.Discrimination.Flag.WEAK ->
+                        stringResource(R.string.report_discrimination_weak)
+                    else -> ""
+                }
+                Text(
+                    stringResource(R.string.report_discrimination_line, discrimination) + flag,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

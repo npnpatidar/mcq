@@ -13,6 +13,8 @@ import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
+import com.mcqapp.data.local.PanelEntity
+import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import androidx.room.Room
 import org.junit.After
@@ -199,6 +201,17 @@ class BackupRestoreRoundTripTest {
                 )
             )
         )
+        // A fixed panel is device state carried in study.json: the restore
+        // must bring back its id (attempts name it) and its frozen order.
+        val panelId = db.panelDao().insertPanel(
+            PanelEntity(paperId = "paper-1", name = "Half", createdAt = 1_700_000_000_500)
+        )
+        db.panelDao().insertQuestions(
+            listOf(
+                PanelQuestionEntity(panelId, "q-2", 0),
+                PanelQuestionEntity(panelId, "q-1", 1)
+            )
+        )
     }
 
     private suspend fun buildBackup(settings: McqBackupFormat.SettingsFile = McqBackupFormat.SettingsFile()): ByteArray {
@@ -244,6 +257,10 @@ class BackupRestoreRoundTripTest {
         "bookmarks" to db.bookmarkDao().getAll().sorted(),
         "attempts" to db.attemptDao().getAllAttempts().map { it.copy(id = 0).toString() }.sorted(),
         "results" to db.attemptDao().getAllResults().map { it.copy(id = 0, attemptId = 0).toString() }.sorted(),
+        "panels" to db.panelDao().allPanels().map { it.toString() }.sorted(),
+        "panel_questions" to db.panelDao().allPanels()
+            .flatMap { panel -> db.panelDao().questionIds(panel.id).map { "${panel.id}:$it" } }
+            .sorted(),
         "passages" to db.passageDao().getAll().map { it.toString() }.sorted()
     )
 

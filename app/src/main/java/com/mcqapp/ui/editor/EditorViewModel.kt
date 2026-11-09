@@ -274,6 +274,36 @@ class EditorViewModel(
     fun updateImage(value: String) = updateState { it.copy(image = value) }
     fun updateExplanationImage(value: String) = updateState { it.copy(explanationImage = value) }
     fun updateTags(value: String) = updateState { it.copy(tags = value) }
+
+    /**
+     * Adds one tag label (phase 3). The state stays the comma string; the
+     * difference is only that the chips make one label the unit of intent.
+     * A case-folded duplicate no-ops.
+     */
+    fun addTag(label: String) {
+        val trimmed = label.trim()
+        if (trimmed.isEmpty()) return
+        updateState { state ->
+            val existing = com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
+            if (existing.any { it.folded == com.mcqapp.domain.TagNormalizer.fold(trimmed) }) {
+                state
+            } else {
+                val labels = existing.map { it.tag } + trimmed
+                state.copy(tags = labels.joinToString(", "))
+            }
+        }
+    }
+
+    /** Removes one tag label from the edited question. */
+    fun removeTag(label: String) {
+        updateState { state ->
+            val existing = com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
+            val labels = existing.filterNot {
+                it.folded == com.mcqapp.domain.TagNormalizer.fold(label)
+            }.map { it.tag }
+            state.copy(tags = labels.joinToString(", "))
+        }
+    }
     fun updateDifficulty(value: Difficulty) = updateState { it.copy(difficulty = value) }
     fun updateMarks(value: String) = updateState { it.copy(marks = value) }
     /**

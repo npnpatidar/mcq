@@ -19,6 +19,7 @@ import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -171,14 +172,16 @@ class StatsRetentionStreamTest {
         val everyPaper = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
         val scoped = repository.statsRetention("p1", StatsAggregator.Range.ALL, now)
         // Unscoped the breakdown is one row per paper; scoped to p1 it is one
-        // per question of that paper — both in Alpha — and p2's card no longer
-        // contributes.
+        // row per category of that paper — its questions are both in Alpha —
+        // and p2's card no longer contributes.
         assertEquals(
             setOf("Paper One", "Paper Two"),
             everyPaper.groupRetention.map { it.label }.toSet()
         )
-        assertEquals(2, scoped.groupRetention.size)
+        assertTrue(everyPaper.groupIsPaper)
+        assertEquals(listOf("Alpha"), scoped.groupRetention.map { it.label })
         assertEquals(6, scoped.groupRetention.sumOf { it.reviews })
+        assertFalse(scoped.groupIsPaper)
     }
 
     @Test

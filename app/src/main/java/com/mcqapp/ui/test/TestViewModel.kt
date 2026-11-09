@@ -1148,10 +1148,11 @@ class TestViewModel(
             )
         ) {
             // The slot holds a different session of this paper. Opening the
-            // screen must not destroy it, but a bounded session that starts
-            // here takes the slot on its first save; see
-            // [dropStaleAnswersOnSave].
-            if (sessionPlan != null) dropStaleAnswersOnSave = true
+            // screen must not destroy it, but *any* session that starts here —
+            // bounded or legacy — takes the slot on its first save; leaving a
+            // legacy start's predecessor rows behind would join them into this
+            // session on the next resume.
+            dropStaleAnswersOnSave = true
             return
         }
         // A document written before the answers moved to rows still carries

@@ -96,7 +96,13 @@ fun SearchScreen(
                 }
             }
             val refresh = hits.loadState.refresh
-            val appending = hits.loadState.append is LoadState.Loading
+            val append = hits.loadState.append
+            val appending = append is LoadState.Loading
+            // `itemCount` is only the rows Paging has loaded (placeholders are
+            // off, and an append starts near the end of the list), so it is not
+            // a total. Show "+" unless both the refresh and the last append
+            // said there is no next page.
+            val possiblyMore = append.hasMore() && refresh.hasMore()
             Spacer(Modifier.height(8.dp))
             when {
                 debouncing || (refresh is LoadState.Loading && hits.itemCount == 0) ->
@@ -105,8 +111,8 @@ fun SearchScreen(
                     Text(stringResource(R.string.no_matches), style = MaterialTheme.typography.bodyMedium)
                 hits.itemCount > 0 ->
                     Text(
-                        "${hits.itemCount}${if (appending) "+" else ""} " +
-                            "match${if (hits.itemCount == 1 && !appending) "" else "es"}",
+                        "${hits.itemCount}${if (possiblyMore) "+" else ""} " +
+                            "match${if (hits.itemCount == 1 && !possiblyMore) "" else "es"}",
                         style = MaterialTheme.typography.labelMedium
                     )
             }
@@ -187,3 +193,12 @@ fun SearchScreen(
         }
     }
 }
+
+/**
+ * Whether a Paging load state can still have a next page. The count label
+ * uses it so the loaded row count is never printed as if it were an exact
+ * total: only a finished append (or refresh) that reached the end drops the
+ * "+".
+ */
+private fun LoadState.hasMore(): Boolean =
+    this !is LoadState.NotLoading || !endOfPaginationReached

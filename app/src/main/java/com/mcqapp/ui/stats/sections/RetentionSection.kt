@@ -157,7 +157,11 @@ private fun Double.roundTo3(): String = String.format(java.util.Locale.ENGLISH, 
 private fun GroupRetentionCard(bundle: RetentionData) {
     ChartCard(
         testTag = "stats-group-retention",
-        title = { ChartTitle(R.string.stats_by_group) },
+        title = {
+            ChartTitle(
+                if (bundle.groupIsPaper) R.string.stats_by_group else R.string.stats_by_category_all
+            )
+        },
         subtitle = { ChartSubtitle(R.string.stats_by_group_help) }
     ) {
         bundle.groupRetention.forEach { group ->

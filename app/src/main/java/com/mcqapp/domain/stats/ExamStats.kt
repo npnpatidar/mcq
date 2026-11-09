@@ -170,6 +170,13 @@ data class ExamStats(
     val skipRate: Double? = null,
     /** Approximate 95% margin in points; absent for practice/short/legacy. */
     val marginPoints: Double? = null,
+    /** Questions in the latest comparable attempt: the margin's sample size. */
+    val latestShown: Int = 0,
+    /**
+     * The combined 95% band of the latest-vs-first change, in points. Two
+     * independent attempts cannot be compared on one attempt's margin.
+     */
+    val deltaMarginPoints: Double? = null,
     /** Questions in the paper, for the finite-population correction. */
     val population: Int = 0,
     val trend: List<ExamTrendPoint> = emptyList(),
@@ -182,11 +189,11 @@ data class ExamStats(
 ) {
     val isEmpty: Boolean get() = familyAttempts == 0 && recent.isEmpty()
 
-    /** True when the latest movement is inside the approximate margin. */
+    /** True when the latest movement is inside the combined margin. */
     val deltaIsNoise: Boolean
         get() {
             val delta = deltaPoints ?: return false
-            val margin = marginPoints ?: return false
+            val margin = deltaMarginPoints ?: return false
             return kotlin.math.abs(delta) <= margin
         }
 }
@@ -247,6 +254,22 @@ object ExamStatsBuilder {
         val graded = correct + wrong + skipped
         val latestPercent = latest?.percentage
         val representative = group != ExamGroup.PRACTICE
+        // The margin belongs to the latest attempt's percentage, so its sample
+        // is that attempt's question count — not the pooled history.
+        val latestMargin = if (representative && latest != null) {
+            marginPoints(latest.percentage, latest.totalQuestions, population)
+        } else {
+            null
+        }
+        val firstMargin = if (representative && comparable.size >= 2) {
+            marginPoints(
+                comparable.first().percentage,
+                comparable.first().totalQuestions,
+                population
+            )
+        } else {
+            null
+        }
 
         return ExamStats(
             group = group,
@@ -274,8 +297,10 @@ object ExamStatsBuilder {
                 null
             },
             skipRate = if (graded > 0) skipped.toDouble() / graded else null,
-            marginPoints = if (representative && latestPercent != null) {
-                marginPoints(latestPercent, shown, population)
+            marginPoints = latestMargin,
+            latestShown = latest?.totalQuestions ?: 0,
+            deltaMarginPoints = if (latestMargin != null && firstMargin != null) {
+                latestMargin + firstMargin
             } else {
                 null
             },

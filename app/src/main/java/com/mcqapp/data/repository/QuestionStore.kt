@@ -7,7 +7,6 @@ import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
-import com.mcqapp.data.local.QuestionOrderRow
 import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
@@ -16,6 +15,8 @@ import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
 import com.mcqapp.data.local.getRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
+import com.mcqapp.data.local.moveAfterAnchor
+import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.data.local.updateBulkFieldsChunked
@@ -605,26 +606,8 @@ internal class QuestionStore(
      * category-wide rewrite is a few hundred rows at most — question banks —
      * and keeps every other position meaningful.
      */
-    internal suspend fun moveAfterAnchor(questionId: String, anchorId: String): Boolean {
-        return db.withTransaction {
-            val movedCategory = db.questionDao().getCategoryIdById(questionId)
-                ?: return@withTransaction false
-            val anchorCategory = db.questionDao().getCategoryIdById(anchorId)
-                ?: return@withTransaction false
-            if (movedCategory != anchorCategory) return@withTransaction false
-            val ordered = mutableListOf<QuestionOrderRow>()
-            for (row in db.questionDao().getOrderByCategory(anchorCategory)) {
-                if (row.id == questionId) continue
-                ordered += row
-                if (row.id == anchorId) ordered += QuestionOrderRow(questionId, 0)
-            }
-            if (ordered.none { it.id == questionId }) return@withTransaction false
-            ordered.forEachIndexed { index, row ->
-                if (row.sortOrder != index) db.questionDao().updateSortOrder(row.id, index)
-            }
-            true
-        }
-    }
+    internal suspend fun moveAfterAnchor(questionId: String, anchorId: String): Boolean =
+        db.moveAfterAnchor(questionId, anchorId)
 
     /**
      * Keeps a passage group's members in the passage's category (a group can
@@ -647,13 +630,8 @@ internal class QuestionStore(
      * stays where it is. No-op for already-contiguous imports.
      */
     suspend fun placeWithGroup(questionId: String) {
-        val member = db.questionDao().getById(questionId) ?: return
-        val passageId = member.passageId ?: return
-        val anchor = db.questionDao().lastMemberInCategory(passageId, member.categoryId, member.id)
-            ?: return
-        if (moveAfterAnchor(member.id, anchor.id)) {
-            Logger.i("REPO", "placeWithGroup(${member.id} after ${anchor.id})")
-        }
+        val anchor = db.placeWithGroup(questionId) ?: return
+        Logger.i("REPO", "placeWithGroup($questionId after $anchor)")
     }
 
     private companion object {

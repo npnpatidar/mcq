@@ -589,6 +589,54 @@ class TestPlanSessionTest {
     }
 
     /**
+     * A legacy route taking the slot must drop the abandoned bounded session's
+     * answer rows, the mirror of [aNewBoundedSessionDropsTheAbandonedLegacySessionsAnswers]:
+     * rows are keyed by paper, so leaving them joins answers the reader never
+     * gave into the legacy attempt's resume.
+     */
+    @Test
+    fun aLegacySessionDropsTheAbandonedBoundedSessionsAnswers() {
+        seed(25)
+        offMain {
+            repository.saveTestProgress(
+                TestSnapshot(
+                    paperId = "p1",
+                    categoryIds = listOf("c1"),
+                    questionSeed = 5L,
+                    questionShuffle = true,
+                    testType = "RANDOM",
+                    requestedCount = 20,
+                    scopeKey = ScopeKey.wholePaper("p1"),
+                    samplingVersion = 2
+                ),
+                listOf(TestAnswer("q24", selection = setOf("q24-a")))
+            )
+        }
+
+        val viewModel = TestViewModel(app, "p1", listOf("c1"))
+        assertTrue(
+            "the session never loaded: state=${viewModel.state.value}",
+            awaitCondition { !viewModel.state.value.loading && viewModel.state.value.current != null }
+        )
+        assertNull(
+            "a bounded snapshot must not be offered to a legacy route",
+            viewModel.state.value.resumeOffer
+        )
+        val current = viewModel.state.value.current!!
+        viewModel.toggleOption("${current.id}-a")
+        assertTrue(
+            "the new session's answer never reached the store",
+            awaitCondition { answerRows().isNotEmpty() }
+        )
+        assertEquals(
+            "the abandoned bounded answers leaked into the legacy session",
+            listOf(current.id),
+            answerRows()
+        )
+        assertFalse("q24" in answerRows())
+    }
+
+    /**
      * A legacy snapshot in the same scope is offered as itself, even on a
      * bounded route (section 7.6): it resumes its surviving ids and saves
      * legacy metadata, never the fresh plan's type or count.

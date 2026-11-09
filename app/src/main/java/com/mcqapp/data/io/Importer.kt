@@ -13,6 +13,7 @@ import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
+import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.passageSearchText
@@ -244,6 +245,12 @@ class Importer(
                 // kept in sync with what we write so a later same-id or
                 // same-title entry still matches, exactly as a re-read would.
                 val catsInPaper = db.categoryDao().getByPaper(effectivePaperId).toMutableList()
+                // Raw file id -> the row this import wrote, for the parent
+                // links resolved below. A child can name a parent that appears
+                // later in the file, so resolution waits until every category
+                // of the paper has been written.
+                val rawToEffectiveCategory = HashMap<String, String>()
+                val parentLinks = ArrayList<Pair<String, String?>>()
                 effectiveCategories.forEachIndexed { categoryIndex, categoryDto ->
                     val scaledCategory = scaledCategories[categoryIndex]
                     // Category identity within the paper: match by id first, then
@@ -263,6 +270,8 @@ class Importer(
                         } else {
                             categoryDto.id
                         }
+                    rawToEffectiveCategory[categoryDto.id] = effectiveCatId
+                    parentLinks += effectiveCatId to categoryDto.parentId
 
                     if (db.categoryDao().getById(effectiveCatId) == null) {
                         db.categoryDao().insertIgnore(
@@ -387,7 +396,18 @@ class Importer(
                             // Resolved from the candidates fetched once for the
                             // whole import rather than three lookups per question.
                             val candidates = collisionCandidates()
-                            val candidate = candidates[contentHash]?.firstOrNull()
+                            // Only a candidate whose *content* matches can be
+                            // refreshed: the hash deliberately cannot see a
+                            // table or a formula, so the first hash hit may be
+                            // a different question. Refreshing that one used to
+                            // write this file's key onto the wrong row.
+                            val candidate = candidates[contentHash].orEmpty().firstOrNull {
+                                ContentHash.sameQuestionContent(
+                                    it.entity,
+                                    it.options,
+                                    scaledQuestion
+                                )
+                            }
                             val sameContentId = candidate?.entity?.id
                             if (sameContentId != null) {
                                 val stored = candidate.entity
@@ -600,11 +620,28 @@ class Importer(
                     }
                 }
 
+                // Resolve every parent link now that the whole paper's raw -> row
+                // map exists: a remapped id, a title-matched row or an unknown
+                // parent all resolve the same way as the category itself did.
+                // A parent the destination paper does not hold (a subtree
+                // export, or an ancestor outside the file) becomes a root, so
+                // the child is not silently dropped from the drawer and counts.
+                for ((categoryId, rawParentId) in parentLinks) {
+                    val parentId = rawParentId?.let { raw ->
+                        rawToEffectiveCategory[raw]
+                            ?: db.categoryDao().getById(raw)
+                                ?.takeIf { it.paperId == effectivePaperId }?.id
+                    }?.takeIf { it != categoryId }
+                    db.categoryDao().updateParent(categoryId, parentId)
+                }
+
                 // A passage group only occurs together when its members share
                 // the passage's category. A file that scattered members across
-                // categories folds them in here — appended after the passage's
-                // category, in member order, so they at least arrive as one
-                // contiguous run.
+                // categories folds them in here, each placed right after the
+                // group's last member — the same placement an assignment uses.
+                // Appending at the category tail could leave two runs of the
+                // same passage separated by unrelated questions, which the
+                // session layer then treats as two smaller passages.
                 for (passageId in paperPassageIds) {
                     val passage = db.passageDao().getById(passageId) ?: continue
                     val strays = db.questionDao().getMemberCategoriesByPassage(passageId)
@@ -612,10 +649,9 @@ class Importer(
                     if (strays.isEmpty()) continue
                     Logger.i("IMPORT", "Folding ${strays.size} passage member(s) of " +
                         "$passageId into ${passage.categoryId}")
-                    var next = (db.questionDao().getMaxSortOrder(passage.categoryId) ?: -1) + 1
                     for (stray in strays) {
                         db.questionDao().updateCategory(listOf(stray.id), passage.categoryId)
-                        db.questionDao().updateSortOrder(stray.id, next++)
+                        db.placeWithGroup(stray.id)
                     }
                 }
             }
@@ -657,7 +693,8 @@ class Importer(
                         exclusionMode = attempt.exclusionMode,
                         targetTopicIds = attempt.targetTopicIds,
                         compositionJson = attempt.compositionJson,
-                        variant = attempt.variant
+                        variant = attempt.variant,
+                        negativeMarking = attempt.negativeMarking
                     )
                 )
                 val restoredRows = attempt.results.map { r ->

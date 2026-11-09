@@ -16,6 +16,10 @@ import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.data.local.getTagsByIdsChunked
+import com.mcqapp.data.local.bookmarkedIdsInScopeChunked
+import com.mcqapp.data.local.dwellSamplesInScopeChunked
+import com.mcqapp.data.local.questionIdsForTagChunked
+import com.mcqapp.data.local.tagCountsChunked
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Panel
 import com.mcqapp.domain.PanelSummary
@@ -581,9 +585,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun tagCountsForScope(
         paperId: String,
         categoryIds: List<String>
-    ): List<TagCount> = db.questionTagDao().tagCounts(
+    ): List<TagCount> = db.questionTagDao().tagCountsChunked(
         paperId = paperId,
-        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
         categoryIds = categoryIds
     )
 
@@ -595,9 +598,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paperId: String,
         categoryIds: List<String>,
         foldedTag: String
-    ): List<String> = db.questionTagDao().questionIdsForTag(
+    ): List<String> = db.questionTagDao().questionIdsForTagChunked(
         paperId = paperId,
-        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
         categoryIds = categoryIds,
         tagFolded = foldedTag
     )
@@ -606,9 +608,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun bookmarkedIdsInScope(
         paperId: String,
         categoryIds: List<String>
-    ): List<String> = db.questionTagDao().bookmarkedIdsInScope(
+    ): List<String> = db.questionTagDao().bookmarkedIdsInScopeChunked(
         paperId = paperId,
-        scopeAll = if (categoryIds.isEmpty()) 1 else 0,
         categoryIds = categoryIds
     )
 
@@ -695,9 +696,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         categoryIds: List<String>
     ): Map<String, Long> =
         db.questionTagDao()
-            .dwellSamplesInScope(
+            .dwellSamplesInScopeChunked(
                 paperId = paperId,
-                scopeAll = if (categoryIds.isEmpty()) 1 else 0,
                 categoryIds = categoryIds
             )
             .groupBy { it.questionId }

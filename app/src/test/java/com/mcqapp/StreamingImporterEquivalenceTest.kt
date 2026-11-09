@@ -434,8 +434,8 @@ class StreamingImporterEquivalenceTest {
 
     /**
      * The import tail folds a passage's strays — members the file scattered
-     * across other categories — into the passage's own category, appended
-     * after it in member order. The fold only reads each member's id and
+     * across other categories — into the passage's own category, beside the
+     * group in member order. The fold only reads each member's id and
      * category, so it went over to an (id, categoryId) projection instead of
      * materialising every member's full row; this pins the fold's whole
      * observable outcome — which strays folded, in what order, with what
@@ -497,8 +497,8 @@ class StreamingImporterEquivalenceTest {
                 }
             }
             assertEquals(
-                "every member folds into the passage category, strays appended " +
-                    "after it in member order",
+                "every member folds into the passage category, beside the group " +
+                    "in member order",
                 mapOf(
                     "qc" to (0 to "c"),
                     "qa" to (1 to "c"),

@@ -199,7 +199,7 @@ private fun TrendBlock(exam: ExamStats) {
     val margin = exam.marginPoints
     if (margin != null) {
         Text(
-            stringResource(R.string.stats_exam_margin, margin, exam.shown),
+            stringResource(R.string.stats_exam_margin, margin, exam.latestShown),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

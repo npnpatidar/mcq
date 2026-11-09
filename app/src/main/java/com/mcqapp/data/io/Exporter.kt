@@ -112,6 +112,7 @@ class Exporter(private val db: AppDatabase) {
                         targetTopicIds = attempt.targetTopicIds,
                         compositionJson = attempt.compositionJson,
                         variant = attempt.variant,
+                        negativeMarking = attempt.negativeMarking,
                         results = results.map { r ->
                             AttemptResultDto(
                                 questionId = r.questionId,
@@ -208,6 +209,7 @@ class Exporter(private val db: AppDatabase) {
                 targetTopicIds = attempt.targetTopicIds,
                 compositionJson = attempt.compositionJson,
                 variant = attempt.variant,
+                negativeMarking = attempt.negativeMarking,
                 results = results.map { r ->
                     AttemptResultDto(
                         questionId = r.questionId,

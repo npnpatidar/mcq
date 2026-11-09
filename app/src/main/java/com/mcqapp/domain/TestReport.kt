@@ -323,7 +323,7 @@ object TestReportBuilder {
         val comparable = family == ReportFamily.MOCK || family == ReportFamily.FRESH_SAMPLE
         val margin = if (comparable) {
             TestStatistics.marginPoints(
-                proportion = score.accuracy,
+                proportion = score.accuracyAsked,
                 sample = score.shown,
                 population = scopeSize
             )
@@ -371,7 +371,7 @@ object TestReportBuilder {
                     attemptId = prior.id,
                     percentage = prior.percentage,
                     marginPoints = TestStatistics.marginPoints(
-                        proportion = prior.accuracyOnAnswered,
+                        proportion = prior.accuracyOnShown,
                         sample = prior.totalQuestions,
                         population = scopeSize
                     )
@@ -684,7 +684,7 @@ object TestReportBuilder {
             attemptId = attempt.id,
             percentage = attempt.percentage,
             marginPoints = TestStatistics.marginPoints(
-                proportion = score.accuracy,
+                proportion = score.accuracyAsked,
                 sample = score.shown,
                 population = scopeSize
             ),
@@ -699,7 +699,7 @@ object TestReportBuilder {
                     attemptId = it.id,
                     percentage = it.percentage,
                     marginPoints = TestStatistics.marginPoints(
-                        proportion = it.accuracyOnAnswered,
+                        proportion = it.accuracyOnShown,
                         sample = it.totalQuestions,
                         population = scopeSize
                     ),
@@ -725,10 +725,10 @@ object TestReportBuilder {
     ): Boolean {
         if (attempt.totalQuestions >= TREND_MIN_SHOWN) return true
         val margin = if (score != null) {
-            TestStatistics.marginPoints(score.accuracy, score.shown, scopeSize)
+            TestStatistics.marginPoints(score.accuracyAsked, score.shown, scopeSize)
         } else {
             TestStatistics.marginPoints(
-                attempt.accuracyOnAnswered,
+                attempt.accuracyOnShown,
                 attempt.totalQuestions,
                 scopeSize
             )
@@ -851,6 +851,10 @@ object TestReportBuilder {
      * wrong answers to derive it from.
      */
     fun markingOf(attempt: Attempt, paper: Paper?): Double {
+        // New attempts store the rate they applied: exact even when questions
+        // carry unequal marks. The reconstruction below remains for pre-v24
+        // rows, whose marks are no longer recoverable.
+        attempt.negativeMarking?.let { return it }
         if (attempt.wrongCount > 0 && attempt.maxScore > 0) {
             val lost = attempt.correctCount.toDouble() - attempt.score
             if (lost >= 0) return (lost / attempt.wrongCount).coerceIn(0.0, 1.0)

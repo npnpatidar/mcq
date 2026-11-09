@@ -315,4 +315,190 @@ class ImportPaperIdentityTest {
 
         assertEquals(1, db.questionDao().getByCategory("c-paper-a").size)
     }
+
+    /**
+     * A category id owned by another paper is remapped for the destination, so
+     * a child naming that raw id must follow the remap. Left verbatim, the
+     * child's parent named no row of its paper and the whole subtree vanished
+     * from the drawer and the category selection.
+     */
+    @Test
+    fun aRemappedParentIdIsResolvedForItsChildren() = runBlocking {
+        Importer(db).import(file("paper-a", "Paper A", "Alpha"))
+
+        val incoming = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-b",
+                    title = "Paper B",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c-paper-a",
+                            title = "Parent",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qb-parent",
+                                    text = "Parent?",
+                                    options = listOf(OptionDto("a", "1"), OptionDto("b", "2")),
+                                    correctOptionIds = listOf("a")
+                                )
+                            )
+                        ),
+                        CategoryDto(
+                            id = "c-child",
+                            title = "Child",
+                            parentId = "c-paper-a",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qb-child",
+                                    text = "Child?",
+                                    options = listOf(OptionDto("a", "3"), OptionDto("b", "4")),
+                                    correctOptionIds = listOf("b")
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        Importer(db).import(incoming)
+
+        val parent = db.categoryDao().getById("paper-b-c-paper-a")!!
+        val child = db.categoryDao().getById("c-child")!!
+        assertEquals("the child still names the file's raw parent id", parent.id, child.parentId)
+    }
+
+    /**
+     * A subtree export ships a root whose parent is outside the file. The
+     * destination has no such row, so the root must land as a root instead of
+     * a dangling child the tree drops.
+     */
+    @Test
+    fun aParentOutsideTheFileMakesTheCategoryARoot() = runBlocking {
+        val incoming = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-c",
+                    title = "Paper C",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c-child",
+                            title = "Shared section",
+                            parentId = "ancestor-not-in-file",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qc",
+                                    text = "Shared?",
+                                    options = listOf(OptionDto("a", "1"), OptionDto("b", "2")),
+                                    correctOptionIds = listOf("a")
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        Importer(db).import(incoming)
+
+        assertNull(
+            "a parent the paper does not hold must not dangle",
+            db.categoryDao().getById("c-child")!!.parentId
+        )
+        val paper = com.mcqapp.data.repository.McqRepository(
+            db,
+            ApplicationProvider.getApplicationContext()
+        ).getPaper("paper-c")!!
+        assertEquals(
+            "the category is reachable in the tree",
+            listOf("c-child"),
+            paper.categories.map { it.id }
+        )
+    }
+
+    /**
+     * A stray folded into the passage's category is placed beside the group,
+     * not at the category tail: appending after an unrelated question split
+     * the passage into two runs, which the session layer then treated as two
+     * smaller passages (and could sample or interleave separately).
+     */
+    @Test
+    fun aFoldedStraySitsBesideItsGroupNotAtTheCategoryTail() = runBlocking {
+        val incoming = McqFileDto(
+            version = 1,
+            papers = listOf(
+                PaperDto(
+                    id = "paper-p",
+                    title = "Paper P",
+                    categories = listOf(
+                        CategoryDto(
+                            id = "c",
+                            title = "Passage category",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qc",
+                                    text = "Member",
+                                    options = listOf(OptionDto("a", "1"), OptionDto("b", "2")),
+                                    correctOptionIds = listOf("a"),
+                                    passageId = "ps"
+                                ),
+                                QuestionDto(
+                                    id = "qx",
+                                    text = "Unrelated",
+                                    options = listOf(OptionDto("a", "3"), OptionDto("b", "4")),
+                                    correctOptionIds = listOf("b")
+                                )
+                            )
+                        ),
+                        CategoryDto(
+                            id = "a",
+                            title = "Elsewhere",
+                            questions = listOf(
+                                QuestionDto(
+                                    id = "qa",
+                                    text = "Stray member",
+                                    options = listOf(OptionDto("a", "5"), OptionDto("b", "6")),
+                                    correctOptionIds = listOf("a"),
+                                    passageId = "ps"
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+            passages = listOf(PassageDto(id = "ps", title = "Read", categoryId = "c"))
+        )
+
+        Importer(db).import(incoming)
+
+        assertEquals(
+            "the stray must land with its group, before the unrelated question",
+            listOf("qc", "qa", "qx"),
+            db.questionDao().getOrderByCategory("c").map { it.id }
+        )
+    }
+
+    /** The streaming writer resolves parent links the same way. */    @Test
+    fun theStreamingPathRepointsARemappedParent() = runBlocking {
+        Importer(db).import(file("paper-a", "Paper A", "Alpha"))
+        val json = """{"papers":[{"id":"paper-b","title":"Paper B","categories":[
+            {"id":"c-paper-a","title":"Parent","questions":[
+                {"id":"qb-parent","text":"Parent?","options":["1","2"],"correctOptionIds":["a"]}]},
+            {"id":"c-child","title":"Child","parentId":"c-paper-a","questions":[
+                {"id":"qb-child","text":"Child?","options":["3","4"],"correctOptionIds":["b"]}]}
+        ]}]}"""
+
+        StreamingImporter(db)
+            .import(source = { ByteArrayInputStream(json.toByteArray()) })
+
+        val parent = db.categoryDao().getById("paper-b-c-paper-a")!!
+        assertEquals(
+            "the child still names the file's raw parent id",
+            parent.id,
+            db.categoryDao().getById("c-child")!!.parentId
+        )
+    }
 }

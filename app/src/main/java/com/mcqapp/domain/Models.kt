@@ -337,7 +337,13 @@ data class Attempt(
     val targetTopicIds: String = "",
     val compositionJson: String = "",
     /** The custom type's choice: the tag or difficulty a Tag/Authored run used. */
-    val variant: String? = null
+    val variant: String? = null,
+    /**
+     * The penalty rate the attempt applied. Null for pre-v24 rows and for
+     * imports from older files; [TestReportBuilder.markingOf] then falls back
+     * to the historic reconstruction.
+     */
+    val negativeMarking: Double? = null
 ) {
     val percentage: Double get() = if (maxScore > 0) score / maxScore * 100.0 else 0.0
 
@@ -352,6 +358,14 @@ data class Attempt(
         } else {
             0.0
         }
+
+    /**
+     * `correct / totalQuestions`: the proportion the report's margin describes.
+     * A skipped or ungraded question is in the denominator, exactly as it is
+     * in `ScoreSummary.accuracyAsked`.
+     */
+    val accuracyOnShown: Double
+        get() = if (totalQuestions > 0) correctCount.toDouble() / totalQuestions else 0.0
 }
 
 /**

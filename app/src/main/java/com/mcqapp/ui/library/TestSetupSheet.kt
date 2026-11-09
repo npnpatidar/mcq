@@ -104,6 +104,12 @@ internal fun TestSetupSheet(
      * name, or null.
      */
     loadPreview: suspend (TestType, Int, Breadth, String?) -> SelectionPreview,
+    /**
+     * The length the learner last started a test with (plan §10). It is only a
+     * starting point: [TestPlan.normalizeLength] snaps it to a selectable step
+     * and the pool clamps it further.
+     */
+    loadLastLength: suspend () -> Int = { TestPlan.DEFAULT_LENGTH },
     /** The scope's distinct tags for the phase-3 Tag picker. */
     loadTags: suspend () -> List<com.mcqapp.data.local.TagCount> = { emptyList() },
     /** The paper's fixed panels for the phase-3 panel picker. */
@@ -127,6 +133,18 @@ internal fun TestSetupSheet(
 ) {
     var type by rememberSaveable(initialType) { mutableStateOf(initialType) }
     var requestedCount by rememberSaveable { mutableIntStateOf(TestPlan.DEFAULT_LENGTH) }
+    /** Set once the stored length has been read, so a rotation cannot re-apply it. */
+    var lengthRestored by rememberSaveable { mutableStateOf(false) }
+    /** A length the learner picked this time is never overridden by the pool clamp. */
+    var lengthChosen by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!lengthRestored) {
+            requestedCount = TestPlan.normalizeLength(
+                runCatching { loadLastLength() }.getOrDefault(TestPlan.DEFAULT_LENGTH)
+            )
+            lengthRestored = true
+        }
+    }
     var breadth by rememberSaveable { mutableStateOf(Breadth.MEDIUM) }
     /** The custom choice (phase 3): folded tag for `TAG`, difficulty name else. */
     var variant by rememberSaveable { mutableStateOf<String?>(null) }
@@ -278,6 +296,17 @@ internal fun TestSetupSheet(
     // still covers a length carried over from a larger scope or type.
     val maxSelectable = TestPlan.maxAllowedFor(available)
     val maxLengthIndex = TestPlan.LENGTHS.indexOf(maxSelectable).coerceAtLeast(0)
+
+    // A restored length is clamped to the current pool (plan §10). A length
+    // the learner picked this time keeps the existing "asked/run" message
+    // instead of being silently lowered.
+    LaunchedEffect(maxSelectable, lengthRestored, lengthChosen) {
+        if (lengthRestored && !lengthChosen &&
+            maxSelectable >= TestPlan.MIN_LENGTH && requestedCount > maxSelectable
+        ) {
+            requestedCount = maxSelectable
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -574,6 +603,7 @@ internal fun TestSetupSheet(
                         onValueChange = {
                             val index = it.roundToInt().coerceIn(0, maxLengthIndex)
                             requestedCount = TestPlan.LENGTHS[index]
+                            lengthChosen = true
                         },
                         valueRange = 0f..maxLengthIndex.toFloat(),
                         // One stop between the selectable lengths: the slider
@@ -586,7 +616,10 @@ internal fun TestSetupSheet(
                         FilterChip(
                             selected = requestedCount == preset,
                             enabled = preset <= maxSelectable,
-                            onClick = { requestedCount = preset },
+                            onClick = {
+                                requestedCount = preset
+                                lengthChosen = true
+                            },
                             label = { Text(preset.toString()) }
                         )
                     }

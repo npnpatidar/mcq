@@ -496,12 +496,12 @@ those tests run wherever `PdfDocument` works.
 
 ## 10. Optional later enhancements
 
-None of these is scheduled; they are recorded so a future request does not
-have to re-derive the design.
+The first row shipped on owner request; the rest are not scheduled and are
+recorded so a future request does not have to re-derive the design.
 
 | Enhancement | Source | Notes |
 |---|---|---|
-| Remember last-used test length | §7.3, §16 #2 | Persist the last accepted length in settings/DataStore; always clamp to the allowed range and to the pool. Default stays 20. |
+| ~~Remember last-used test length~~ | §7.3, §16 #2 | **Shipped.** The last accepted length is stored in DataStore (`last_test_length`, default 20), snapped by `TestPlan.normalizeLength` to a selectable step and clamped to the current pool before it can seed the sheet. A length the learner picks this session is never silently lowered. |
 | Equal-allocation "Coverage" test type | §8.2, §9.4 | Same number per selected topic instead of proportional. Maximises coverage but over-represents small topics, so it is **not** comparable to Balanced. Needs a new `TestType` and labels; do not call it Balanced. |
 | Rotating balanced mode | §9.4 | When `n < number of categories`, rotate which small categories are included across tests. Needs rotation state (attempt history or a setting) so the choice is reproducible. |
 | Exposure-weighted Coverage test mode | §9.8 | Weight selection inversely to test exposure. A biased sample for score estimation; label it "Coverage", never "Random". |
@@ -551,7 +551,8 @@ green CI. Robolectric/instrumented tests are authoritative on CI x86_64.
 5. **Smaller additions** (item 6) — low risk, after the tabs settle.
 6. **Test hardening** (item 7) — interleave with the above; the deferred
    Robolectric tests can land as their own PR before the new tabs.
-7. **Optional later enhancements** (item 8) — only on owner request.
+7. **Optional later enhancements** (item 8) — only on owner request. The
+   last-used test length shipped first; the remaining rows stay unscheduled.
 8. **Logging-dependent metrics** (item 9) — only after a logging design is
    accepted.
 
@@ -609,6 +610,9 @@ or is re-scoped.
 - [x] Workload adds due-tomorrow/due-this-week, grade mix and sessions.
 - [x] Memory shows per-paper means; the card sheet shows Again rate and mean
       time.
+- [x] The setup sheet restores the last accepted test length, snapped to the
+      allowed step and clamped to the pool (`TestPlan.normalizeLength`,
+      `RepositorySettingsTest`).
 - [x] In-memory and streamed builds are equal in tests.
 - [x] The deferred Robolectric tests in §9.1 exist (`DeferredDbQueriesTest`);
       the reliability cross-check (§9.3) and PDF layout test (§9.4) exist and

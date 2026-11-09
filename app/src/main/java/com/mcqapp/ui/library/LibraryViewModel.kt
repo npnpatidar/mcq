@@ -744,6 +744,16 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     /** The paper's fixed panels, for the phase-3 panel picker. */
     suspend fun panelsForPaper(paperId: String) = repository.panelsForPaper(paperId)
 
+    /** The length the setup sheet should start from (plan §10). */
+    suspend fun lastTestLength(): Int = repository.lastTestLength().first()
+
+    /** Records the accepted length for the next setup sheet. */
+    fun rememberTestLength(count: Int) {
+        viewModelScope.launch {
+            runCatching { repository.setLastTestLength(count) }
+        }
+    }
+
     /**
      * Saves [questionIds] as a named fixed panel. The ids are the preview's
      * own selection, so the panel repeats exactly the sample the learner just

@@ -470,6 +470,7 @@ fun LibraryScreen(
             loadPreview = { type, count, breadth, variant ->
                 viewModel.previewSelection(request.paper, request.categoryIds, type, count, breadth, variant)
             },
+            loadLastLength = { viewModel.lastTestLength() },
             loadTags = {
                 viewModel.tagsForScope(request.paper.id, request.categoryIds)
             },
@@ -483,6 +484,8 @@ fun LibraryScreen(
             onDismiss = { pendingTestSetup = null },
             onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
                 pendingTestSetup = null
+                // Plan §10: the next setup sheet starts from this length.
+                viewModel.rememberTestLength(requestedCount)
                 Logger.i(
                     "LIB",
                     "Test: paperId=${request.paper.id}, type=${type.name}, categories=${request.categoryIds.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}, variant=${variant ?: ""}"

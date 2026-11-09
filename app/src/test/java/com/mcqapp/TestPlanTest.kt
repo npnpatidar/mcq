@@ -282,4 +282,25 @@ class TestPlanTest {
         assertTrue(TestPlan.noPassageFitsMessage().contains("longer test"))
         assertTrue(TestPlan.passageTooLargeMessage().contains("150"))
     }
+
+    @Test
+    fun aRestoredLengthSnapsIntoTheAllowedRange() {
+        // Plan §10: a stored length may predate the current step, or be
+        // corrupt; it can never reach the plan unchanged.
+        assertEquals(20, TestPlan.normalizeLength(Int.MIN_VALUE))
+        assertEquals(20, TestPlan.normalizeLength(-40))
+        assertEquals(20, TestPlan.normalizeLength(0))
+        assertEquals(20, TestPlan.normalizeLength(20))
+        assertEquals(20, TestPlan.normalizeLength(24))
+        assertEquals(30, TestPlan.normalizeLength(25))
+        assertEquals(30, TestPlan.normalizeLength(26))
+        assertEquals(70, TestPlan.normalizeLength(70))
+        assertEquals(150, TestPlan.normalizeLength(145))
+        assertEquals(150, TestPlan.normalizeLength(149))
+        assertEquals(150, TestPlan.normalizeLength(150))
+        assertEquals(150, TestPlan.normalizeLength(Int.MAX_VALUE))
+        for (value in listOf(-1, 0, 21, 34, 77, 148, 999)) {
+            assertTrue(TestPlan.isAllowedLength(TestPlan.normalizeLength(value)))
+        }
+    }
 }

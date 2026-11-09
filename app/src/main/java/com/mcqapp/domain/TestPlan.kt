@@ -236,6 +236,20 @@ data class TestPlan(
         fun isAllowedLength(count: Int): Boolean =
             count in MIN_LENGTH..MAX_LENGTH && count % STEP == 0
 
+        /**
+         * The nearest selectable length to [value], for a value restored from
+         * settings (plan §10): below 20 becomes 20, above 150 becomes 150, and
+         * anything between snaps to the nearest step of ten. A corrupt or
+         * legacy value therefore can never reach the plan unchanged.
+         */
+        fun normalizeLength(value: Int): Int {
+            if (value <= MIN_LENGTH) return MIN_LENGTH
+            if (value >= MAX_LENGTH) return MAX_LENGTH
+            val index = ((value - MIN_LENGTH + STEP / 2) / STEP)
+                .coerceIn(0, LENGTHS.lastIndex)
+            return LENGTHS[index]
+        }
+
         /** The stored form of a target set: sorted and deduplicated. */
         fun canonicalTargets(ids: Collection<String>): List<String> = ids.distinct().sorted()
 

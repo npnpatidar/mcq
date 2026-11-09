@@ -99,6 +99,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun pdfTwoColumn(): Flow<Boolean> = settings.pdfTwoColumn()
     suspend fun setPdfTwoColumn(enabled: Boolean) = settings.setPdfTwoColumn(enabled)
 
+    /** The last length the learner started a test with (plan §10). */
+    fun lastTestLength(): Flow<Int> = settings.lastTestLength()
+    suspend fun setLastTestLength(length: Int) = settings.setLastTestLength(length)
+
     fun practiceMode(): Flow<Boolean> = settings.practiceMode()
     suspend fun setPracticeMode(enabled: Boolean) = settings.setPracticeMode(enabled)
 

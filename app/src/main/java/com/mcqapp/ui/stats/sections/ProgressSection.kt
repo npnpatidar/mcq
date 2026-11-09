@@ -52,7 +52,7 @@ internal fun ProgressSection(data: ProgressData) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item(contentType = "totals") { TotalsCard(data.totals) }
+        item(contentType = "totals") { TotalsCard(data) }
         item(contentType = "comparison") { ComparisonCard(data.comparison) }
         item(contentType = "flow") { FlowCard(data.trend) }
         item(contentType = "again") { AgainRateCard(data) }
@@ -60,7 +60,9 @@ internal fun ProgressSection(data: ProgressData) {
 }
 
 @Composable
-private fun TotalsCard(totals: ProgressSlice) {
+private fun TotalsCard(data: ProgressData) {
+    val totals = data.totals
+    val comparison = data.comparison
     ChartCard(
         testTag = "stats-progress-totals",
         title = { ChartTitle(R.string.stats_progress_title) },
@@ -68,11 +70,20 @@ private fun TotalsCard(totals: ProgressSlice) {
     ) {
         KpiGrid(
             items = listOf(
-                KpiItem(R.string.stats_reviews, totals.reviews.toString()),
+                KpiItem(
+                    R.string.stats_reviews,
+                    totals.reviews.toString(),
+                    // Plan §8.1: signed deltas on the Progress KPI grid only.
+                    delta = comparison?.let { signedInt(it.reviewsDelta) }
+                ),
                 KpiItem(R.string.stats_introduced, totals.introduced.toString()),
                 KpiItem(R.string.stats_progress_graduated, totals.graduated.toString()),
                 KpiItem(R.string.stats_progress_relapsed, totals.relapsed.toString()),
-                KpiItem(R.string.stats_progress_again, pct(totals.againRate)),
+                KpiItem(
+                    R.string.stats_progress_again,
+                    pct(totals.againRate),
+                    delta = comparison?.againRateDelta?.let(::signedPoints)
+                ),
                 KpiItem(R.string.stats_progress_lapse_rate, pct(totals.lapseRate))
             ),
             columns = 2

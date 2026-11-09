@@ -204,7 +204,13 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             now = now,
             cfg = config,
             zone = zone,
-            scheduler = scheduler
+            scheduler = scheduler,
+            // The per-paper means only exist unscoped; skip the read otherwise.
+            paperTitleOf = if (scopePaperId == null) {
+                db.paperDao().getAll().associate { it.id to it.title }
+            } else {
+                emptyMap()
+            }
         )
         replayInto(scheduler) { review ->
             overview.add(review)

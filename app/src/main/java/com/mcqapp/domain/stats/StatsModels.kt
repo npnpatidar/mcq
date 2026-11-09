@@ -103,6 +103,40 @@ data class ReviewHistoryEntry(
     val intervalDaysAfter: Int?
 )
 
+/**
+ * The per-card sheet's headline figures (plan §8.2), computed from the history
+ * the sheet already loaded — no extra query. [meanSeconds] uses the timed
+ * reviews only.
+ */
+data class CardHistorySummary(
+    val reviews: Int = 0,
+    val again: Int = 0,
+    val meanSeconds: Double? = null
+) {
+    val againRate: Double? get() = if (reviews == 0) null else again.toDouble() / reviews
+
+    companion object {
+        fun of(history: List<ReviewHistoryEntry>): CardHistorySummary {
+            if (history.isEmpty()) return CardHistorySummary()
+            var again = 0
+            var timedSeconds = 0L
+            var timedCount = 0
+            history.forEach { entry ->
+                if (entry.rating == ReviewGrade.AGAIN.ordinal + 1) again++
+                entry.elapsedSeconds?.let {
+                    timedSeconds += it
+                    timedCount++
+                }
+            }
+            return CardHistorySummary(
+                reviews = history.size,
+                again = again,
+                meanSeconds = if (timedCount == 0) null else timedSeconds.toDouble() / timedCount
+            )
+        }
+    }
+}
+
 /** Chartable single-value point; [value] null draws a gap, [count] backs tooltips. */
 data class SeriesPoint(val label: String, val value: Double?, val count: Int = 0)
 
@@ -631,7 +665,23 @@ data class MemoryData(
     val difficulty: Distribution,
     val retrievability: Distribution,
     val intervals: Distribution,
-    val memoryGrowth: MemoryGrowthData
+    val memoryGrowth: MemoryGrowthData,
+    /** Plan §8.3: per-paper means, unscoped only. */
+    val byPaper: List<PaperMemory> = emptyList()
+)
+
+/**
+ * One paper's mean memory state (plan §8.3). Each mean is over the cards that
+ * carry that value, so a paper with no graduated card still reports [cards]
+ * and a null mean rather than a fabricated zero.
+ */
+data class PaperMemory(
+    val paperId: String,
+    val label: String,
+    val cards: Int,
+    val meanStability: Double?,
+    val meanDifficulty: Double?,
+    val meanRetrievability: Double?
 )
 
 /** Cards tab: the collection's shape and the cards that need attention. */
@@ -683,6 +733,13 @@ data class ProgressComparison(
     val avgSecondsDelta: Double?
         get() = pair(currentAvgSeconds, previousAvgSeconds)?.let { it.first - it.second }
     val studyDaysDelta: Int get() = currentStudyDays - previousStudyDays
+
+    /**
+     * Again rate is the inverse of the pass rate, so its signed change is the
+     * pass-rate delta negated (plan §8.1).
+     */
+    val againRateDelta: Double?
+        get() = passRateDelta?.let { -it }
 
     private fun pair(a: Double?, b: Double?): Pair<Double, Double>? =
         if (a != null && b != null) a to b else null

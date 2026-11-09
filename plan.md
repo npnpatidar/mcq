@@ -395,6 +395,13 @@ one-review and mixed histories; memory-by-paper means with missing cards.
 Acceptance: the card sheet shows Again rate and mean time; Memory shows
 per-paper means; Progress shows deltas.
 
+Shipped in `feature/remaining-plan`: `KpiItem.delta` (Progress totals grid
+only), `ProgressComparison.againRateDelta`, `CardHistorySummary.of(history)`
+and its two sheet lines, and `PaperMemory`/`MemoryData.byPaper` fed by the
+memory accumulator's unscoped per-paper sums (the streamed load reads the
+paper titles only when unscoped). `SmallerAdditionsTest` covers the pure
+figures.
+
 ## 9. Test and verification gaps
 
 These are the explicitly deferred tests from the shipped phases. They are
@@ -564,9 +571,9 @@ or is re-scoped.
       previous-period comparison; the All range hides the comparison.
 - [x] Retention adds interval-band, tag and all-papers category slices.
 - [x] Workload adds due-tomorrow/due-this-week, grade mix and sessions.
-- [ ] Memory shows per-paper means; the card sheet shows Again rate and mean
+- [x] Memory shows per-paper means; the card sheet shows Again rate and mean
       time.
-- [ ] In-memory and streamed builds are equal in tests.
+- [x] In-memory and streamed builds are equal in tests.
 - [ ] The deferred Robolectric tests in §9.1 pass; the instrumented custom
       test/share paths in §9.2 pass on CI; the reliability cross-check (§9.3)
       and PDF smoke test (§9.4) exist and pass.

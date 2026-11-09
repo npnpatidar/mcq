@@ -221,7 +221,8 @@ object StatsAggregator {
             now = ctx.input.now,
             cfg = ctx.cfg,
             zone = ctx.zone,
-            scheduler = ctx.input.scheduler
+            scheduler = ctx.input.scheduler,
+            paperTitleOf = ctx.input.paperTitleOf
         )
         ctx.input.reviews.forEach(accumulator::add)
         ctx.input.cards.forEach(accumulator::addCard)
@@ -1442,12 +1443,26 @@ object StatsAggregator {
         private val now: Long,
         private val cfg: SchedulerConfig,
         private val zone: Long,
-        private val scheduler: FsrsScheduler
+        private val scheduler: FsrsScheduler,
+        private val paperTitleOf: Map<String, String> = emptyMap()
     ) {
         private val stability = Values()
         private val difficulty = Values()
         private val retrievability = Values()
         private val intervals = Values()
+
+        /** Per-paper sums for the unscoped means (plan §8.3). */
+        private class PaperSums {
+            var cards = 0
+            var stabilitySum = 0.0
+            var stabilityCount = 0
+            var difficultySum = 0.0
+            var difficultyCount = 0
+            var retrievabilitySum = 0.0
+            var retrievabilityCount = 0
+        }
+
+        private val paperSums = LinkedHashMap<String, PaperSums>()
 
         /** Contributing reviews seen per question, capped at the last bucket. */
         private val contributing = HashMap<String, Int>()
@@ -1474,6 +1489,20 @@ object StatsAggregator {
         fun addCard(snapshot: CardSnapshot) {
             if (scopePaperId != null && snapshot.paperId != scopePaperId) return
             val state = snapshot.state
+            if (scopePaperId == null) {
+                val sums = paperSums.getOrPut(snapshot.paperId) { PaperSums() }
+                sums.cards++
+                if (state.stability > 0.0) {
+                    sums.stabilitySum += state.stability
+                    sums.stabilityCount++
+                    sums.retrievabilitySum += scheduler.retention(state, now)
+                    sums.retrievabilityCount++
+                }
+                if (state.difficulty > 0.0) {
+                    sums.difficultySum += state.difficulty
+                    sums.difficultyCount++
+                }
+            }
             if (state.stability > 0.0) {
                 stability.add(state.stability)
                 retrievability.add(scheduler.retention(state, now))
@@ -1489,8 +1518,36 @@ object StatsAggregator {
             difficulty = difficultyDistribution(difficulty),
             retrievability = retrievabilityDistribution(retrievability),
             intervals = histogram(intervals, INTERVAL_EDGES, INTERVAL_LABELS),
-            memoryGrowth = memoryGrowth()
+            memoryGrowth = memoryGrowth(),
+            byPaper = byPaper()
         )
+
+        /** Plan §8.3: one row per paper, only when no paper is selected. */
+        private fun byPaper(): List<PaperMemory> {
+            if (scopePaperId != null) return emptyList()
+            return paperSums.map { (paperId, sums) ->
+                PaperMemory(
+                    paperId = paperId,
+                    label = paperTitleOf[paperId] ?: UNKNOWN_PAPER,
+                    cards = sums.cards,
+                    meanStability = if (sums.stabilityCount == 0) {
+                        null
+                    } else {
+                        sums.stabilitySum / sums.stabilityCount
+                    },
+                    meanDifficulty = if (sums.difficultyCount == 0) {
+                        null
+                    } else {
+                        sums.difficultySum / sums.difficultyCount
+                    },
+                    meanRetrievability = if (sums.retrievabilityCount == 0) {
+                        null
+                    } else {
+                        sums.retrievabilitySum / sums.retrievabilityCount
+                    }
+                )
+            }.sortedWith(compareBy({ it.label }, { it.paperId }))
+        }
 
         private fun memoryGrowth(): MemoryGrowthData {
             val points = (1..CAPPED_NUMBERS).map { number ->

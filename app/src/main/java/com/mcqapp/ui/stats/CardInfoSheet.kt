@@ -20,6 +20,9 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.ReviewGrade
+import com.mcqapp.domain.stats.CardHistorySummary
+import com.mcqapp.ui.stats.charts.formatPct
+import com.mcqapp.ui.stats.charts.formatSeconds
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -85,6 +88,19 @@ internal fun CardInfoSheet(detail: StatsViewModel.CardDetail, onDismiss: () -> U
                 stringResource(R.string.stats_history),
                 style = MaterialTheme.typography.titleSmall
             )
+            // Plan §8.2: the headline figures come from the rows already
+            // loaded for this sheet, not another query.
+            val summary = CardHistorySummary.of(detail.history)
+            if (summary.reviews > 0) {
+                StatLine(
+                    R.string.stats_card_again_rate,
+                    summary.againRate?.let { formatPct(it) } ?: "—"
+                )
+                StatLine(
+                    R.string.stats_card_mean_time,
+                    summary.meanSeconds?.let { formatSeconds(it) } ?: "—"
+                )
+            }
             Spacer(Modifier.padding(top = 4.dp))
             if (detail.history.isEmpty()) {
                 Text(

@@ -1,6 +1,5 @@
 package com.mcqapp
 
-import androidx.compose.ui.test.assertCountIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -195,6 +194,6 @@ class BlueprintPathsUiTest {
         // bare label does not exist (profiles are single-element here, so no
         // chip row is shown either). The paper title contains it too.
         waitFor("UIBlueprint")
-        compose.onAllNodesWithText("UIBlueprint", substring = true).assertCountIsAtLeast(1)
+        // (waitFor above is the assertion: the label text is rendered.)
     }
 }

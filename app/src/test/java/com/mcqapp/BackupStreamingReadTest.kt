@@ -30,6 +30,7 @@ class BackupStreamingReadTest {
         val cardState = mutableListOf<McqBackupFormat.CardStateRow>()
         val reviewLog = mutableListOf<McqBackupFormat.ReviewLogRow>()
         val paperCreated = mutableListOf<McqBackupFormat.PaperCreated>()
+        val panels = mutableListOf<McqBackupFormat.PanelRow>()
         var inProgressTest: String? = null
         var settings: McqBackupFormat.SettingsFile? = null
 
@@ -47,6 +48,10 @@ class BackupStreamingReadTest {
 
         override suspend fun paperCreated(row: McqBackupFormat.PaperCreated) {
             paperCreated += row
+        }
+
+        override suspend fun panel(row: McqBackupFormat.PanelRow) {
+            panels += row
         }
 
         override suspend fun inProgressTest(json: String?) {
@@ -115,6 +120,12 @@ class BackupStreamingReadTest {
          "difficultyAfter": 4.0, "intervalDaysAfter": 3}
       ],
       "paperCreated": [{"id": "p1", "createdAt": 7}],
+      "panels": [
+        {"id": 3, "paperId": "p1", "name": "Half", "createdAt": 8,
+         "questionIds": ["q1", "q2"]},
+        {"id": 4, "paperId": "p1", "name": "Later version",
+         "createdAt": 9, "questionIds": [], "aPanelFieldFromALaterVersion": 1}
+      ],
       "inProgressTest": "{\"paperId\": \"p1\"}",
       "anotherFieldFromALaterVersion": [1, 2, 3]
     }
@@ -146,6 +157,12 @@ class BackupStreamingReadTest {
         assertEquals(decoded.study.cardState, collected.cardState)
         assertEquals(decoded.study.reviewLog, collected.reviewLog)
         assertEquals(decoded.study.paperCreated, collected.paperCreated)
+        assertEquals(decoded.study.panels, collected.panels)
+        assertEquals(
+            "the frozen member order must survive the streamed read",
+            listOf("q1", "q2"),
+            collected.panels.first { it.id == 3L }.questionIds
+        )
         assertEquals(decoded.study.inProgressTest, collected.inProgressTest)
         assertEquals(decoded.settings, collected.settings)
         // The bank is handed over as the very bytes the zip carries, so

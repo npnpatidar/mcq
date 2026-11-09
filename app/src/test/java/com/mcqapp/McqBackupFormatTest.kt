@@ -203,6 +203,9 @@ class McqBackupFormatTest {
             )
         )
         val paperCreated = listOf(McqBackupFormat.PaperCreated("p1", 7L))
+        val panels = listOf(
+            McqBackupFormat.PanelRow(3L, "p1", "Half", 8L, listOf("q1", "q2"))
+        )
 
         val out = java.io.StringWriter()
         val writer = java.io.BufferedWriter(out)
@@ -211,7 +214,8 @@ class McqBackupFormatTest {
             cardState = { emit -> cards.forEach { emit(it) } },
             reviewLog = { emit -> reviews.forEach { emit(it) } },
             paperCreated = paperCreated,
-            inProgressTest = "{\"paperId\":\"p1\"}"
+            inProgressTest = "{\"paperId\":\"p1\"}",
+            panels = panels
         )
         writer.flush()
 
@@ -219,6 +223,7 @@ class McqBackupFormatTest {
             cardState = cards.map { McqBackupFormat.stateRow(it) },
             reviewLog = reviews.map { McqBackupFormat.logRow(it) },
             paperCreated = paperCreated,
+            panels = panels,
             inProgressTest = "{\"paperId\":\"p1\"}"
         )
         // The writer adds the punctuation itself as it goes, so read what it

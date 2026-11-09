@@ -522,7 +522,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                     cardState = { emit -> source.emitCards(emit) },
                                     reviewLog = { emit -> source.emitReviews(emit) },
                                     paperCreated = paperCreated,
-                                    inProgressTest = inProgressTest
+                                    inProgressTest = inProgressTest,
+                                    panels = source.panels()
                                 )
                             },
                             settings = settings

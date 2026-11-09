@@ -155,6 +155,12 @@ class BlueprintPathsUiTest {
         compose.onNodeWithText("Tests", substring = false).performScrollTo().performClick()
         waitFor("UIBlueprint")
         compose.onNodeWithText("UIBlueprint", substring = true).assertIsDisplayed()
+
+        // Return to the library so the back stack is settled before teardown;
+        // ending mid-navigation leaves the test destination destroyed before
+        // it reached CREATED.
+        compose.onNodeWithContentDescription("Back").performClick()
+        waitFor("UIBlueprint Paper")
         compose.waitForIdle()
     }
 }

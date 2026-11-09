@@ -127,15 +127,24 @@ class ExamStatsDbTest {
 
     @Test
     fun getTestProgressBuildsEachExamGroupFromItsOwnAttempts() = runBlocking {
+        // A family is only a mock/practice measurement at or above
+        // TestPlan.MIN_LENGTH, so the paper needs a full-length attempt.
+        for (i in 3..20) repository.saveQuestion(question("q$i"))
+        val ids = repository.getQuestionsForPaper("p1").map { it.id }
+        val firstHalf = ids.take(10).toSet()
+        val secondHalf = ids.drop(10).toSet()
+        fun answers(correct: Set<String>) =
+            ids.associateWith { id -> setOf(if (id in correct) "$id-a" else "$id-b") }
+
         saveAttempt(
             TestType.RANDOM,
-            selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("nope")),
+            selections = answers(firstHalf),
             dwell = mapOf("q1" to 10L, "q2" to 20L),
             finishedAt = 1_000L
         )
         saveAttempt(
             TestType.WEAKEST_TOPICS,
-            selections = mapOf("q1" to setOf("nope"), "q2" to setOf("q2-a")),
+            selections = answers(secondHalf),
             dwell = mapOf("q1" to 30L, "q2" to 40L),
             finishedAt = 2_000L
         )
@@ -146,15 +155,17 @@ class ExamStatsDbTest {
 
         assertEquals(1, mock.attempts)
         assertEquals(50.0, mock.latestPercent!!, 0.0001)
-        assertEquals(2, mock.shown)
+        assertEquals(20, mock.shown)
         assertTrue(mock.lifetimeIsRepresentative)
-        assertEquals(1, mock.lifetime.correct)
+        // The mock reads the representative (rep*) counters only.
+        assertEquals(10, mock.lifetime.correct)
         assertEquals(15L, mock.averageSecondsPerQuestion!!.toLong())
 
         assertEquals(1, practice.attempts)
         assertEquals(50.0, practice.latestPercent!!, 0.0001)
         assertFalse(practice.lifetimeIsRepresentative)
-        assertEquals(2, practice.lifetime.correct)
+        // Practice reads every attempt's counters.
+        assertEquals(20, practice.lifetime.correct)
     }
 
     @Test

@@ -158,7 +158,8 @@ class TestSetupTest {
                 TestType.BOOKMARKED,
                 TestType.TAG,
                 TestType.AUTHORED_DIFFICULTY,
-                TestType.SLOWEST
+                TestType.SLOWEST,
+                TestType.FIXED_PANEL
             ),
             TestSetup.STARTABLE_TYPES
         )
@@ -237,6 +238,58 @@ class TestSetupTest {
         val good = setup(type = TestType.TAG, available = 100, variant = "polity")
         assertTrue(good.startable())
         assertEquals("polity", good.plan().variant)
+    }
+
+    @Test
+    fun aFixedPanelSetupNeedsAChosenPanel() {
+        val noVariant = setup(type = TestType.FIXED_PANEL, available = 50)
+        assertFalse(noVariant.startable())
+        assertEquals(TestPlan.VARIANT_REQUIRED_MESSAGE, noVariant.message())
+
+        val chosen = setup(type = TestType.FIXED_PANEL, available = 50, variant = "7")
+        assertTrue(chosen.startable())
+        assertEquals("7", chosen.plan().variant)
+        // Practice, never a mock.
+        assertEquals(TestComparability.PRACTICE, chosen.comparability())
+    }
+
+    @Test
+    fun aFixedPanelIsWholePaperOnly() {
+        // A category scope would silently drop panel members, so the plan
+        // refuses it even though the panel itself is valid.
+        val scoped = setup(
+            type = TestType.FIXED_PANEL,
+            requested = 47,
+            available = 47,
+            categoryIds = listOf("c1"),
+            variant = "7"
+        )
+        assertFalse(scoped.startable())
+        assertEquals(TestPlan.PANEL_SCOPE_MESSAGE, scoped.message())
+    }
+
+    @Test
+    fun aFixedPanelRunsItsWholeSetEvenAtAnOddSize() {
+        // A deleted question can leave a panel of 47. The run is the panel,
+        // not the nearest step of ten (which would sample 40 of the 47 anew
+        // each time and stop being a stable set).
+        val odd = setup(
+            type = TestType.FIXED_PANEL,
+            requested = 47,
+            available = 47,
+            variant = "7"
+        )
+        assertTrue(odd.startable())
+        assertEquals(47, odd.resolvedCount())
+        assertEquals(47, odd.plan().resolve(47).let { (it as TestPlan.Resolution.Ready).count })
+        // Shrunk after the sheet read the size: still the whole remaining set.
+        assertEquals(46, odd.plan().resolve(46).let { (it as TestPlan.Resolution.Ready).count })
+        // A panel below the normal minimum is a labelled short run, not a
+        // refusal.
+        val tiny = setup(type = TestType.FIXED_PANEL, requested = 7, available = 7, variant = "7")
+        assertTrue(tiny.startable())
+        assertTrue(tiny.short())
+        assertEquals(7, tiny.resolvedCount())
     }
 
     @Test

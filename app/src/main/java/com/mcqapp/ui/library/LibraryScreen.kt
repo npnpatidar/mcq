@@ -473,6 +473,13 @@ fun LibraryScreen(
             loadTags = {
                 viewModel.tagsForScope(request.paper.id, request.categoryIds)
             },
+            loadPanels = {
+                viewModel.panelsForPaper(request.paper.id)
+            },
+            onCreatePanel = { name, questionIds ->
+                viewModel.createPanel(request.paper.id, name, questionIds)
+            },
+            onDeletePanel = { panelId -> viewModel.deletePanel(panelId) },
             onDismiss = { pendingTestSetup = null },
             onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
                 pendingTestSetup = null

@@ -22,6 +22,8 @@ enum class TestType {
     TAG,
     AUTHORED_DIFFICULTY,
     SLOWEST,
+    /** A saved, stable set of question ids, repeated to track progress on it. */
+    FIXED_PANEL,
     MIXED;
 
     /**
@@ -50,7 +52,8 @@ enum class TestType {
      */
     val usesSignalSelector: Boolean
         get() = isFocus || this == BALANCED || this == BOOKMARKED ||
-            this == TAG || this == AUTHORED_DIFFICULTY || this == SLOWEST
+            this == TAG || this == AUTHORED_DIFFICULTY || this == SLOWEST ||
+            this == FIXED_PANEL
 
     /** Only these types may record `exclusionMode = RECENT_3` (section 9.8). */
     val supportsFreshSample: Boolean

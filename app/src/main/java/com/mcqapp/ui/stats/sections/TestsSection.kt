@@ -38,6 +38,7 @@ internal fun TestsSection(data: TestProgressData) {
         item(contentType = "reliability") { ReliabilityCard(data) }
         item(contentType = "practice") { PracticeCard(data) }
         item(contentType = "practice-topics") { PracticeTopicsCard(data) }
+        item(contentType = "panels") { PanelsCard(data) }
         item(contentType = "scope") { ScopeCard(data) }
     }
 }
@@ -140,6 +141,43 @@ private fun PracticeTopicsCard(data: TestProgressData) {
                         topic.correct,
                         topic.asked,
                         (topic.accuracy * 100).roundToInt()
+                    ),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Fixed-panel progress: the same frozen ids repeated, so a change is the
+ * learner's rather than the sample's. Only panels that have been run appear;
+ * a panel with no run has nothing to report yet.
+ */
+@Composable
+private fun PanelsCard(data: TestProgressData) {
+    if (data.panels.isEmpty()) return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.stats_panels_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                stringResource(R.string.stats_panels_help),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            data.panels.forEach { panel ->
+                Text(
+                    stringResource(
+                        R.string.stats_panels_row,
+                        panel.name,
+                        panel.size,
+                        panel.attempts,
+                        panel.latestPercent.roundToInt(),
+                        panel.averagePercent.roundToInt()
                     ),
                     style = MaterialTheme.typography.bodySmall
                 )

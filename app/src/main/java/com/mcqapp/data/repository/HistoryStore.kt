@@ -538,9 +538,25 @@ internal class HistoryStore(
                 isCorrect = it.isCorrect,
                 graded = it.correctOptionIds.isNotBlank(),
                 answered = it.selectedOptionIds.isNotBlank(),
-                passageId = it.passageId
+                passageId = it.passageId,
+                optionCount = optionCount(it.optionsJson),
+                correctCount = it.correctOptionIds.split(",").count { id -> id.isNotBlank() }
             )
         }
+
+    /** The option count from the as-of-attempt snapshot; 0 when unreadable. */
+    private fun optionCount(optionsJson: String): Int {
+        if (optionsJson.isBlank()) return 0
+        return try {
+            mapper.json.decodeFromString(
+                ListSerializer(QuestionOptionDto.serializer()),
+                optionsJson
+            ).size
+        } catch (e: Exception) {
+            Logger.w("REPO", "Unreadable optionsJson while counting options: ${e.message}")
+            0
+        }
+    }
 
     /**
      * The phase-2 report evidence (sections 11.8, 11.10): read-only Study

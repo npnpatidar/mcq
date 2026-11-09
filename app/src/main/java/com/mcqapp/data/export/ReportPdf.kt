@@ -91,6 +91,13 @@ object ReportPdf {
             line("${report.score.correct}/${report.score.shown} correct · $pct% accuracy")
             line("Correct ${report.score.correct}, wrong ${report.score.wrong}, skipped ${report.score.skipped}, ungraded ${report.score.ungraded}")
             report.marginPoints?.let { line("Approx. margin: ±${String.format(Locale.US, "%.1f", it)} points (comparable sample)") }
+            report.guessing?.let { guessing ->
+                line(
+                    "Guessing-corrected: ${(guessing.correctedAccuracy * 100).roundToInt()}% " +
+                        "(raw ${(guessing.rawAccuracy * 100).roundToInt()}%, " +
+                        "chance ${(guessing.chance * 100).roundToInt()}%, estimate)"
+                )
+            }
             blank()
 
             line("Error mix", boldPaint)

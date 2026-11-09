@@ -208,7 +208,14 @@ data class QuestionReview(
     /** The question changed since its Study card was written. */
     val staleCard: Boolean = false,
     /** A card exists but has never been reviewed (a new card). */
-    val newCard: Boolean = false
+    val newCard: Boolean = false,
+    /**
+     * Point-biserial discrimination across same-family attempts, when at least
+     * [com.mcqapp.domain.stats.Reliability.MIN_DISCRIMINATION_ATTEMPTS] asked
+     * the question. Null means "no estimate", never "zero".
+     */
+    val discrimination: Double? = null,
+    val discriminationFlag: com.mcqapp.domain.stats.Reliability.Discrimination.Flag? = null
 )
 
 /** One point on the comparable trend line (stats.md §11.5). */

@@ -375,6 +375,10 @@ class TestViewModel(
                                 paperId, categoryIds, com.mcqapp.domain.TagNormalizer.fold(it)
                             ).toSet()
                         } ?: emptySet()
+                        TestType.FIXED_PANEL -> effectivePlan.variant
+                            ?.toLongOrNull()
+                            ?.let { panelId -> repository.panel(panelId)?.questionIds?.toSet() }
+                            ?: emptySet()
                         else -> emptySet()
                     }
                     val medianDwellSeconds = if (effectivePlan.type == TestType.SLOWEST) {
@@ -608,9 +612,10 @@ class TestViewModel(
         // a difficulty name. A Tag/Authored route without one cannot start,
         // and Start on the setup sheet already refuses without it.
         val variant = when (type) {
-            TestType.TAG, TestType.AUTHORED_DIFFICULTY -> routeVariant.ifBlank {
-                throw IllegalStateException("This test needs a choice.")
-            }
+            TestType.TAG, TestType.AUTHORED_DIFFICULTY, TestType.FIXED_PANEL ->
+                routeVariant.ifBlank {
+                    throw IllegalStateException("This test needs a choice.")
+                }
             else -> null
         }
         return TestPlan(
@@ -1127,7 +1132,8 @@ class TestViewModel(
                 // A legacy session keeps the raw tick-set identity so a
                 // snapshot written before scopeKey existed can still resume;
                 // a bounded plan compares the canonical expanded key.
-                scopeKey = sessionPlan?.scopeKey ?: ""
+                scopeKey = sessionPlan?.scopeKey ?: "",
+                variant = sessionPlan?.variant
             )
         ) {
             // The slot holds a different session of this paper. Opening the

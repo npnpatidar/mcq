@@ -63,7 +63,23 @@ data class TestProgressData(
     val scopeSize: Int = 0,
     val scopeIsWholeLibrary: Boolean = false,
     /** Slice 4: optional reliability summary (family-scoped), when computable. */
-    val reliability: ReliabilitySummary? = null
+    val reliability: ReliabilitySummary? = null,
+    /** Fixed-panel progress (phase 3), most recently run first. */
+    val panels: List<PanelProgress> = emptyList()
+)
+
+/**
+ * One fixed panel's progress across the runs that used it. Because the ids do
+ * not change between runs, the movement is the learner's, not the sample's —
+ * which is exactly what a random mock cannot claim.
+ */
+data class PanelProgress(
+    val panelId: Long,
+    val name: String,
+    val size: Int,
+    val attempts: Int,
+    val latestPercent: Double,
+    val averagePercent: Double
 )
 
 data class ReliabilitySummary(
@@ -132,5 +148,33 @@ object TestProgress {
         return totals.values
             .sortedWith(compareBy({ it.accuracy }, { -it.asked }))
             .take(limit)
+    }
+
+    /**
+     * Progress on each fixed panel, most recently run first. Only a run whose
+     * recorded variant is the panel id counts: a fixed-panel attempt on a
+     * different panel is a different measurement. A panel with no runs is
+     * omitted from the progress card (it has nothing to report yet).
+     */
+    fun panels(
+        panels: List<PanelSummary>,
+        attempts: List<Attempt>
+    ): List<PanelProgress> {
+        val runsByPanel = attempts
+            .filter { TestType.fromStorage(it.testType) == TestType.FIXED_PANEL }
+            .groupBy { it.variant }
+        return panels.mapNotNull { panel ->
+            val runs = runsByPanel[panel.id.toString()]?.sortedBy { it.finishedAt }
+            if (runs.isNullOrEmpty()) return@mapNotNull null
+            PanelProgress(
+                panelId = panel.id,
+                name = panel.name,
+                size = panel.size,
+                attempts = runs.size,
+                latestPercent = runs.last().percentage,
+                averagePercent = runs.sumOf { it.percentage } / runs.size
+            ) to runs.last().finishedAt
+        }.sortedByDescending { (_, lastFinishedAt) -> lastFinishedAt }
+            .map { (progress, _) -> progress }
     }
 }

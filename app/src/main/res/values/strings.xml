@@ -289,6 +289,7 @@
     <string name="test_setup_type_tag">Tag</string>
     <string name="test_setup_type_authored">Authored difficulty</string>
     <string name="test_setup_type_slowest">Slowest</string>
+    <string name="test_setup_type_fixed_panel">Fixed panel</string>
     <string name="test_setup_type_random_help">A random sample of the chosen scope.</string>
     <string name="test_setup_type_mistakes_help">Previously missed questions in the chosen scope.</string>
     <string name="test_setup_type_weakest_help">Practice the topics where your evidence is weakest.</string>
@@ -303,6 +304,17 @@
     <string name="test_setup_type_tag_help">Questions carrying one exact tag in this scope, filled with random questions when the tag runs short.</string>
     <string name="test_setup_type_authored_help">Questions by the difficulty label their author gave them, topped from the nearest label when a label runs short.</string>
     <string name="test_setup_type_slowest_help">Questions you spend the most time on, slowest first. Slow is not necessarily hard: long questions take time to read.</string>
+    <string name="test_setup_type_fixed_panel_help">The same saved set of questions every time. Because the sample does not change, a score change is yours rather than a different random draw. Practice only: it never feeds the mock trend.</string>
+    <string name="test_setup_pick_panel">Pick a panel</string>
+    <string name="test_setup_no_panels">No panels yet. Pick another type, then save its sample as a panel.</string>
+    <string name="test_setup_panel_new">New panel…</string>
+    <string name="test_setup_panel_name">Panel name</string>
+    <string name="test_setup_panel_new_help">Saves the %1$d questions this preview selects as a fixed set you can repeat.</string>
+    <string name="test_setup_panel_new_nothing">Pick a type that selects questions first, then save that sample as a panel.</string>
+    <string name="test_setup_panel_delete">Delete panel</string>
+    <string name="test_setup_panel_delete_confirm">Delete “%1$s”? Its saved question set is lost; the questions themselves are not.</string>
+    <string name="test_setup_panel_runs_all">Runs all %1$d panel questions.</string>
+    <string name="test_setup_panel_whole_paper">A panel is a whole-paper set. Clear the category selection to run it, so every run asks the same questions.</string>
     <string name="test_setup_pick_tag">Choose a tag</string>
     <string name="test_setup_no_tags">No tags in this scope</string>
     <string name="test_setup_pick_difficulty">Choose a difficulty</string>
@@ -328,6 +340,7 @@
     <string name="test_setup_fill_tag">tag</string>
     <string name="test_setup_fill_authored_easy">easy</string>
     <string name="test_setup_fill_slowest">slowest</string>
+    <string name="test_setup_fill_panel">panel</string>
     <string name="test_setup_fill_random">random</string>
     <string name="test_setup_scope_whole_paper">Whole paper</string>
     <string name="test_setup_scope_categories">%1$d categories</string>
@@ -515,6 +528,9 @@
     <string name="stats_practice_topics_title">Weakest practiced topics</string>
     <string name="stats_practice_topics_help">Accuracy on the recorded practice targets, weakest first.</string>
     <string name="stats_practice_topics_row">%1$s · %2$d/%3$d (%4$d%%)</string>
+    <string name="stats_panels_title">Fixed panels</string>
+    <string name="stats_panels_help">The same questions repeated, so a change is yours rather than the sample\'s. Practice only.</string>
+    <string name="stats_panels_row">%1$s · %2$d questions · %3$d runs · latest %4$d%% · average %5$d%%</string>
     <string name="stats_practice_title">Practice progress</string>
     <string name="stats_practice_run">%1$s · target %2$d/%3$d (%4$d%%) · %5$d mistakes cleared</string>
     <string name="stats_practice_no_runs">No focus-practice runs in this scope yet.</string>
@@ -769,6 +785,7 @@
     <string name="report_type_tag">Tag</string>
     <string name="report_type_difficulty">Authored difficulty</string>
     <string name="report_type_slowest">Slowest</string>
+    <string name="report_type_fixed_panel">Fixed panel</string>
     <string name="report_type_tag_variant">Tag · %1$s</string>
     <string name="report_type_difficulty_variant">Authored difficulty · %1$s</string>
     <string name="report_export">Export report</string>
@@ -781,6 +798,13 @@
     <string name="stats_reliability_too_small">Sample too small to estimate reliability.</string>
     <string name="stats_reliability_value">r = %1$.2f · SEM %2$.1f</string>
     <string name="stats_reliability_kr20">KR-20 %1$.2f</string>
+    <string name="report_guessing_title">Guessing-corrected score (estimate)</string>
+    <string name="report_guessing_line">Corrected %1$d%% · raw %2$d%% · chance %3$d%%</string>
+    <string name="report_guessing_help">Corrects the score for answers a uniform guess would have got right. It assumes no negative marking and is not a prediction.</string>
+    <string name="report_guessing_sample">Estimate from %1$d answered questions.</string>
+    <string name="report_discrimination_line">Item discrimination r = %1$.2f</string>
+    <string name="report_discrimination_review"> · review this question</string>
+    <string name="report_discrimination_weak"> · weak discrimination</string>
     <string name="report_type_mixed">Mixed</string>
     <string name="report_header_of_scope">%1$d of %2$d questions</string>
     <string name="report_header_questions">%1$d questions</string>

@@ -7,6 +7,8 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.PanelEntity
+import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.toContentJson
@@ -196,7 +198,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_18_19,
         AppDatabase.MIGRATION_19_20,
         AppDatabase.MIGRATION_20_21,
-        AppDatabase.MIGRATION_21_22
+        AppDatabase.MIGRATION_21_22,
+        AppDatabase.MIGRATION_22_23
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1136,6 +1139,57 @@ class MigrationTest {
                 assertTrue("attempts.variant should exist after 21->22", hasVariant)
             }
             check.close()
+        }
+    }
+
+    @Test
+    fun `migration 22 to 23 creates panels that shrink with a deleted question`() {
+        runBlocking {
+            createV21WithTaggedQuestion()
+            // Bring the hand-built file to a genuine v22 first, so the test
+            // exercises 22->23 alone rather than the whole chain.
+            val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name("migration-test.db")
+                .callback(object : SupportSQLiteOpenHelper.Callback(21) {
+                    override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                    override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+                })
+                .build()
+            FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+                val raw = helper.writableDatabase
+                AppDatabase.MIGRATION_21_22.migrate(raw)
+                raw.version = 22
+            }
+
+            val db = openMigrated()
+            try {
+                val panelId = db.panelDao().insertPanel(
+                    PanelEntity(paperId = "p1", name = "Half")
+                )
+                db.panelDao().insertQuestions(
+                    listOf(PanelQuestionEntity(panelId, "q1", 0))
+                )
+                assertEquals(listOf("q1"), db.panelDao().questionIds(panelId))
+                assertEquals(
+                    1,
+                    db.panelDao().panelsWithCountsForPaper("p1").single().questionCount
+                )
+
+                // A deleted question cascades out of the panel; the panel
+                // shrinks rather than substituting a stranger.
+                db.openHelper.writableDatabase.execSQL("DELETE FROM questions WHERE id='q1'")
+                assertTrue(db.panelDao().questionIds(panelId).isEmpty())
+                assertEquals(
+                    0,
+                    db.panelDao().panelsWithCountsForPaper("p1").single().questionCount
+                )
+
+                // Deleting the panel removes its rows too.
+                db.panelDao().deletePanel(panelId)
+                assertTrue(db.panelDao().panelsForPaper("p1").isEmpty())
+            } finally {
+                db.close()
+            }
         }
     }
 }

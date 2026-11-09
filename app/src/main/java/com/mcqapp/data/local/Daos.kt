@@ -2419,7 +2419,8 @@ interface AttemptDao {
         "SELECT r.questionId AS questionId, r.categoryTitle AS categoryTitle, " +
             "q.categoryId AS currentCategoryId, r.dwellSeconds AS dwellSeconds, " +
             "r.isCorrect AS isCorrect, r.correctOptionIds AS correctOptionIds, " +
-            "r.selectedOptionIds AS selectedOptionIds, q.passageId AS passageId " +
+            "r.selectedOptionIds AS selectedOptionIds, r.optionsJson AS optionsJson, " +
+            "q.passageId AS passageId " +
             "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
             "WHERE r.attemptId = :attemptId ORDER BY r.rowid"
     )
@@ -2978,6 +2979,7 @@ data class ReportRowEntity(
     val isCorrect: Boolean,
     val correctOptionIds: String,
     val selectedOptionIds: String,
+    val optionsJson: String = "",
     val passageId: String? = null
 )
 
@@ -3153,3 +3155,55 @@ data class BookmarkedQuestionRow(
     @Embedded val question: QuestionEntity,
     val bookmarkCreatedAt: Long
 )
+
+/** One panel with its frozen size, without materialising the question ids. */
+data class PanelWithCount(
+    @Embedded val panel: PanelEntity,
+    val questionCount: Int
+)
+
+/**
+ * Fixed panels (phase 3): named, frozen question sets on one paper.
+ *
+ * A panel's rows are written once, in creation order, and never rewritten
+ * behind the user's back. Deleting a question cascades its row out, so a
+ * panel shrinks rather than substituting a stranger; the size query is how the
+ * UI reports that.
+ */
+@Dao
+interface PanelDao {
+    @Insert
+    suspend fun insertPanel(panel: PanelEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertQuestions(rows: List<PanelQuestionEntity>)
+
+    @Query("SELECT * FROM panels WHERE paperId = :paperId ORDER BY createdAt, id")
+    suspend fun panelsForPaper(paperId: String): List<PanelEntity>
+
+    @Query("SELECT * FROM panels ORDER BY createdAt, id")
+    suspend fun allPanels(): List<PanelEntity>
+
+    @Query("SELECT * FROM panels WHERE id = :panelId")
+    suspend fun panel(panelId: Long): PanelEntity?
+
+    @Query("SELECT questionId FROM panel_questions WHERE panelId = :panelId ORDER BY position")
+    suspend fun questionIds(panelId: Long): List<String>
+
+    @Query(
+        "SELECT panels.*, COUNT(panel_questions.questionId) AS questionCount " +
+            "FROM panels LEFT JOIN panel_questions ON panels.id = panel_questions.panelId " +
+            "WHERE panels.paperId = :paperId GROUP BY panels.id ORDER BY panels.createdAt, panels.id"
+    )
+    suspend fun panelsWithCountsForPaper(paperId: String): List<PanelWithCount>
+
+    @Query(
+        "SELECT panels.*, COUNT(panel_questions.questionId) AS questionCount " +
+            "FROM panels LEFT JOIN panel_questions ON panels.id = panel_questions.panelId " +
+            "GROUP BY panels.id ORDER BY panels.createdAt, panels.id"
+    )
+    suspend fun allPanelsWithCounts(): List<PanelWithCount>
+
+    @Query("DELETE FROM panels WHERE id = :panelId")
+    suspend fun deletePanel(panelId: Long)
+}

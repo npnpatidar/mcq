@@ -31,6 +31,21 @@ class ReportExportCsvTest {
     }
 
     @Test
+    fun `writes the guessing correction when the report has one`() {
+        val out = StringWriter()
+        ReportCsv.write(
+            out,
+            header().copy(guessingCorrected = 0.3333),
+            emptyList()
+        )
+        assertTrue(out.toString().contains("# guessingCorrected=33%"))
+
+        val plain = StringWriter()
+        ReportCsv.write(plain, header(), emptyList())
+        assertTrue("# guessingCorrected" !in plain.toString())
+    }
+
+    @Test
     fun `quotes commas quotes and newlines per rfc 4180`() {
         assertEquals("plain", ReportCsv.quote("plain"))
         assertEquals("\"a,b\"", ReportCsv.quote("a,b"))

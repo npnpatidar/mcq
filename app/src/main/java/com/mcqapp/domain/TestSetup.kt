@@ -177,7 +177,8 @@ data class TestSetup(
             TestType.BOOKMARKED,
             TestType.TAG,
             TestType.AUTHORED_DIFFICULTY,
-            TestType.SLOWEST
+            TestType.SLOWEST,
+            TestType.FIXED_PANEL
         )
 
         /** Whether [type] can be started. */

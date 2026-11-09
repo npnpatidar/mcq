@@ -115,6 +115,39 @@ class TestSelectorTest {
     }
 
     @Test
+    fun aFixedPanelNeverFillsFromOutsideThePanel() {
+        val signals = (0 until 10).map { signal("q$it", "c1") }
+        val pool = setOf("q2", "q5", "q7")
+        val selection = TestSelector.select(
+            plan(TestType.FIXED_PANEL, 5),
+            signals,
+            customPool = pool
+        )!!
+        // Three members, three asked: a short panel shrinks instead of
+        // topping up from the rest of the scope.
+        assertEquals(3, selection.ids.size)
+        assertTrue(selection.ids.all { it in pool })
+        assertEquals(listOf("PANEL"), selection.composition.segments.map { it.source })
+        assertEquals(3, selection.composition.segments.single().count)
+        // Deterministic for the seed.
+        assertEquals(
+            selection.ids,
+            TestSelector.select(
+                plan(TestType.FIXED_PANEL, 5),
+                signals,
+                customPool = pool
+            )!!.ids
+        )
+        // No panel chosen yet: nothing runs, not a random sample.
+        val empty = TestSelector.select(
+            plan(TestType.FIXED_PANEL, 5),
+            signals,
+            customPool = emptySet()
+        )!!
+        assertTrue(empty.ids.isEmpty())
+    }
+
+    @Test
     fun anAuthoredDifficultySelectionUsesTheChosenLabel() {
         val signals = (0 until 10).map { index ->
             signal(

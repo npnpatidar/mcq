@@ -12,9 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -27,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.ExclusionMode
+import com.mcqapp.domain.PanelSummary
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestComparability
@@ -50,6 +57,7 @@ import com.mcqapp.domain.signals.Composition
 import com.mcqapp.domain.signals.SelectionPreview
 import com.mcqapp.ui.common.testTypeLabelRes
 import com.mcqapp.ui.common.testTypeLabelText
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -98,6 +106,15 @@ internal fun TestSetupSheet(
     loadPreview: suspend (TestType, Int, Breadth, String?) -> SelectionPreview,
     /** The scope's distinct tags for the phase-3 Tag picker. */
     loadTags: suspend () -> List<com.mcqapp.data.local.TagCount> = { emptyList() },
+    /** The paper's fixed panels for the phase-3 panel picker. */
+    loadPanels: suspend () -> List<PanelSummary> = { emptyList() },
+    /**
+     * Saves the preview's selected ids as a named panel. Returns the created
+     * panel, or null when the name is blank or nothing was selected.
+     */
+    onCreatePanel: suspend (String, List<String>) -> PanelSummary? = { _, _ -> null },
+    /** Removes a fixed panel and its member rows. */
+    onDeletePanel: suspend (Long) -> Unit = {},
     onDismiss: () -> Unit,
     onStart: (
         type: TestType,
@@ -120,6 +137,19 @@ internal fun TestSetupSheet(
             tags = runCatching { loadTags() }.getOrDefault(emptyList())
         }
     }
+    /** The paper's fixed panels, loaded once for the panel picker. */
+    var panels by remember(paper.id) { mutableStateOf<List<PanelSummary>?>(null) }
+    LaunchedEffect(paper.id, type) {
+        if (type == TestType.FIXED_PANEL && panels == null) {
+            panels = runCatching { loadPanels() }.getOrDefault(emptyList())
+        }
+    }
+    /** The "New panel…" dialog's name field. */
+    var showPanelDialog by rememberSaveable { mutableStateOf(false) }
+    var panelName by rememberSaveable { mutableStateOf("") }
+    /** The panel awaiting delete confirmation. */
+    var panelToDelete by remember { mutableStateOf<PanelSummary?>(null) }
+    val panelScope = rememberCoroutineScope()
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -157,7 +187,23 @@ internal fun TestSetupSheet(
     // A custom type's pool comes from the preview (computed below); until
     // it lands the pool reads empty and Start waits.
     val isCustom = type == TestType.BOOKMARKED || type == TestType.TAG ||
-        type == TestType.AUTHORED_DIFFICULTY || type == TestType.SLOWEST
+        type == TestType.AUTHORED_DIFFICULTY || type == TestType.SLOWEST ||
+        type == TestType.FIXED_PANEL
+
+    // A fixed panel runs its whole frozen set: its length is the panel's size,
+    // not the sampled chip the other types share. The size comes from the
+    // picker's summary, so it is known before the preview lands.
+    val panelBlocked = type == TestType.FIXED_PANEL && categoryIds.isNotEmpty()
+    val panelSize = if (type == TestType.FIXED_PANEL && !panelBlocked) {
+        panels?.firstOrNull { it.id.toString() == variant }?.size
+    } else {
+        null
+    }
+    val requestCount = if (type == TestType.FIXED_PANEL && (panelSize ?: 0) > 0) {
+        panelSize ?: requestedCount
+    } else {
+        requestedCount
+    }
 
     // The live preview of what the current request would select. It is a read
     // of the same signals the session uses, so the composition the learner sees
@@ -166,15 +212,15 @@ internal fun TestSetupSheet(
         mutableStateOf<SelectionPreview?>(null)
     }
     var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
-    LaunchedEffect(paper.id, expanded, type, requestedCount, breadth, variant) {
-        if (!type.usesSignalSelector) {
+    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, variant) {
+        if (!type.usesSignalSelector || panelBlocked) {
             selectionPreview = null
             previewLoading = false
             return@LaunchedEffect
         }
         previewLoading = true
         selectionPreview = runCatching {
-            loadPreview(type, requestedCount, breadth, variant)
+            loadPreview(type, requestCount, breadth, variant)
         }.getOrNull()
         previewLoading = false
     }
@@ -200,6 +246,10 @@ internal fun TestSetupSheet(
         }
     }
     val blockLoading = minBlockSize == null
+    // A fixed panel's length is its size, so Start must wait for the picker's
+    // summary; otherwise the first frame could start the default 20 of a
+    // larger panel.
+    val panelsLoading = type == TestType.FIXED_PANEL && categoryIds.isEmpty() && panels == null
 
     val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
         ExclusionMode.RECENT_3
@@ -212,12 +262,15 @@ internal fun TestSetupSheet(
         categoryIds = categoryIds,
         scopeKey = scopeKey,
         type = type,
-        requestedCount = requestedCount,
+        requestedCount = requestCount,
         time = minutesOverride?.let { TestTime.Fixed(it.toIntOrNull() ?: 0) }
             ?: TestTime.Suggested,
         available = available,
         exclusionMode = exclusionMode,
-        variant = if (type == TestType.TAG || type == TestType.AUTHORED_DIFFICULTY) variant else null,
+        variant = if (!panelBlocked && (type == TestType.TAG ||
+                type == TestType.AUTHORED_DIFFICULTY ||
+                type == TestType.FIXED_PANEL)
+        ) variant else null,
         minBlockSize = minBlockSize ?: 1
     )
     // The largest length this pool can actually supply. Chips above it are
@@ -276,6 +329,7 @@ internal fun TestSetupSheet(
                         TestType.TAG -> R.string.test_setup_type_tag_help
                         TestType.AUTHORED_DIFFICULTY -> R.string.test_setup_type_authored_help
                         TestType.SLOWEST -> R.string.test_setup_type_slowest_help
+                        TestType.FIXED_PANEL -> R.string.test_setup_type_fixed_panel_help
                         else -> R.string.test_setup_type_random_help
                     }
                 ),
@@ -334,6 +388,57 @@ internal fun TestSetupSheet(
                         }
                     }
                 }
+                TestType.FIXED_PANEL -> {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.test_setup_pick_panel),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    if (categoryIds.isNotEmpty()) {
+                        // A panel is a whole-paper set; running it under a
+                        // category scope would silently drop members and make
+                        // two runs of "the same" panel different sets.
+                        Text(
+                            stringResource(R.string.test_setup_panel_whole_paper),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (panels.isNullOrEmpty()) {
+                        Text(
+                            stringResource(R.string.test_setup_no_panels),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            panels.orEmpty().forEach { panel ->
+                                val id = panel.id.toString()
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    FilterChip(
+                                        selected = variant == id,
+                                        onClick = {
+                                            variant = if (variant == id) null else id
+                                        },
+                                        label = { Text("${panel.name} · ${panel.size}") }
+                                    )
+                                    // A panel is just a saved id set, but it is
+                                    // not reproducible once the metrics move;
+                                    // the trash is a separate, explicit target.
+                                    IconButton(onClick = { panelToDelete = panel }) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = stringResource(R.string.test_setup_panel_delete)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 else -> Unit
             }
 
@@ -345,7 +450,12 @@ internal fun TestSetupSheet(
                     stringResource(R.string.test_setup_breadth),
                     style = MaterialTheme.typography.labelLarge
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // A plain Row squeezed the three chips into a single column of
+                // characters on a narrow sheet; they wrap like the type chips.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     Breadth.entries.forEach { option ->
                         FilterChip(
                             selected = breadth == option,
@@ -407,12 +517,32 @@ internal fun TestSetupSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                // Any signal-selected sample can be frozen as a panel. The
+                // button lives here rather than in the panel picker: a panel
+                // is created *from* a sample, so the learner picks a type,
+                // sees the sample, then saves it.
+                if (type.usesSignalSelector && type != TestType.FIXED_PANEL) {
+                    TextButton(onClick = {
+                        panelName = ""
+                        showPanelDialog = true
+                    }) {
+                        Text(stringResource(R.string.test_setup_panel_new))
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))
 
             // --- length ---
-            if (setup.short()) {
+            if (type == TestType.FIXED_PANEL) {
+                // The panel is the length: every member runs, every time.
+                if (panelSize != null) {
+                    Text(
+                        stringResource(R.string.test_setup_panel_runs_all, setup.resolvedCount()),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            } else if (setup.short()) {
                 // The whole scope is below the minimum: there is nothing to
                 // choose, the session runs every question it holds.
                 Text(
@@ -524,6 +654,9 @@ internal fun TestSetupSheet(
             }
             val note = when {
                 poolLoading -> null
+                // The whole-paper notice above already says why a panel
+                // cannot run under a category scope.
+                panelBlocked -> null
                 type == TestType.MISTAKES && available == 0 ->
                     stringResource(R.string.test_setup_no_mistakes)
                 else -> setup.message()
@@ -539,8 +672,8 @@ internal fun TestSetupSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { onStart(type, requestedCount, setup.minutes(), exclusionMode, breadth, variant) },
-                enabled = setup.startable() && !poolLoading && !blockLoading,
+                onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, variant) },
+                enabled = setup.startable() && !poolLoading && !blockLoading && !panelsLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("test-setup-start")
@@ -563,6 +696,97 @@ internal fun TestSetupSheet(
                 Text(stringResource(R.string.cancel))
             }
         }
+    }
+
+    // "New panel…" saves the sample the preview is showing: the ids come from
+    // the same selector the session would run, so the panel repeats exactly
+    // the questions the learner just saw.
+    if (showPanelDialog) {
+        val previewIds = selectionPreview?.ids.orEmpty()
+        AlertDialog(
+            onDismissRequest = { showPanelDialog = false },
+            title = { Text(stringResource(R.string.test_setup_panel_new)) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = panelName,
+                        onValueChange = { panelName = it.take(60) },
+                        label = { Text(stringResource(R.string.test_setup_panel_name)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        if (previewIds.isEmpty()) {
+                            stringResource(R.string.test_setup_panel_new_nothing)
+                        } else {
+                            stringResource(R.string.test_setup_panel_new_help, previewIds.size)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = panelName.isNotBlank() && previewIds.isNotEmpty(),
+                    onClick = {
+                        val name = panelName
+                        panelScope.launch {
+                            val created = onCreatePanel(name, previewIds)
+                            if (created != null) {
+                                // Switch to the new panel: the sample just
+                                // saved is now the fixed set being run. The
+                                // picker reloads so an earlier panel is not
+                                // missing from the list.
+                                type = TestType.FIXED_PANEL
+                                variant = created.id.toString()
+                                panels = null
+                            }
+                            showPanelDialog = false
+                            panelName = ""
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPanelDialog = false
+                    panelName = ""
+                }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    // Deleting a panel throws away a set that cannot be rebuilt exactly once
+    // the metrics have moved, so it asks first.
+    panelToDelete?.let { panel ->
+        AlertDialog(
+            onDismissRequest = { panelToDelete = null },
+            title = { Text(stringResource(R.string.test_setup_panel_delete)) },
+            text = { Text(stringResource(R.string.test_setup_panel_delete_confirm, panel.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    panelToDelete = null
+                    panelScope.launch {
+                        runCatching { onDeletePanel(panel.id) }
+                        if (variant == panel.id.toString()) variant = null
+                        panels = panels.orEmpty().filterNot { it.id == panel.id }
+                    }
+                }) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { panelToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }
 
@@ -587,6 +811,7 @@ private fun fillSourceLabel(source: String): String = when (source.uppercase()) 
     "TAG" -> stringResource(R.string.test_setup_fill_tag)
     "AUTHORED_EASY" -> stringResource(R.string.test_setup_fill_authored_easy)
     "SLOWEST" -> stringResource(R.string.test_setup_fill_slowest)
+    "PANEL" -> stringResource(R.string.test_setup_fill_panel)
     "LEAST_RECENTLY_REVIEWED", "AUTHORED_HARD", "AUTHORED_MEDIUM" ->
         stringResource(R.string.test_setup_fill_recent)
     else -> stringResource(R.string.test_setup_fill_random)

@@ -26,9 +26,11 @@ import com.mcqapp.domain.searchableText
         CardStateEntity::class,
         ReviewLogEntity::class,
         PassageEntity::class,
-        TestProgressEntity::class
+        TestProgressEntity::class,
+        PanelEntity::class,
+        PanelQuestionEntity::class
     ],
-    version = 22,
+    version = 23,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -48,6 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reviewLogDao(): ReviewLogDao
     abstract fun passageDao(): PassageDao
     abstract fun testProgressDao(): TestProgressDao
+    abstract fun panelDao(): PanelDao
 
     companion object {
         @Volatile
@@ -611,6 +614,47 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Fixed panels (phase 3): a named, frozen set of question ids per
+         * paper. The DDL mirrors [PanelEntity] and [PanelQuestionEntity]
+         * exactly; a panel loses a member to the question cascade rather than
+         * silently substituting another.
+         */
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `panels` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`paperId` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_panels_paperId_name` " +
+                        "ON `panels` (`paperId`, `name`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `panel_questions` (" +
+                        "`panelId` INTEGER NOT NULL, `questionId` TEXT NOT NULL, " +
+                        "`position` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`panelId`, `questionId`), " +
+                        "FOREIGN KEY(`panelId`) REFERENCES `panels`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE , " +
+                        "FOREIGN KEY(`questionId`) REFERENCES `questions`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_panel_questions_panelId_position` " +
+                        "ON `panel_questions` (`panelId`, `position`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_panel_questions_questionId` " +
+                        "ON `panel_questions` (`questionId`)"
+                )
+            }
+        }
+
+        /**
          * Keys `question_tags` off the stored CSV in the same normalisation as
          * the runtime writers. Keyset-paged by rowid, one compiled insert per
          * batch — the backfill touches every tagged question, so peak memory
@@ -812,7 +856,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
-                    MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22
+                    MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
+                    MIGRATION_22_23
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

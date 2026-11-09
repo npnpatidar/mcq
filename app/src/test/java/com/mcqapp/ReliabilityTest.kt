@@ -161,10 +161,72 @@ class ReliabilityTest {
     }
 
     @Test
-    fun `single attempt point-biserial is marked weak not a claim`() {
-        val disc = Reliability.pointBiserial(listOf(1.0, 0.0, 1.0, 1.0))
-        assertEquals(4, disc.size)
-        assertTrue(disc.all { it.flag == Reliability.Discrimination.Flag.WEAK })
+    fun `chance level uses the key size not just the option count`() {
+        // Single-correct 4-option item: 1/4.
+        assertEquals(0.25, Reliability.chanceOf(4, 1)!!, 1e-9)
+        // "Pick 2 of 4": only one of the six pairs is the key.
+        assertEquals(1.0 / 6.0, Reliability.chanceOf(4, 2)!!, 1e-9)
+        // A broken key is not a chance level.
+        assertNull(Reliability.chanceOf(4, 0))
+        assertNull(Reliability.chanceOf(4, 5))
+        assertNull(Reliability.chanceOf(1, 1))
+    }
+
+    @Test
+    fun `chance-based guessing correction matches the k formula`() {
+        val byChance = Reliability.guessingCorrectionWithChance(10, 20, 0.25)
+        assertNotNull(byChance)
+        assertEquals(1.0 / 3.0, byChance!!.correctedProportion, 1e-9)
+        assertEquals(0.5, byChance.rawProportion, 1e-9)
+        assertEquals(0.25, byChance.chance, 1e-9)
+        // The same numbers as the 4-option formula.
+        assertEquals(
+            Reliability.guessingCorrection(10, 20, 4)!!.correctedProportion,
+            byChance.correctedProportion,
+            1e-9
+        )
+        assertNull(Reliability.guessingCorrectionWithChance(10, 20, 0.0))
+        assertNull(Reliability.guessingCorrectionWithChance(10, 20, 1.0))
+        assertNull(Reliability.guessingCorrectionWithChance(10, 19, 0.25))
+    }
+
+    @Test
+    fun `discrimination is keyed by question even when the order changes`() {
+        // Five attempts, two questions swapped between them. Q1 is answered
+        // right by the weak attempts and missed by the strong ones, so it must
+        // come back negative despite the position changing.
+        val attempts = listOf(
+            Reliability.AttemptVector(listOf("q1", "q2", "q3"), listOf(1.0, 0.0, 0.0)),
+            Reliability.AttemptVector(listOf("q2", "q1", "q3"), listOf(0.0, 1.0, 0.0)),
+            Reliability.AttemptVector(listOf("q3", "q2", "q1"), listOf(1.0, 1.0, 1.0)),
+            Reliability.AttemptVector(listOf("q1", "q2", "q3"), listOf(0.0, 1.0, 1.0)),
+            Reliability.AttemptVector(listOf("q2", "q3", "q1"), listOf(1.0, 1.0, 0.0))
+        )
+        val disc = Reliability.discriminationByQuestion(attempts)
+        assertEquals(setOf("q1", "q2", "q3"), disc.keys)
+        assertTrue("q1 should discriminate negatively", disc.getValue("q1").pointBiserial < 0.0)
+        assertEquals(Reliability.Discrimination.Flag.REVIEW, disc.getValue("q1").flag)
+        assertTrue("q2 should discriminate positively", disc.getValue("q2").pointBiserial > 0.0)
+    }
+
+    @Test
+    fun `discrimination needs five attempts that asked the question`() {
+        val four = (1..4).map {
+            Reliability.AttemptVector(listOf("q1", "q2"), listOf(1.0, 0.0))
+        }
+        assertTrue(Reliability.discriminationByQuestion(four).isEmpty())
+
+        // Five attempts in total, but only four asked q3.
+        val five = listOf(
+            Reliability.AttemptVector(listOf("q1", "q2"), listOf(1.0, 0.0)),
+            Reliability.AttemptVector(listOf("q1", "q2"), listOf(1.0, 1.0)),
+            Reliability.AttemptVector(listOf("q1", "q2"), listOf(0.0, 0.0)),
+            Reliability.AttemptVector(listOf("q1", "q2"), listOf(0.0, 1.0)),
+            Reliability.AttemptVector(listOf("q1", "q3"), listOf(1.0, 1.0))
+        )
+        val disc = Reliability.discriminationByQuestion(five)
+        assertTrue("q3 has only four attempts", "q3" !in disc)
+        assertTrue("q1 has five attempts", "q1" in disc)
     }
 
     @Test

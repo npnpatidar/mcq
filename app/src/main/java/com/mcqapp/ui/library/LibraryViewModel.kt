@@ -720,6 +720,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     paper.id, categoryIds, com.mcqapp.domain.TagNormalizer.fold(it)
                 ).toSet()
             } ?: emptySet()
+            TestType.FIXED_PANEL -> variant?.toLongOrNull()?.let { panelId ->
+                repository.panel(panelId)?.questionIds?.toSet()
+            } ?: emptySet()
             else -> emptySet()
         }
         val medianDwellSeconds = if (type == TestType.SLOWEST) {
@@ -737,4 +740,26 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         paperId: String,
         categoryIds: List<String>
     ) = repository.tagCountsForScope(paperId, categoryIds)
+
+    /** The paper's fixed panels, for the phase-3 panel picker. */
+    suspend fun panelsForPaper(paperId: String) = repository.panelsForPaper(paperId)
+
+    /**
+     * Saves [questionIds] as a named fixed panel. The ids are the preview's
+     * own selection, so the panel repeats exactly the sample the learner just
+     * saw. Returns the new panel, or null when the name is blank.
+     */
+    suspend fun createPanel(
+        paperId: String,
+        name: String,
+        questionIds: List<String>
+    ): com.mcqapp.domain.PanelSummary? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || questionIds.isEmpty()) return null
+        val id = repository.createPanel(paperId, trimmed, questionIds)
+        return repository.panelsForPaper(paperId).firstOrNull { it.id == id }
+    }
+
+    /** Removes a fixed panel; its saved id set and member rows go with it. */
+    suspend fun deletePanel(panelId: Long) = repository.deletePanel(panelId)
 }

@@ -575,7 +575,8 @@ fun TestSessionScreen(
                                 stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
                                 minOf(asked, shown)
                             )
-                            bounded == com.mcqapp.domain.TestType.BALANCED -> stringResource(
+                            bounded == com.mcqapp.domain.TestType.BALANCED ||
+                                bounded == com.mcqapp.domain.TestType.FIXED_PANEL -> stringResource(
                                 R.string.test_banner_practice,
                                 stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
                                 minOf(asked, shown)

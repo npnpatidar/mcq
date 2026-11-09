@@ -45,7 +45,7 @@ fun McqNavHost(repository: McqRepository) {
             LibraryScreen(repository = repository, navController = navController)
         }
         composable(
-            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}&minutes={minutes}&type={type}&count={count}&exclusion={exclusion}",
+            route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}&minutes={minutes}&type={type}&count={count}&exclusion={exclusion}&breadth={breadth}&variant={variant}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
                 navArgument("categories") { type = NavType.StringType; defaultValue = "" },

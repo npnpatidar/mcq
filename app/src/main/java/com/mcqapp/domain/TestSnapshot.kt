@@ -93,7 +93,8 @@ data class TestSnapshot(
         requestedCount: Int = 0,
         exclusionMode: String = "NONE",
         targetTopicIds: List<String> = emptyList(),
-        scopeKey: String = ""
+        scopeKey: String = "",
+        variant: String? = null
     ): Boolean {
         // New snapshots carry the canonical expanded scope; a legacy snapshot
         // (and a legacy caller) has no key, so it keeps the raw tick-set
@@ -121,6 +122,10 @@ data class TestSnapshot(
             (!isDrill || this.drillRequested == drillRequested) &&
             this.testType == testType && this.requestedCount == requestedCount &&
             this.exclusionMode == exclusionMode &&
+            // A panel's id (and a Tag's tag) is part of the session's shape:
+            // resuming a panel run under another panel would keep this order
+            // but adopt the other panel's meaning.
+            this.variant == variant &&
             targetsMatch
     }
 

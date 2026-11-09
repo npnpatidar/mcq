@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.countUngradedForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
@@ -9,10 +10,14 @@ import com.mcqapp.data.local.minBlockSizeForCategoriesChunked
 import com.mcqapp.data.local.minBlockSizeForPaper
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.local.TagCount
+import com.mcqapp.data.local.PanelEntity
+import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.data.local.getTagsByIdsChunked
 import com.mcqapp.domain.FsrsFitResult
+import com.mcqapp.domain.Panel
+import com.mcqapp.domain.PanelSummary
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
@@ -586,6 +591,78 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     )
 
     /**
+     * The paper's fixed panels, oldest first (phase 3). The size comes from a
+     * count join, so listing panels never materialises their ids.
+     */
+    suspend fun panelsForPaper(paperId: String): List<PanelSummary> =
+        db.panelDao().panelsWithCountsForPaper(paperId).map { row ->
+            PanelSummary(
+                id = row.panel.id,
+                paperId = row.panel.paperId,
+                name = row.panel.name,
+                size = row.questionCount
+            )
+        }
+
+    /** The paper's fixed panels with their real, frozen question ids. */
+    suspend fun panelsWithQuestions(paperId: String): List<Panel> =
+        db.panelDao().panelsForPaper(paperId).map { entity ->
+            Panel(
+                id = entity.id,
+                paperId = entity.paperId,
+                name = entity.name,
+                questionIds = db.panelDao().questionIds(entity.id)
+            )
+        }
+
+    /** Every paper's panels, for the whole-library Statistics scope. */
+    suspend fun allPanels(): List<PanelSummary> =
+        db.panelDao().allPanelsWithCounts().map { row ->
+            PanelSummary(
+                id = row.panel.id,
+                paperId = row.panel.paperId,
+                name = row.panel.name,
+                size = row.questionCount
+            )
+        }
+
+    /** One panel with its frozen ids, or null after it was deleted. */
+    suspend fun panel(panelId: Long): Panel? {
+        val entity = db.panelDao().panel(panelId) ?: return null
+        return Panel(
+            id = entity.id,
+            paperId = entity.paperId,
+            name = entity.name,
+            questionIds = db.panelDao().questionIds(panelId)
+        )
+    }
+
+    /**
+     * Creates a panel from [questionIds], in the given order, and returns its
+     * id. Blank ids are dropped and duplicates keep their first position: a
+     * panel is a set, and the order is the order it asks.
+     */
+    suspend fun createPanel(paperId: String, name: String, questionIds: List<String>): Long {
+        val ids = questionIds.filter { it.isNotBlank() }.distinct()
+        return db.withTransaction {
+            val panelId = db.panelDao().insertPanel(
+                PanelEntity(paperId = paperId, name = name.trim())
+            )
+            if (ids.isNotEmpty()) {
+                db.panelDao().insertQuestions(
+                    ids.mapIndexed { index, questionId ->
+                        PanelQuestionEntity(panelId = panelId, questionId = questionId, position = index)
+                    }
+                )
+            }
+            panelId
+        }
+    }
+
+    /** Deletes a panel and its rows; the questions are untouched. */
+    suspend fun deletePanel(panelId: Long) = db.panelDao().deletePanel(panelId)
+
+    /**
      * The median dwell seconds of every scope question with at least
      * [TestSelector.SLOWEST_MIN_SAMPLES] timed answers (phase 3): the Slowest
      * selector's input. A median of an even sample list is the lower median,
@@ -989,6 +1066,38 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): List<com.mcqapp.domain.Attempt> = historyStore.getComparableAttempts(attempt, limit)
 
     /**
+     * Per-question discrimination across same-key attempts (slice 4). Only a
+     * representative attempt gets one: a practice set is chosen on the
+     * dependent variable, so its item statistics are biased by design. Below
+     * [com.mcqapp.domain.stats.Reliability.MIN_DISCRIMINATION_ATTEMPTS] the map
+     * is empty rather than a noisy r.
+     */
+    suspend fun getItemDiscrimination(
+        attempt: com.mcqapp.domain.Attempt,
+        limit: Int = 30
+    ): Map<String, com.mcqapp.domain.stats.Reliability.ItemDiscrimination> {
+        val family = com.mcqapp.domain.TestReportBuilder.familyOf(attempt)
+        if (family != com.mcqapp.domain.ReportFamily.MOCK &&
+            family != com.mcqapp.domain.ReportFamily.FRESH_SAMPLE
+        ) {
+            return emptyMap()
+        }
+        val attempts = listOf(attempt) + getComparableAttempts(attempt, limit)
+        if (attempts.size < com.mcqapp.domain.stats.Reliability.MIN_DISCRIMINATION_ATTEMPTS) {
+            return emptyMap()
+        }
+        val vectors = attempts.map { candidate ->
+            val rows = historyStore.getAttemptResultEntities(candidate.id)
+                .filter { it.correctOptionIds.isNotBlank() }
+            com.mcqapp.domain.stats.Reliability.AttemptVector(
+                questionIds = rows.map { it.questionId },
+                scores = rows.map { if (it.isCorrect) 1.0 else 0.0 }
+            )
+        }
+        return com.mcqapp.domain.stats.Reliability.discriminationByQuestion(vectors)
+    }
+
+    /**
      * The phase-2 report evidence (sections 11.8, 11.10). Read-only: it reads
      * `card_state`, `question_stats` and prior results, and never writes Study
      * state.
@@ -1125,7 +1234,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             unseen = db.questionDao().countUnseenInScope(paperId),
             scopeSize = db.questionDao().countQuestionsInScope(paperId),
             scopeIsWholeLibrary = paperId == null,
-            reliability = computeReliabilitySummary(attempts)
+            reliability = computeReliabilitySummary(attempts),
+            panels = com.mcqapp.domain.TestProgress.panels(
+                panels = if (paperId == null) allPanels() else panelsForPaper(paperId),
+                attempts = attempts
+            )
         )
     }
 

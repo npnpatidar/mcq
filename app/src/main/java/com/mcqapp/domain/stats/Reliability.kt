@@ -50,9 +50,34 @@ object Reliability {
         val k: Int
     )
 
+    /** The same correction when the paper's items do not share one `k`. */
+    data class ChanceEstimate(
+        val correctedProportion: Double,
+        val rawProportion: Double,
+        /** The average uniform-guessing chance across the scored items. */
+        val chance: Double
+    )
+
+    /**
+     * One question's discrimination across attempts. The key is the question
+     * id, not a position: two attempts of the same family can ask the same
+     * questions in a different order.
+     */
+    data class ItemDiscrimination(
+        val questionId: String,
+        val pointBiserial: Double,
+        val flag: Discrimination.Flag
+    )
+
     const val MIN_ATTEMPTED = 20
     const val MIN_PER_HALF = 5
     const val GUESSING_MIN = 20
+
+    /**
+     * A discrimination estimate needs more than two points to mean anything;
+     * below this the report says nothing rather than a noisy r.
+     */
+    const val MIN_DISCRIMINATION_ATTEMPTS = 5
 
     /**
      * Split-half odd/even by the order the items are passed (the question order
@@ -132,20 +157,9 @@ object Reliability {
     }
 
     /**
-     * Point-biserial discrimination is meaningful across attempts (item
-     * correct/incorrect vs rest-of-test score). A single attempt cannot yield a
-     * stable discrimination estimate; callers with one attempt should show
-     * "sample too small" rather than a misleading 0.
-     */
-    fun pointBiserial(items: List<Double>): List<Discrimination> {
-        if (items.size < 2) return emptyList()
-        return items.indices.map { Discrimination(it, 0.0, Discrimination.Flag.WEAK) }
-    }
-
-    /**
-     * Point-biserial across attempts: [itemIndexScores] has one list per
-     * attempt, each the full item score vector in the same order. Returns one
-     * [Discrimination] per item position.
+     * Point-biserial discrimination across attempts: [itemIndexScores] has one
+     * list per attempt, each the full item score vector in the same order.
+     * Returns one [Discrimination] per item position.
      */
     fun pointBiserialAcrossAttempts(itemIndexScores: List<List<Double>>): List<Discrimination> {
         if (itemIndexScores.isEmpty()) return emptyList()
@@ -170,18 +184,95 @@ object Reliability {
     }
 
     /**
+     * One attempt's graded rows, in the order they were asked. The builder
+     * aligns these by question id, so two attempts of the same family may ask
+     * the questions in different orders.
+     */
+    data class AttemptVector(val questionIds: List<String>, val scores: List<Double>)
+
+    /**
+     * Point-biserial discrimination per question id across attempts. A
+     * question needs at least [MIN_DISCRIMINATION_ATTEMPTS] attempts that asked
+     * it; below that it is absent from the map rather than reported as 0.
+     * Attempts that did not ask the question are skipped, so a shuffled bank
+     * still yields a per-question estimate.
+     */
+    fun discriminationByQuestion(
+        attempts: List<AttemptVector>
+    ): Map<String, ItemDiscrimination> {
+        if (attempts.size < MIN_DISCRIMINATION_ATTEMPTS) return emptyMap()
+        val totals = attempts.map { it.scores.sum() }
+        val askedIn = LinkedHashMap<String, MutableList<Int>>()
+        attempts.forEachIndexed { index, attempt ->
+            for (id in attempt.questionIds) {
+                askedIn.getOrPut(id) { mutableListOf() } += index
+            }
+        }
+        val result = LinkedHashMap<String, ItemDiscrimination>()
+        for ((questionId, indices) in askedIn) {
+            if (indices.size < MIN_DISCRIMINATION_ATTEMPTS) continue
+            val itemValues = ArrayList<Double>(indices.size)
+            val restValues = ArrayList<Double>(indices.size)
+            for (index in indices) {
+                val attempt = attempts[index]
+                val position = attempt.questionIds.indexOf(questionId)
+                if (position < 0) continue
+                val item = attempt.scores[position]
+                itemValues += item
+                restValues += totals[index] - item
+            }
+            if (itemValues.size < MIN_DISCRIMINATION_ATTEMPTS) continue
+            val r = safe(pearson(itemValues, restValues))
+            result[questionId] = ItemDiscrimination(questionId, r, flagFor(r))
+        }
+        return result
+    }
+
+    /**
+     * Uniform-guessing chance of a correct answer: `1 / C(optionCount,
+     * correctCount)`. A single-correct 4-option item gives 1/4; a 4-option
+     * "pick 2" item gives 1/6, because only one of the six pairs is the key.
+     */
+    fun chanceOf(optionCount: Int, correctCount: Int): Double? {
+        if (optionCount < 2 || correctCount < 1 || correctCount > optionCount) return null
+        val combinations = binomial(optionCount, correctCount)
+        if (combinations <= 0.0 || !combinations.isFinite()) return null
+        return 1.0 / combinations
+    }
+
+    /**
      * Guessing correction for [k]-option items: `(p - 1/k) / (1 - 1/k)`.
      * Suppressed (returns null) below [GUESSING_MIN] items.
      */
     fun guessingCorrection(correct: Int, total: Int, k: Int = 4): GuessingEstimate? {
-        if (total < GUESSING_MIN || k < 2) return null
-        val p = correct.toDouble() / total
-        val chance = 1.0 / k
-        val corrected = (p - chance) / (1.0 - chance)
+        if (k < 2) return null
+        val est = guessingCorrectionWithChance(correct, total, 1.0 / k) ?: return null
         return GuessingEstimate(
+            correctedProportion = est.correctedProportion,
+            rawProportion = est.rawProportion,
+            k = k
+        )
+    }
+
+    /**
+     * The same correction when the paper's items do not share one `k` (mixed
+     * option counts, multi-correct items): [chance] is the average chance
+     * level. Suppressed below [GUESSING_MIN] items and for a chance level that
+     * is not a real probability.
+     */
+    fun guessingCorrectionWithChance(
+        correct: Int,
+        total: Int,
+        chance: Double
+    ): ChanceEstimate? {
+        if (total < GUESSING_MIN) return null
+        if (!chance.isFinite() || chance <= 0.0 || chance >= 1.0) return null
+        val p = correct.toDouble() / total
+        val corrected = (p - chance) / (1.0 - chance)
+        return ChanceEstimate(
             correctedProportion = corrected.coerceIn(-1.0, 1.0),
             rawProportion = p,
-            k = k
+            chance = chance
         )
     }
 
@@ -210,6 +301,16 @@ object Reliability {
         if (values.size < 2) return 0.0
         val mean = values.average()
         return values.sumOf { (it - mean) * (it - mean) } / values.size
+    }
+
+    /** C(n, k) in doubles: option counts are small, the product is not. */
+    private fun binomial(n: Int, k: Int): Double {
+        val kk = minOf(k, n - k)
+        var result = 1.0
+        for (i in 1..kk) {
+            result = result * (n - kk + i) / i
+        }
+        return result
     }
 
     private fun safe(v: Double): Double = if (v.isFinite()) v else 0.0

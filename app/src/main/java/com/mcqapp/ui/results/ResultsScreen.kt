@@ -237,6 +237,9 @@ fun ResultsScreen(
             }
             if (report != null) {
                 item(contentType = "meaning") { MeaningCard(report) }
+                if (report.guessing != null) {
+                    item(contentType = "guessing") { GuessingCard(report) }
+                }
                 if (report.practice != null) {
                     item(contentType = "practice") { PracticeCard(report) }
                 }
@@ -585,6 +588,32 @@ private fun MeaningCard(report: TestReport) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun GuessingCard(report: TestReport) {
+    val guessing = report.guessing ?: return
+    ReportSection(R.string.report_guessing_title) {
+        Text(
+            stringResource(
+                R.string.report_guessing_line,
+                (guessing.correctedAccuracy * 100).roundToInt(),
+                (guessing.rawAccuracy * 100).roundToInt(),
+                (guessing.chance * 100).roundToInt()
+            ),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(
+            stringResource(R.string.report_guessing_help),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            stringResource(R.string.report_guessing_sample, guessing.scored),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -1299,6 +1328,24 @@ private fun ResultCard(
                             }
                         )
                     ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            val discrimination = review?.discrimination
+            val discriminationFlag = review?.discriminationFlag
+            if (discrimination != null) {
+                // An estimate from repeated same-family attempts, not a verdict
+                // on the question: the label never says "bad".
+                val flag = when (discriminationFlag) {
+                    com.mcqapp.domain.stats.Reliability.Discrimination.Flag.REVIEW ->
+                        stringResource(R.string.report_discrimination_review)
+                    com.mcqapp.domain.stats.Reliability.Discrimination.Flag.WEAK ->
+                        stringResource(R.string.report_discrimination_weak)
+                    else -> ""
+                }
+                Text(
+                    stringResource(R.string.report_discrimination_line, discrimination) + flag,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

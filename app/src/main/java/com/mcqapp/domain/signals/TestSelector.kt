@@ -41,6 +41,8 @@ enum class FillSource {
     BOOKMARKED,
     TAG,
     SLOWEST,
+    /** A fixed panel: the same frozen ids, never a fill from outside. */
+    PANEL,
     RANDOM
 }
 
@@ -115,7 +117,12 @@ data class TargetPreview(
 data class SelectionPreview(
     val pool: Int,
     val composition: Composition,
-    val targets: List<TargetPreview>
+    val targets: List<TargetPreview>,
+    /**
+     * The ids the same request would select, in presented order. The setup
+     * sheet uses them to save a sample as a fixed panel; display-only.
+     */
+    val ids: List<String> = emptyList()
 )
 
 /**
@@ -163,6 +170,7 @@ object TestSelector {
         TestType.TAG -> fromPool(plan, signals, customPool, FillSource.TAG)
         TestType.AUTHORED_DIFFICULTY -> authored(plan, signals)
         TestType.SLOWEST -> slowest(plan, signals, medianDwellSeconds)
+        TestType.FIXED_PANEL -> fixedPanel(plan, signals, customPool)
         else -> null
     }
 
@@ -179,6 +187,7 @@ object TestSelector {
         TestType.AT_RISK -> signals.count { it.atRisk }
         TestType.UNSEEN -> signals.count { it.unseen }
         TestType.BOOKMARKED, TestType.TAG -> signals.count { it.questionId in customPool }
+        TestType.FIXED_PANEL -> signals.count { it.questionId in customPool }
         TestType.AUTHORED_DIFFICULTY -> {
             val chosen = authoredDifficultyOf(variant) ?: return 0
             signals.count { it.authoredDifficulty == chosen }
@@ -213,7 +222,8 @@ object TestSelector {
         return SelectionPreview(
             pool = poolSize(plan.type, signals, plan.variant, customPool, medianDwellSeconds),
             composition = selection?.composition ?: Composition(),
-            targets = targets
+            targets = targets,
+            ids = selection?.ids.orEmpty()
         )
     }
 
@@ -547,6 +557,28 @@ object TestSelector {
                 *fill.toTypedArray()
             )
         )
+    }
+
+    /**
+     * A fixed panel: the frozen ids, in a seeded order, and nothing else. A
+     * panel that has lost members to a delete or a moved paper runs short and
+     * says so through the recorded composition — it never tops itself up from
+     * the rest of the scope, because that would stop it being a fixed panel.
+     */
+    private fun fixedPanel(
+        plan: TestPlan,
+        signals: List<Signals>,
+        customPool: Set<String>
+    ): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty() || customPool.isEmpty()) return Selection(emptyList())
+        val ids = signals.asSequence()
+            .map { it.questionId }
+            .filter { it in customPool }
+            .shuffled(Random(plan.seed))
+            .take(n)
+            .toList()
+        return Selection(ids = ids, composition = Composition.of(FillSource.PANEL to ids.size))
     }
 
     /**

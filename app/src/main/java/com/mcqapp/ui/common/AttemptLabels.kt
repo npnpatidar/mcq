@@ -27,6 +27,7 @@ fun testTypeLabel(type: TestType?): String = when (type) {
     TestType.TAG -> stringResource(R.string.report_type_tag)
     TestType.AUTHORED_DIFFICULTY -> stringResource(R.string.report_type_difficulty)
     TestType.SLOWEST -> stringResource(R.string.report_type_slowest)
+    TestType.FIXED_PANEL -> stringResource(R.string.report_type_fixed_panel)
     TestType.MIXED -> stringResource(R.string.report_type_mixed)
     null -> stringResource(R.string.report_legacy_attempt)
 }

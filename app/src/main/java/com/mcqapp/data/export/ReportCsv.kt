@@ -5,6 +5,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.roundToInt
 
 /**
  * Slice 5 (stats-phase3.md): a shareable CSV report with the same numbers the
@@ -16,7 +17,9 @@ data class ReportCsvHeader(
     val paperTitle: String,
     val testType: String,
     val family: String,
-    val exportedAtEpochMs: Long
+    val exportedAtEpochMs: Long,
+    /** The report's guessing-corrected accuracy (0..1), when it has one. */
+    val guessingCorrected: Double? = null
 )
 
 data class ReportCsvRow(
@@ -39,6 +42,11 @@ object ReportCsv {
         out.append("# type=").append(sanitizeComment(header.testType)).append('\n')
         out.append("# family=").append(sanitizeComment(header.family)).append('\n')
         out.append("# exportedAt=").append(formatIso(header.exportedAtEpochMs)).append('\n')
+        header.guessingCorrected?.let {
+            out.append("# guessingCorrected=")
+                .append(((it * 100).roundToInt()).toString())
+                .append("%\n")
+        }
         out.append(COLUMNS.joinToString(",")).append('\n')
         rows.forEach { row ->
             out.append(

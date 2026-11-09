@@ -16,6 +16,7 @@ import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ReplayReview
+import com.mcqapp.domain.stats.Reliability
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.ReviewHistoryEntry
 import com.mcqapp.domain.stats.StatsAggregator
@@ -259,21 +260,9 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             .groupingBy { it.questionId }.eachCount()
         return options.mapNotNull { (questionId, optionCount) ->
             val correctCount = keys[questionId] ?: return@mapNotNull null
-            if (optionCount <= 0 || correctCount <= 0 || correctCount > optionCount) {
-                return@mapNotNull null
-            }
-            questionId to 1.0 / binomial(optionCount, correctCount)
+            val chance = Reliability.chanceOf(optionCount, correctCount) ?: return@mapNotNull null
+            questionId to chance
         }.toMap()
-    }
-
-    /** C(n, k), in doubles: option counts are small but the product can be large. */
-    private fun binomial(n: Int, k: Int): Double {
-        val kk = minOf(k, n - k)
-        var result = 1.0
-        for (i in 1..kk) {
-            result = result * (n - kk + i) / i
-        }
-        return result
     }
 
     /** Replays the log a page at a time into [consume]; it is never listed. */

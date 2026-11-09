@@ -462,3 +462,54 @@ data class QuestionStatsEntity(
     val repWrong: Int = 0,
     val repSkip: Int = 0
 )
+
+/**
+ * A fixed panel: a named, stable set of question ids, so progress on the same
+ * questions can be read across attempts without resampling noise. The ids are
+ * frozen when the panel is created; editing the bank does not silently swap
+ * them (a deleted question cascades out and shrinks the panel instead).
+ */
+@Entity(
+    tableName = "panels",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("paperId", "name")]
+)
+data class PanelEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val paperId: String,
+    val name: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+/** One frozen member of a [PanelEntity], in the order the panel asks it. */
+@Entity(
+    tableName = "panel_questions",
+    primaryKeys = ["panelId", "questionId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PanelEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["panelId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = QuestionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["questionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("panelId", "position"), Index("questionId")]
+)
+data class PanelQuestionEntity(
+    val panelId: Long,
+    val questionId: String,
+    val position: Int
+)

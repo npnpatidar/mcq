@@ -1,6 +1,7 @@
 package com.mcqapp.domain
 
 import com.mcqapp.domain.signals.CounterSet
+import com.mcqapp.domain.stats.Reliability
 import kotlin.math.sqrt
 import kotlin.random.Random
 
@@ -36,7 +37,15 @@ data class ReportRow(
     /** An option was selected; a graded row without one is a skip. */
     val answered: Boolean = false,
     /** Passage membership, so the bootstrap resamples whole blocks. */
-    val passageId: String? = null
+    val passageId: String? = null,
+    /**
+     * The question's option count at attempt time (0 when the snapshot predates
+     * it or cannot be read). Read by the guessing correction, which must use
+     * each item's own k rather than one invented number.
+     */
+    val optionCount: Int = 0,
+    /** Correct options in the key; 0 when ungraded or unknown. */
+    val correctCount: Int = 0
 )
 
 /** A category in the attempt's scope, with the questions it currently holds. */
@@ -60,7 +69,13 @@ data class TestReportInput(
      * Earlier practice runs on the same recorded target set, oldest first.
      * Display-only for the practice trend; never read by a mock's trend.
      */
-    val practiceHistory: List<PracticeTrendPoint> = emptyList()
+    val practiceHistory: List<PracticeTrendPoint> = emptyList(),
+    /**
+     * Per-question discrimination across same-family attempts, keyed by
+     * question id. Empty when the sample cannot support it; the review row
+     * then says nothing rather than showing a 0.
+     */
+    val discrimination: Map<String, Reliability.ItemDiscrimination> = emptyMap()
 )
 
 /** The headline numbers, with both denominators the report shows (section 11.4). */
@@ -248,7 +263,28 @@ data class TestReport(
     /** The practice per-target trend, or null for a mock/legacy/short run. */
     val practiceTrend: PracticeTrend? = null,
     /** The bootstrap score interval, when negative marking makes it meaningful. */
-    val interval: ScoreInterval? = null
+    val interval: ScoreInterval? = null,
+    /**
+     * The guessing-corrected score, when the attempt is representative, has no
+     * negative marking and every answered row carries its option key.
+     */
+    val guessing: GuessingSummary? = null
+)
+
+/**
+ * The guessing-corrected score (slice 4). It is an estimate, never a claim:
+ * [chance] is the average uniform-guessing chance across the scored items
+ * (1/k for a single-correct item, 1/C(k,c) for a multi-correct one), so a
+ * paper that mixes option counts is not corrected with one invented k.
+ */
+data class GuessingSummary(
+    /** `correct / answered`, the same accuracy the header shows. */
+    val rawAccuracy: Double,
+    /** `(p - chance) / (1 - chance)`, clamped to 0 when at or below chance. */
+    val correctedAccuracy: Double,
+    val chance: Double,
+    /** Answered rows the estimate stands on; never below GUESSING_MIN. */
+    val scored: Int
 )
 
 /**
@@ -308,13 +344,16 @@ object TestReportBuilder {
         val practice = practiceOf(input, type, score)
         val trend = trendOf(attempt, input.comparableAttempts, scopeSize, family, score)
         val practiceTrend = practiceTrendOf(input, family, type, practice)
+        val negativeMarking = markingOf(attempt, input.paper)
         val reviews = reviewsOf(
             input.rows,
             timing,
             evidence,
             input.targetTopicIds,
-            family
+            family,
+            input.discrimination
         )
+        val guessing = guessingOf(input.rows, family, negativeMarking)
 
         val report = TestReport(
             attempt = attempt,
@@ -344,7 +383,7 @@ object TestReportBuilder {
             unresolvedResults = input.rows.count { it.currentCategoryId == null },
             timing = timing,
             actions = emptyList(),
-            negativeMarking = markingOf(attempt, input.paper),
+            negativeMarking = negativeMarking,
             memory = memory,
             coverage = coverage,
             mistakes = mistakes,
@@ -353,7 +392,8 @@ object TestReportBuilder {
             trend = trend,
             reviews = reviews,
             practiceTrend = practiceTrend,
-            interval = bootstrapOf(attempt, input.rows)
+            interval = bootstrapOf(attempt, input.rows),
+            guessing = guessing
         )
         return report.copy(actions = RecommendationEngine.recommend(report))
     }
@@ -572,7 +612,8 @@ object TestReportBuilder {
         timing: TimingSummary,
         evidence: ReportEvidence,
         targetTopicIds: List<String>,
-        family: ReportFamily
+        family: ReportFamily,
+        discrimination: Map<String, Reliability.ItemDiscrimination> = emptyMap()
     ): Map<String, QuestionReview> {
         if (rows.isEmpty()) return emptyMap()
         val targetSet = targetTopicIds.toHashSet()
@@ -617,7 +658,9 @@ object TestReportBuilder {
                     (row.currentCategoryId in targetSet ||
                         (row.currentCategoryId == null && row.categoryTitle in targetTitles)),
                 staleCard = stale,
-                newCard = newCard
+                newCard = newCard,
+                discrimination = discrimination[row.questionId]?.pointBiserial,
+                discriminationFlag = discrimination[row.questionId]?.flag
             )
         }
         return result
@@ -740,6 +783,40 @@ object TestReportBuilder {
             highPercent = high,
             resamples = BOOTSTRAP_RESAMPLES,
             passageBlocks = blocks.size
+        )
+    }
+
+    /**
+     * The guessing-corrected score (slice 4). It is shown only for a
+     * representative attempt: a practice set is selected on weak questions, so
+     * correcting it for guessing would dress selection bias up as measurement.
+     * Negative marking also suppresses it, because the correction assumes a
+     * wrong answer costs nothing. Every answered row must carry its option key
+     * — a correction over a subset is a different number wearing the score's
+     * label.
+     */
+    fun guessingOf(
+        rows: List<ReportRow>,
+        family: ReportFamily,
+        negativeMarking: Double
+    ): GuessingSummary? {
+        if (family != ReportFamily.MOCK && family != ReportFamily.FRESH_SAMPLE) return null
+        if (negativeMarking > 0.0) return null
+        val answered = rows.filter { it.graded && it.answered }
+        if (answered.size < Reliability.GUESSING_MIN) return null
+        val chances = ArrayList<Double>(answered.size)
+        for (row in answered) {
+            chances += Reliability.chanceOf(row.optionCount, row.correctCount) ?: return null
+        }
+        val chance = chances.average()
+        val correct = answered.count { it.isCorrect }
+        val estimate = Reliability.guessingCorrectionWithChance(correct, answered.size, chance)
+            ?: return null
+        return GuessingSummary(
+            rawAccuracy = estimate.rawProportion,
+            correctedAccuracy = estimate.correctedProportion.coerceAtLeast(0.0),
+            chance = estimate.chance,
+            scored = answered.size
         )
     }
 

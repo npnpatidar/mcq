@@ -151,7 +151,8 @@ class ResultsViewModel(
                                 .split(",")
                                 .filter { id -> id.isNotBlank() },
                             evidence = repository.getReportEvidence(it, rows, paper),
-                            practiceHistory = repository.getPracticeHistory(it)
+                            practiceHistory = repository.getPracticeHistory(it),
+                            discrimination = repository.getItemDiscrimination(it)
                         )
                     )
                 }
@@ -222,7 +223,8 @@ class ResultsViewModel(
                 paperTitle = report.attempt.title,
                 testType = report.type?.name ?: "LEGACY",
                 family = report.family.name,
-                exportedAtEpochMs = System.currentTimeMillis()
+                exportedAtEpochMs = System.currentTimeMillis(),
+                guessingCorrected = report.guessing?.correctedAccuracy
             )
             val file = reportFile("csv")
             FileOutputStream(file).use { fos ->

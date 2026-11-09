@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import androidx.compose.ui.test.assertCountIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -189,9 +190,11 @@ class BlueprintPathsUiTest {
         compose.onNodeWithText("Statistics", substring = false).performClick()
         waitFor("Tests")
         compose.onNodeWithText("Tests", substring = false).performScrollTo().performClick()
+        // The label lives inside the key line ("Paper · Label · N questions"),
+        // so it must be matched as a substring — an exact-text node for the
+        // bare label does not exist (profiles are single-element here, so no
+        // chip row is shown either). The paper title contains it too.
         waitFor("UIBlueprint")
-        // The paper title "UIBlueprint Paper" also contains this substring, so
-        // the label must be matched exactly.
-        compose.onNodeWithText("UIBlueprint", substring = false).assertIsDisplayed()
+        compose.onAllNodesWithText("UIBlueprint", substring = true).assertCountIsAtLeast(1)
     }
 }

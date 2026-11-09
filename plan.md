@@ -1,25 +1,18 @@
 # Remaining implementation plan
 
-Status: consolidated on 2026-11-09 from [`stats.md`](stats.md),
-[`stats-phase2.md`](stats-phase2.md), [`stats-phase3.md`](stats-phase3.md) and
-[`statistics-plan.md`](statistics-plan.md). This file is the single list of
-work that is still outstanding; the source documents remain the design record
-for what has already shipped.
+Status: consolidated and self-contained as of 2026-11-09. This is the single
+plan for the work that remains; it does not depend on any other design
+document.
 
 Baseline: `main` at the merge of PR #52, release `0.0.43`. Phases 1–3 of the
 Test redesign, the phase-2 report evidence, the phase-3 custom tests,
 reliability/guessing/item analysis, CSV/PDF export and fixed panels are
-implemented and tested. The two deliberately deferred phase-3 ideas are **not**
-repeated here:
+implemented and tested. The two deliberately deferred phase-3 ideas are not
+part of this plan; they are recorded in Appendix A so nothing is lost.
 
-- adaptive next-test recommendation / staged testing — see
-  [`ideas.md`](ideas.md) §1;
-- exam blueprint — see [`ideas.md`](ideas.md) §2.
-
-Everything else that any of the four documents still marks deferred, missing
-or "later" is collected below. Work that the statistics plan explicitly says
-needs new logging is kept in §11 so the decision is not lost, but it is not
-scheduled.
+Everything that earlier planning left deferred, missing or "later" is
+collected below. Work that needs new logging is kept in §11 so the decision is
+not lost, but it is not scheduled.
 
 ## 1. What is already shipped
 
@@ -38,39 +31,57 @@ scheduled.
 The six SRS tabs are Overview, Retention, Workload, Memory, Cards and
 Guessing. The seventh, Tests, is the phase-2/3 addition.
 
+Key terms used throughout this plan:
+
+- **`rep*` counters** — `question_stats.repCorrect`, `repWrong` and `repSkip`.
+  They are updated only for representative attempts (`RANDOM`/`BALANCED` with
+  `samplingVersion >= 2`), so practice and legacy attempts cannot contaminate
+  a mock figure. All-attempt counters (`correctCount`, `wrongCount`,
+  `skipCount`) are the personal/practice source.
+- **`samplingVersion`** — `2` for a bounded Test, `1` for a legacy route or a
+  pre-v21 attempt. A legacy attempt has `testType = null` and
+  `requestedCount = 0` and never enters a comparable trend.
+- **Family** — `MOCK`, `FRESH_SAMPLE`, `PRACTICE`, `SHORT` or `LEGACY`, from
+  `TestReportBuilder.familyOf`. Practice never shares a mock trend; strict and
+  Fresh sample attempts stay separate; Random and Balanced stay separate.
+- **Comparability key** — `(paperId, testType, scopeKey, requestedCount,
+  samplingVersion, exclusionMode)`. A trend is drawn only inside one key.
+- **As-of-attempt** — report and category figures use the
+  `question_results.categoryTitle` stored with the attempt, so a later rename
+  or move does not rewrite history.
+
 ## 2. Remaining work at a glance
 
-| # | Work | Source | Size | Priority |
-|---|---|---|---|---|
-| 1 | Exam (measurement) view: attempt trends, per-paper and category figures, recent attempts | `statistics-plan.md` §4 | L | High |
-| 2 | Coverage: studied/unseen/bookmarked, per-paper not-started | `statistics-plan.md` §5 | M | High |
-| 3 | Progress tab: introductions, graduations, relapses, Again rate, period comparison | `statistics-plan.md` §6 | L | High |
-| 4 | Retention additions: interval bands, by tag, all-papers category | `statistics-plan.md` §7 | M | Medium |
-| 5 | Workload additions: due tomorrow/week, grade-mix trend, sessions summary | `statistics-plan.md` §8 | M | Medium |
-| 6 | Smaller additions: KPI deltas, card-sheet summary, memory by paper | `statistics-plan.md` §9 | S | Medium |
-| 7 | Deferred database/UI tests from phases 1–3 | `stats.md` §11.16, `stats-phase2.md` §9, `stats-phase3.md` §7 | M | High |
-| 8 | Optional later Test/Statistics enhancements | `stats.md` §7.3, §8.2, §9.4, §9.8, §9.10, §12.3 | S–M | Low |
-| 9 | Metrics that need new logging (not scheduled) | `statistics-plan.md` §10 | L | Deferred |
+| # | Work | Size | Priority |
+|---|---|---|---|
+| 1 | Exam (measurement) view: attempt trends, per-paper and category figures, recent attempts | L | High |
+| 2 | Coverage: studied/unseen/bookmarked, per-paper not-started | M | High |
+| 3 | Progress tab: introductions, graduations, relapses, Again rate, period comparison | L | High |
+| 4 | Retention additions: interval bands, by tag, all-papers category | M | Medium |
+| 5 | Workload additions: due tomorrow/week, grade-mix trend, sessions summary | M | Medium |
+| 6 | Smaller additions: KPI deltas, card-sheet summary, memory by paper | S | Medium |
+| 7 | Deferred database/UI tests from phases 1–3 | M | High |
+| 8 | Optional later Test/Statistics enhancements | S–M | Low |
+| 9 | Metrics that need new logging (not scheduled) | L | Deferred |
 
 Recommended delivery order is §13. Items 1–7 are the actual backlog; item 8 is
 optional and item 9 is recorded only so the reasons survive.
 
 ## 3. Exam (measurement) view
 
-Source: `statistics-plan.md` §4. The prerequisite is met: Test now produces
-bounded attempts with the full metadata. The current Tests tab already shows
-family summaries (attempts, latest, average) and practice progress. It does
-**not** show best/delta, margins, a trend inside one comparable key, per-paper
-rows, category accuracy, timing/skip aggregates or recent attempts. Those are
-the remaining Exam work.
+The prerequisite is met: Test now produces bounded attempts with the full
+metadata. The current Tests tab already shows family summaries (attempts,
+latest, average) and practice progress. It does **not** show best/delta,
+margins, a trend inside one comparable key, per-paper rows, category accuracy,
+timing/skip aggregates or recent attempts. Those are the remaining Exam work.
 
 **Placement recommendation.** Extend the existing **Tests** tab with the Exam
 sections instead of adding a near-duplicate tab: the family summary already
 lives there, and two tabs answering "how are my tests going?" is worse UX. The
-data model and queries below are the same either way. If the owner prefers the
-original statistics-plan layout, split the tab into **Exam** (representative
-mocks) and **Tests** (practice, panels, reliability); the split is a UI
-decision, not a data one.
+data model and queries below are the same either way. If the owner prefers a
+separate tab, split the current tab into **Exam** (representative mocks) and
+**Tests** (practice, panels, reliability); the split is a UI decision, not a
+data one.
 
 ### 3.1 Model
 
@@ -194,8 +205,6 @@ Robolectric/DB tests (CI x86_64):
 
 ## 4. Coverage (studied vs never studied)
 
-Source: `statistics-plan.md` §5.
-
 ### 4.1 Model
 
 Add `domain/stats/CoverageStats.kt`:
@@ -241,7 +250,7 @@ Definitions are about **rows**, not schedules: a card whose content was reset
 
 ## 5. Progress tab
 
-Source: `statistics-plan.md` §6. This is the only genuinely new SRS tab.
+This is the only genuinely new SRS tab.
 
 ### 5.1 Model
 
@@ -295,8 +304,7 @@ Derived: `againRate = again / reviews`, `lapseRate = relapsed / reviews`.
 
 ## 6. Retention additions
 
-Source: `statistics-plan.md` §7. Extend the existing `RetentionAccumulator`
-with three slices.
+Extend the existing `RetentionAccumulator` with three slices.
 
 1. **By interval band** — reviews grouped by the whole-day interval carried
    into the review: `First`, `1–7d`, `8–21d`, `22–60d`, `61–180d`, `181d+`.
@@ -320,8 +328,8 @@ slices; the tag slice uses the index and stays bounded by the reviewed set.
 
 ## 7. Workload additions
 
-Source: `statistics-plan.md` §8. Extend `WorkloadAccumulator` from the cards it
-already pages and the log it already replays.
+Extend `WorkloadAccumulator` from the cards it already pages and the log it
+already replays.
 
 | Field | Definition |
 |---|---|
@@ -342,8 +350,6 @@ Acceptance: Workload tab adds due-tomorrow/due-this-week, grade-mix trend and
 session summary.
 
 ## 8. Smaller additions
-
-Source: `statistics-plan.md` §9.
 
 1. **KPI deltas on Progress** — signed deltas on the Progress KPI grid only;
    do not clutter every KPI tile with icons.
@@ -367,7 +373,7 @@ small, but they protect rules that currently rely on pure-builder tests only.
 
 ### 9.1 Robolectric/SQLite (CI x86_64)
 
-From `stats.md` §11.16 and `stats-phase2.md` §9:
+The shipped phases left these database tests deferred:
 
 1. **Coverage query counts engaged questions, not old skipped rows.** Seed an
    old full-scope attempt with untouched skipped rows and assert the coverage
@@ -383,13 +389,14 @@ From `stats.md` §11.16 and `stats-phase2.md` §9:
 Also worth adding while touching these queries:
 
 - query-plan assertions for the comparable-attempt and focus indexes where
-  practical (`stats.md` §14);
+  practical;
 - the phase-2 `getLatestStandings`-style standing rule for the new chunked
   query (the same rule as #2).
 
 ### 9.2 Instrumented (CI emulator)
 
-From `stats-phase3.md` §7:
+The shipped custom-test and export slices left these instrumented checks
+deferred:
 
 - the four custom chips (Bookmarked, Tag, Authored difficulty, Slowest) appear
   in the setup sheet; a tag can be chosen; Start runs the type;
@@ -402,7 +409,7 @@ paths.
 
 ### 9.3 Reliability cross-check
 
-`stats-phase3.md` §4 requires KR-20 and split-half to agree within a stated
+The reliability slice requires KR-20 and split-half to agree within a stated
 tolerance in tests. `ReliabilityTest` covers both independently but not the
 agreement. Add a hand-computed matrix where both are defined and assert the
 difference is within the documented tolerance; if the two are not comparable
@@ -411,14 +418,14 @@ behaviour instead.
 
 ### 9.4 PDF/export smoke
 
-`stats-phase3.md` §5/§7 asks for a PDF layout smoke test where feasible:
+The export slice asks for a PDF layout smoke test where feasible:
 page count, no exception on an empty report, and the header/score/topics text
 present. `ReportExportCsvTest` already covers CSV quoting and column order.
 
 ## 10. Optional later enhancements
 
-Source: `stats.md`. None of these is scheduled; they are recorded so a future
-request does not have to re-derive the design.
+None of these is scheduled; they are recorded so a future request does not
+have to re-derive the design.
 
 | Enhancement | Source | Notes |
 |---|---|---|
@@ -431,8 +438,8 @@ request does not have to re-derive the design.
 
 ## 11. Metrics that need new logging (not scheduled)
 
-Source: `statistics-plan.md` §10. These cannot be implemented from existing
-columns; each needs its own design and migration.
+These cannot be implemented from existing columns; each needs its own design
+and migration.
 
 | Metric | Why deferred |
 |---|---|
@@ -444,15 +451,17 @@ columns; each needs its own design and migration.
 
 Do not add these to the statistics tabs until the logging design is accepted.
 
-## 12. Excluded by instruction
+## 12. Excluded from this plan
 
-- **Adaptive next-test recommendation / staged testing** — see
-  [`ideas.md`](ideas.md) §1. A rule-based cross-attempt card is feasible; CAT
-  and staged testing need calibrated item parameters this single-user bank
-  cannot produce.
-- **Exam blueprint** — see [`ideas.md`](ideas.md) §2. It changes the plan shape
-  and needs owner decisions on sections, family, pools, short sections, timing,
-  weights and a real example.
+These two items are deliberately **not** part of the remaining work. They are
+recorded in Appendix A with their constraints and open questions so the
+decision does not have to be reconstructed later.
+
+- **Adaptive next-test recommendation / staged testing** — a rule-based
+  cross-attempt card is feasible; CAT and staged testing need calibrated item
+  parameters this single-user bank cannot produce.
+- **Exam blueprint** — it changes the plan shape and needs owner decisions on
+  sections, family, pools, short sections, timing, weights and a real example.
 
 ## 13. Delivery order
 
@@ -535,3 +544,99 @@ or is re-scoped.
 - [ ] No schema change ships without a migration, schema JSON and
       `MigrationTest` proof.
 - [ ] `:app:testDebugUnitTest` and `:app:lintDebug` pass; CI is green.
+
+## Appendix A. Deferred ideas (not scheduled)
+
+These two items are deliberately excluded from the plan above. They are kept
+here, with their constraints and open questions, so the decision does not have
+to be reconstructed later. Neither is scheduled; both need an owner decision
+before code.
+
+### A.1 Adaptive next-test recommendation / staged testing
+
+**What was wanted.** A card on the report and/or the Tests tab that answers
+"what should I take next?" — a type, a length and a scope, with the evidence it
+used. It must never claim that a score will improve, and it must not present a
+practice gain as proof of mastery.
+
+**What is feasible with this app's data.** The app is single-user. There is no
+population of test takers, so there is no way to calibrate item difficulty or
+discrimination against a norm group. That rules out, for now:
+
+- **CAT / IRT adaptive testing.** It needs calibrated item parameters and
+  exposure control; this bank has neither. A one-user bank cannot supply them
+  (a user's own correctness is the dependent variable the test is supposed to
+  measure).
+- **Staged testing** (stop when the score interval is narrow enough). The
+  interval exists (`TestReport.marginPoints`), but staging a single session
+  changes the plan shape and the session contract, and a stop rule calibrated
+  on one user's variance is not a measurement.
+
+What *is* feasible is a **rule-based recommendation across attempts**:
+
+- it reads the same pure report facts already computed: score denominators,
+  topic accuracy, error mix, coverage, comparable attempts, mistakes and due
+  counts;
+- it picks from the existing startable types and links to the existing Test
+  route (type, count, scope) — no new plan shape;
+- every recommendation carries its evidence number and sample size;
+- short or legacy attempts suppress the statistical rules and keep only
+  review/topic rules.
+
+**Open questions.**
+
+1. Where does it live: a card at the end of the report, a line in the Tests
+   tab, or both? The report rules already exist, so the report is the natural
+   first home.
+2. Does it read only the latest attempt, or the last N comparable attempts? A
+   single attempt's topic accuracy is noisy; a trend across comparable attempts
+   is more defensible but needs a suppression rule.
+3. Should a practice attempt be allowed to recommend a random control mock?
+   The existing rules say yes when the claim is about mastery; confirm the
+   wording never implies the practice score itself improved.
+4. Should the card remember dismissals, or is it recomputed each time from the
+   report (stateless, simpler)?
+
+**Why it is not in this plan.** Only the rule-based cross-attempt card is
+plausible without population data, and it was not part of the shipped phase-3
+scope. CAT/staged testing stays deferred until there is calibration data, which
+a single-user app cannot produce.
+
+### A.2 Exam blueprint
+
+**What was wanted.** Per-paper sections with counts, optional weights and
+optional per-section time; a "Blueprint" test is a representative mock built
+from those quotas, so the sample resembles the real exam's composition instead
+of the bank's.
+
+**Why it waits.** It changes the meaning of `TestPlan` (sections with their own
+counts and timing versus one flat count), needs an editor for the quotas, and a
+paper without a blueprint must keep working exactly as today. That is a
+plan-shape change, not a selector.
+
+**Open questions the owner has to answer.**
+
+1. **Shape.** Is a blueprint one flat list of sections, or nested
+   (section → category branches)? Flat is much simpler and covers most exams.
+2. **Family.** Is a Blueprint attempt representative (feeds the comparable
+   trend and `rep*` counters, like Random/Balanced) or practice? It is meant to
+   be a mock, so representative is the likely answer, but that has consequences
+   for the trend and the comparability key.
+3. **Section pool.** Can a section draw from the whole paper, or only from
+   explicit category branches? What happens when a section's pool is smaller
+   than its quota — short the section, borrow from outside, or refuse to start?
+   (Compare the fixed-panel rule: a fixed set never fills from outside.)
+4. **Short-section behaviour.** Same question at the section level: is a
+   partially filled blueprint still comparable, or does it become practice?
+5. **Timing.** Is per-section time enforced in the session (a timer per
+   section) or only reported? Enforcing it touches the session state machine.
+6. **Weights.** What do weights mean — scoring weight per section, or just a
+   target proportion of questions? If scoring, the report's `maxScore` and
+   negative-marking maths change.
+7. **A real example.** One actual exam blueprint (sections, counts, time,
+   marking) is needed to validate the editor and the sampler. Without it the
+   feature is speculative.
+
+**Why it is not in this plan.** It needs the decisions above, and it changes the
+plan shape that the rest of the Test and report work depends on. Implementing
+it on assumptions would likely be thrown away.

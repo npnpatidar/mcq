@@ -11,6 +11,7 @@ import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.Scoring
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
@@ -718,11 +719,12 @@ class StudyViewModel(
 
     /**
      * One definition of "right" for the log and the result card, so the stored
-     * flag can never disagree with what the learner was told. An empty
-     * selection is not correct: nothing was answered.
+     * flag can never disagree with what the learner was told. The result
+     * haptic shares it through [Scoring], so the pulse cannot disagree with the
+     * card either. An empty selection is not correct: nothing was answered.
      */
     private fun isCorrect(question: Question, selection: Set<String>): Boolean =
-        selection.isNotEmpty() && selection == question.correctOptionIds
+        Scoring.isCorrect(selection, question.correctOptionIds)
 
     /** Replaces the proposed grade before it is persisted. */
     fun changeGrade(grade: ReviewGrade) {

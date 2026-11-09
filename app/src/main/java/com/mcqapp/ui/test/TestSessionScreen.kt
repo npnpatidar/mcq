@@ -88,9 +88,11 @@ import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.ExamMode
 import com.mcqapp.domain.Feedback
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.Scoring
 import com.mcqapp.domain.SubmitSummary
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.ui.TestViewModelFactory
+import com.mcqapp.ui.haptics.rememberHaptics
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
@@ -140,6 +142,7 @@ fun TestSessionScreen(
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
     val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
+    val haptics = rememberHaptics()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -337,7 +340,10 @@ fun TestSessionScreen(
                         // guard lives in the view model, this only keeps the
                         // control from promising otherwise.
                         IconButton(
-                            onClick = { viewModel.toggleFlag() },
+                            onClick = {
+                                haptics.toggle(question.id !in state.flagged)
+                                viewModel.toggleFlag()
+                            },
                             enabled = !(state.saving || state.submitted)
                         ) {
                                 Icon(
@@ -347,7 +353,12 @@ fun TestSessionScreen(
                                 )
                             }
                         }
-                        IconButton(onClick = { viewModel.toggleBookmarkCurrent() }) {
+                        IconButton(
+                            onClick = {
+                                haptics.toggle(question.id !in state.bookmarked)
+                                viewModel.toggleBookmarkCurrent()
+                            }
+                        ) {
                             Icon(
                                 if (question.id in state.bookmarked) Icons.Default.Bookmark
                                 else Icons.Default.BookmarkBorder,
@@ -404,6 +415,7 @@ fun TestSessionScreen(
                 QuestionPalette(
                     state = state,
                     onPick = { index ->
+                        haptics.tick()
                         viewModel.goTo(index)
                         showPalette = false
                     }
@@ -705,7 +717,10 @@ fun TestSessionScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedButton(
-                    onClick = { viewModel.previous() },
+                    onClick = {
+                        haptics.tick()
+                        viewModel.previous()
+                    },
                     enabled = !(state.saving || state.submitted) && state.currentIndex > 0
                 ) {
                     Text(stringResource(R.string.previous))
@@ -722,11 +737,19 @@ fun TestSessionScreen(
                 }
                 if (state.currentIndex < state.questionCount - 1) {
                     Button(
-                        onClick = { viewModel.next() },
+                        onClick = {
+                            haptics.tick()
+                            viewModel.next()
+                        },
                         enabled = !(state.saving || state.submitted)
                     ) { Text(stringResource(R.string.next)) }
                 } else {
-                    Button(onClick = { showSubmitDialog = true }) { Text(stringResource(R.string.submit)) }
+                    Button(
+                        onClick = {
+                            haptics.tick()
+                            showSubmitDialog = true
+                        }
+                    ) { Text(stringResource(R.string.submit)) }
                 }
             }
 
@@ -739,7 +762,20 @@ fun TestSessionScreen(
             ) {
                 if (ExamMode.canReveal(state.practiceMode, state.strictMode)) {
                     OutlinedButton(
-                        onClick = { viewModel.revealCurrent() },
+                        onClick = {
+                            // Revealing is the learner asking for the verdict;
+                            // the pulse may only judge an answer they gave.
+                            val chosen = state.selections[question.id].orEmpty()
+                            haptics.tick()
+                            viewModel.revealCurrent()
+                            if (chosen.isNotEmpty()) {
+                                if (Scoring.isCorrect(chosen, question.correctOptionIds)) {
+                                    haptics.confirm()
+                                } else {
+                                    haptics.reject()
+                                }
+                            }
+                        },
                         enabled = question.id !in state.revealed,
                         modifier = Modifier.weight(1f)
                     ) {
@@ -747,7 +783,10 @@ fun TestSessionScreen(
                     }
                 }
                 Button(
-                    onClick = { showSubmitDialog = true },
+                    onClick = {
+                        haptics.tick()
+                        showSubmitDialog = true
+                    },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(stringResource(R.string.submit_test_2))
@@ -820,6 +859,7 @@ fun TestSessionScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        haptics.confirm()
                         showSubmitDialog = false
                         viewModel.submit()
                     },
@@ -857,6 +897,7 @@ fun TestSessionScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
+                                    haptics.tick()
                                     viewModel.dismissAnswerReview()
                                     viewModel.goTo(row.number - 1)
                                 }
@@ -981,6 +1022,13 @@ private fun OptionRow(
     onClick: () -> Unit
 ) {
     val verdicts = verdictColors()
+    val haptics = rememberHaptics()
+    // The card, the checkbox and the radio button all toggle the same answer.
+    // Sharing one lambda keeps a tap on the control from pulsing twice.
+    val select = {
+        haptics.toggle(!selected)
+        onClick()
+    }
     val containerColor = when {
         revealed && isCorrectOption -> verdicts.correctContainer
         revealed && selected && !isCorrectOption -> verdicts.wrongContainer
@@ -1004,7 +1052,7 @@ private fun OptionRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, onClick = select),
         colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(
             width = if (selected || revealed) 2.dp else 1.dp,
@@ -1018,9 +1066,9 @@ private fun OptionRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (multi) {
-                Checkbox(checked = selected, onCheckedChange = { onClick() }, enabled = enabled)
+                Checkbox(checked = selected, onCheckedChange = { select() }, enabled = enabled)
             } else {
-                RadioButton(selected = selected, onClick = onClick, enabled = enabled)
+                RadioButton(selected = selected, onClick = select, enabled = enabled)
             }
             CompositionLocalProvider(LocalContentColor provides bodyColor) {
                 Column(modifier = Modifier.weight(1f)) {

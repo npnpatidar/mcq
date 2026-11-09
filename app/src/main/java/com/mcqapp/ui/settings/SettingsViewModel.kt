@@ -185,6 +185,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _shuffleOptions = MutableStateFlow(false)
     val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
 
+    private val _hapticsEnabled = MutableStateFlow(true)
+    val hapticsEnabled: StateFlow<Boolean> = _hapticsEnabled.asStateFlow()
+
     init {
         viewModelScope.launch {
             repository.shuffleQuestions().collect { _shuffleQuestions.value = it }
@@ -194,6 +197,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
+        }
+        viewModelScope.launch {
+            repository.hapticsEnabled().collect { _hapticsEnabled.value = it }
         }
     }
 
@@ -218,6 +224,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setShuffleOptions(enabled: Boolean) {
         viewModelScope.launch { repository.setShuffleOptions(enabled) }
+    }
+
+    fun setHapticsEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.setHapticsEnabled(enabled) }
     }
 
     private val _practiceMode = MutableStateFlow(false)

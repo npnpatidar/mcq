@@ -105,6 +105,20 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         context.dataStore.edit { it[shuffleOptionsKey] = enabled }
     }
 
+    private val hapticsEnabledKey = booleanPreferencesKey("haptics_enabled")
+
+    /**
+     * The app's own haptic feedback. On by default: one short tick is standard
+     * UI confirmation, and the system's touch-feedback switch still gates it
+     * underneath. The Settings switch is the app-level opt-out.
+     */
+    fun hapticsEnabled(): Flow<Boolean> =
+        context.dataStore.data.map { it[hapticsEnabledKey] ?: true }
+
+    suspend fun setHapticsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[hapticsEnabledKey] = enabled }
+    }
+
     private val pdfTwoColumnKey = booleanPreferencesKey("pdf_two_column")
 
     fun pdfTwoColumn(): Flow<Boolean> =

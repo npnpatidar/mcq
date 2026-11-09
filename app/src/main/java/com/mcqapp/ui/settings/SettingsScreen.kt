@@ -64,7 +64,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -96,6 +98,7 @@ fun SettingsScreen(
     val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
     val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
+    val hapticsEnabled by viewModel.hapticsEnabled.collectAsStateWithLifecycle()
     val practiceMode by viewModel.practiceMode.collectAsStateWithLifecycle()
     val strictMode by viewModel.strictMode.collectAsStateWithLifecycle()
     val autoAdvance by viewModel.autoAdvance.collectAsStateWithLifecycle()
@@ -107,6 +110,7 @@ fun SettingsScreen(
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val feedback = LocalHapticFeedback.current
     // rememberSaveable: the pickers and confirm dialogs recreate the activity,
     // and plain `remember` dismissed the confirm and lost the picked URI and
     // the typed-error strings (consolidated_bugs.md F4/H10).
@@ -576,6 +580,41 @@ fun SettingsScreen(
                         stringResource(R.string.review_order_help),
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(stringResource(R.string.feedback), style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.haptic_feedback))
+                            Text(
+                                stringResource(R.string.haptic_feedback_help),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(
+                            checked = hapticsEnabled,
+                            onCheckedChange = { enabled ->
+                                // Sample the effect as it is switched on. The
+                                // switch is still off here, so this bypasses
+                                // the app gate deliberately; the platform's
+                                // touch-feedback setting still applies.
+                                if (enabled) {
+                                    feedback.performHapticFeedback(
+                                        HapticFeedbackType.ToggleOn
+                                    )
+                                }
+                                viewModel.setHapticsEnabled(enabled)
+                            }
+                        )
+                    }
                 }
             }
 

@@ -100,6 +100,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun shuffleOptions(): Flow<Boolean> = settings.shuffleOptions()
     suspend fun setShuffleOptions(enabled: Boolean) = settings.setShuffleOptions(enabled)
 
+    fun hapticsEnabled(): Flow<Boolean> = settings.hapticsEnabled()
+    suspend fun setHapticsEnabled(enabled: Boolean) = settings.setHapticsEnabled(enabled)
+
     fun pdfTwoColumn(): Flow<Boolean> = settings.pdfTwoColumn()
     suspend fun setPdfTwoColumn(enabled: Boolean) = settings.setPdfTwoColumn(enabled)
 

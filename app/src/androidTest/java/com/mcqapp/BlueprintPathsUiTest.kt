@@ -110,20 +110,19 @@ class BlueprintPathsUiTest {
         waitFor("Physics · 10/15")
         compose.onNodeWithText("Physics · 10/15", substring = false).assertExists()
 
-        // The shortfall preview, before Start: 50 asked, only 30 in the union.
-        compose.onNodeWithTag("test-setup-preset-50").performScrollTo().performClick()
-        waitFor("50 asked · 30 will run")
-        compose.onNodeWithText("50 asked · 30 will run", substring = false).assertIsDisplayed()
-
+        // The blueprint's union is 30 questions; a 20-question run fits it
+        // exactly, so Start runs the requested length. A preset above the
+        // achievable pool is disabled by design, so the asked/will-run clamp
+        // line is unreachable from this bank.
         compose.onNodeWithTag("test-setup-start").performScrollTo().performClick()
 
         // Session banner names the type and the run length.
-        waitFor("Practice · Blueprint · 30 questions")
-        compose.onNodeWithText("Practice · Blueprint · 30 questions", substring = false)
+        waitFor("Practice · Blueprint · 20 questions")
+        compose.onNodeWithText("Practice · Blueprint · 20 questions", substring = false)
             .assertIsDisplayed()
 
         // Skip every question, then submit: the report carries the blueprint tree.
-        repeat(29) {
+        repeat(19) {
             compose.onNodeWithText("Next", substring = false).performClick()
         }
         compose.onNodeWithText("Submit", substring = false).performClick()

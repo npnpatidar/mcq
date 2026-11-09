@@ -35,6 +35,8 @@ enum class FillSource {
     BALANCED,
     /** An equal-allocation Coverage block (plan §10), practice only. */
     COVERAGE,
+    /** A Coverage block whose within-topic order prefers less-tested questions. */
+    COVERAGE_EXPOSURE,
     MIXED,
     LEAST_RECENTLY_REVIEWED,
     AUTHORED_HARD,
@@ -158,7 +160,12 @@ object TestSelector {
          * caller from the stored results. Only questions with at least
          * [SLOWEST_MIN_SAMPLES] timed answers are present.
          */
-        medianDwellSeconds: Map<String, Long> = emptyMap()
+        medianDwellSeconds: Map<String, Long> = emptyMap(),
+        /**
+         * Stored test appearances per question, for the exposure-weighted
+         * Coverage mode (plan §10). Empty for every other type/mode.
+         */
+        exposure: Map<String, Int> = emptyMap()
     ): Selection? = when (plan.type) {
         TestType.WEAKEST_TOPICS -> weakest(plan, signals, breadth)
         TestType.TOUGHEST_QUESTIONS -> toughest(plan, signals)
@@ -167,7 +174,7 @@ object TestSelector {
         TestType.AT_RISK -> atRisk(plan, signals)
         TestType.UNSEEN -> unseen(plan, signals)
         TestType.BALANCED -> balanced(plan, signals)
-        TestType.COVERAGE -> coverage(plan, signals)
+        TestType.COVERAGE -> coverage(plan, signals, exposure)
         TestType.MIXED -> mixed(plan, signals, breadth)
         TestType.BOOKMARKED -> fromPool(plan, signals, customPool, FillSource.BOOKMARKED)
         TestType.TAG -> fromPool(plan, signals, customPool, FillSource.TAG)
@@ -208,9 +215,11 @@ object TestSelector {
         signals: List<Signals>,
         breadth: Breadth = Breadth.MEDIUM,
         customPool: Set<String> = emptySet(),
-        medianDwellSeconds: Map<String, Long> = emptyMap()
+        medianDwellSeconds: Map<String, Long> = emptyMap(),
+        /** Stored test appearances per question, for exposure-weighted Coverage. */
+        exposure: Map<String, Int> = emptyMap()
     ): SelectionPreview {
-        val selection = select(plan, signals, breadth, customPool, medianDwellSeconds)
+        val selection = select(plan, signals, breadth, customPool, medianDwellSeconds, exposure)
         val targets = selection?.targets.orEmpty().mapNotNull { id ->
             val rows = signals.filter { it.categoryId == id }
             if (rows.isEmpty()) return@mapNotNull null
@@ -495,18 +504,31 @@ object TestSelector {
      * This is practice only: a small topic is over-represented relative to
      * the paper, so the score is not comparable to Balanced.
      */
-    private fun coverage(plan: TestPlan, signals: List<Signals>): Selection {
+    private fun coverage(
+        plan: TestPlan,
+        signals: List<Signals>,
+        exposure: Map<String, Int>
+    ): Selection {
         val n = plan.count.coerceAtLeast(0)
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val categories = TestRanking.categories(signals).sortedBy { it.categoryId }
         val allocation = equalAllocation(n, categories, plan.seed)
+        val weighted = plan.variant == TestPlan.EXPOSURE_VARIANT
         val perCategory = categories.mapNotNull { category ->
             val need = allocation[category.categoryId] ?: 0
             if (need <= 0) return@mapNotNull null
-            signals
+            val candidates = signals
                 .filter { it.categoryId == category.categoryId }
                 .shuffled(Random(plan.seed xor category.categoryId.hashCode().toLong()))
-                .take(need)
+            // Exposure weighting is a stable sort over the seeded shuffle: the
+            // least-tested questions come first, and equal exposure keeps the
+            // reproducible order.
+            val ordered = if (weighted) {
+                candidates.sortedBy { exposure[it.questionId] ?: 0 }
+            } else {
+                candidates
+            }
+            ordered.take(need)
         }
         val interleaved = interleave(perCategory)
         val (ids, fill) = fillWith(
@@ -519,7 +541,8 @@ object TestSelector {
         return Selection(
             ids = ids,
             composition = Composition.of(
-                FillSource.COVERAGE to interleaved.size,
+                (if (weighted) FillSource.COVERAGE_EXPOSURE else FillSource.COVERAGE)
+                    to interleaved.size,
                 *fill.toTypedArray()
             )
         )

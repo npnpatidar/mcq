@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -148,6 +150,21 @@ internal fun TestSetupSheet(
     var breadth by rememberSaveable { mutableStateOf(Breadth.MEDIUM) }
     /** The custom choice (phase 3): folded tag for `TAG`, difficulty name else. */
     var variant by rememberSaveable { mutableStateOf<String?>(null) }
+    /** Coverage's exposure mode (plan §10); the plan carries it as the variant. */
+    var weightByExposure by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(type) {
+        if (type != TestType.COVERAGE) weightByExposure = false
+    }
+    /**
+     * What the route and the preview carry: the custom choice, or Coverage's
+     * exposure mode. Keeping one value means the preview and Start cannot
+     * disagree about the mode.
+     */
+    val effectiveVariant = if (type == TestType.COVERAGE && weightByExposure) {
+        TestPlan.EXPOSURE_VARIANT
+    } else {
+        variant
+    }
     /** The scope's distinct tags, loaded once for the Tag picker. */
     var tags by remember(paper.id, categoryIds) { mutableStateOf<List<com.mcqapp.data.local.TagCount>?>(null) }
     LaunchedEffect(paper.id, categoryIds, type) {
@@ -230,7 +247,7 @@ internal fun TestSetupSheet(
         mutableStateOf<SelectionPreview?>(null)
     }
     var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
-    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, variant) {
+    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, effectiveVariant) {
         if (!type.usesSignalSelector || panelBlocked) {
             selectionPreview = null
             previewLoading = false
@@ -238,7 +255,7 @@ internal fun TestSetupSheet(
         }
         previewLoading = true
         selectionPreview = runCatching {
-            loadPreview(type, requestCount, breadth, variant)
+            loadPreview(type, requestCount, breadth, effectiveVariant)
         }.getOrNull()
         previewLoading = false
     }
@@ -285,10 +302,14 @@ internal fun TestSetupSheet(
             ?: TestTime.Suggested,
         available = available,
         exclusionMode = exclusionMode,
-        variant = if (!panelBlocked && (type == TestType.TAG ||
+        variant = when {
+            panelBlocked -> null
+            type == TestType.COVERAGE -> effectiveVariant
+            type == TestType.TAG ||
                 type == TestType.AUTHORED_DIFFICULTY ||
-                type == TestType.FIXED_PANEL)
-        ) variant else null,
+                type == TestType.FIXED_PANEL -> variant
+            else -> null
+        },
         minBlockSize = minBlockSize ?: 1
     )
     // The largest length this pool can actually supply. Chips above it are
@@ -366,6 +387,27 @@ internal fun TestSetupSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // Coverage's exposure mode (plan §10). The type stays Coverage;
+            // only the within-topic order changes, so the score is still a
+            // practice sample, not a mock.
+            if (type == TestType.COVERAGE) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = weightByExposure,
+                        onCheckedChange = { weightByExposure = it }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.test_setup_coverage_exposure),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    stringResource(R.string.test_setup_coverage_exposure_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             // A custom type needs its choice before Start is offered.
             when (type) {
                 TestType.TAG -> {
@@ -706,7 +748,7 @@ internal fun TestSetupSheet(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, variant) },
+                onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, effectiveVariant) },
                 enabled = setup.startable() && !poolLoading && !blockLoading && !panelsLoading,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -841,6 +883,7 @@ private fun fillSourceLabel(source: String): String = when (source.uppercase()) 
     "UNSEEN" -> stringResource(R.string.test_setup_fill_unseen)
     "BALANCED" -> stringResource(R.string.test_setup_fill_balanced)
     "COVERAGE" -> stringResource(R.string.test_setup_fill_coverage)
+    "COVERAGE_EXPOSURE" -> stringResource(R.string.test_setup_fill_coverage_exposure)
     "MIXED" -> stringResource(R.string.test_setup_fill_mixed)
     "BOOKMARKED" -> stringResource(R.string.test_setup_fill_bookmarked)
     "TAG" -> stringResource(R.string.test_setup_fill_tag)

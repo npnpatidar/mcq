@@ -496,7 +496,7 @@ those tests run wherever `PdfDocument` works.
 
 ## 10. Optional later enhancements
 
-The first three rows shipped on owner request; the rest are not scheduled and
+The first four rows shipped on owner request; the rest are not scheduled and
 are recorded so a future request does not have to re-derive the design.
 
 | Enhancement | Source | Notes |
@@ -504,7 +504,7 @@ are recorded so a future request does not have to re-derive the design.
 | ~~Remember last-used test length~~ | §7.3, §16 #2 | **Shipped.** The last accepted length is stored in DataStore (`last_test_length`, default 20), snapped by `TestPlan.normalizeLength` to a selectable step and clamped to the current pool before it can seed the sheet. A length the learner picks this session is never silently lowered. |
 | ~~Equal-allocation "Coverage" test type~~ | §8.2, §9.4 | **Shipped.** `TestType.COVERAGE` gives every topic in scope the same share, redistributes a short topic's surplus and picks one-per-topic when the request is below the topic count. It is practice only: `isRepresentative` stays Random/Balanced, so it never feeds the mock trend or `rep*`. The composition records `COVERAGE`, and the label is never "Balanced". |
 | ~~Rotating balanced mode~~ | §9.4 | **Shipped.** When a Balanced request is below the topic count, the included subset is chosen from the attempt seed instead of a fixed largest-remainder order. The seed is already stored in the plan, so the sample rotates across attempts and stays reproducible without new state. Proportional allocation is unchanged when the request covers every topic. |
-| Exposure-weighted Coverage test mode | §9.8 | Weight selection inversely to test exposure. A biased sample for score estimation; label it "Coverage", never "Random". |
+| ~~Exposure-weighted Coverage test mode~~ | §9.8 | **Shipped.** A switch on the Coverage section sets `variant = EXPOSURE`; the selector keeps the equal topic share but stably sorts each topic's seeded order by stored test appearances, so the least-tested questions come first. The attempt still reads as Coverage, the composition records `COVERAGE_EXPOSURE`, and no schema change was needed. |
 | Per-paper priority cache | §9.10 | Only if profiling shows ranking a 250k-question paper is too slow. Rank per category and merge, or materialise a cache; do not add it speculatively. |
 | `question_stats.categoryId` column | §12.3 | Makes ranking cheaper by avoiding the join to `questions`; not required for the current bank sizes. Would need a migration and schema JSON. |
 
@@ -552,8 +552,9 @@ green CI. Robolectric/instrumented tests are authoritative on CI x86_64.
 6. **Test hardening** (item 7) — interleave with the above; the deferred
    Robolectric tests can land as their own PR before the new tabs.
 7. **Optional later enhancements** (item 8) — only on owner request. The
-   last-used test length, the equal-allocation Coverage type and rotating
-   Balanced shipped first; the remaining rows stay unscheduled.
+   last-used test length, the equal-allocation Coverage type, rotating
+   Balanced and exposure-weighted Coverage shipped first; the remaining rows
+   stay unscheduled.
 8. **Logging-dependent metrics** (item 9) — only after a logging design is
    accepted.
 
@@ -620,6 +621,9 @@ or is re-scoped.
 - [x] A Balanced request below the topic count rotates its included subset
       from the stored attempt seed, and the same seed reproduces the sample
       (`TestSelectorTest`).
+- [x] Coverage's exposure mode prefers the least-tested question within each
+      topic, records `COVERAGE_EXPOSURE`, and stays a practice run
+      (`TestSelectorTest`, `TestPlanTest`).
 - [x] In-memory and streamed builds are equal in tests.
 - [x] The deferred Robolectric tests in §9.1 exist (`DeferredDbQueriesTest`);
       the reliability cross-check (§9.3) and PDF layout test (§9.4) exist and

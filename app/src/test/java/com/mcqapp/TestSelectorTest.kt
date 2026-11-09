@@ -528,6 +528,27 @@ class TestSelectorTest {
     }
 
     @Test
+    fun exposureWeightedCoveragePrefersTheLeastTestedQuestion() {
+        val signals = listOf(
+            signal("tested", "a", correct = 0),
+            signal("fresh", "a", correct = 0)
+        )
+        val weighted = plan(TestType.COVERAGE, 1)
+            .copy(variant = TestPlan.EXPOSURE_VARIANT)
+        val selection = TestSelector.select(
+            weighted, signals, exposure = mapOf("tested" to 5)
+        )!!
+        assertEquals(listOf("fresh"), selection.ids)
+        assertEquals(
+            FillSource.COVERAGE_EXPOSURE.name,
+            selection.composition.segments.first().source
+        )
+        // The plain mode keeps the same type but records an unweighted block.
+        val plain = TestSelector.select(weighted.copy(variant = null), signals)!!
+        assertEquals(FillSource.COVERAGE.name, plain.composition.segments.first().source)
+    }
+
+    @Test
     fun mixedBlendsThePartsAndKeepsTheWeakestTargets() {
         val signals = buildList {
             repeat(10) { add(signal("weak$it", "a", correct = 0, wrong = 5)) }

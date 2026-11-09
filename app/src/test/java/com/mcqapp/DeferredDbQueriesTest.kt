@@ -76,6 +76,27 @@ class DeferredDbQueriesTest {
         )
     }
 
+    // --- plan §10: exposure-weighted Coverage --------------------------------
+
+    @Test
+    fun exposureCountsHowManyStoredTestsIncludedEachQuestion() = runBlocking {
+        saveAttempt(
+            selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("q2-a")),
+            finishedAt = 1_000L
+        )
+        saveAttempt(
+            selections = mapOf("q1" to setOf("q1-a")),
+            finishedAt = 2_000L
+        )
+        val exposure = repository.testExposureByPaper("p1")
+        // q1 appeared in both tests; q2 and the untouched q3..q5 in the first.
+        assertEquals(2, exposure["q1"])
+        assertEquals(1, exposure["q2"])
+        assertEquals(1, exposure["q3"])
+        // A question no stored test included is absent and reads as zero.
+        assertEquals(null, exposure["missing"])
+    }
+
     // --- §9.1 item 1 and 4: engaged coverage and the report header -----------
 
     @Test

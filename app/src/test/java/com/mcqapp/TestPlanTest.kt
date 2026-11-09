@@ -27,7 +27,8 @@ class TestPlanTest {
         samplingVersion: Int = TestPlan.SAMPLING_VERSION,
         scopeKey: String = ScopeKey.wholePaper("p1"),
         exclusionMode: ExclusionMode = ExclusionMode.NONE,
-        targetTopicIds: List<String> = emptyList()
+        targetTopicIds: List<String> = emptyList(),
+        variant: String? = null
     ) = TestPlan(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -37,7 +38,8 @@ class TestPlanTest {
         samplingVersion = samplingVersion,
         scopeKey = scopeKey,
         exclusionMode = exclusionMode,
-        targetTopicIds = targetTopicIds
+        targetTopicIds = targetTopicIds,
+        variant = variant
     )
 
     @Test
@@ -262,6 +264,19 @@ class TestPlanTest {
         assertEquals(
             Resolution.Ready(count = 20, short = false, clamped = false, message = null),
             coverage.resolve(100)
+        )
+    }
+
+    @Test
+    fun coverageOnlyAcceptsTheExposureMode() {
+        assertNull(plan(type = TestType.COVERAGE).validationError(100))
+        assertNull(
+            plan(type = TestType.COVERAGE, variant = TestPlan.EXPOSURE_VARIANT)
+                .validationError(100)
+        )
+        assertEquals(
+            TestPlan.COVERAGE_VARIANT_MESSAGE,
+            plan(type = TestType.COVERAGE, variant = "OTHER").validationError(100)
         )
     }
 

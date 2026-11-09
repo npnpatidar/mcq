@@ -730,8 +730,17 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         } else {
             emptyMap()
         }
+        // Exposure-weighted Coverage reads how often each question has
+        // appeared in a stored test (plan §10). Every other mode stays empty.
+        val exposure = if (type == TestType.COVERAGE &&
+            variant == TestPlan.EXPOSURE_VARIANT
+        ) {
+            repository.testExposureByPaper(paper.id)
+        } else {
+            emptyMap()
+        }
         return TestSelector.preview(
-            plan, signals, breadth, customPool, medianDwellSeconds
+            plan, signals, breadth, customPool, medianDwellSeconds, exposure
         )
     }
 

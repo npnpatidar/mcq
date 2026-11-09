@@ -2285,6 +2285,20 @@ interface AttemptDao {
     suspend fun getById(id: Long): AttemptEntity?
 
     /**
+     * Stored test appearances per question in [paperId] (plan §10): how many
+     * result rows included it across every stored attempt, answered or
+     * skipped. Coverage's exposure mode prefers the least-tested questions; a
+     * question no stored test included is absent and reads as zero exposure.
+     */
+    @Query(
+        "SELECT r.questionId AS questionId, COUNT(*) AS count " +
+            "FROM question_results r " +
+            "INNER JOIN attempts a ON a.id = r.attemptId " +
+            "WHERE a.paperId = :paperId GROUP BY r.questionId"
+    )
+    suspend fun getExposureByPaper(paperId: String): List<QuestionExposureRow>
+
+    /**
      * Each question's most recent graded result across every attempt, by
      * `attempts.finishedAt DESC, question_results.id DESC` (section 12.3).
      * Result ids alone are not recency: a merge import can write an older
@@ -3261,6 +3275,12 @@ data class LatestStanding(
 data class StandingRow(
     val questionId: String,
     val isCorrect: Boolean
+)
+
+/** One row of [AttemptDao.getExposureByPaper]: a question and its test count. */
+data class QuestionExposureRow(
+    val questionId: String,
+    val count: Int
 )
 
 /** One row of [AttemptDao.countMistakesByPaper]: a paper and its mistake count. */

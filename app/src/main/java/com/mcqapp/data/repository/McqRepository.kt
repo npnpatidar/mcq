@@ -706,6 +706,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             .mapValues { (_, samples) -> samples[(samples.size - 1) / 2] }
 
     /**
+     * Stored test appearances per question in [paperId] (plan §10), for the
+     * exposure-weighted Coverage mode: how many stored result rows included
+     * it, answered or skipped. A question no stored test included is absent
+     * and reads as zero exposure.
+     */
+    suspend fun testExposureByPaper(paperId: String): Map<String, Int> =
+        db.attemptDao().getExposureByPaper(paperId).associate { it.questionId to it.count }
+
+    /**
      * The smallest passage block in a scope (section 9.6). The setup sheet's
      * sampler pre-check uses it before it emits a route; a standalone question
      * makes the answer 1.

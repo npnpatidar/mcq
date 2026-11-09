@@ -451,7 +451,15 @@ object TestSelector {
         val n = plan.count.coerceAtLeast(0)
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val categories = TestRanking.categories(signals)
-        val allocation = allocate(n, categories)
+        // When the request is below the topic count, a fixed largest-remainder
+        // order would include the same topics on every attempt. Rotate the
+        // included subset by the attempt seed instead; the seed is stored in
+        // the plan, so the sample stays reproducible without extra state.
+        val allocation = if (n < categories.size) {
+            equalAllocation(n, categories, plan.seed)
+        } else {
+            allocate(n, categories)
+        }
         val perCategory = categories.mapNotNull { category ->
             val need = allocation[category.categoryId] ?: 0
             if (need <= 0) return@mapNotNull null

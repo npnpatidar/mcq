@@ -17,6 +17,7 @@ import com.mcqapp.domain.signals.Signals
 import com.mcqapp.domain.signals.TestRanking
 import com.mcqapp.domain.signals.TestSelector
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -277,6 +278,30 @@ class TestSelectorTest {
         seed = seed,
         scopeKey = ScopeKey.wholePaper("p1")
     )
+
+    @Test
+    fun balancedRotatesTheSubsetWhenTheRequestIsBelowTheTopicCount() {
+        // 30 topics, a 20-question Balanced run: the fixed largest-remainder
+        // order would always take the same 20. The attempt seed rotates the
+        // included subset and remains the reproducibility state.
+        val signals = (0 until 30).flatMap { topic ->
+            (0 until 5).map { q -> signal("c${topic}q$q", "c$topic") }
+        }
+        val first = TestSelector.select(plan(TestType.BALANCED, 20, seed = 1L), signals)!!
+        val second = TestSelector.select(plan(TestType.BALANCED, 20, seed = 2L), signals)!!
+        assertEquals(20, first.ids.size)
+        val firstTopics = first.ids.map { it.substringBefore('q') }.toSet()
+        val secondTopics = second.ids.map { it.substringBefore('q') }.toSet()
+        assertEquals(20, firstTopics.size)
+        assertEquals(20, secondTopics.size)
+        assertNotEquals(firstTopics, secondTopics)
+        // The same seed reproduces the same sample.
+        assertEquals(
+            first.ids,
+            TestSelector.select(plan(TestType.BALANCED, 20, seed = 1L), signals)!!.ids
+        )
+        assertEquals(FillSource.BALANCED.name, first.composition.segments.first().source)
+    }
 
     @Test
     fun largestRemainderMatchesTheSpecExample() {

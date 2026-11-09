@@ -1163,6 +1163,27 @@ interface QuestionDao {
     suspend fun countUnseenInScope(paperId: String?): Int
 
     /**
+     * Row-based coverage per paper (plan §4.2): a question is studied when a
+     * `card_state` row exists, not when its schedule says NEW. The grouped
+     * query never materialises a question row; the bookmark join is a set
+     * membership test on a unique key.
+     */
+    @Query(
+        "SELECT p.id AS paperId, p.title AS label, " +
+            "COUNT(q.id) AS questions, " +
+            "COUNT(cs.questionId) AS studied, " +
+            "COUNT(b.questionId) AS bookmarked " +
+            "FROM questions q " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "INNER JOIN papers p ON p.id = c.paperId " +
+            "LEFT JOIN card_state cs ON cs.paperId = p.id AND cs.questionId = q.id " +
+            "LEFT JOIN bookmarks b ON b.questionId = q.id " +
+            "WHERE (:paperId IS NULL OR c.paperId = :paperId) " +
+            "GROUP BY p.id, p.title"
+    )
+    suspend fun getCoverageByPaper(paperId: String?): List<CoverageRow>
+
+    /**
      * Per-category counts for one paper's categories.
      *
      * The whole-bank form of this query is a covering-index scan of a million
@@ -3058,6 +3079,15 @@ data class ExamCategoryTotalRow(
 data class ExamDwellRow(
     val totalSeconds: Long,
     val timedRows: Int
+)
+
+/** One paper's row-based coverage in [QuestionDao.getCoverageByPaper]. */
+data class CoverageRow(
+    val paperId: String,
+    val label: String,
+    val questions: Int,
+    val studied: Int,
+    val bookmarked: Int
 )
 
 /**

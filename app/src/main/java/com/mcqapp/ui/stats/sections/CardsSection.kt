@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.CardCountsData
+import com.mcqapp.domain.stats.CoveragePaper
+import com.mcqapp.domain.stats.CoverageStats
 import com.mcqapp.domain.stats.OverdueAgeData
 import com.mcqapp.domain.stats.PaperCardCounts
 import com.mcqapp.domain.stats.StackedPoint
@@ -35,6 +37,7 @@ import com.mcqapp.ui.stats.charts.MeterBar
 import com.mcqapp.ui.stats.charts.StackedBarChart
 import com.mcqapp.ui.stats.charts.seriesColors
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Tab 5: the collection's current shape — the state donut with its legend and
@@ -54,13 +57,80 @@ internal fun CardsSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        item(contentType = "coverage") { CoverageCard(bundle.coverage) }
         item(contentType = "card-counts") { CardCountsCard(bundle.cardCounts) }
         item(contentType = "overdue-age") { OverdueAgeCard(bundle.overdueAge) }
         if (bundle.paperCounts.isNotEmpty()) {
             item(contentType = "paper-counts") { PaperCountsCard(bundle.paperCounts) }
         }
+        if (bundle.coverage.papers.isNotEmpty()) {
+            item(contentType = "not-started") { NotStartedCard(bundle.coverage.papers) }
+        }
         if (bundle.leeches.isNotEmpty()) {
             item(contentType = "leeches") { LeechesCard(bundle, questionText, onOpenCard) }
+        }
+    }
+}
+
+/**
+ * The row-based coverage card (plan §4.2): studied means a stored card, not a
+ * schedule state, so a reset card is unseen again rather than a leftover NEW.
+ */
+@Composable
+private fun CoverageCard(coverage: CoverageStats) {
+    ChartCard(
+        testTag = "stats-coverage",
+        title = { ChartTitle(R.string.stats_coverage_title) },
+        subtitle = { ChartSubtitle(R.string.stats_coverage_help) }
+    ) {
+        if (coverage.questions == 0) {
+            ChartEmpty(R.string.stats_coverage_empty)
+            return@ChartCard
+        }
+        Text(
+            stringResource(
+                R.string.stats_coverage_line,
+                coverage.studied,
+                coverage.unseen,
+                coverage.bookmarked,
+                coverage.questions
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(8.dp))
+        MeterBar(
+            fraction = coverage.studiedRate,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            stringResource(
+                R.string.stats_coverage_rate,
+                (coverage.studiedRate * 100).roundToInt()
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** Papers that still have unseen questions, most unseen first (plan §4.2). */
+@Composable
+private fun NotStartedCard(papers: List<CoveragePaper>) {
+    ChartCard(
+        testTag = "stats-not-started",
+        title = { ChartTitle(R.string.stats_not_started_title) },
+        subtitle = { ChartSubtitle(R.string.stats_not_started_help) }
+    ) {
+        papers.forEach { paper ->
+            Text(
+                stringResource(
+                    R.string.stats_not_started_row,
+                    paper.label,
+                    paper.unseen,
+                    paper.questions
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }

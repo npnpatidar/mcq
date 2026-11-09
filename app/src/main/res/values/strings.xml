@@ -545,7 +545,7 @@
     <string name="stats_exam_group_fresh">Mock fresh</string>
     <string name="stats_exam_group_practice">Practice</string>
     <string name="stats_exam_empty">No comparable attempts in this group yet.</string>
-    <string name="stats_exam_key">%1$s · %2$s · %3$d questions · %4$s</string>
+    <string name="stats_exam_key">%1$s · %2$s · %3$d questions</string>
     <string name="stats_exam_scope_whole">whole paper</string>
     <string name="stats_exam_scope_custom">category scope</string>
     <string name="stats_exam_sample">%1$d comparable attempts · %2$d questions shown</string>
@@ -735,6 +735,14 @@
     <string name="stats_over_time">Mean stability by month</string>
     <string name="stats_card_counts">Card counts</string>
     <string name="stats_total">Total</string>
+    <string name="stats_coverage_title">Coverage</string>
+    <string name="stats_coverage_help">Row-based: a question with a stored card is studied. A reset card becomes unseen again.</string>
+    <string name="stats_coverage_empty">No questions in this scope.</string>
+    <string name="stats_coverage_line">%1$d studied · %2$d unseen · %3$d bookmarked of %4$d</string>
+    <string name="stats_coverage_rate">Studied share %1$d%%</string>
+    <string name="stats_not_started_title">Not started per paper</string>
+    <string name="stats_not_started_help">Papers with unseen questions, most unseen first.</string>
+    <string name="stats_not_started_row">%1$s · %2$d unseen of %3$d</string>
     <string name="stats_overdue_age">Overdue age</string>
     <string name="stats_paper_table_capped">%1$d more papers not shown.</string>
     <string name="stats_overdue_age_help">How long the scheduled cards have already been past due.</string>

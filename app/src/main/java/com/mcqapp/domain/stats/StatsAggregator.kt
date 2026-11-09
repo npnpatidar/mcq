@@ -62,6 +62,12 @@ object StatsAggregator {
         /** The device's UTC offset at [now], in ms. */
         val zoneOffsetMillis: Long,
         /**
+         * Row-based coverage (plan §4). The pure aggregator cannot derive it
+         * from the card list: an unseen question has no card at all. The
+         * database path supplies the same value, so both builds agree.
+         */
+        val coverage: CoverageStats = CoverageStats(),
+        /**
          * questionId → chance a uniform random pick is exactly right, for the
          * guessed questions only. The guessing tab's baseline reads it; every
          * other section may pass an empty map.
@@ -218,7 +224,7 @@ object StatsAggregator {
         // its card has been seen.
         ctx.input.cards.forEach(accumulator::addCard)
         ctx.input.reviews.forEach(accumulator::add)
-        return accumulator.toData()
+        return accumulator.toData(coverage = ctx.input.coverage)
     }
 
     // --- overview accumulator ----------------------------------------------
@@ -1397,11 +1403,12 @@ object StatsAggregator {
         }
 
         /** The cards tab's slice. */
-        fun toData(): CardsData = CardsData(
+        fun toData(coverage: CoverageStats = CoverageStats()): CardsData = CardsData(
             cardCounts = CardCountsData(learning, relearning, young, mature, leechCount),
             overdueAge = overdueAge(),
             paperCounts = if (scopePaperId == null) paperCounts() else emptyList(),
-            leeches = leeches()
+            leeches = leeches(),
+            coverage = coverage
         )
 
         private fun overdueAge(): OverdueAgeData = OverdueAgeData(

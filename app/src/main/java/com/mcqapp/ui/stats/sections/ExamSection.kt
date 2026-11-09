@@ -153,21 +153,24 @@ private fun ExamBody(exam: ExamStats) {
 @Composable
 private fun KeyLine(exam: ExamStats) {
     val key = exam.comparisonKey ?: return
-    val scope = if (key.isWholePaper) {
-        stringResource(R.string.stats_exam_scope_whole)
-    } else {
-        stringResource(R.string.stats_exam_scope_custom)
-    }
     Text(
         stringResource(
             R.string.stats_exam_key,
             exam.paperTitle ?: "",
             testTypeLabel(TestType.fromStorage(key.testType)),
-            key.requestedCount,
-            scope
+            key.requestedCount
         ),
         style = MaterialTheme.typography.bodySmall,
         fontWeight = FontWeight.Medium
+    )
+    Text(
+        if (key.isWholePaper) {
+            stringResource(R.string.stats_exam_scope_whole)
+        } else {
+            stringResource(R.string.stats_exam_scope_custom)
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
     )
     Text(
         stringResource(R.string.stats_exam_sample, exam.attempts, exam.shown),

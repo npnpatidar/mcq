@@ -11,6 +11,8 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardSnapshot
 import com.mcqapp.domain.stats.CardsData
+import com.mcqapp.domain.stats.CoveragePaper
+import com.mcqapp.domain.stats.CoverageStatsBuilder
 import com.mcqapp.domain.stats.FsrsReplay
 import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
@@ -216,7 +218,19 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         )
         pageCardsInto(accumulator::addCard)
         replayInto(scheduler, accumulator::add)
-        return accumulator.toData()
+        val coverage = CoverageStatsBuilder.build(
+            rows = db.questionDao().getCoverageByPaper(scopePaperId).map {
+                CoveragePaper(
+                    paperId = it.paperId,
+                    label = it.label,
+                    questions = it.questions,
+                    studied = it.studied,
+                    bookmarked = it.bookmarked
+                )
+            },
+            scoped = scopePaperId != null
+        )
+        return accumulator.toData(coverage)
     }
 
     /**

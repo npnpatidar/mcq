@@ -249,9 +249,13 @@ Definitions are about **rows**, not schedules: a card whose content was reset
 
 ### 4.4 Acceptance
 
-- [ ] Cards tab shows studied/unseen/bookmarked and a studied-share meter.
-- [ ] Cards tab shows per-paper unseen, capped and sorted, only when non-zero.
-- [ ] Counts are row-based and a reset card is unseen again.
+Shipped in `feature/remaining-plan`: `domain/stats/CoverageStats.kt`, the
+grouped `QuestionDao.getCoverageByPaper` query, the Cards tab Coverage and
+"Not started per paper" cards, and `CoverageStatsTest`/`CoverageDbTest`.
+
+- [x] Cards tab shows studied/unseen/bookmarked and a studied-share meter.
+- [x] Cards tab shows per-paper unseen, capped and sorted, only when non-zero.
+- [x] Counts are row-based and a reset card is unseen again.
 
 ## 5. Progress tab
 
@@ -535,7 +539,7 @@ or is re-scoped.
 - [x] Families and comparability keys are never mixed in a trend.
 - [x] Mock accuracy reads `rep*`; practice/personal views read all-attempt
       counters; both are labelled.
-- [ ] Coverage shows studied/unseen/bookmarked and per-paper unseen.
+- [x] Coverage shows studied/unseen/bookmarked and per-paper unseen.
 - [ ] Progress shows introductions, graduations, relapses, Again rate and a
       previous-period comparison; the All range hides the comparison.
 - [ ] Retention adds interval-band, tag and all-papers category slices.

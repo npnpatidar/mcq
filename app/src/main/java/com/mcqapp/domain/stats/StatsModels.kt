@@ -581,7 +581,9 @@ data class CardsData(
     val cardCounts: CardCountsData,
     val overdueAge: OverdueAgeData,
     val paperCounts: List<PaperCardCounts>,
-    val leeches: List<WeakCard>
+    val leeches: List<WeakCard>,
+    /** Row-based studied/unseen/bookmarked coverage (plan §4). */
+    val coverage: CoverageStats = CoverageStats()
 )
 
 /**

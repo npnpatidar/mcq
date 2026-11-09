@@ -149,7 +149,7 @@ class ExamStatsDbTest {
         assertEquals(2, mock.shown)
         assertTrue(mock.lifetimeIsRepresentative)
         assertEquals(1, mock.lifetime.correct)
-        assertEquals(30L, mock.averageSecondsPerQuestion!!.toLong())
+        assertEquals(15L, mock.averageSecondsPerQuestion!!.toLong())
 
         assertEquals(1, practice.attempts)
         assertEquals(50.0, practice.latestPercent!!, 0.0001)

@@ -11,6 +11,13 @@ package com.mcqapp.domain
 enum class TestType {
     RANDOM,
     BALANCED,
+    /**
+     * Equal-allocation coverage: the same number from each selected topic
+     * instead of a size-proportional split (plan §10). Practice only — it
+     * over-represents small topics, so it is never comparable to Balanced and
+     * never feeds the `rep*` mock counters.
+     */
+    COVERAGE,
     WEAKEST_TOPICS,
     TOUGHEST_QUESTIONS,
     EASIEST_QUESTIONS,
@@ -51,9 +58,9 @@ enum class TestType {
      * they take this path too.
      */
     val usesSignalSelector: Boolean
-        get() = isFocus || this == BALANCED || this == BOOKMARKED ||
-            this == TAG || this == AUTHORED_DIFFICULTY || this == SLOWEST ||
-            this == FIXED_PANEL
+        get() = isFocus || this == BALANCED || this == COVERAGE ||
+            this == BOOKMARKED || this == TAG || this == AUTHORED_DIFFICULTY ||
+            this == SLOWEST || this == FIXED_PANEL
 
     /** Only these types may record `exclusionMode = RECENT_3` (section 9.8). */
     val supportsFreshSample: Boolean

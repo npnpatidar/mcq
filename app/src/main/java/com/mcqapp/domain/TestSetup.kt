@@ -166,6 +166,7 @@ data class TestSetup(
         val STARTABLE_TYPES: List<TestType> = listOf(
             TestType.RANDOM,
             TestType.BALANCED,
+            TestType.COVERAGE,
             TestType.MISTAKES,
             TestType.WEAKEST_TOPICS,
             TestType.TOUGHEST_QUESTIONS,

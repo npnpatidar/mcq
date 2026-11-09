@@ -452,6 +452,57 @@ class TestSelectorTest {
     }
 
     @Test
+    fun coverageAllocatesEquallyAcrossTopics() {
+        val signals = buildList {
+            repeat(30) { add(signal("a$it", "a")) }
+            repeat(10) { add(signal("b$it", "b")) }
+            repeat(10) { add(signal("c$it", "c")) }
+        }
+        val selection = TestSelector.select(plan(TestType.COVERAGE, 20), signals)!!
+        assertEquals(20, selection.ids.size)
+        val counts = listOf("a", "b", "c").map { prefix ->
+            selection.ids.count { it.startsWith(prefix) }
+        }
+        // 20 does not divide by 3: every topic gets six or seven, so the two
+        // ten-question topics are not crowded out by the thirty-question one.
+        assertTrue("unequal coverage: $counts", counts.all { it == 6 || it == 7 })
+        assertEquals(FillSource.COVERAGE.name, selection.composition.segments.first().source)
+        assertEquals(20, selection.composition.segments.sumOf { it.count })
+        assertTrue(selection.targets.isEmpty())
+    }
+
+    @Test
+    fun coverageRedistributesAShortTopicsSurplus() {
+        val signals = buildList {
+            repeat(30) { add(signal("a$it", "a")) }
+            repeat(2) { add(signal("b$it", "b")) }
+        }
+        val selection = TestSelector.select(plan(TestType.COVERAGE, 20), signals)!!
+        assertEquals(20, selection.ids.size)
+        // The two-question topic takes both, and the surplus returns to the
+        // large topic instead of leaving the run short.
+        assertEquals(2, selection.ids.count { it.startsWith("b") })
+        assertEquals(18, selection.ids.count { it.startsWith("a") })
+    }
+
+    @Test
+    fun coverageBelowTheTopicCountPicksOnePerTopicDeterministically() {
+        val signals = buildList {
+            repeat(5) { add(signal("a$it", "a")) }
+            repeat(5) { add(signal("b$it", "b")) }
+            repeat(5) { add(signal("c$it", "c")) }
+        }
+        val plan = plan(TestType.COVERAGE, 2)
+        val selection = TestSelector.select(plan, signals)!!
+        assertEquals(2, selection.ids.size)
+        assertEquals(2, selection.ids.distinct().size)
+        assertEquals(FillSource.COVERAGE.name, selection.composition.segments.first().source)
+        assertEquals(2, selection.composition.segments.first().count)
+        // Reproducible from the seed: the same plan picks the same two topics.
+        assertEquals(selection.ids, TestSelector.select(plan, signals)!!.ids)
+    }
+
+    @Test
     fun mixedBlendsThePartsAndKeepsTheWeakestTargets() {
         val signals = buildList {
             repeat(10) { add(signal("weak$it", "a", correct = 0, wrong = 5)) }

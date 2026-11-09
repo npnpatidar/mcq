@@ -502,7 +502,7 @@ recorded so a future request does not have to re-derive the design.
 | Enhancement | Source | Notes |
 |---|---|---|
 | ~~Remember last-used test length~~ | §7.3, §16 #2 | **Shipped.** The last accepted length is stored in DataStore (`last_test_length`, default 20), snapped by `TestPlan.normalizeLength` to a selectable step and clamped to the current pool before it can seed the sheet. A length the learner picks this session is never silently lowered. |
-| Equal-allocation "Coverage" test type | §8.2, §9.4 | Same number per selected topic instead of proportional. Maximises coverage but over-represents small topics, so it is **not** comparable to Balanced. Needs a new `TestType` and labels; do not call it Balanced. |
+| ~~Equal-allocation "Coverage" test type~~ | §8.2, §9.4 | **Shipped.** `TestType.COVERAGE` gives every topic in scope the same share, redistributes a short topic's surplus and picks one-per-topic when the request is below the topic count. It is practice only: `isRepresentative` stays Random/Balanced, so it never feeds the mock trend or `rep*`. The composition records `COVERAGE`, and the label is never "Balanced". |
 | Rotating balanced mode | §9.4 | When `n < number of categories`, rotate which small categories are included across tests. Needs rotation state (attempt history or a setting) so the choice is reproducible. |
 | Exposure-weighted Coverage test mode | §9.8 | Weight selection inversely to test exposure. A biased sample for score estimation; label it "Coverage", never "Random". |
 | Per-paper priority cache | §9.10 | Only if profiling shows ranking a 250k-question paper is too slow. Rank per category and merge, or materialise a cache; do not add it speculatively. |
@@ -552,7 +552,8 @@ green CI. Robolectric/instrumented tests are authoritative on CI x86_64.
 6. **Test hardening** (item 7) — interleave with the above; the deferred
    Robolectric tests can land as their own PR before the new tabs.
 7. **Optional later enhancements** (item 8) — only on owner request. The
-   last-used test length shipped first; the remaining rows stay unscheduled.
+   last-used test length and the equal-allocation Coverage type shipped
+   first; the remaining rows stay unscheduled.
 8. **Logging-dependent metrics** (item 9) — only after a logging design is
    accepted.
 
@@ -613,6 +614,9 @@ or is re-scoped.
 - [x] The setup sheet restores the last accepted test length, snapped to the
       allowed step and clamped to the pool (`TestPlan.normalizeLength`,
       `RepositorySettingsTest`).
+- [x] Coverage gives every topic an equal share, redistributes a short
+      topic's surplus and records `COVERAGE`; it is practice only and never
+      enters the mock trend (`TestSelectorTest`, `TestPlanTest`).
 - [x] In-memory and streamed builds are equal in tests.
 - [x] The deferred Robolectric tests in §9.1 exist (`DeferredDbQueriesTest`);
       the reliability cross-check (§9.3) and PDF layout test (§9.4) exist and

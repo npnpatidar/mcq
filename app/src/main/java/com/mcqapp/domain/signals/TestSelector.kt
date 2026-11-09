@@ -33,6 +33,8 @@ enum class FillSource {
     AT_RISK,
     UNSEEN,
     BALANCED,
+    /** An equal-allocation Coverage block (plan §10), practice only. */
+    COVERAGE,
     MIXED,
     LEAST_RECENTLY_REVIEWED,
     AUTHORED_HARD,
@@ -165,6 +167,7 @@ object TestSelector {
         TestType.AT_RISK -> atRisk(plan, signals)
         TestType.UNSEEN -> unseen(plan, signals)
         TestType.BALANCED -> balanced(plan, signals)
+        TestType.COVERAGE -> coverage(plan, signals)
         TestType.MIXED -> mixed(plan, signals, breadth)
         TestType.BOOKMARKED -> fromPool(plan, signals, customPool, FillSource.BOOKMARKED)
         TestType.TAG -> fromPool(plan, signals, customPool, FillSource.TAG)
@@ -472,6 +475,100 @@ object TestSelector {
                 *fill.toTypedArray()
             )
         )
+    }
+
+    /**
+     * Equal-allocation Coverage (plan §10): every selected topic gets the same
+     * share of the request instead of a size-proportional one. A topic with
+     * less room takes all it has and the surplus is redistributed, so the
+     * request is still met from the scope when possible. The remainder of a
+     * share that does not divide evenly is spread one-per-topic in a
+     * seed-shuffled order, so successive runs do not favour the same topics.
+     * This is practice only: a small topic is over-represented relative to
+     * the paper, so the score is not comparable to Balanced.
+     */
+    private fun coverage(plan: TestPlan, signals: List<Signals>): Selection {
+        val n = plan.count.coerceAtLeast(0)
+        if (n == 0 || signals.isEmpty()) return Selection(emptyList())
+        val categories = TestRanking.categories(signals).sortedBy { it.categoryId }
+        val allocation = equalAllocation(n, categories, plan.seed)
+        val perCategory = categories.mapNotNull { category ->
+            val need = allocation[category.categoryId] ?: 0
+            if (need <= 0) return@mapNotNull null
+            signals
+                .filter { it.categoryId == category.categoryId }
+                .shuffled(Random(plan.seed xor category.categoryId.hashCode().toLong()))
+                .take(need)
+        }
+        val interleaved = interleave(perCategory)
+        val (ids, fill) = fillWith(
+            selected = interleaved,
+            target = n,
+            seed = plan.seed,
+            pool = signals,
+            stages = listOf(FillSource.RANDOM to signals)
+        )
+        return Selection(
+            ids = ids,
+            composition = Composition.of(
+                FillSource.COVERAGE to interleaved.size,
+                *fill.toTypedArray()
+            )
+        )
+    }
+
+    /**
+     * The equal share for [count] over [categories], capped by each topic's
+     * room. Every active topic receives the same base share; topics that
+     * cannot take their share release the surplus to the rest, so a short
+     * topic never blocks the request. When [count] is below the number of
+     * topics, one question goes to each of [count] topics in a seed-shuffled
+     * order, so successive runs rotate which small topics appear.
+     */
+    fun equalAllocation(
+        count: Int,
+        categories: List<CategorySignals>,
+        seed: Long = 0L
+    ): Map<String, Int> {
+        if (count <= 0 || categories.isEmpty()) return emptyMap()
+        val room = categories.associate { it.categoryId to it.questionCount }.toMutableMap()
+        val assigned = categories.associate { it.categoryId to 0 }.toMutableMap()
+        var left = count
+
+        if (left < categories.size) {
+            categories
+                .filter { (room[it.categoryId] ?: 0) > 0 }
+                .shuffled(Random(seed))
+                .take(left)
+                .forEach { assigned[it.categoryId] = 1 }
+            return assigned
+        }
+
+        var active = categories
+            .filter { (room[it.categoryId] ?: 0) > 0 }
+            .shuffled(Random(seed))
+        while (left > 0 && active.isNotEmpty()) {
+            val share = left / active.size
+            val extra = left % active.size
+            if (share == 0) {
+                // Fewer questions left than active topics: one each.
+                active.take(left).forEach {
+                    assigned[it.categoryId] = (assigned[it.categoryId] ?: 0) + 1
+                }
+                break
+            }
+            val next = mutableListOf<CategorySignals>()
+            active.forEachIndexed { index, category ->
+                val want = share + if (index < extra) 1 else 0
+                val take = minOf(want, room[category.categoryId] ?: 0)
+                assigned[category.categoryId] = (assigned[category.categoryId] ?: 0) + take
+                room[category.categoryId] = (room[category.categoryId] ?: 0) - take
+                left -= take
+                if ((room[category.categoryId] ?: 0) > 0) next += category
+            }
+            active = next
+        }
+        return assigned
     }
 
     /**

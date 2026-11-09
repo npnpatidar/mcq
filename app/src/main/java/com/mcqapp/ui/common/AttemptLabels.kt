@@ -16,6 +16,7 @@ import com.mcqapp.domain.TestType
 fun testTypeLabel(type: TestType?): String = when (type) {
     TestType.RANDOM -> stringResource(R.string.report_type_random)
     TestType.BALANCED -> stringResource(R.string.report_type_balanced)
+    TestType.COVERAGE -> stringResource(R.string.report_type_coverage)
     TestType.WEAKEST_TOPICS -> stringResource(R.string.report_type_weakest_topics)
     TestType.TOUGHEST_QUESTIONS -> stringResource(R.string.report_type_toughest)
     TestType.EASIEST_QUESTIONS -> stringResource(R.string.report_type_easiest)

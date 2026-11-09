@@ -281,6 +281,7 @@
     <string name="test_setup_type_toughest">Toughest questions</string>
     <string name="test_setup_type_easiest">Easiest questions</string>
     <string name="test_setup_type_balanced">Balanced</string>
+    <string name="test_setup_type_coverage">Coverage</string>
     <string name="test_setup_type_tricky">Tricky</string>
     <string name="test_setup_type_at_risk">At risk</string>
     <string name="test_setup_type_unseen">Unseen</string>
@@ -296,6 +297,7 @@
     <string name="test_setup_type_toughest_help">Practice the hardest individual questions, with a per-topic cap.</string>
     <string name="test_setup_type_easiest_help">A warm-up from the easiest questions, excluding leeches where possible.</string>
     <string name="test_setup_type_balanced_help">Mix difficulty bands so easy, medium and hard questions all appear.</string>
+    <string name="test_setup_type_coverage_help">An equal number from every topic in scope, so small topics are not crowded out. Practice only: not comparable to Balanced.</string>
     <string name="test_setup_type_tricky_help">Practice questions that keep catching you out — lapses, guesses and skips weigh most.</string>
     <string name="test_setup_type_at_risk_help">Questions whose memory is due or nearly due, before they are forgotten.</string>
     <string name="test_setup_type_unseen_help">Questions you have never answered in this scope.</string>
@@ -334,6 +336,7 @@
     <string name="test_setup_fill_at_risk">due</string>
     <string name="test_setup_fill_unseen">unseen</string>
     <string name="test_setup_fill_balanced">balanced</string>
+    <string name="test_setup_fill_coverage">coverage</string>
     <string name="test_setup_fill_mixed">mixed</string>
     <string name="test_setup_fill_recent">recent</string>
     <string name="test_setup_fill_bookmarked">bookmarked</string>
@@ -871,6 +874,7 @@
     <string name="report_legacy_attempt">Legacy attempt</string>
     <string name="report_type_random">Random</string>
     <string name="report_type_balanced">Balanced</string>
+    <string name="report_type_coverage">Coverage</string>
     <string name="report_type_weakest_topics">Weakest topics</string>
     <string name="report_type_toughest">Toughest questions</string>
     <string name="report_type_easiest">Easiest questions</string>

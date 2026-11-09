@@ -4,6 +4,7 @@ import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestPlan.Resolution
+import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -245,6 +246,23 @@ class TestPlanTest {
         assertFalse(TestType.EASIEST_QUESTIONS.isRepresentative)
         assertFalse(TestType.MISTAKES.isRepresentative)
         assertTrue(TestType.MISTAKES.isPractice)
+    }
+
+    @Test
+    fun coverageIsPracticeAndUsesTheSignalSelector() {
+        // Plan §10: equal allocation over-represents small topics, so Coverage
+        // must never feed the mock trend or the `rep*` counters.
+        assertFalse(TestType.COVERAGE.isRepresentative)
+        assertTrue(TestType.COVERAGE.isPractice)
+        assertTrue(TestType.COVERAGE.usesSignalSelector)
+        assertFalse(TestType.COVERAGE.supportsFreshSample)
+        assertTrue(TestSetup.isStartableType(TestType.COVERAGE))
+        val coverage = plan(type = TestType.COVERAGE)
+        assertNull(coverage.validationError(100))
+        assertEquals(
+            Resolution.Ready(count = 20, short = false, clamped = false, message = null),
+            coverage.resolve(100)
+        )
     }
 
     @Test

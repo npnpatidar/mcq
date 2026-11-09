@@ -350,6 +350,7 @@ internal fun TestSetupSheet(
                         TestType.TOUGHEST_QUESTIONS -> R.string.test_setup_type_toughest_help
                         TestType.EASIEST_QUESTIONS -> R.string.test_setup_type_easiest_help
                         TestType.BALANCED -> R.string.test_setup_type_balanced_help
+                        TestType.COVERAGE -> R.string.test_setup_type_coverage_help
                         TestType.TRICKY -> R.string.test_setup_type_tricky_help
                         TestType.AT_RISK -> R.string.test_setup_type_at_risk_help
                         TestType.UNSEEN -> R.string.test_setup_type_unseen_help
@@ -839,6 +840,7 @@ private fun fillSourceLabel(source: String): String = when (source.uppercase()) 
     "AT_RISK" -> stringResource(R.string.test_setup_fill_at_risk)
     "UNSEEN" -> stringResource(R.string.test_setup_fill_unseen)
     "BALANCED" -> stringResource(R.string.test_setup_fill_balanced)
+    "COVERAGE" -> stringResource(R.string.test_setup_fill_coverage)
     "MIXED" -> stringResource(R.string.test_setup_fill_mixed)
     "BOOKMARKED" -> stringResource(R.string.test_setup_fill_bookmarked)
     "TAG" -> stringResource(R.string.test_setup_fill_tag)

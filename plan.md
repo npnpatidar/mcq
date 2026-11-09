@@ -188,20 +188,25 @@ Robolectric/DB tests (CI x86_64):
 
 ### 3.5 Acceptance
 
-- [ ] Real attempts, trends, per-paper and category figures appear, with an
+Shipped in `feature/remaining-plan`: `domain/stats/ExamStats.kt`, aggregate
+reads in `AttemptDao`/`QuestionStatsDao`, the Exam sections of the Tests tab,
+and `ExamStatsTest`/`ExamStatsDbTest`.
+
+- [x] Real attempts, trends, per-paper and category figures appear, with an
       empty state before any test exists.
-- [ ] Strict mocks, Fresh samples, practice, short and legacy are separate; no
+- [x] Strict mocks, Fresh samples, practice, short and legacy are separate; no
       trend mixes families; a fresh sample is never plotted against a strict
       attempt.
-- [ ] The full comparability key groups attempts; the margin uses shown and
+- [x] The full comparability key groups attempts; the margin uses shown and
       comparability uses requested.
-- [ ] Mock accuracy reads `rep*`; practice/personal views read all-attempt
+- [x] Mock accuracy reads `rep*`; practice/personal views read all-attempt
       counters; both are labelled.
-- [ ] Category rows use as-of-attempt titles and report unresolved questions;
+- [x] Category rows use as-of-attempt titles and report unresolved questions;
       "hardest" says "in stored attempts".
-- [ ] Pre-v21 attempts are labelled legacy, never enter a trend, and the
-      skip-rate/Tricky limitation is stated.
-- [ ] Deleting an attempt updates the stored hardest/per-question figures.
+- [x] Pre-v21 attempts are labelled legacy, never enter a trend, and the
+      skip-rate limitation is stated.
+- [x] Deleting an attempt updates the stored hardest/per-question figures
+      (existing `QuestionStatsRecomputeTest`).
 
 ## 4. Coverage (studied vs never studied)
 
@@ -525,10 +530,10 @@ or is re-scoped.
 
 ## 15. Whole-plan acceptance
 
-- [ ] Exam/measurement sections show real attempts, trends, per-paper and
+- [x] Exam/measurement sections show real attempts, trends, per-paper and
       category figures, and an empty state before any test exists.
-- [ ] Families and comparability keys are never mixed in a trend.
-- [ ] Mock accuracy reads `rep*`; practice/personal views read all-attempt
+- [x] Families and comparability keys are never mixed in a trend.
+- [x] Mock accuracy reads `rep*`; practice/personal views read all-attempt
       counters; both are labelled.
 - [ ] Coverage shows studied/unseen/bookmarked and per-paper unseen.
 - [ ] Progress shows introductions, graduations, relapses, Again rate and a

@@ -2410,6 +2410,33 @@ interface AttemptDao {
     suspend fun getResultCategoryBreakdown(attemptId: Long): List<CategoryBreakdownRow>
 
     /**
+     * The Exam tab's category aggregate over a set of comparable attempts.
+     * Grouping by the stored `categoryTitle` keeps every row as-of-attempt; the
+     * `questions` join only resolves a current category for the Study link and
+     * counts the rows whose question no longer exists. It is aggregate-only, so
+     * the page never materialises every result row.
+     */
+    @Query(
+        "SELECT r.categoryTitle AS title, COUNT(*) AS asked, " +
+            "COALESCE(SUM(CASE WHEN r.correctOptionIds != '' " +
+            "AND r.selectedOptionIds != '' AND r.isCorrect THEN 1 ELSE 0 END), 0) AS correct, " +
+            "MIN(q.categoryId) AS currentCategoryId, " +
+            "COALESCE(SUM(CASE WHEN q.id IS NULL THEN 1 ELSE 0 END), 0) AS unresolved " +
+            "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
+            "WHERE r.attemptId IN (:attemptIds) " +
+            "GROUP BY r.categoryTitle ORDER BY r.categoryTitle"
+    )
+    suspend fun getExamCategoryTotals(attemptIds: List<Long>): List<ExamCategoryTotalRow>
+
+    /** The Exam tab's measured dwell over a set of comparable attempts. */
+    @Query(
+        "SELECT COALESCE(SUM(dwellSeconds), 0) AS totalSeconds, " +
+            "COALESCE(SUM(CASE WHEN dwellSeconds > 0 THEN 1 ELSE 0 END), 0) AS timedRows " +
+            "FROM question_results WHERE attemptId IN (:attemptIds)"
+    )
+    suspend fun getExamDwellTotals(attemptIds: List<Long>): ExamDwellRow
+
+    /**
      * The report's per-question evidence (section 11.14), without the heavy
      * element/option JSON: correctness, dwell, the stored as-of-attempt
      * category title and the question's current category for a Study link.
@@ -2690,6 +2717,22 @@ interface QuestionStatsDao {
             "repSkip AS repSkip FROM question_stats WHERE questionId IN (:ids)"
     )
     suspend fun getCountersByIds(ids: List<String>): List<QuestionCounterRow>
+
+    /**
+     * Lifetime totals for the Exam tab's counter-source line, scoped to one
+     * paper or every paper. The caller picks the representative or the
+     * all-attempt columns according to the family it is showing.
+     */
+    @Query(
+        "SELECT COALESCE(SUM(correctCount), 0) AS correct, " +
+            "COALESCE(SUM(wrongCount), 0) AS wrong, " +
+            "COALESCE(SUM(skipCount), 0) AS skip, " +
+            "COALESCE(SUM(repCorrect), 0) AS repCorrect, " +
+            "COALESCE(SUM(repWrong), 0) AS repWrong, " +
+            "COALESCE(SUM(repSkip), 0) AS repSkip " +
+            "FROM question_stats WHERE (:paperId IS NULL OR paperId = :paperId)"
+    )
+    suspend fun getExamCounterTotals(paperId: String?): ExamCounterTotalsRow
 
     /**
      * Hardest first: highest wrong rate, then most graded attempts, then text.
@@ -2996,6 +3039,39 @@ data class CategoryBreakdownRow(
     val title: String,
     val correct: Int,
     val graded: Int
+)
+
+/**
+ * One as-of-attempt category row for the Exam tab. [currentCategoryId] is null
+ * when no stored result in the group still resolves to a question;
+ * [unresolved] counts the result rows whose question was deleted.
+ */
+data class ExamCategoryTotalRow(
+    val title: String,
+    val asked: Int,
+    val correct: Int,
+    val currentCategoryId: String?,
+    val unresolved: Int
+)
+
+/** The Exam tab's dwell aggregate over one chunk of attempt ids. */
+data class ExamDwellRow(
+    val totalSeconds: Long,
+    val timedRows: Int
+)
+
+/**
+ * Lifetime counters for the Exam tab's source line: the all-attempt set and
+ * the representative subset side by side, so the caller labels which one it
+ * reads instead of conflating them.
+ */
+data class ExamCounterTotalsRow(
+    val correct: Int,
+    val wrong: Int,
+    val skip: Int,
+    val repCorrect: Int,
+    val repWrong: Int,
+    val repSkip: Int
 )
 
 /**

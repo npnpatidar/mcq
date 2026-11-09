@@ -189,7 +189,14 @@ fun StatsScreen(
                                 )
                             }
                             StatsViewModel.Tab.TESTS -> state.testProgress?.let { data ->
-                                TestsSection(data)
+                                TestsSection(
+                                    data = data,
+                                    onOpenAttempt = { attemptId ->
+                                        navController.navigate(
+                                            com.mcqapp.ui.navigation.resultsRoute(attemptId)
+                                        )
+                                    }
+                                )
                             }
                         }
                     }

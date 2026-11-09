@@ -65,7 +65,14 @@ data class TestProgressData(
     /** Slice 4: optional reliability summary (family-scoped), when computable. */
     val reliability: ReliabilitySummary? = null,
     /** Fixed-panel progress (phase 3), most recently run first. */
-    val panels: List<PanelProgress> = emptyList()
+    val panels: List<PanelProgress> = emptyList(),
+    /**
+     * The Exam view's comparable groups (plan §3). Each entry is built inside
+     * one comparability key, so the tab can switch between them without ever
+     * averaging a strict mock, a Fresh sample or a practice run together.
+     */
+    val exams: Map<com.mcqapp.domain.stats.ExamGroup, com.mcqapp.domain.stats.ExamStats> =
+        emptyMap()
 )
 
 /**

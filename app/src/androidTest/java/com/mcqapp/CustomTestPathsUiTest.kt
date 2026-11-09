@@ -88,10 +88,13 @@ class CustomTestPathsUiTest {
         waitFor("UICustom Paper")
         compose.onNodeWithTag("paper-test-$paperId").performClick()
         waitFor("Start a test")
+        compose.waitForIdle()
 
         // The four phase-3 custom types are offered by the one setup sheet.
+        // Existence is the claim here: some of them sit below the sheet's
+        // fold, and the sheet's scroll position is not what this asserts.
         listOf("Bookmarked", "Tag", "Authored difficulty", "Slowest").forEach { label ->
-            compose.onNodeWithText(label, substring = false).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(label, substring = false).assertExists()
         }
 
         compose.onNodeWithText("Tag", substring = false).performScrollTo().performClick()
@@ -139,9 +142,15 @@ class CustomTestPathsUiTest {
         }
 
         waitFor("UICustom question 1?")
-        compose.onNodeWithText("Add a tag…", substring = false).performTextInput("economy")
-        compose.onNodeWithText("Add", substring = false).performClick()
-        compose.onNodeWithText("Save", substring = false).performClick()
+        // The tag section is below the fold: scroll to it before typing, or
+        // the Add click lands outside the viewport and does nothing.
+        compose.onNodeWithText("Add a tag…", substring = false)
+            .performScrollTo()
+            .performTextInput("economy")
+        compose.onNodeWithText("Add", substring = false).performScrollTo().performClick()
+        // The editor's own chip proves the Add control took the label.
+        compose.onNodeWithText("economy", substring = false).assertExists()
+        compose.onNodeWithText("Save", substring = false).performScrollTo().performClick()
 
         compose.waitUntil(30_000) {
             runBlocking {

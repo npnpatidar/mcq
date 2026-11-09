@@ -570,13 +570,14 @@ fun TestSessionScreen(
                                 stringResource(
                                     R.string.test_banner_mistakes, minOf(asked, shown)
                                 )
-                            bounded != null && bounded.isFocus -> stringResource(
-                                R.string.test_banner_practice,
-                                stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
-                                minOf(asked, shown)
-                            )
-                            bounded == com.mcqapp.domain.TestType.BALANCED ||
-                                bounded == com.mcqapp.domain.TestType.FIXED_PANEL -> stringResource(
+                            // Everything except a plain Random run names its
+                            // type: the focus selectors, Balanced and the
+                            // phase-3 custom types (Bookmarked, Tag, Authored
+                            // difficulty, Slowest, Fixed panel). Falling
+                            // through to the Random banner mislabelled a Tag
+                            // run as "Random · N questions" (plan §9.2).
+                            bounded != null &&
+                                bounded != com.mcqapp.domain.TestType.RANDOM -> stringResource(
                                 R.string.test_banner_practice,
                                 stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
                                 minOf(asked, shown)

@@ -111,6 +111,24 @@ object Reliability {
     }
 
     /**
+     * The standard across-attempt split-half: each attempt's odd-item total
+     * against its even-item total, correlated across attempts, with
+     * Spearman–Brown applied. This is the estimator comparable to [kr20];
+     * [splitHalf] is the within-attempt odd/even diagnostic. Null when the
+     * matrix is too small, ragged, or either half has zero variance (the two
+     * estimators are not comparable then).
+     */
+    fun splitHalfAcrossAttempts(itemScores: List<List<Double>>): Double? {
+        if (itemScores.size < 2) return null
+        val k = itemScores.first().size
+        if (k < 2 || itemScores.any { it.size != k }) return null
+        val odd = itemScores.map { row -> row.filterIndexed { i, _ -> i % 2 == 0 }.sum() }
+        val even = itemScores.map { row -> row.filterIndexed { i, _ -> i % 2 == 1 }.sum() }
+        if (odd.distinct().size < 2 || even.distinct().size < 2) return null
+        return safe(spearmanBrown(pearson(odd, even)))
+    }
+
+    /**
      * Standard error of measurement. Shown only when [reliability] is positive
      * and finite and [sdPoints] is finite. A perfect/zero-variance score returns
      * null (no NaN).

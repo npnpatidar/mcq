@@ -429,6 +429,15 @@ Also worth adding while touching these queries:
 - the phase-2 `getLatestStandings`-style standing rule for the new chunked
   query (the same rule as #2).
 
+Shipped in `feature/remaining-plan`: `DeferredDbQueriesTest` covers #1–#4
+against a real Room database — engaged coverage excludes untouched skipped
+rows and the report's score/timing/category figures match the attempt header;
+the prior-standing rule is `finishedAt DESC, id DESC` including a merged-in
+older attempt and an equal-time tie, with the chunked wrapper asserted equal;
+and the due count leaves every `card_state` row unchanged. The query-plan
+assertions were not added: Room exposes no supported `EXPLAIN` API, and a raw
+query would assert the planner's current choices rather than the rule.
+
 ### 9.2 Instrumented (CI emulator)
 
 The shipped custom-test and export slices left these instrumented checks
@@ -443,6 +452,17 @@ deferred:
 The current androidTest suite covers practice results but not these custom
 paths.
 
+Shipped in `feature/remaining-plan`: `CustomTestPathsUiTest` runs the four
+custom chips, picks the seeded tag and starts it, and asserts the session
+banner reads `Practice · Tag · 20 questions` and the result header
+`Tag · polity`. It also proves a tag added through the editor's Add control is
+persisted for the picker, and that the report's export menu offers CSV and
+PDF. The session banner used to fall through to `Random · …` for every custom
+type; it now names any bounded type except a plain Random run. The chooser
+itself is an external activity, so asserting that it opens needs
+`espresso-intents`, which this project does not depend on (no test dependency
+without the owner's approval); the menu assertion covers the app's side.
+
 ### 9.3 Reliability cross-check
 
 The reliability slice requires KR-20 and split-half to agree within a stated
@@ -452,11 +472,27 @@ difference is within the documented tolerance; if the two are not comparable
 for a given matrix (e.g. zero variance), document why and assert the null
 behaviour instead.
 
+Shipped in `feature/remaining-plan`: the comparable estimator is the standard
+across-attempt split-half (`Reliability.splitHalfAcrossAttempts`: each
+attempt's odd-item total against its even-item total, then Spearman–Brown),
+because the existing within-attempt `splitHalf` is a different quantity. On a
+hand-computed 20×20 Guttman matrix KR-20 is 0.9474 and the across-attempt
+split-half 0.9925, a 0.045 difference against the 0.10 tolerance. A flat
+matrix returns null from both, as do fewer than two attempts and ragged rows.
+
 ### 9.4 PDF/export smoke
 
 The export slice asks for a PDF layout smoke test where feasible:
 page count, no exception on an empty report, and the header/score/topics text
 present. `ReportExportCsvTest` already covers CSV quoting and column order.
+
+Shipped in `feature/remaining-plan`: `ReportPdf.write` now draws from a pure
+`ReportPdf.lines(report, generatedAt)` seam, and `ReportPdfTest` asserts the
+header, score denominators, topic rows and the empty-report layout without
+constructing `PdfDocument`. The byte-level smoke (page count, a real PDF file)
+remains infeasible on this host: Robolectric's `PdfDocument` throws
+"document is closed!" on construction, as documented on `PdfPaperWriterTest`;
+those tests run wherever `PdfDocument` works.
 
 ## 10. Optional later enhancements
 
@@ -574,9 +610,12 @@ or is re-scoped.
 - [x] Memory shows per-paper means; the card sheet shows Again rate and mean
       time.
 - [x] In-memory and streamed builds are equal in tests.
-- [ ] The deferred Robolectric tests in §9.1 pass; the instrumented custom
-      test/share paths in §9.2 pass on CI; the reliability cross-check (§9.3)
-      and PDF smoke test (§9.4) exist and pass.
+- [x] The deferred Robolectric tests in §9.1 exist (`DeferredDbQueriesTest`);
+      the reliability cross-check (§9.3) and PDF layout test (§9.4) exist and
+      pass locally.
+- [ ] The instrumented custom paths in §9.2 pass on CI; the report chooser
+      assertion is still blocked on `espresso-intents` (no test dependency
+      without the owner's approval).
 - [ ] No schema change ships without a migration, schema JSON and
       `MigrationTest` proof.
 - [ ] `:app:testDebugUnitTest` and `:app:lintDebug` pass; CI is green.

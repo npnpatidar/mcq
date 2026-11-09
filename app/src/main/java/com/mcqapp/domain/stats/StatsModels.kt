@@ -531,7 +531,8 @@ data class StatsBundle(
     val paperCounts: List<PaperCardCounts>,
     val weakest: List<WeakCard>,
     val leeches: List<WeakCard>,
-    val guessing: GuessingData
+    val guessing: GuessingData,
+    val progress: ProgressData
 )
 
 /**
@@ -587,6 +588,57 @@ data class CardsData(
 )
 
 /**
+ * One progress bucket (plan §5.1): counts, not rates, so buckets pool
+ * correctly. [introduced] is the card's first-ever logged review landing in
+ * the bucket; [graduated] is a pass from NEW/LEARNING/RELEARNING; [relapsed]
+ * is an Again on a REVIEW card.
+ */
+data class ProgressSlice(
+    val label: String,
+    val reviews: Int = 0,
+    val introduced: Int = 0,
+    val graduated: Int = 0,
+    val relapsed: Int = 0,
+    val again: Int = 0
+) {
+    val againRate: Double? get() = if (reviews == 0) null else again.toDouble() / reviews
+    val lapseRate: Double? get() = if (reviews == 0) null else relapsed.toDouble() / reviews
+}
+
+/**
+ * The selected window against the equal-length window immediately before it
+ * (plan §5.1). Null for [StatsAggregator.Range.ALL], which has no previous
+ * window. Pass rate treats Again as a fail.
+ */
+data class ProgressComparison(
+    val currentReviews: Int,
+    val previousReviews: Int,
+    val currentPassRate: Double?,
+    val previousPassRate: Double?,
+    val currentAvgSeconds: Double?,
+    val previousAvgSeconds: Double?,
+    val currentStudyDays: Int,
+    val previousStudyDays: Int
+) {
+    val reviewsDelta: Int get() = currentReviews - previousReviews
+    val passRateDelta: Double?
+        get() = pair(currentPassRate, previousPassRate)?.let { it.first - it.second }
+    val avgSecondsDelta: Double?
+        get() = pair(currentAvgSeconds, previousAvgSeconds)?.let { it.first - it.second }
+    val studyDaysDelta: Int get() = currentStudyDays - previousStudyDays
+
+    private fun pair(a: Double?, b: Double?): Pair<Double, Double>? =
+        if (a != null && b != null) a to b else null
+}
+
+/** Progress tab: introductions, graduations, relapses and the Again rate. */
+data class ProgressData(
+    val totals: ProgressSlice,
+    val comparison: ProgressComparison?,
+    val trend: List<ProgressSlice>
+)
+
+/**
  * The whole page, one entry per tab. Kept alongside [StatsBundle] so the
  * existing all-at-once payload stays available while tabs move to loading
  * their own slice (§4.9 item 3).
@@ -597,7 +649,8 @@ data class StatsSections(
     val workload: WorkloadData,
     val memory: MemoryData,
     val cards: CardsData,
-    val guessing: GuessingData
+    val guessing: GuessingData,
+    val progress: ProgressData
 )
 
 /** Flattens the per-tab slices back into the whole-page payload. */
@@ -627,5 +680,6 @@ fun StatsSections.toBundle(): StatsBundle = StatsBundle(
     paperCounts = cards.paperCounts,
     weakest = overview.weakest,
     leeches = cards.leeches,
-    guessing = guessing
+    guessing = guessing,
+    progress = progress
 )

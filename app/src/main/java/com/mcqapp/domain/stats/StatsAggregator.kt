@@ -119,7 +119,8 @@ object StatsAggregator {
             workload = workloadOf(ctx),
             memory = memoryOf(ctx, overview.kpis()),
             cards = cardsOf(ctx),
-            guessing = guessingOf(ctx)
+            guessing = guessingOf(ctx),
+            progress = progressOf(ctx)
         )
     }
 
@@ -144,6 +145,10 @@ object StatsAggregator {
     /** The cards tab on its own. */
     fun buildCards(input: Input, scopePaperId: String?, range: Range): CardsData =
         cardsOf(Context.of(input, scopePaperId, range))
+
+    /** The progress tab on its own (plan §5). */
+    fun buildProgress(input: Input, scopePaperId: String?, range: Range): ProgressData =
+        progressOf(Context.of(input, scopePaperId, range))
 
     /**
      * The overview pass: the scope-filtered log and the scope-filtered cards
@@ -225,6 +230,20 @@ object StatsAggregator {
         ctx.input.cards.forEach(accumulator::addCard)
         ctx.input.reviews.forEach(accumulator::add)
         return accumulator.toData(coverage = ctx.input.coverage)
+    }
+
+    private fun progressOf(ctx: Context): ProgressData {
+        val accumulator = ProgressAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone
+        )
+        // The whole log: the accumulator applies the scope and the range
+        // itself, and the streamed build pages the same rows.
+        ctx.input.reviews.forEach(accumulator::add)
+        return accumulator.toData()
     }
 
     // --- overview accumulator ----------------------------------------------
@@ -1774,6 +1793,160 @@ object StatsAggregator {
             const val SITTING_GAP_MS = 30 * 60 * 1000L
             /** Below this many guesses a card's hit rate is noise. */
             const val SHAKY_MIN_GUESSES = 2
+        }
+    }
+
+    // --- progress accumulator ------------------------------------------------
+
+    /**
+     * The Progress tab as one bounded pass (plan §5). Introductions need the
+     * first-ever logged review per card, so the accumulator keeps a set of
+     * seen (paper, question) keys — bounded by the card library, not the log.
+     * Every other figure is a counter, and the per-day buckets are the only
+     * per-day state.
+     *
+     * The in-memory and the streamed build feed this same accumulator, so the
+     * two cannot drift apart.
+     */
+    class ProgressAccumulator(
+        private val scopePaperId: String?,
+        private val range: Range,
+        private val now: Long,
+        private val cfg: SchedulerConfig,
+        private val zone: Long
+    ) {
+        private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
+        private val todayDay = studyEpochDay(todayStart, cfg, zone)
+
+        /** First day of the selected window; null for the All range. */
+        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+
+        /** First day of the equal-length window before it; null for All. */
+        private val previousStart = range.days?.let { rangeStart!! - it * DayBoundary.DAY_MS }
+
+        private class Counts {
+            var reviews = 0
+            var passes = 0
+            var introduced = 0
+            var graduated = 0
+            var relapsed = 0
+            var again = 0
+            var timedSeconds = 0L
+            var timedCount = 0
+            val days = HashSet<Long>()
+
+            fun add(review: ReplayReview, firstEver: Boolean) {
+                reviews++
+                if (review.passed) passes++ else again++
+                review.elapsedSeconds?.let {
+                    timedSeconds += it
+                    timedCount++
+                }
+                if (firstEver) introduced++
+                if (review.passed) {
+                    when (review.stateBefore) {
+                        CardStateKind.NEW, CardStateKind.LEARNING, CardStateKind.RELEARNING ->
+                            graduated++
+                        else -> Unit
+                    }
+                } else if (review.stateBefore == CardStateKind.REVIEW) {
+                    relapsed++
+                }
+            }
+
+            val passRate: Double? get() = if (reviews == 0) null else passes.toDouble() / reviews
+            val avgSeconds: Double? get() =
+                if (timedCount == 0) null else timedSeconds.toDouble() / timedCount
+        }
+
+        private val totals = Counts()
+        private val current = Counts()
+        private val previous = Counts()
+
+        /** (paper, question) keys whose first logged review has been seen. */
+        private val seenCards = HashSet<String>()
+
+        /** Study day → that day's counts; bucketed in [toData]. */
+        private val trendDays = HashMap<Long, Counts>()
+
+        private var earliestInRange: Long? = null
+
+        /**
+         * Feeds one replayed review. Rows before the previous window are
+         * dropped, but the seen-set is updated first so a card introduced long
+         * ago is never counted as an introduction when it is reviewed again.
+         */
+        fun add(review: ReplayReview) {
+            if (scopePaperId != null && review.paperId != scopePaperId) return
+            val firstEver = seenCards.add(review.paperId + '\u0000' + review.questionId)
+            val reviewedAt = review.reviewedAt
+            if (previousStart != null && reviewedAt < previousStart) return
+            val inCurrent = rangeStart == null || reviewedAt >= rangeStart
+            val counts = if (inCurrent) current else previous
+            counts.add(review, firstEver)
+            val day = studyEpochDay(reviewedAt, cfg, zone)
+            counts.days.add(day)
+            if (!inCurrent) return
+            totals.add(review, firstEver)
+            totals.days.add(day)
+            val earliest = earliestInRange
+            if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
+            trendDays.getOrPut(day) { Counts() }.add(review, firstEver)
+        }
+
+        fun toData(): ProgressData = ProgressData(
+            totals = ProgressSlice(
+                label = "range",
+                reviews = totals.reviews,
+                introduced = totals.introduced,
+                graduated = totals.graduated,
+                relapsed = totals.relapsed,
+                again = totals.again
+            ),
+            comparison = if (range.days == null) {
+                null
+            } else {
+                ProgressComparison(
+                    currentReviews = current.reviews,
+                    previousReviews = previous.reviews,
+                    currentPassRate = current.passRate,
+                    previousPassRate = previous.passRate,
+                    currentAvgSeconds = current.avgSeconds,
+                    previousAvgSeconds = previous.avgSeconds,
+                    currentStudyDays = current.days.size,
+                    previousStudyDays = previous.days.size
+                )
+            },
+            trend = trend()
+        )
+
+        private fun trend(): List<ProgressSlice> {
+            if (trendDays.isEmpty() && rangeStart == null) return emptyList()
+            val windowStart = rangeStart ?: earliestInRange ?: now
+            val granularity = granularityFor(windowStart, todayDay, cfg, zone)
+            val buckets = bucketList(
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+            )
+            val byBucket = HashMap<Long, Counts>()
+            trendDays.forEach { (day, counts) ->
+                val bucket = byBucket.getOrPut(bucketKeyOf(day, granularity)) { Counts() }
+                bucket.reviews += counts.reviews
+                bucket.introduced += counts.introduced
+                bucket.graduated += counts.graduated
+                bucket.relapsed += counts.relapsed
+                bucket.again += counts.again
+            }
+            return buckets.map { bucket ->
+                val counts = byBucket[bucket.key]
+                ProgressSlice(
+                    label = bucket.label,
+                    reviews = counts?.reviews ?: 0,
+                    introduced = counts?.introduced ?: 0,
+                    graduated = counts?.graduated ?: 0,
+                    relapsed = counts?.relapsed ?: 0,
+                    again = counts?.again ?: 0
+                )
+            }
         }
     }
 

@@ -38,6 +38,7 @@ import com.mcqapp.domain.stats.ExamStatsBuilder
 import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ProgressData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
@@ -212,6 +213,16 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         range: StatsAggregator.Range,
         now: Long
     ): CardsData = statsStore.loadCards(scopePaperId, range, now)
+
+    /**
+     * The progress tab alone, streamed: introductions, graduations, relapses
+     * and the Again rate, plus the previous-window comparison.
+     */
+    internal suspend fun statsProgress(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): ProgressData = statsStore.loadProgress(scopePaperId, range, now)
 
     /**
      * The guessing tab alone, streamed: flagged reviews into counters, then the

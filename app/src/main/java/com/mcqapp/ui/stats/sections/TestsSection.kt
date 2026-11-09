@@ -231,13 +231,13 @@ private fun ScopeCard(data: TestProgressData) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                stringResource(R.string.stats_progress_title),
+                stringResource(R.string.stats_scope_title),
                 style = MaterialTheme.typography.titleSmall
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 stringResource(
-                    R.string.stats_progress_line,
+                    R.string.stats_scope_line,
                     data.scopeSize,
                     data.unseen,
                     data.leeches,
@@ -246,7 +246,7 @@ private fun ScopeCard(data: TestProgressData) {
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                stringResource(R.string.stats_progress_help),
+                stringResource(R.string.stats_scope_help),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

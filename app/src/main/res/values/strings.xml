@@ -521,6 +521,7 @@
     <string name="tab_cards">Cards</string>
     <string name="tab_guessing">Guessing</string>
     <string name="tab_tests">Tests</string>
+    <string name="tab_progress">Progress</string>
     <string name="stats_tests_title">Test families</string>
     <string name="stats_tests_help">A mock, a Fresh sample, a practice set, a short test and a legacy attempt are never averaged together.</string>
     <string name="stats_tests_family_row">%1$s · %2$d attempts · latest %3$d%% · average %4$d%%</string>
@@ -534,10 +535,31 @@
     <string name="stats_practice_title">Practice progress</string>
     <string name="stats_practice_run">%1$s · target %2$d/%3$d (%4$d%%) · %5$d mistakes cleared</string>
     <string name="stats_practice_no_runs">No focus-practice runs in this scope yet.</string>
-    <string name="stats_progress_title">Current scope</string>
-    <string name="stats_progress_line">%1$d questions · %2$d unseen · %3$d leeches · %4$d at risk</string>
-    <string name="stats_progress_help">Unseen means no card, a new card or a stale card after a content edit. Leech and at-risk counts are read-only.</string>
+    <string name="stats_scope_title">Current scope</string>
+    <string name="stats_scope_line">%1$d questions · %2$d unseen · %3$d leeches · %4$d at risk</string>
+    <string name="stats_scope_help">Unseen means no card, a new card or a stale card after a content edit. Leech and at-risk counts are read-only.</string>
     <string name="stats_tests_whole_library">All papers</string>
+
+    <string name="stats_progress_title">Progress</string>
+    <string name="stats_progress_help">Cards introduced, graduated and relapsed, and the share of reviews answered Again.</string>
+    <string name="stats_progress_graduated">Graduated</string>
+    <string name="stats_progress_relapsed">Relapsed</string>
+    <string name="stats_progress_again">Again rate</string>
+    <string name="stats_progress_lapse_rate">Lapse rate</string>
+    <string name="stats_progress_comparison_title">Against the previous period</string>
+    <string name="stats_progress_comparison_help">The equal-length window immediately before the selected range.</string>
+    <string name="stats_progress_no_comparison">The All range has no previous period to compare.</string>
+    <string name="stats_progress_reviews_vs">Reviews vs previous</string>
+    <string name="stats_progress_pass_vs">Pass rate vs previous</string>
+    <string name="stats_progress_time_vs">Avg answer vs previous</string>
+    <string name="stats_progress_days_vs">Study days vs previous</string>
+    <string name="stats_progress_flow_title">Card flow</string>
+    <string name="stats_progress_flow_help">Introductions, graduations and relapses per bucket. A graduation is a pass from a new, learning or relearning card; a relapse is an Again on a review card.</string>
+    <string name="stats_progress_again_title">Again rate</string>
+    <string name="stats_progress_again_help">Share of reviews answered Again, per bucket.</string>
+    <string name="stats_progress_again_value">Again %1$s · lapses %2$s</string>
+    <string name="stats_progress_pass_delta">Pass rate change %1$s against the previous period.</string>
+    <string name="stats_progress_empty">No reviews in this range yet.</string>
 
     <string name="stats_exam_title">Exam</string>
     <string name="stats_exam_help">Comparable results only: strict mocks, Fresh samples and practice are never averaged together.</string>

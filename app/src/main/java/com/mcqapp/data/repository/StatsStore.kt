@@ -17,6 +17,7 @@ import com.mcqapp.domain.stats.FsrsReplay
 import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
+import com.mcqapp.domain.stats.ProgressData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.Reliability
 import com.mcqapp.domain.stats.RetentionData
@@ -231,6 +232,29 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             scoped = scopePaperId != null
         )
         return accumulator.toData(coverage)
+    }
+
+    /**
+     * The progress tab, streamed: one pass of the log into counters plus the
+     * bounded seen-card set and the per-day buckets. Neither the log nor the
+     * library is ever listed.
+     */
+    suspend fun loadProgress(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): ProgressData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.ProgressAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now)
+        )
+        replayInto(scheduler, accumulator::add)
+        return accumulator.toData()
     }
 
     /**

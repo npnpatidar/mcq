@@ -306,10 +306,16 @@ Derived: `againRate = again / reviews`, `lapseRate = relapsed / reviews`.
 
 ### 5.4 Acceptance
 
-- [ ] Progress tab shows introductions, graduations, relapses, Again rate and
+Shipped in `feature/remaining-plan`: `ProgressSlice`/`ProgressComparison`/
+`ProgressData`, `StatsAggregator.ProgressAccumulator` (bounded seen-card set,
+previous-window counters, per-day buckets), `StatsStore.loadProgress`,
+`StatsViewModel.Tab.PROGRESS`, `ProgressSection`, and `ProgressStatsTest`
+plus the `StatsTabsStreamTest` parity case.
+
+- [x] Progress tab shows introductions, graduations, relapses, Again rate and
       a previous-period comparison.
-- [ ] The All range hides the comparison.
-- [ ] In-memory and streamed builds are equal in tests.
+- [x] The All range hides the comparison.
+- [x] In-memory and streamed builds are equal in tests.
 
 ## 6. Retention additions
 
@@ -540,7 +546,7 @@ or is re-scoped.
 - [x] Mock accuracy reads `rep*`; practice/personal views read all-attempt
       counters; both are labelled.
 - [x] Coverage shows studied/unseen/bookmarked and per-paper unseen.
-- [ ] Progress shows introductions, graduations, relapses, Again rate and a
+- [x] Progress shows introductions, graduations, relapses, Again rate and a
       previous-period comparison; the All range hides the comparison.
 - [ ] Retention adds interval-band, tag and all-papers category slices.
 - [ ] Workload adds due-tomorrow/due-this-week, grade mix and sessions.

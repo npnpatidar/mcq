@@ -260,4 +260,18 @@ class StatsTabsStreamTest {
         assertEquals(3, leech.lapses)
         assertTrue(everyPaper.overdueAge.overdue > 0)
     }
+
+    @Test
+    fun streamedProgressMatchesTheInMemoryBuild() = runBlocking {
+        seed()
+        val loaded = input()
+        var sawIntroduced = false
+        cases.forEach { (scope, range) ->
+            val streamed = repository.statsProgress(scope, range, now)
+            val inMemory = StatsAggregator.buildProgress(loaded, scope, range)
+            assertEquals("scope=$scope range=$range", inMemory, streamed)
+            sawIntroduced = sawIntroduced || streamed.totals.introduced > 0
+        }
+        assertTrue("no case reached an introduction", sawIntroduced)
+    }
 }

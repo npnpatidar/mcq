@@ -109,7 +109,13 @@ fun ResultsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (reviewMode) "Attempt review" else "Results") },
+                title = {
+                    Text(
+                        stringResource(
+                            if (reviewMode) R.string.attempt_review else R.string.results
+                        )
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -439,12 +445,12 @@ private fun ReportHeaderCard(report: TestReport) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Stat("Correct", report.score.correct.toString(), MaterialTheme.colorScheme.primary)
-                Stat("Wrong", report.score.wrong.toString(), MaterialTheme.colorScheme.error)
-                Stat("Skipped", report.score.skipped.toString(), MaterialTheme.colorScheme.outline)
+                Stat(stringResource(R.string.correct), report.score.correct.toString(), MaterialTheme.colorScheme.primary)
+                Stat(stringResource(R.string.wrong), report.score.wrong.toString(), MaterialTheme.colorScheme.error)
+                Stat(stringResource(R.string.skipped), report.score.skipped.toString(), MaterialTheme.colorScheme.outline)
                 if (report.score.ungraded > 0) {
                     Stat(
-                        "Ungraded",
+                        stringResource(R.string.ungraded),
                         report.score.ungraded.toString(),
                         MaterialTheme.colorScheme.tertiary
                     )
@@ -495,9 +501,9 @@ private fun StoredHeaderCard(attempt: com.mcqapp.domain.Attempt) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Stat("Correct", attempt.correctCount.toString(), MaterialTheme.colorScheme.primary)
-                Stat("Wrong", attempt.wrongCount.toString(), MaterialTheme.colorScheme.error)
-                Stat("Skipped", attempt.skippedCount.toString(), MaterialTheme.colorScheme.outline)
+                Stat(stringResource(R.string.correct), attempt.correctCount.toString(), MaterialTheme.colorScheme.primary)
+                Stat(stringResource(R.string.wrong), attempt.wrongCount.toString(), MaterialTheme.colorScheme.error)
+                Stat(stringResource(R.string.skipped), attempt.skippedCount.toString(), MaterialTheme.colorScheme.outline)
             }
             Text(
                 stringResource(R.string.report_study_unchanged),
@@ -712,7 +718,7 @@ private fun BlueprintSectionRows(sections: List<com.mcqapp.domain.BlueprintSecti
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    section.title.ifBlank { "Uncategorized" },
+                    section.title.ifBlank { stringResource(R.string.uncategorized) },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -761,7 +767,7 @@ private fun TopicsCard(report: TestReport) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    topic.title.ifBlank { "Uncategorized" },
+                    topic.title.ifBlank { stringResource(R.string.uncategorized) },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -1381,19 +1387,30 @@ private fun ResultCard(
                     textStyle = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f)
                 )
+                val skipped = result.selectedOptionIds.isEmpty()
                 Text(
-                    if (ungraded) "Not scored" else if (result.isCorrect) "Correct" else "Wrong",
+                    stringResource(
+                        when {
+                            ungraded -> R.string.report_tag_ungraded
+                            skipped -> R.string.skipped
+                            result.isCorrect -> R.string.correct
+                            else -> R.string.wrong
+                        }
+                    ),
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (ungraded) MaterialTheme.colorScheme.tertiary
-                    else if (result.isCorrect)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.error
+                    color = when {
+                        ungraded -> MaterialTheme.colorScheme.tertiary
+                        skipped -> MaterialTheme.colorScheme.outline
+                        result.isCorrect -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.error
+                    }
                 )
                 IconButton(onClick = onToggleBookmark) {
                     Icon(
                         if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark question"
+                        contentDescription = stringResource(
+                            if (bookmarked) R.string.remove_bookmark else R.string.bookmark_question
+                        )
                     )
                 }
             }

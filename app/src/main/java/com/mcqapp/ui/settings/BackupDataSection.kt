@@ -59,6 +59,10 @@ fun BackupDataSection(
         ) {
             Text(stringResource(R.string.export_all_data_json))
         }
+        Text(
+            stringResource(R.string.export_all_help),
+            style = MaterialTheme.typography.bodySmall
+        )
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = onShareAllClick,
@@ -103,6 +107,7 @@ fun BackupDataSection(
         )
         Spacer(Modifier.height(8.dp))
         Button(
+            enabled = !busy,
             onClick = {
                 // Both failure modes used to be silent (no log
                 // file) or fatal (no chooser activity)
@@ -135,11 +140,6 @@ fun BackupDataSection(
         ) {
             Text(stringResource(R.string.export_logs))
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            stringResource(R.string.export_all_help),
-            style = MaterialTheme.typography.bodySmall
-        )
 
         Spacer(Modifier.height(12.dp))
         Row(

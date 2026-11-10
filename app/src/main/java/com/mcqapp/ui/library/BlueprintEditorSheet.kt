@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.BlueprintQuotas
 import com.mcqapp.domain.BlueprintSection
 import com.mcqapp.domain.BlueprintSectionView
 import com.mcqapp.domain.BlueprintSummary
@@ -84,6 +85,41 @@ internal fun BlueprintEditorSheet(
 
     val flat = remember(paper.categories) { CategorySelection.flatten(paper.categories) }
     val byId = remember(flat) { flat.associate { it.first.id to it.first } }
+
+    // The quota shown per row is the one Start will allocate, not a rounded
+    // share: BlueprintQuotas uses recursive floors, remainders, pool caps and
+    // the min-one steal, which can differ from round(share × length).
+    val previewQuotas = remember(parts, requestedCount, paper.categories) {
+        fun viewOf(node: CategoryNode): BlueprintSectionView {
+            val childViews = node.children
+                .filter { (parts[it.id] ?: 0) > 0 }
+                .map { viewOf(it) }
+            return BlueprintSectionView(
+                categoryId = node.id,
+                title = node.title,
+                parts = parts[node.id] ?: 0,
+                pool = if (childViews.isEmpty()) {
+                    node.totalQuestionCount
+                } else {
+                    childViews.sumOf { it.pool }
+                },
+                available = true,
+                children = childViews
+            )
+        }
+        val top = paper.categories
+            .filter { (parts[it.id] ?: 0) > 0 }
+            .map { viewOf(it) }
+        BlueprintQuotas.allocate(top, requestedCount)
+    }
+    fun quotaOf(node: CategoryNode): Int {
+        val includedChildren = node.children.filter { (parts[it.id] ?: 0) > 0 }
+        return if (includedChildren.isEmpty()) {
+            previewQuotas.perTerminal[node.id] ?: 0
+        } else {
+            includedChildren.sumOf { quotaOf(it) }
+        }
+    }
     // Include [id] and every ancestor: a child implies its parent.
     fun ancestorsOf(id: String): List<String> {
         val out = mutableListOf<String>()
@@ -232,7 +268,7 @@ internal fun BlueprintEditorSheet(
                     if (value > 0) {
                         val local = localShareOf(node.id)
                         val global = globalShareOf(node.id)
-                        val quota = (global * requestedCount).roundToInt()
+                        val quota = quotaOf(node)
                         Text(
                             stringResource(
                                 R.string.blueprint_editor_share,

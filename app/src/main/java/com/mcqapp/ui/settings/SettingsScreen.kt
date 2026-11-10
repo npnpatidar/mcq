@@ -325,7 +325,17 @@ fun SettingsScreen(
     exportError?.let { error ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { exportError = null },
-            title = { Text(stringResource(R.string.export_failed)) },
+            title = {
+                Text(
+                    stringResource(
+                        if (exportErrorTitleRes != 0) {
+                            exportErrorTitleRes
+                        } else {
+                            R.string.export_failed
+                        }
+                    )
+                )
+            },
             text = { Text(error) },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { exportError = null }) { Text(stringResource(R.string.ok)) }

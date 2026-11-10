@@ -124,9 +124,6 @@ fun HistoryScreen(
                     items(trends, key = { "trend-${it.key}" }, contentType = { "trend" }) { trend ->
                         TrendCard(trend = trend)
                     }
-                    item(contentType = "header") {
-                        Text(stringResource(R.string.attempts), style = MaterialTheme.typography.titleSmall)
-                    }
                 }
                 if (weakest.isNotEmpty()) {
                     item(contentType = "header") {
@@ -184,6 +181,12 @@ fun HistoryScreen(
                             }
                         }
                     }
+                }
+                // The list always carries its own heading: with only legacy
+                // attempts there are no trends, and the rows used to appear
+                // with no label above them.
+                item(contentType = "header") {
+                    Text(stringResource(R.string.attempts), style = MaterialTheme.typography.titleSmall)
                 }
                 items(attempts, key = { it.id }, contentType = { "attempt" }) { attempt ->
                     Card(

@@ -609,6 +609,17 @@ fun TestSessionScreen(
                             // Falling
                             // through to the Random banner mislabelled a Tag
                             // run as "Random · N questions" (plan §9.2).
+                            // A representative type (Balanced, Blueprint) is a
+                            // mock on the result page, so the banner must not
+                            // call it Practice; only a real practice type gets
+                            // that badge.
+                            bounded != null &&
+                                bounded != com.mcqapp.domain.TestType.RANDOM &&
+                                bounded.isRepresentative -> stringResource(
+                                R.string.test_banner_mock,
+                                stringResource(com.mcqapp.ui.common.testTypeLabelRes(bounded)),
+                                minOf(asked, shown)
+                            )
                             bounded != null &&
                                 bounded != com.mcqapp.domain.TestType.RANDOM -> stringResource(
                                 R.string.test_banner_practice,

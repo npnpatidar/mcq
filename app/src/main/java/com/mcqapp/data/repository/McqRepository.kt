@@ -436,8 +436,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Storage breakdown for Settings: file size, row counts, per-paper weight. */
     suspend fun storageReport(): com.mcqapp.domain.StorageInfo.Report {
+        // The report labels this as the database size, so it must include the
+        // write-ahead log and shared-memory file: in WAL mode most recent
+        // writes live in mcq.db-wal until a checkpoint, and counting only the
+        // main file understates the database after a session.
         val dbBytes = try {
-            context.getDatabasePath("mcq.db").length()
+            val main = context.getDatabasePath("mcq.db")
+            listOf(main, java.io.File("${main.path}-wal"), java.io.File("${main.path}-shm"))
+                .filter { it.exists() }
+                .sumOf { it.length() }
         } catch (e: Exception) {
             -1L
         }
@@ -1755,8 +1762,18 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
                 is com.mcqapp.domain.stats.Reliability.SplitHalfResult.TooSmall -> null
             }
         }
-        if (splitRels.isEmpty() && !sameForm) return null
-        val meanRel = if (splitRels.isNotEmpty()) splitRels.average() else 0.0
+        // With one form, reliability is the correlation of half-scores across
+        // attempts (the standard split-half estimator, and the one comparable
+        // to KR-20). Averaging each attempt's within-attempt odd/even
+        // correlation measures the sitting, not the test. Different forms fall
+        // back to that per-attempt mean because there is one vector per form.
+        val acrossAttempts = if (sameForm) {
+            com.mcqapp.domain.stats.Reliability.splitHalfAcrossAttempts(scoreMatrix)
+        } else {
+            null
+        }
+        if (acrossAttempts == null && splitRels.isEmpty()) return null
+        val meanRel = acrossAttempts ?: splitRels.average()
         val totals = scoreMatrix.map { it.sum() }
         val sd = if (totals.size >= 2) {
             val mean = totals.average()

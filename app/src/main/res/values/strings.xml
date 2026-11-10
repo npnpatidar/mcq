@@ -15,7 +15,7 @@
     <string name="apply">Apply</string>
     <string name="auto_advance">Auto-advance</string>
     <string name="avoid_recent_questions">Avoid recently tested questions</string>
-    <string name="avoid_recent_questions_help">A Random or Balanced test skips questions asked in your last three comparable tests of this length, when enough others remain. Such a test is a fresh sample, compared only with another fresh sample.</string>
+    <string name="avoid_recent_questions_help">A Random, Balanced, Easiest or Blueprint test skips questions asked in your last three comparable tests of this length, when enough others remain. Such a test is a fresh sample, compared only with another fresh sample.</string>
     <string name="back">Back</string>
     <string name="back_to_library">Back to library</string>
     <string name="back_to_submit">Back to submit</string>
@@ -33,6 +33,7 @@
     <string name="correct_answer">Correct answer</string>
     <string name="delete">Delete</string>
     <string name="delete_category">Delete category</string>
+    <string name="delete_category_confirm">Delete “%1$s” and every question in it? This cannot be undone.</string>
     <string name="delete_paper">Delete paper</string>
     <string name="delete_question">Delete question</string>
     <string name="description">Description</string>
@@ -84,10 +85,10 @@
     <string name="update_answers_help">When a file repeats a question\'s text and options but corrects its answer key, update the stored answer instead of reporting it as a duplicate.</string>
     <string name="review_order_help">Review always shows the order you were given. Scoring is unaffected: answers are matched by option, not position.</string>
     <string name="image_weight_help">Image weight counts embedded pictures; large banks shrink automatically at import.</string>
-    <string name="export_all_help">Backs up every paper, bookmark and attempt to one JSON file. Re-import it anywhere to restore content and history.</string>
+    <string name="export_all_help">Backs up every paper, category, question, passage, bookmark, attempt and card schedule to one JSON file. Re-import it anywhere to restore content and history. Settings and the review log are only in the zip backup.</string>
     <string name="app_about_help">MCQ App turns your own multiple-choice papers into practice, fully offline. Import a JSON question bank, then study it with spaced repetition or sit a timed test with negative marking and a full result breakdown. Every answer comes with its explanation, and your history, accuracy and weakest categories stay on the device.</string>
     <string name="app_about_made_by">Made by Naresh</string>
-    <string name="response_time_thresholds_help">The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.</string>
+    <string name="response_time_thresholds_help">The response-time thresholds drive Simplified study\'s automatic grading. With Simplified study off you grade every card yourself.</string>
     <string name="next_day_starts_at">Next day starts at</string>
     <string name="next_day_starts_at_help">Hour of the day a new study day begins, on this device\'s clock</string>
     <string name="maximum_interval">Maximum interval</string>
@@ -182,6 +183,12 @@
     <string name="change_grade">Change grade</string>
     <string name="check">Check</string>
     <string name="correct">Correct</string>
+    <string name="results">Results</string>
+    <string name="attempt_review">Attempt review</string>
+    <string name="wrong">Wrong</string>
+    <string name="skipped">Skipped</string>
+    <string name="ungraded">Ungraded</string>
+    <string name="uncategorized">Uncategorized</string>
     <string name="guessing">Guessing</string>
     <string name="guessing_this_is_a_guess">I\'m guessing — grade a right answer as Again.</string>
     <string name="incorrect">Incorrect</string>
@@ -309,13 +316,13 @@
     <string name="test_setup_type_weakest_help">Practice the topics where your evidence is weakest.</string>
     <string name="test_setup_type_toughest_help">Practice the hardest individual questions, with a per-topic cap.</string>
     <string name="test_setup_type_easiest_help">A warm-up from the easiest questions, excluding leeches where possible.</string>
-    <string name="test_setup_type_balanced_help">Mix difficulty bands so easy, medium and hard questions all appear.</string>
+    <string name="test_setup_type_balanced_help">A sample spread across your categories in proportion to their size, so the paper is representative and small topics are not over-weighted.</string>
     <string name="test_setup_type_coverage_help">An equal number from every topic in scope, so small topics are not crowded out. Practice only: not comparable to Balanced.</string>
     <string name="test_setup_coverage_exposure">Weight by test exposure</string>
     <string name="test_setup_coverage_exposure_help">Prefer questions that have appeared in fewer stored tests, while keeping the equal topic share.</string>
     <string name="test_setup_type_tricky_help">Practice questions that keep catching you out — lapses, guesses and skips weigh most.</string>
-    <string name="test_setup_type_at_risk_help">Questions whose memory is due or nearly due, before they are forgotten.</string>
-    <string name="test_setup_type_unseen_help">Questions you have never answered in this scope.</string>
+    <string name="test_setup_type_at_risk_help">Questions whose review is due now, before they are forgotten.</string>
+    <string name="test_setup_type_unseen_help">Questions with no study card yet, or whose card is new or out of date.</string>
     <string name="test_setup_type_mixed_help">A blend of weakest topics, tricky, due and unseen questions.</string>
     <string name="test_setup_type_bookmarked_help">The questions you bookmarked in this scope, filled with random questions when the bookmarks run short.</string>
     <string name="test_setup_type_tag_help">Questions carrying one exact tag in this scope, filled with random questions when the tag runs short.</string>
@@ -402,7 +409,7 @@
     <string name="test_setup_suggested">Suggested: %1$d min</string>
     <string name="test_setup_use_suggested">Use suggested</string>
     <string name="test_preview_comparable">comparable</string>
-    <string name="test_preview_fresh">fresh sample · compared only with fresh samples</string>
+    <string name="test_preview_fresh">fresh sample if enough others remain · compared only with fresh samples</string>
     <string name="test_preview_practice">practice · not comparable</string>
     <string name="test_preview_short">Short test · %1$d questions</string>
     <string name="test_setup_fresh_note">Skips questions asked in your last three comparable tests of this length, when enough others remain.</string>
@@ -412,6 +419,7 @@
     <string name="test_banner_random">Random · %1$d questions</string>
     <string name="test_banner_mistakes">Practice · Mistakes · %1$d questions</string>
     <string name="test_banner_practice">Practice · %1$s · %2$d questions</string>
+    <string name="test_banner_mock">%1$s · %2$d questions</string>
     <string name="test_banner_short">Short test · %1$d questions</string>
     <string name="test_asked_shown">%1$d asked, %2$d shown</string>
     <string name="study_again">Study again</string>
@@ -455,7 +463,7 @@
     <string name="measuring">Measuring…</string>
     <string name="menu">Menu</string>
     <string name="mistakes_round_previously_missed_questions">Mistakes round — previously missed questions</string>
-    <string name="move_to_the_next_question_after_answering_single_answer_only">Move to the next question after answering (single-answer only)</string>
+    <string name="move_to_the_next_question_after_answering_single_answer_only">Move on as soon as you choose an answer, in single-answer tests. Practice mode stays on the question so you can read the explanation.</string>
     <string name="multiple_correct_select_all_that_apply">Multiple correct — select all that apply</string>
     <string name="new_question">New question</string>
     <string name="no_answer_key_not_scored">No answer key — not scored</string>
@@ -484,6 +492,9 @@
     <string name="advanced_anki_settings">Advanced Anki settings</string>
     <string name="study_section">Study</string>
     <string name="target_retention">Target retention</string>
+    <string name="target_retention_value">Target retention: %1$d%%</string>
+    <string name="reset_study_settings_confirm">Reset every study setting to its default? This resets the schedule knobs, target retention, ranking mode and new-card handling. Fitted FSRS weights are kept.</string>
+    <string name="restore_fsrs_defaults_confirm">Restore the default FSRS weights? Your fitted weights are discarded.</string>
     <string name="target_retention_help">How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.</string>
     <string name="optimize_fsrs_parameters">Optimize FSRS parameters</string>
     <string name="optimize_fsrs_parameters_help">Fits the scheduling weights to your own review history, the way Anki\'s Optimize does. Unlocks after %1$d reviews.</string>
@@ -501,7 +512,7 @@
     <string name="easy_answer_threshold">Minimum easy answer threshold</string>
     <string name="easy_answer_threshold_help">Auto-graded Easy below this minimum time. Long questions get extra reading time.</string>
     <string name="hard_answer_threshold">Hard answer threshold</string>
-    <string name="hard_answer_threshold_help">Auto-graded Hard above this response time</string>
+    <string name="hard_answer_threshold_help">Auto-graded Hard above this response time.</string>
     <string name="response_time_thresholds_study_tail">from past test attempts. In Study you grade every card yourself.</string>
     <string name="spaced_repetition">Spaced repetition</string>
     <string name="simplified_anki">Simplified Anki</string>
@@ -943,7 +954,7 @@
     <string name="stats_reliability_title">Reliability (estimate)</string>
     <string name="stats_reliability_help">Split-half reliability and standard error for families with enough attempted questions. A small or biased sample is not a stable score.</string>
     <string name="stats_reliability_too_small">Sample too small to estimate reliability.</string>
-    <string name="stats_reliability_value">r = %1$.2f · SEM %2$.1f</string>
+    <string name="stats_reliability_value">r = %1$.2f · SEM %2$.1f questions</string>
     <string name="stats_reliability_kr20">KR-20 %1$.2f</string>
     <string name="report_guessing_title">Guessing-corrected score (estimate)</string>
     <string name="report_guessing_line">Corrected %1$d%% · raw %2$d%% · chance %3$d%%</string>

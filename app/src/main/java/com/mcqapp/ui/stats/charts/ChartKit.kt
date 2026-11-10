@@ -180,7 +180,10 @@ internal fun formatCount(value: Double): String =
         String.format(java.util.Locale.ENGLISH, "%.1f", value)
     }
 
-/** 59 → "59s", 90 → "1.5m", 5400 → "1h 30m"; the study-time axis label. */
+/** 59 → "59 s", 90 → "1m", 5400 → "1 h 30 m"; the study-time axis label.
+ *
+ * Whole units only: 90 seconds is one minute, not 1.5m. The spacing before a
+ * unit is deliberate and pinned by StatsChartKitTest. */
 internal fun formatDuration(seconds: Double): String {
     val total = seconds.roundToInt()
     return when {

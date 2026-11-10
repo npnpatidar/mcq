@@ -892,12 +892,17 @@ class TestViewModel(
         }
         persistProgress()
         val current = _state.value
-        AutoAdvance.nextIndex(
-            current.autoAdvance,
-            question.isMultiCorrect,
-            current.currentIndex,
-            current.questionCount
-        )?.let { goTo(it) }
+        // Practice mode reveals the verdict and explanation on the same tap.
+        // Advancing now would hide what the learner just asked to see, so
+        // auto-advance only applies to a test without live feedback.
+        if (!current.practiceMode) {
+            AutoAdvance.nextIndex(
+                current.autoAdvance,
+                question.isMultiCorrect,
+                current.currentIndex,
+                current.questionCount
+            )?.let { goTo(it) }
+        }
     }
 
     fun revealCurrent() {

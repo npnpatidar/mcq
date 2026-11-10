@@ -567,6 +567,7 @@ private fun ManageCategoryRow(
 ) {
     val collapsed = isCollapsed(node.id)
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (node.children.isNotEmpty()) {
@@ -672,9 +673,9 @@ private fun ManageCategoryRow(
                         modifier = Modifier.testTag("cat-promote-${node.id}")
                     )
                     HorizontalDivider()
-                    // Last, behind a divider, in the error colour: category
-                    // deletion is immediate (no dialog), so it must not sit
-                    // next to Move by muscle memory.
+                    // Last, behind a divider, in the error colour: deleting a
+                    // category takes every question in it, so it asks first
+                    // instead of sitting next to Move by muscle memory.
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -684,7 +685,7 @@ private fun ManageCategoryRow(
                         },
                         onClick = {
                             menuOpen = false
-                            onDeleteCategory(node.id)
+                            confirmDelete = true
                         },
                         modifier = Modifier.testTag("cat-delete-${node.id}")
                     )
@@ -711,5 +712,27 @@ private fun ManageCategoryRow(
                 )
             }
         }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(stringResource(R.string.delete_category)) },
+            text = {
+                Text(stringResource(R.string.delete_category_confirm, node.title))
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    onDeleteCategory(node.id)
+                }) {
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }

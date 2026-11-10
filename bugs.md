@@ -4,6 +4,69 @@
 
 ---
 
+## Audit status (2026-11-10)
+
+Every item was checked against the source on branch `fix/bug-docs`. `Verified`
+means the code did what the item claimed; `Fixed` means it was changed in this
+branch. `Not a bug` means the behaviour is deliberate, documented, or a feature
+request rather than a defect.
+
+| # | Verdict | Action |
+|---|---------|--------|
+| 1 | Verified | Fixed: the failure dialog reads `exportErrorTitleRes`. |
+| 2 | Verified | Fixed: help now describes Simplified study auto-grading. |
+| 3 | Verified | Fixed: auto-advance is skipped in practice mode; help says when it fires. |
+| 4 | Verified | Fixed: help describes the per-category allocation. |
+| 5 | Verified | Not changed: the two definitions are deliberate and separately documented (Coverage is row-based; Unseen is the selector's pool). |
+| 6 | Verified | Fixed: same-form families use the across-attempt split-half; the per-attempt mean is only the different-form fallback. |
+| 7 | Verified | Fixed: the SEM string carries its unit (`questions`). |
+| 8 | Verified | Fixed: corrupt ratings are skipped by both charts. |
+| 9 | Verified | Not changed: History never had delete; this is a missing feature, not a defect. |
+| 10 | Verified | Fixed: help says due now. |
+| 11 | Verified | Fixed: help names the no-card / NEW / stale-hash rule. |
+| 12 | Verified | Fixed: help names all four fresh-sample types. |
+| 13 | Verified | Fixed: the target-retention percentage is shown and follows the thumb. |
+| 14 | Verified | Fixed: Reset asks first and the dialog names everything it resets. |
+| 15 | Verified | Fixed: help lists categories, questions, passages and schedules, and says settings/log are only in the zip. |
+| 16 | Verified | Fixed: the JSON help line sits under the JSON button. |
+| 17 | Verified | Fixed: full stop added. |
+| 18 | Verified | Fixed: `-wal` and `-shm` are included in the database figure. |
+| 19 | Verified | Fixed: Reset and Restore defaults both ask for confirmation. |
+| 20 | Verified | Fixed: Export Logs is disabled while busy. |
+| 21 | Verified | Not changed: silent success is a UX gap, not wrong behaviour; no completion feedback was added. |
+| 22 | Verified | Fixed: deleting a category asks for confirmation. |
+| 23 | Verified | Fixed: the comparability line says `fresh sample if enough others remain`. |
+| 24 | Verified | Fixed: the editor preview uses `BlueprintQuotas.allocate`, the same allocation Start uses. |
+| 25 | Verified | Fixed: Balanced and Blueprint show a mock banner, not `Practice`. |
+| 26 | Verified | Fixed: a skipped review is labelled and coloured `Skipped`. |
+| 27 | Verified | Fixed for the listed strings in `ResultsScreen` and the Browse filter; the bookmark strings already used resources. |
+| 28 | Verified | Not changed: leaving without submitting is a missing feature. |
+| 29 | Verified | Not changed: countdown/background policy is a design decision. |
+| 30 | Verified | Not a bug: the 60 s floor is documented in `ReviewFilters`. |
+| 31 | Verified | Fixed: the Attempts header always renders. |
+| 32 | Verified | Not changed: auto-select on import and same-name replace are design choices. |
+| 33 | Verified | Not changed: deleting an unselected theme is a missing affordance. |
+| 34 | Verified | Not a bug in practice: the hash is a pre-filter and `sameQuestionContent` is authoritative, so a table/formula-only duplicate is not dropped. Only a table/formula-only edit fails to reset the card. |
+| 35 | Verified | Not changed: stale-until-Refresh is accepted behaviour. |
+| 36 | Verified | Fixed: comment says eight tabs. |
+| 37 | Verified | Fixed: the `formatDuration` comment matches the pinned output. |
+| 38 | Verified | Not a bug: legend placement is a design choice. |
+| 39 | Verified | Fixed: label is the final tie-break. |
+| 40 | Verified | Not a bug: the same-day band is documented as deliberate in `bandOf`. |
+| 41 | Verified | Not changed: wording nit; the row shows the configured value. |
+| 42 | Verified | Not a bug: exclusions are documented and the guard string is shown. |
+| 43 | Verified | Not a bug: `stats_forecast_help` already explains the overdue start. |
+| 44 | Verified | Not a bug: due-this-week is a superset by design. |
+| 45 | Verified | Not a bug: Monday-first mapping is correct. |
+
+Verification: `:app:compileDebugKotlin`, `:app:compileDebugUnitTestKotlin`,
+and the JVM tests `AutoAdvanceTest`, `BlueprintQuotasTest`, `StatsChartKitTest`,
+`ReliabilityTest`, `StatsAggregatorTest`, `StorageInfoTest` and
+`WorkloadAdditionsTest` (including the new corrupt-rating regression) pass on
+the NixOS arm64 host. Robolectric/SQLite tests remain CI-only there.
+
+---
+
 ## 🔴 Critical Bugs (Wrong Behaviour)
 
 ### 1. Failure dialog always titled "Export failed"

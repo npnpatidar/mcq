@@ -556,6 +556,94 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
+     * Renders the whole bank JSON into `cacheDir/shared` and returns the raw
+     * `ACTION_SEND` intent (the screen wraps it in a chooser). Null on
+     * failure; the screen shows the failure dialog it owns.
+     */
+    suspend fun shareAllIntent(): android.content.Intent? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val app = getApplication<Application>()
+                val file = com.mcqapp.util.nextSharedFile(app.cacheDir, "mcq-export.json")
+                java.io.FileOutputStream(file).use { out ->
+                    Exporter(repository.db()).exportAllTo(
+                        java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
+                    )
+                }
+                Logger.i("SETTINGS", "Shared all data '${file.name}' (${file.length()} bytes)")
+                com.mcqapp.util.shareIntent(app, file, "application/json")
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Share failed", e)
+                null
+            }
+        }
+    }
+
+    /**
+     * Renders the full backup zip into `cacheDir/shared` and returns the raw
+     * `ACTION_SEND` intent. Null on failure; the screen shows the failure
+     * dialog it owns.
+     */
+    suspend fun shareBackupIntent(): android.content.Intent? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val app = getApplication<Application>()
+                val file = com.mcqapp.util.nextSharedFile(app.cacheDir, "mcqapp-backup.zip")
+                val appVersion = try {
+                    app.packageManager.getPackageInfo(app.packageName, 0).versionName
+                } catch (_: Exception) {
+                    null
+                }
+                val db = repository.db()
+                val paperRows = db.paperDao().getAll()
+                val paperCreated = paperRows.map {
+                    McqBackupFormat.PaperCreated(it.id, it.createdAt, it.sortOrder)
+                }
+                val inProgressTest = repository.testProgressForBackup()
+                val manifest = McqBackupFormat.Manifest(
+                    dbVersion = db.openHelper.readableDatabase.version,
+                    appVersion = appVersion,
+                    exportedAt = System.currentTimeMillis(),
+                    papers = paperRows.size,
+                    questions = db.questionDao().countQuestions(),
+                    attempts = db.attemptDao().countAll(),
+                    reviews = db.reviewLogDao().countAll()
+                )
+                val settings = McqBackupFormat.SettingsFile(
+                    preferences = repository.settingsSnapshot().preferences
+                )
+                java.io.FileOutputStream(file).use { out ->
+                    McqBackupFormat.writeTo(
+                        output = out,
+                        manifest = manifest,
+                        content = { w ->
+                            com.mcqapp.data.io.Exporter(db).exportAllTo(w, withScheduling = false)
+                        },
+                        study = { w ->
+                            val source = com.mcqapp.data.backup.BackupSource(db)
+                            McqBackupFormat.writeStudyRows(
+                                w = w,
+                                cardState = { emit -> source.emitCards(emit) },
+                                reviewLog = { emit -> source.emitReviews(emit) },
+                                paperCreated = paperCreated,
+                                inProgressTest = inProgressTest,
+                                panels = source.panels(),
+                                blueprints = source.backupBlueprints()
+                            )
+                        },
+                        settings = settings
+                    )
+                }
+                Logger.i("SETTINGS", "Shared backup '${file.name}' (${file.length()} bytes)")
+                com.mcqapp.util.shareIntent(app, file, "application/zip")
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Share backup failed", e)
+                null
+            }
+        }
+    }
+
+    /**
      * Reads and restores a backup zip. The wipe-and-replace is atomic in
      * the database; settings flip after. [onDone] reports the summary the
      * screen shows.

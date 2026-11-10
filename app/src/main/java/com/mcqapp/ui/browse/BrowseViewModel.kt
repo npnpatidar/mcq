@@ -645,53 +645,104 @@ class BrowseViewModel(
     ) {
         viewModelScope.launch {
             try {
-                // Sessions and the list hold refs; content comes back by id.
-                // Contained in questionIds, so a stale ref still exports the
-                // question the user selected. The export is ordered by the
-                // browse scope's own ordering, not the tick order: the ticked
-                // set is a LinkedHashSet, so a whole-paper selection used to
-                // sort properly while a partial one exported in tap order
-                // (consolidated_bugs.md F11). A row outside the current scope
-                // (the filter changed since it was ticked) keeps its relative
-                // tail position rather than disappearing from its own export.
-                val scope = currentScope()
-                val byId = repository.getQuestionsByIds(questionIds.toList())
-                    .associateBy { it.id }
-                val positions = HashMap<String, Int>()
-                questionIds.forEachIndexed { tickIndex, id ->
-                    val counted = repository.browseFilteredIndexOf(id, scope)
-                    positions[id] = if (repository.browseFilteredIdAt(counted, scope) == id) {
-                        counted
-                    } else {
-                        Int.MAX_VALUE - (questionIds.size - tickIndex)
-                    }
-                }
-                val selected = byId.values
-                    .sortedBy { positions[it.id] ?: Int.MAX_VALUE }
-                if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
-                // The passages the selection's member questions reference,
-                // resolved the same way a paper export's are.
+                val dto = buildSelectionDto(questionIds, title)
                 val exporter = com.mcqapp.data.export.PaperExporter(repository.db())
-                val dto = com.mcqapp.data.io.SelectionExport.paperDto(
-                    title = title,
-                    questions = selected,
-                    categoryTitleById = categoryTitles(),
-                    passages = exporter.passagesOfIds(
-                        selected.mapNotNull { it.passageId }.distinct()
-                    )
-                )
                 val file = (
                     getApplication<Application>().contentResolver.openOutputStream(uri)
                         ?: throw IllegalStateException("Could not open output stream")
                     ).use { sink ->
                     exporter.exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
                 }
-                Logger.i("BROWSEVM", "Exported ${selected.size} questions as ${file.fileName}")
+                Logger.i("BROWSEVM", "Exported ${questionIds.size} questions as ${file.fileName}")
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Export of selection failed", e)
                 _exportError.value = "Export failed: ${e.message}"
             }
+        }
+    }
+
+    /**
+     * The exportable DTO for [questionIds], ordered by the browse scope's own
+     * ordering (see the tick-order note below) with its passages resolved.
+     * Shared by the save and share paths so they cannot diverge.
+     *
+     * Sessions and the list hold refs; content comes back by id. Contained in
+     * questionIds, so a stale ref still exports the question the user
+     * selected. The set is a LinkedHashSet, so a partial selection used to
+     * export in tap order while a whole-paper one sorted properly
+     * (consolidated_bugs.md F11). A row outside the current scope (the filter
+     * changed since it was ticked) keeps its relative tail position rather
+     * than disappearing from its own export.
+     */
+    private suspend fun buildSelectionDto(
+        questionIds: Set<String>,
+        title: String
+    ): com.mcqapp.data.io.PaperDto {
+        val scope = currentScope()
+        val byId = repository.getQuestionsByIds(questionIds.toList())
+            .associateBy { it.id }
+        val positions = HashMap<String, Int>()
+        questionIds.forEachIndexed { tickIndex, id ->
+            val counted = repository.browseFilteredIndexOf(id, scope)
+            positions[id] = if (repository.browseFilteredIdAt(counted, scope) == id) {
+                counted
+            } else {
+                Int.MAX_VALUE - (questionIds.size - tickIndex)
+            }
+        }
+        val selected = byId.values
+            .sortedBy { positions[it.id] ?: Int.MAX_VALUE }
+        if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
+        // The passages the selection's member questions reference, resolved
+        // the same way a paper export's are.
+        val exporter = com.mcqapp.data.export.PaperExporter(repository.db())
+        return com.mcqapp.data.io.SelectionExport.paperDto(
+            title = title,
+            questions = selected,
+            categoryTitleById = categoryTitles(),
+            passages = exporter.passagesOfIds(
+                selected.mapNotNull { it.passageId }.distinct()
+            )
+        )
+    }
+
+    private val _isSharing = MutableStateFlow(false)
+    val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
+
+    /**
+     * Renders the ticked questions into `cacheDir/shared` and returns the raw
+     * share intent (the screen wraps it in a chooser). Null on failure, with
+     * [exportError] set; [isSharing] drives the dialog's progress while the
+     * render runs on IO.
+     */
+    suspend fun shareSelectionIntent(
+        questionIds: Set<String>,
+        title: String,
+        format: com.mcqapp.data.export.ExportFormat
+    ): android.content.Intent? {
+        _isSharing.value = true
+        try {
+            return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val dto = buildSelectionDto(questionIds, title)
+                val app = getApplication<Application>()
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir,
+                    com.mcqapp.data.export.PaperExporter.fileNameFor(title, format)
+                )
+                val exported = java.io.FileOutputStream(file).use { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("BROWSEVM", "Shared ${questionIds.size} questions as ${exported.fileName} (${file.length()} bytes)")
+                com.mcqapp.util.shareIntent(app, file, format.mimeType)
+            }
+        } catch (e: Exception) {
+            Logger.e("BROWSEVM", "Share of selection failed", e)
+            _exportError.value = "Export failed: ${e.message}"
+            return null
+        } finally {
+            _isSharing.value = false
         }
     }
 

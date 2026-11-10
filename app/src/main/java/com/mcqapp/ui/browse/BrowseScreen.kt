@@ -1,5 +1,9 @@
 package com.mcqapp.ui.browse
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.widget.Toast
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -55,6 +60,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +68,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -120,6 +128,14 @@ fun BrowseScreen(
     var exportFormat by rememberSaveable {
         mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE)
     }
+    var shareMode by rememberSaveable { mutableStateOf(false) }
+    val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val platformContext = androidx.compose.ui.platform.LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val platformResources = LocalResources.current
 
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
@@ -228,6 +244,7 @@ fun BrowseScreen(
                         TextButton(
                             onClick = {
                                 exportFormat = com.mcqapp.data.export.ExportFormat.JSON_INLINE
+                                shareMode = false
                                 exportIds = selectedIds
                                 showExportDialog = true
                             },
@@ -771,6 +788,27 @@ fun BrowseScreen(
                 title = { Text("Export ${exportIds.size} selected questions") },
                 text = {
                     Column {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = !shareMode,
+                                onClick = { shareMode = false },
+                                label = { Text(stringResource(R.string.share_save)) }
+                            )
+                            FilterChip(
+                                selected = shareMode,
+                                onClick = { shareMode = true },
+                                label = { Text(stringResource(R.string.share_share)) }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        if (isSharing) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.sharing))
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                         com.mcqapp.data.export.ExportFormat.entries.forEach { format ->
                             Row(
                                 modifier = Modifier
@@ -797,18 +835,50 @@ fun BrowseScreen(
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        showExportDialog = false
-                        exportSaver(exportFormat).launch(
-                            com.mcqapp.data.export.PaperExporter.fileNameFor(
-                                exportTitle(), exportFormat
+                    TextButton(
+                        enabled = !isSharing,
+                        onClick = {
+                            if (shareMode) {
+                                scope.launch {
+                                    val intent = viewModel.shareSelectionIntent(
+                                        exportIds, exportTitle(), exportFormat
+                                    )
+                                    showExportDialog = false
+                                    if (intent != null) {
+                                        try {
+                                            platformContext.startActivity(
+                                                Intent.createChooser(
+                                                    intent,
+                                                    platformResources.getString(R.string.share_chooser_title)
+                                                )
+                                            )
+                                        } catch (_: ActivityNotFoundException) {
+                                            Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    selectionMode = false
+                                    selectedIds = emptySet()
+                                }
+                                return@TextButton
+                            }
+                            showExportDialog = false
+                            exportSaver(exportFormat).launch(
+                                com.mcqapp.data.export.PaperExporter.fileNameFor(
+                                    exportTitle(), exportFormat
+                                )
+                            )
+                            // Selection mode ends with the export: the ids are now
+                            // held by exportIds, and the user asked for a file.
+                            selectionMode = false
+                            selectedIds = emptySet()
+                        }
+                    ) {
+                        Text(
+                            stringResource(
+                                if (shareMode) R.string.share_share else R.string.export
                             )
                         )
-                        // Selection mode ends with the export: the ids are now
-                        // held by exportIds, and the user asked for a file.
-                        selectionMode = false
-                        selectedIds = emptySet()
-                    }) { Text(stringResource(R.string.export)) }
+                    }
                 },
                 dismissButton = {
                     TextButton(onClick = { showExportDialog = false }) {

@@ -1,6 +1,9 @@
 package com.mcqapp.ui.library
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,9 +25,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -101,6 +108,10 @@ fun LibraryScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val resources = LocalResources.current
 
     // Dialog flags ride rotation (plain `remember` closed them and
     // discarded typed input) — consolidated_bugs.md F12.
@@ -120,8 +131,10 @@ fun LibraryScreen(
     // exportAll — the whole library written to one paper's file
     // (consolidated_bugs.md F2).
     val pendingExportTarget by viewModel.pendingExport.collectAsStateWithLifecycle()
+    val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     var showExportFormatDialog by rememberSaveable { mutableStateOf(false) }
     var exportFormat by rememberSaveable { mutableStateOf(ExportFormat.JSON_INLINE) }
+    var shareMode by rememberSaveable { mutableStateOf(false) }
 
     // The format must travel in state: saver callbacks fire after the save
     // dialog, so anything baked into the callback itself goes stale.
@@ -376,6 +389,7 @@ fun LibraryScreen(
                                         }
                                     )
                                     exportFormat = ExportFormat.JSON_INLINE
+                                    shareMode = false
                                     showExportFormatDialog = true
                                 },
                                 onDelete = { viewModel.requestDelete(paper.id, paper.title) },
@@ -669,6 +683,27 @@ fun LibraryScreen(
             },
             text = {
                 Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !shareMode,
+                            onClick = { shareMode = false },
+                            label = { Text(stringResource(R.string.share_save)) }
+                        )
+                        FilterChip(
+                            selected = shareMode,
+                            onClick = { shareMode = true },
+                            label = { Text(stringResource(R.string.share_share)) }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (isSharing) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.sharing))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                     ExportFormat.entries.forEach { format ->
                         Row(
                             modifier = Modifier
@@ -695,27 +730,66 @@ fun LibraryScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val target = pendingExportTarget
-                    val paper = papers.firstOrNull { it.id == target?.paperId }
-                    val selectionPaper = papers.firstOrNull { it.id == target?.selection?.first }
-                    showExportFormatDialog = false
-                    if (target != null && (target.paperId != null || target.selection != null)) {
-                        viewModel.setPendingExport(target.copy(format = exportFormat))
-                        exportSaver(exportFormat).launch(
-                            if (target.selection != null) {
-                                PaperExporter.fileNameFor(
-                                    "${selectionPaper?.title.orEmpty()} (selection)",
-                                    exportFormat
-                                )
-                            } else {
-                                PaperExporter.fileNameFor(paper?.title.orEmpty(), exportFormat)
+                TextButton(
+                    enabled = !isSharing,
+                    onClick = {
+                        val target = pendingExportTarget
+                        val paper = papers.firstOrNull { it.id == target?.paperId }
+                        val selectionPaper = papers.firstOrNull { it.id == target?.selection?.first }
+                        if (shareMode) {
+                            scope.launch {
+                                val intent = if (target?.selection != null) {
+                                    viewModel.shareSelectionIntent(
+                                        target.selection.first,
+                                        target.selection.second,
+                                        exportFormat
+                                    )
+                                } else if (target?.paperId != null) {
+                                    viewModel.sharePaperIntent(target.paperId, exportFormat)
+                                } else {
+                                    null
+                                }
+                                showExportFormatDialog = false
+                                viewModel.setPendingExport(null)
+                                if (intent != null) {
+                                    try {
+                                        context.startActivity(
+                                            Intent.createChooser(
+                                                intent,
+                                                resources.getString(R.string.share_chooser_title)
+                                            )
+                                        )
+                                    } catch (_: ActivityNotFoundException) {
+                                        Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             }
-                        )
-                    } else {
-                        viewModel.setPendingExport(null)
+                            return@TextButton
+                        }
+                        showExportFormatDialog = false
+                        if (target != null && (target.paperId != null || target.selection != null)) {
+                            viewModel.setPendingExport(target.copy(format = exportFormat))
+                            exportSaver(exportFormat).launch(
+                                if (target.selection != null) {
+                                    PaperExporter.fileNameFor(
+                                        "${selectionPaper?.title.orEmpty()} (selection)",
+                                        exportFormat
+                                    )
+                                } else {
+                                    PaperExporter.fileNameFor(paper?.title.orEmpty(), exportFormat)
+                                }
+                            )
+                        } else {
+                            viewModel.setPendingExport(null)
+                        }
                     }
-                }) { Text(stringResource(R.string.export)) }
+                ) {
+                    Text(
+                        stringResource(
+                            if (shareMode) R.string.share_share else R.string.export
+                        )
+                    )
+                }
             },
             dismissButton = {
                 TextButton(onClick = {

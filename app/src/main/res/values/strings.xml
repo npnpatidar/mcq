@@ -73,6 +73,14 @@
     </plurals>
     <string name="export_bookmarks">Export bookmarks</string>
     <string name="export_failed">Export failed</string>
+    <string name="share_save">Save to file</string>
+    <string name="share_share">Share</string>
+    <string name="share_chooser_title">Share file</string>
+    <string name="share_no_app">No app can share this file.</string>
+    <string name="share_failed">Could not prepare the file to share.</string>
+    <string name="share_all_data">Share all data (JSON)</string>
+    <string name="share_backup">Share backup (zip)</string>
+    <string name="sharing">Preparing file…</string>
     <string name="update_answers_help">When a file repeats a question\'s text and options but corrects its answer key, update the stored answer instead of reporting it as a duplicate.</string>
     <string name="review_order_help">Review always shows the order you were given. Scoring is unaffected: answers are matched by option, not position.</string>
     <string name="image_weight_help">Image weight counts embedded pictures; large banks shrink automatically at import.</string>

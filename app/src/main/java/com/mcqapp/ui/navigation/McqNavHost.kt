@@ -1,11 +1,15 @@
 package com.mcqapp.ui.navigation
 
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -16,18 +20,52 @@ import com.mcqapp.ui.browse.BrowseScreen
 import com.mcqapp.ui.editor.QuestionEditorScreen
 import com.mcqapp.ui.history.BookmarksScreen
 import com.mcqapp.ui.history.HistoryScreen
+import com.mcqapp.ui.importscreen.ImportDataHolder
 import com.mcqapp.ui.importscreen.ImportScreen
 import com.mcqapp.ui.library.LibraryScreen
+import com.mcqapp.ui.library.LibraryViewModel
 import com.mcqapp.ui.results.ResultsScreen
 import com.mcqapp.ui.search.SearchScreen
 import com.mcqapp.ui.settings.SettingsScreen
 import com.mcqapp.ui.study.StudyScreen
 import com.mcqapp.ui.test.TestSessionScreen
 import com.mcqapp.util.Logger
+import com.mcqapp.util.SharedImport
 
 @Composable
 fun McqNavHost(repository: McqRepository) {
     val navController = rememberNavController()
+    // One activity-scoped library VM: the picker and a shared file route into
+    // the same classify pipeline, and the import report and error dialogs
+    // the pipeline raises stay visible when the library is reached.
+    val libraryViewModel: LibraryViewModel = viewModel()
+    val platformContext = LocalContext.current
+    val pendingImport by SharedImport.pending.collectAsStateWithLifecycle()
+    val pendingImportError by SharedImport.error.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingImport) {
+        val request = SharedImport.consume() ?: return@LaunchedEffect
+        libraryViewModel.onImportPicked(
+            request.uri,
+            platformContext.contentResolver,
+            onDocx = { bytes, name ->
+                ImportDataHolder.pendingDocxBytes = bytes
+                ImportDataHolder.pendingDocxName = name
+                navController.navigate("import/direct")
+            },
+            onJsonUri = {
+                ImportDataHolder.pendingJsonUri = it
+                navController.navigate("import/direct")
+            },
+            onJsonBytes = {
+                ImportDataHolder.pendingJsonBytes = it
+                navController.navigate("import/direct")
+            }
+        )
+    }
+    LaunchedEffect(pendingImportError) {
+        val message = SharedImport.consumeError() ?: return@LaunchedEffect
+        Toast.makeText(platformContext, message, Toast.LENGTH_LONG).show()
+    }
     val fontScale by repository.fontScale().collectAsStateWithLifecycle(
         initialValue = com.mcqapp.util.FontScale.DEFAULT
     )
@@ -42,7 +80,11 @@ fun McqNavHost(repository: McqRepository) {
     ) {
     NavHost(navController = navController, startDestination = "library") {
         composable("library") {
-            LibraryScreen(repository = repository, navController = navController)
+            LibraryScreen(
+                repository = repository,
+                navController = navController,
+                viewModel = libraryViewModel
+            )
         }
         composable(
             route = "test?paperId={paperId}&categories={categories}&mistakes={mistakes}&drillCount={drillCount}&drillMinutes={drillMinutes}&minutes={minutes}&type={type}&count={count}&exclusion={exclusion}&breadth={breadth}&variant={variant}",

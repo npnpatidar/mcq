@@ -22,6 +22,14 @@ internal enum class PickedArchive {
 }
 
 /**
+ * Whether the first bytes look like a zip archive — the `PK` signature the
+ * import router sniffs on before classifying the archive. Content, not MIME:
+ * a provider hands over whatever type it likes.
+ */
+internal fun isZipMagic(bytes: ByteArray): Boolean =
+    bytes.size >= 2 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
+
+/**
  * Decides what a picked zip is by streaming its entry names, without reading
  * the archive whole. The same decision the byte overload makes, for a file too
  * large to hold: a Word bank is its `word/document.xml` entry, a backup its

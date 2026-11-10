@@ -3,5 +3,6 @@
     <external-files-path name="logs" path="logs/" />
     <files-path name="logs_internal" path="logs/" />
     <cache-path name="reports" path="reports/" />
+    <cache-path name="shared" path="shared/" />
     <files-path name="reports_internal" path="reports/" />
 </paths>

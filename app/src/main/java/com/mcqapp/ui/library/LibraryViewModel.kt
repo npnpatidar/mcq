@@ -117,8 +117,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             // .docx is told apart by its word/document.xml entry; our
             // JSON can arrive under any extension and stays on the text
             // path below.
-            val isZip = prefix.bytes.size >= 2 && prefix.bytes[0] == 'P'.code.toByte() &&
-                prefix.bytes[1] == 'K'.code.toByte()
+            val isZip = com.mcqapp.ui.library.isZipMagic(prefix.bytes)
 
             if (isZip) {
                 // Classify by streaming the archive's entry names, so the file
@@ -412,6 +411,81 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 Logger.e("LIBVM", "Export failed", e)
                 _exportError.value = "Export failed: ${e.message}"
             }
+        }
+    }
+
+    private val _isSharing = MutableStateFlow(false)
+    val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
+
+    /**
+     * Renders a whole paper into `cacheDir/shared` and returns the raw
+     * `ACTION_SEND` intent (the screen wraps it in a chooser). Null on
+     * failure, with [exportError] set; [isSharing] drives the dialog's
+     * progress while the render runs on IO.
+     */
+    suspend fun sharePaperIntent(
+        paperId: String,
+        format: com.mcqapp.data.export.ExportFormat
+    ): android.content.Intent? {
+        _isSharing.value = true
+        try {
+            return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val app = getApplication<Application>()
+                val title = repository.getPaper(paperId)?.title ?: "paper"
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir,
+                    com.mcqapp.data.export.PaperExporter.fileNameFor(title, format)
+                )
+                java.io.FileOutputStream(file).use { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportPaper(paperId, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Shared '${file.name}' (${file.length()} bytes)")
+                com.mcqapp.util.shareIntent(app, file, format.mimeType)
+            }
+        } catch (e: Exception) {
+            Logger.e("LIBVM", "Share failed", e)
+            _exportError.value = "Export failed: ${e.message}"
+            return null
+        } finally {
+            _isSharing.value = false
+        }
+    }
+
+    /**
+     * Renders a ticked selection into `cacheDir/shared` and returns the raw
+     * share intent. Same fallible contract as [sharePaperIntent].
+     */
+    suspend fun shareSelectionIntent(
+        paperId: String,
+        categoryIds: List<String>,
+        format: com.mcqapp.data.export.ExportFormat
+    ): android.content.Intent? {
+        _isSharing.value = true
+        try {
+            return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val app = getApplication<Application>()
+                val paperTitle = repository.getPaper(paperId)?.title ?: "paper"
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir,
+                    com.mcqapp.data.export.PaperExporter.fileNameFor(
+                        "$paperTitle (selection)",
+                        format
+                    )
+                )
+                java.io.FileOutputStream(file).use { sink ->
+                    com.mcqapp.data.export.PaperExporter(repository.db())
+                        .exportSelection(paperId, categoryIds, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+                }
+                Logger.i("LIBVM", "Shared '${file.name}' (${file.length()} bytes)")
+                com.mcqapp.util.shareIntent(app, file, format.mimeType)
+            }
+        } catch (e: Exception) {
+            Logger.e("LIBVM", "Share failed", e)
+            _exportError.value = "Export failed: ${e.message}"
+            return null
+        } finally {
+            _isSharing.value = false
         }
     }
 

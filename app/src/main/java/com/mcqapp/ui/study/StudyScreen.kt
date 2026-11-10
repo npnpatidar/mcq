@@ -1,6 +1,7 @@
 package com.mcqapp.ui.study
 
 import android.app.Application
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -128,6 +129,12 @@ fun StudyScreen(
     val showStudyHeader =
         !state.loading && state.loadError == null && !state.finished
 
+    // Back is a voluntary stop, not a silent exit: it ends the sitting the
+    // same way "Done for now" does, so the tally and the restart option are
+    // not skipped. Once the summary is up the handler stands down and back
+    // leaves normally.
+    BackHandler(enabled = showStudyHeader) { viewModel.stop() }
+
     Scaffold(
         topBar = {
             if (showStudyHeader) {
@@ -135,7 +142,8 @@ fun StudyScreen(
                     state = state,
                     liveDwell = liveDwell,
                     sessionSeconds = sessionSeconds,
-                    onBack = { navController.popBackStack() },
+                    // The header's arrow is the same back gesture; both stop.
+                    onBack = { viewModel.stop() },
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
                     onToggleClock = { viewModel.toggleQuestionClock() },

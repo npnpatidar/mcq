@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.SemanticsMatcher
@@ -11,7 +12,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -52,7 +53,7 @@ import org.junit.runner.RunWith
 class StudyAndSelectionUiTest {
 
     @get:Rule
-    val compose = createComposeRule()
+    val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val repository
         get() = (ApplicationProvider.getApplicationContext() as McqApplication).repository
@@ -106,6 +107,12 @@ class StudyAndSelectionUiTest {
         compose.waitUntil(30_000) {
             compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    /** Dispatches the system back gesture to the activity hosting the content. */
+    private fun pressSystemBack() {
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
     }
 
     /**
@@ -571,6 +578,34 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithText("Done for now", substring = false)
                 .fetchSemanticsNodes().isEmpty()
         )
+    }
+
+    /**
+     * Back from a live sitting is a voluntary stop, not a silent exit: the
+     * summary and its tally appear, and only the next back leaves the screen.
+     */
+    @Test
+    fun systemBackEndsTheSessionLikeDoneForNow() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        seedPaper(
+            "ui-back", "UIBack Paper", "ui-back-cat",
+            single("ui-back-q1", "ui-back-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-back").assertIsDisplayed()
+        compose.onNodeWithTag("paper-study-ui-back").performClick()
+        waitFor("Done for now")
+
+        pressSystemBack()
+
+        // Still on Study: the stop ends the sitting, it does not leave it.
+        waitFor("Session complete")
+        compose.onNodeWithText("0 reviewed • 0 again • 0 remembered", substring = false)
+            .assertIsDisplayed()
+
+        // The handler stands down on the summary, so back now leaves.
+        pressSystemBack()
+        waitForTag("paper-title-ui-back")
     }
 
     /**

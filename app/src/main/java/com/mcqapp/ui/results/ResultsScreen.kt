@@ -445,12 +445,12 @@ private fun ReportHeaderCard(report: TestReport) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Stat(stringResource(R.string.correct), report.score.correct.toString(), MaterialTheme.colorScheme.primary)
-                Stat(stringResource(R.string.wrong), report.score.wrong.toString(), MaterialTheme.colorScheme.error)
-                Stat(stringResource(R.string.skipped), report.score.skipped.toString(), MaterialTheme.colorScheme.outline)
+                Stat(label = stringResource(R.string.correct), report.score.correct.toString(), MaterialTheme.colorScheme.primary)
+                Stat(label = stringResource(R.string.wrong), report.score.wrong.toString(), MaterialTheme.colorScheme.error)
+                Stat(label = stringResource(R.string.skipped), report.score.skipped.toString(), MaterialTheme.colorScheme.outline)
                 if (report.score.ungraded > 0) {
                     Stat(
-                        stringResource(R.string.ungraded),
+                        label = stringResource(R.string.ungraded),
                         report.score.ungraded.toString(),
                         MaterialTheme.colorScheme.tertiary
                     )
@@ -501,9 +501,9 @@ private fun StoredHeaderCard(attempt: com.mcqapp.domain.Attempt) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Stat(stringResource(R.string.correct), attempt.correctCount.toString(), MaterialTheme.colorScheme.primary)
-                Stat(stringResource(R.string.wrong), attempt.wrongCount.toString(), MaterialTheme.colorScheme.error)
-                Stat(stringResource(R.string.skipped), attempt.skippedCount.toString(), MaterialTheme.colorScheme.outline)
+                Stat(label = stringResource(R.string.correct), attempt.correctCount.toString(), MaterialTheme.colorScheme.primary)
+                Stat(label = stringResource(R.string.wrong), attempt.wrongCount.toString(), MaterialTheme.colorScheme.error)
+                Stat(label = stringResource(R.string.skipped), attempt.skippedCount.toString(), MaterialTheme.colorScheme.outline)
             }
             Text(
                 stringResource(R.string.report_study_unchanged),

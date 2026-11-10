@@ -55,32 +55,38 @@ class ReadmeExamplesTest {
      */
     @Test
     fun docxExampleImportsCleanly() {
-        val questions = splitDocxMarkersForTest(blockAfter("A complete, valid document:"))
-        assertEquals(2, questions.size)
+        val questions = splitDocxMarkersForTest(blockAfter("### Full Worked Example"))
+        assertEquals(3, questions.size)
 
         assertEquals("1.)", questions[0].num)
-        assertEquals("Which gas do plants absorb during photosynthesis?", questions[0].stemHtml)
-        assertEquals("Oxygen", questions[0].options["a"])
-        assertEquals("Carbon dioxide", questions[0].options["b"])
-        assertEquals("Nitrogen", questions[0].options["c"])
-        assertEquals("Hydrogen", questions[0].options["d"])
+        assertEquals("What is the capital of France?", questions[0].stemHtml)
+        assertEquals("London", questions[0].options["a"])
+        assertEquals("Paris", questions[0].options["b"])
+        assertEquals("Berlin", questions[0].options["c"])
         assertEquals("b", questions[0].answer)
-        assertEquals("Photosynthesis fixes carbon dioxide into glucose using light energy.", questions[0].explanationHtml)
+        // The marker splitter keeps the passage that follows on the same line
+        // run; the passage-aware parseDocx path is covered by the passage test.
+        assertTrue(questions[0].explanationHtml.startsWith("Paris is the capital city of France."))
 
-        assertEquals("What is the capital of France?", questions[1].stemHtml)
-        assertEquals("Paris", questions[1].options["c"])
-        assertEquals("c", questions[1].answer)
+        assertEquals("2.)", questions[1].num)
+        assertEquals("Which law describes inertia?", questions[1].stemHtml)
+        assertEquals("a", questions[1].answer)
+
+        assertEquals("3.)", questions[2].num)
+        assertEquals("What is F=ma?", questions[2].stemHtml)
+        assertEquals("b", questions[2].answer)
     }
 
     /** The same example end-to-end, so the documented answer letters really resolve. */
     @Test
     fun docxExampleResolvesAnswerKeys() {
-        val raw = splitDocxMarkersForTest(blockAfter("A complete, valid document:"))
+        val raw = splitDocxMarkersForTest(blockAfter("### Full Worked Example"))
         val array = raw.joinToString(",", "[", "]") { questionJsonForTest(it).toString() }
         val file = LegacyParser.parse(array)
         val questions = file.papers[0].categories[0].questions
         assertEquals(listOf("b"), questions[0].correctOptionIds)
-        assertEquals(listOf("c"), questions[1].correctOptionIds)
+        assertEquals(listOf("a"), questions[1].correctOptionIds)
+        assertEquals(listOf("b"), questions[2].correctOptionIds)
         assertTrue(file.warnings.isEmpty())
     }
 
@@ -96,10 +102,10 @@ class ReadmeExamplesTest {
         }
     }
 
-    /** The documented `Passage:` example: one standalone question, two members. */
+    /** The worked example: a passage with one member, reset by a bare marker. */
     @Test
     fun docxPassageExampleGroupsMembers() {
-        val body = blockAfter("### The `Passage:` marker")
+        val body = blockAfter("### Full Worked Example")
         val paragraphs = body.lines().filter { it.isNotBlank() }.joinToString("") { line ->
             "<w:p><w:r><w:t>${xmlEscape(line)}</w:t></w:r></w:p>"
         }
@@ -116,20 +122,21 @@ class ReadmeExamplesTest {
         }
         val file = LegacyParser.parse(com.mcqapp.data.docx.parseDocx(baos.toByteArray()).json)
         assertEquals(1, file.passages.size)
-        assertEquals("The water cycle", file.passages.single().title)
+        assertEquals("Newton's Laws", file.passages.single().title)
         val questions = file.papers.single().categories.single().questions
         assertEquals(3, questions.size)
-        // The pre-marker question stays standalone; the two after it are members.
+        // Before the marker stays standalone; then one member; the bare
+        // `Passage:` line resets, so the last question is standalone again.
         assertEquals(null, questions[0].passageId)
         assertEquals("passage-1", questions[1].passageId)
-        assertEquals("passage-1", questions[2].passageId)
+        assertEquals(null, questions[2].passageId)
         assertTrue(file.warnings.isEmpty())
     }
 
     /** A bare array is wrapped into one paper and one category, with a..d option ids. */
     @Test
     fun jsonBareArrayExample() {
-        val file = LegacyParser.parse(blockAfter("**1. Bare array**"))
+        val file = LegacyParser.parse(blockAfter("### Bare array"))
         assertTrue(file.warnings.isEmpty())
         assertEquals(1, file.papers.size)
         assertEquals("Imported Questions", file.papers[0].title)
@@ -148,7 +155,7 @@ class ReadmeExamplesTest {
     /** Every documented element type is really read. */
     @Test
     fun jsonRichContentExample() {
-        val snippet = blockAfter("**4. Rich content.**")
+        val snippet = blockAfter("### Rich content")
         val file = LegacyParser.parse(
             """{"papers":[{"title":"T","categories":[{"title":"C","questions":[$snippet]}]}]}"""
         )

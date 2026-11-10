@@ -1244,6 +1244,21 @@ App's own DOCX exports embed a **custom document property** (`mcqapp` in
 
 ## Import: JSON Reference
 
+### Bare array
+
+The simplest shape — e.g. `simple_questions.json`:
+
+```json
+[
+  { "question": "Which planet is known as the Red Planet?",
+    "options": ["Venus", "Mars", "Jupiter", "Mercury"] }
+]
+```
+
+A bare array carries no structure, so it is wrapped for you: one paper
+`Imported Questions`, one category `Uncategorized`, and no bookmarks, attempts or
+schedules. Option ids are assigned `a`, `b`, `c`, … in order.
+
 ### Full Schema (`McqFileDto`)
 
 ```kotlin
@@ -1331,6 +1346,33 @@ Wire format: `{"type": "...", "content": ...}`
 ### Card Schedule Schema (`CardScheduleDto`)
 
 `ease`, `intervalDays`, `dueAt` (epoch ms), `reps`, `lapses`, `leech`, `lastReviewedAt`, `difficulty`, `stability`, `cardState` (`NEW`\|`LEARNING`\|`RELEARNING`\|`REVIEW`), `reviewCount`. Only written for studied cards (`reps > 0 || dueAt > 0`).
+
+### Rich content
+
+Where a plain string is accepted (`text`/`question`, `explanation`/`explain`/`reason`,
+`options`), you can instead supply a **list of elements**. They take precedence over
+the plain-string form and are what export writes:
+
+```json
+{
+  "question_elements": [
+    { "type": "text",  "content": "Which expression equals " },
+    { "type": "math",  "content": "<math><mfrac>…</math>" },
+    { "type": "image", "content": "<img src=\"data:image/png;base64,iVBORw0…\">" },
+    { "type": "table", "content": [["Ruler", "Year"], ["Akbar", "1556"]] }
+  ],
+  "options_elements": {
+    "a": [{ "type": "text", "content": "Akbar — 1556" }],
+    "b": [{ "type": "text", "content": "Akbar — 1605" }]
+  },
+  "explanation_elements": [{ "type": "text", "content": "He acceded in 1556." }]
+}
+```
+
+In `options_elements` the object **keys are the option ids**, which is what
+`correctOptionIds` must then refer to. Only the `text`, `math`, `image` and `table`
+types are read; every entry must be an element object, because a bare string is
+dropped without warning.
 
 ### Complete Annotated Example
 

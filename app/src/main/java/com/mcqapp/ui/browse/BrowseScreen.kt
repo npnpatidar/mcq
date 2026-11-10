@@ -458,12 +458,19 @@ fun BrowseScreen(
                         "All" to BrowseListFilter.ALL,
                         "No answer" to BrowseListFilter.NO_ANSWER,
                         "No explanation" to BrowseListFilter.NO_EXPLANATION,
-                        stringResource(R.string.uncategorized) to BrowseListFilter.UNCATEGORIZED
+                        null to BrowseListFilter.UNCATEGORIZED
                     ).forEach { (label, kind) ->
                         FilterChip(
                             selected = filterState.filter == kind,
                             onClick = { viewModel.updateFilter(kind) },
-                            label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                            label = {
+                                // The one resource label is resolved inside the
+                                // Text that renders it; the rest stay literals.
+                                Text(
+                                    label ?: stringResource(R.string.uncategorized),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
                         )
                     }
                 }

@@ -458,7 +458,7 @@ fun BrowseScreen(
                         "All" to BrowseListFilter.ALL,
                         "No answer" to BrowseListFilter.NO_ANSWER,
                         "No explanation" to BrowseListFilter.NO_EXPLANATION,
-                        "Uncategorized" to BrowseListFilter.UNCATEGORIZED
+                        stringResource(R.string.uncategorized) to BrowseListFilter.UNCATEGORIZED
                     ).forEach { (label, kind) ->
                         FilterChip(
                             selected = filterState.filter == kind,

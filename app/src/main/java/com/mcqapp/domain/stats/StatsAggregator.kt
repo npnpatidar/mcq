@@ -888,7 +888,7 @@ object StatsAggregator {
             }
             GroupRetention(label, counts.reviews, counts.passes)
         }
-            .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }))
+            .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))
             .take(15)
 
         private fun weekdayRetention(): List<WeekdayRetention> = (0..6).map { day ->
@@ -1232,6 +1232,10 @@ object StatsAggregator {
         }
 
         private fun countAnswerButtons(review: ReplayReview) {
+            // A corrupt rating is skipped here too: the grade-mix chart's
+            // DayBucket.add ignores it, and folding it into Easy made the two
+            // charts disagree about the same review.
+            if (review.rating !in 1..4) return
             val kind = when {
                 review.kind == null -> return
                 review.kind == ReplayReview.ReviewKind.RELEARNING ->
@@ -1246,8 +1250,6 @@ object StatsAggregator {
                 1 -> counts[0]++
                 2 -> counts[1]++
                 3 -> counts[2]++
-                // Anything else (Easy) — corrupt ratings fold here rather
-                // than vanishing from the total (E11).
                 else -> counts[3]++
             }
         }

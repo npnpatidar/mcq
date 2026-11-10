@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.FsrsOptimizer
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /** The Study / Spaced repetition group: the whole scheduler card, collapsible. */
 @Composable
@@ -108,6 +110,10 @@ private fun AnkiSchedulerBody(
     // veterans, and an open wall of numbers is what made this screen feel
     // complex. The everyday controls stay above the fold.
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+    // Reset re-applies defaults to every study setting below this row, not
+    // only the schedule knobs, so it asks first.
+    var showResetConfirm by rememberSaveable { mutableStateOf(false) }
+    var showRestoreDefaultsConfirm by rememberSaveable { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -117,7 +123,25 @@ private fun AnkiSchedulerBody(
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.weight(1f)
         )
-        TextButton(onClick = onReset) { Text(stringResource(R.string.reset)) }
+        TextButton(onClick = { showResetConfirm = true }) { Text(stringResource(R.string.reset)) }
+    }
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text(stringResource(R.string.reset)) },
+            text = { Text(stringResource(R.string.reset_study_settings_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showResetConfirm = false
+                    onReset()
+                }) { Text(stringResource(R.string.reset)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
     Text(
         stringResource(R.string.sm_2_scheduling_for_study_these_match_anki_s_review_options_) +
@@ -138,13 +162,21 @@ private fun AnkiSchedulerBody(
 
     Text(stringResource(R.string.study_section), style = MaterialTheme.typography.labelLarge)
     Spacer(Modifier.height(8.dp))
-    Text(stringResource(R.string.target_retention), style = MaterialTheme.typography.bodyMedium)
     // One commit per gesture: the drag frames used to write DataStore
     // per frame (consolidated_bugs.md F17). The text rows' per-keystroke
     // writes are documented deliberate; the slider's were not.
     var dragRetention by rememberSaveable(config.desiredRetention) {
         mutableStateOf(config.desiredRetention.toFloat())
     }
+    // The label follows the thumb so the percentage is readable while
+    // dragging, not only after a commit.
+    Text(
+        stringResource(
+            R.string.target_retention_value,
+            (dragRetention * 100).roundToInt()
+        ),
+        style = MaterialTheme.typography.bodyMedium
+    )
     Slider(
         value = dragRetention,
         onValueChange = { dragRetention = it },
@@ -233,7 +265,7 @@ private fun AnkiSchedulerBody(
                 style = MaterialTheme.typography.bodySmall
             )
             Row {
-                TextButton(onClick = onRestoreFsrsDefaults) {
+                TextButton(onClick = { showRestoreDefaultsConfirm = true }) {
                     Text(stringResource(R.string.restore_defaults))
                 }
                 TextButton(onClick = onDismissFsrsOptimize) {
@@ -252,6 +284,24 @@ private fun AnkiSchedulerBody(
             }
         }
         else -> Unit
+    }
+    if (showRestoreDefaultsConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestoreDefaultsConfirm = false },
+            title = { Text(stringResource(R.string.restore_defaults)) },
+            text = { Text(stringResource(R.string.restore_fsrs_defaults_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRestoreDefaultsConfirm = false
+                    onRestoreFsrsDefaults()
+                }) { Text(stringResource(R.string.restore_defaults)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreDefaultsConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
     Spacer(Modifier.height(12.dp))
     Text(stringResource(R.string.ranking_mode), style = MaterialTheme.typography.bodyMedium)

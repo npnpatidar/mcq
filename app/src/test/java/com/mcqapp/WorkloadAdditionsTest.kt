@@ -138,6 +138,20 @@ class WorkloadAdditionsTest {
     }
 
     @Test
+    fun aCorruptRatingIsExcludedFromBothGradeCharts() {
+        // The two charts used to disagree: grade mix skipped rating 9 while
+        // answer buttons counted it as Easy.
+        val bundle = workload(
+            reviews = listOf(
+                review("q1", rating = 3),
+                review("q2", rating = 9)
+            )
+        )
+        assertEquals(1, bundle.ratingTrend.sumOf { it.total })
+        assertEquals(1, bundle.answerButtons.groups.sumOf { it.total })
+    }
+
+    @Test
     fun gradeMixIsEmptyWithoutReviews() {
         val bundle = workload()
         assertTrue(bundle.ratingTrend.all { it.total == 0 })

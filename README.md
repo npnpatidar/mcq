@@ -158,14 +158,14 @@ pinned at the end of content.
 | Chip | Family | Fresh-sample? | What it does |
 |------|--------|---------------|--------------|
 | `Random` | Mock | ✅ | Uniform sample of scope; passage blocks move together. |
-| `Balanced` | Mock | ✅ | Allocate slots proportionally per category (largest remainder, min 1), interleave round-robin. **Help text says "mix difficulty bands" but the code allocates by category size.** |
+| `Balanced` | Mock | ✅ | Allocate slots proportionally per category (largest remainder, min 1), interleave round-robin. |
 | `Blueprint` | Mock | ✅ | Runs a frozen section tree (see [Blueprints](#exam-blueprints)). |
 | `Easiest questions` | Practice | ✅ | Rank by ease score (1−weakness, 1−difficulty, 1−memoryRisk, 1−lapse), exclude leeches/at-risk when ≥ 2N alternatives, take top 2N, shuffle, take N. Fill: authored Medium, then random. |
 | `Mistakes` | Practice | ❌ | Previously missed questions in current scope. |
 | `Weakest topics` | Practice | ❌ | Rank categories by composite weakness (0.5·(1−WilsonLower), 0.25·difficulty, 0.15·memoryRisk, 0.10·lapse), take top K (Breadth), allocate proportionally, record targets. |
 | `Toughest questions` | Practice | ❌ | Rank by toughness (0.35·weakness + 0.20·difficulty + 0.20·memoryRisk + 0.15·lapse + 0.10·skip), 40% per-category cap (relaxes if needed), fill: authored Hard, then random. |
 | `Tricky` | Practice | ❌ | Rank by trickiness (0.40·lapse + 0.25·guessRate + 0.20·skipRate + 0.15·weakness), 40% cap, fill: Toughest, then random. |
-| `At risk` | Practice | ❌ | **Only cards due now** (`dueAt ≤ now`). Sorted by memoryRisk (1−retrievability), then due. "Nearly due" in help is not implemented. Fill: remaining due, then unseen, then random. |
+| `At risk` | Practice | ❌ | **Only cards due now** (`dueAt ≤ now`). Sorted by memoryRisk (1−retrievability), then due. Fill: remaining due, then unseen, then random. |
 | `Unseen` | Practice | ❌ | No card / NEW card / stale content hash. Uniform shuffle. Fill: least recently reviewed, then random. |
 | `Mixed` | Practice | ❌ | 40% Weakest + 25% Tricky + 20% At-risk + 15% Unseen (ceil), deduped, random fill. Records Weakest targets. |
 | `Bookmarked` | Practice | ❌ | Current scope's bookmarks, shuffle, fill random. |
@@ -180,11 +180,11 @@ with mocks.
 
 **Fresh sample:** If the type supports it (Random, Balanced, Easiest, Blueprint)
 and Settings → Tests → **Avoid recently tested questions** is on (default), the
-sheet shows a note. At session load, whole passage blocks containing any id from
-the last 3 comparable attempts are excluded **only if** something was removed and
-the remaining pool ≥ 2× the request. If applied, the attempt family is **Fresh
-sample** (compared only with fresh samples); otherwise it stays **Mock** even
-though the note was shown.
+sheet shows a note that says "when enough others remain". At session load, whole
+passage blocks containing any id from the last 3 comparable attempts are
+excluded **only if** something was removed and the remaining pool ≥ 2× the
+request. If applied, the attempt family is **Fresh sample** (compared only with
+fresh samples); otherwise it stays **Mock**.
 
 ### 2. Breadth (Weakest topics / Mixed only)
 
@@ -226,8 +226,9 @@ while the clock runs a week.
 
 `<Type>[ · <blueprint name>] · N questions · M min|Untimed · <comparability>`
 
-Comparability: `comparable` (mock), `fresh sample · compared only with fresh
-samples`, `practice · not comparable`, `Short test · N questions`.
+Comparability: `comparable` (mock), `fresh sample if enough others remain ·
+compared only with fresh samples`, `practice · not comparable`, `Short test ·
+N questions`.
 
 ### 7. Start Button
 
@@ -260,7 +261,7 @@ These are **not** in the sheet but materially change the sitting:
 | `Shuffle options` | Settings → Tests | off | Option order shuffled per question with same seed. |
 | `Practice mode` | Settings → Tests | off | Live correctness colours + explanation always shown; hides `Show answer`. |
 | `Strict exam mode` | Settings → Tests | off | Hides flag, palette, `Show answer`; suppresses practice feedback (strict wins). |
-| `Auto-advance` | Settings → Tests | off | After single-answer selection, go to next (no delay). |
+| `Auto-advance` | Settings → Tests | off | After single-answer selection, go to next (no delay). Not in practice mode, where the live verdict needs reading. |
 | `Avoid recently tested questions` | Settings → Tests | **on** | Fresh-sample rule above. |
 | `Negative marking` | Add/Edit paper dialog | 0 | Penalty as fraction of marks; shown on card as `• -0.33 neg`. |
 | `Paper duration` | Add/Edit paper | 0 = untimed | Legacy only; bounded test always uses sheet minutes. |
@@ -383,7 +384,8 @@ revealed question). Ungraded questions show `No answer key — not scored`.
   selected wrong = red.
 - Answering writes progress immediately (navigation/background too).
 - `Auto-advance`: on single-answer selection, immediate jump to next (no delay,
-  no animation); never for multi-correct or last question.
+  no animation); never for multi-correct, last question, or practice mode
+  (practice reveals the explanation on the same tap).
 
 ### Question Palette
 - Open: tap bottom-centre progress text (`N/M answered`).
@@ -507,8 +509,8 @@ falling back to paper's current rate.
 | Shown | result rows (or attempt total when rows absent) |
 | Asked | requested count recorded on attempt |
 
-**Note:** A graded skipped question is labelled `Wrong` on its review card,
-though header counts it as `Skipped` and the `Skipped` filter selects it.
+**Note:** A graded skipped question is labelled `Skipped` on its review card,
+matching the header count and the `Skipped` filter.
 
 ---
 
@@ -709,8 +711,9 @@ correct questions`, etc.
 
 ### Trends Section
 One card per `(paper, family, type, requestedCount, exclusionMode)` group,
-excluding legacy. If any trend exists, `Trends` header + cards shown, then
-`Attempts` header before attempt list. (If all legacy → no `Attempts` header.)
+excluding legacy. If any trend exists, `Trends` header + cards shown. The
+`Attempts` header always renders before the attempt list, including when every
+attempt is legacy.
 Card: paper title; subtitle `<family>[ · <type>][ · N questions][ · fresh
 sample]`; `${attempts} attempt[s] · best 82%`; right: latest %, arrow + absolute
 change (`▲ 12 pts`, `▼ 8 pts`, `= 0 pts` grey). Delta = `latest − first` (not
@@ -845,7 +848,7 @@ this, never midnight.
 | Setting | Default | Range / Step | What it changes |
 |---------|---------|--------------|-----------------|
 | `Simplified Anki` | **on** | switch | Auto-grades from answers instead of Again/Hard/Good/Easy. |
-| `Target retention` | 0.90 | slider 0.75–0.97 (21 steps, 0.01) | Higher → shorter intervals, more reviews. No numeric readout shown. |
+| `Target retention` | 0.90 | slider 0.75–0.97 (21 steps, 0.01) | Higher → shorter intervals, more reviews. The percentage is shown above the slider and follows the thumb. |
 | `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 21 weights to your review log (Anki parity). Shows log-loss before/after. `Restore defaults` drops fitted weights. |
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
@@ -856,7 +859,7 @@ this, never midnight.
 | `Maximum interval` | 36500 d | 1–36500 | Cap on any interval. |
 | `Relearning delay` | 10 m | 1–1440 m, step 0.5 m | Delay after Again on REVIEW. |
 | `Leech threshold` | 8 | 1–100 | Lapses before flagging tricky. |
-| `Reset` | — | button (no confirm) | Resets pacing knobs only (not fitted weights). |
+| `Reset` | — | button (confirm dialog) | Resets every study setting — schedule knobs, target retention, ranking mode and new-card handling (not fitted weights). |
 
 **FSRS Parameters (21 weights, official defaults):**
 `w = [0.40, 0.60, 2.40, 5.80, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94,
@@ -969,7 +972,7 @@ shrink drastically until it is no longer a leech.
 |------|-------|-------------|
 | **Forecast** | Stacked vertical bars (30 days, today = bar 0) + right-axis cumulative line. Segments: Learning (incl. Relearning) / Review. Overlay = cumulative if skipped (starts at overdue). Tooltip: bar total + overlay. Below: `Overdue: N` (error if >0), `Due today: N`, `Due tomorrow: N`, `Due this week: N`, `Daily load: X.X` (Σ 1/max(interval,1)). |
 | **Review history** | Stacked bars (4 segments: Learning, Review, Relearning, Unknown) at same granularity as Retention trend. |
-| **Grade mix over time** | Stacked bars (Again, Hard, Good, Easy). Corrupt ratings (outside 1..4) dropped here (but folded into Easy in Answer buttons). |
+| **Grade mix over time** | Stacked bars (Again, Hard, Good, Easy). Corrupt ratings (outside 1..4) are dropped here, and by **Answer buttons** too, so the two charts agree. |
 | **Time studied** | Single-segment bars = total seconds per bucket (y formatted as duration). Missing timing = 0 bar; no reviews = no bar. |
 | **Answer buttons** | Numeric table: rows Learning / Young / Mature / Relearning (pre-state classification). Columns Again / Hard / Good / Easy / Pass. Unknown pre-state rows dropped. Again counts tinted error. |
 | **Study sessions** | Text stats: Sittings (gap > 30 min or negative), Mean reviews, Mean length, Longest, Seconds per review (timed). Histogram: bins `1`, `2–4`, `5–9`, `10–19`, `20–49`, `50+`. |
@@ -1025,7 +1028,7 @@ No range chips. Sections in order:
 | **Exam** | Group chips: `Mock strict`, `Mock fresh`, `Practice` (default first with attempts). Profile chips (≤ 8, latest first) when group has > 1 comparison key. Body: key line, scope, `N comparable attempts · N questions shown`, 2-col KPIs (Latest, Best, Average, Change, Attempts, Total time, Skip rate, Sec/question), source line (lifetime accuracy + rep*/all), trend line (filled, y 0–100%), `Approx. 95% margin ±X.X points · n=N`, `The latest change is inside the margin: treat it as noise.` (when `|delta| ≤ currentMargin + firstMargin`), Per paper (if ≥ 2 papers), Category accuracy (meter bars, weakest first, ≤ 15), Timing/skips. Empty: `No comparable attempts in this group yet.` |
 | **Recent attempts** | 5 most recent all families: `family · correct/shown · percent · dd MMM yy`. Tap → Results. |
 | **Test families** | Rows per family present: `Family · N attempts · latest X% · average Y%` (unweighted mean of percentages). Families: Mock, Fresh sample, Practice, Short, Legacy. |
-| **Reliability (estimate)** | `r = X.XX · SEM Y.Y` (split-half mean across attempts, Spearman–Brown `2r/(1+r)`). Optional `KR-20 X.XX` (same-form check). Sample: MOCK + FRESH_SAMPLE, largest group by (paper, type, scope, count), latest 30 attempts, each attempt's graded rows as 1/0, n = first attempt's rows (≥ 20), min 5 per half. SEM on raw question-count scale (no unit). Guard: `Sample too small to estimate reliability.` |
+| **Reliability (estimate)** | `r = X.XX · SEM Y.Y questions`. Same-form families use the across-attempt split-half (`splitHalfAcrossAttempts`, Spearman–Brown `2r/(1+r)`); different-form families fall back to the mean per-attempt split-half. Optional `KR-20 X.XX` (same-form check). Sample: MOCK + FRESH_SAMPLE, largest group by (paper, type, scope, count), latest 30 attempts, each attempt's graded rows as 1/0, n = first attempt's rows (≥ 20), min 5 per half. SEM is on the raw question-count scale and labelled `questions`. Guard: `Sample too small to estimate reliability.` |
 | **Practice progress** | Last 3 focus-practice runs: `Type · target X/Y (Z%) · N mistakes cleared`. Mistakes cleared = graded/answered/correct with prior standing = mistake. |
 | **Weakest practiced topics** | Top 5 by target accuracy asc: `Category · X/Y (Z%)`. Targets with 0 asked skipped. `withoutTargets` runs skipped. |
 | **Fixed panels** | Rows `Name · N questions · N runs · latest X% · average Y%` (most recent run first). Only attempts with `variant = panel id`. |
@@ -1921,8 +1924,8 @@ Six switch rows (all default **off** except #6), 8 dp spacing, footnote under gr
 | 2 | `Shuffle options` | `Present answer options in random order` | off | `shuffle_options` | `setting-shuffle-options` |
 | 3 | `Practice mode` | `Show correct answers and explanations instantly` | off | `practice_mode` | `setting-practice-mode` |
 | 4 | `Strict exam mode` | `Hides answers, flags and the question palette` | off | `strict_mode` | `setting-strict-mode` |
-| 5 | `Auto-advance` | `Move to the next question after answering (single-answer only)` | off | `auto_advance` | `setting-auto-advance` |
-| 6 | `Avoid recently tested questions` | `A Random or Balanced test skips questions asked in your last three comparable tests of this length, when enough others remain. Such a test is a fresh sample, compared only with another fresh sample.` | **on** | `avoid_recent_questions` | `setting-avoid-recent` |
+| 5 | `Auto-advance` | `Move on as soon as you choose an answer, in single-answer tests. Practice mode stays on the question so you can read the explanation.` | off | `auto_advance` | `setting-auto-advance` |
+| 6 | `Avoid recently tested questions` | `A Random, Balanced, Easiest or Blueprint test skips questions asked in your last three comparable tests of this length, when enough others remain. Such a test is a fresh sample, compared only with another fresh sample.` | **on** | `avoid_recent_questions` | `setting-avoid-recent` |
 
 Footnote: `Review always shows the order you were given. Scoring is unaffected: answers are matched by option, not position.`
 
@@ -1951,7 +1954,7 @@ Footnote: `Review always shows the order you were given. Scoring is unaffected: 
 **Effect:** `StudyViewModel.load()` snapshots into `state.simplified` per session. When on, `check()` calls `Study.autoGrade(...)` (exact match + not guessed → `Good`; exact + guessed → `Again`; wrong → `Again`; empty → `Again`). Uses dwell thresholds: ≤ `fastSeconds` → `Easy`; ≥ `slowSeconds` → `Hard`; else `Good`. Reading bonus: `ceil(chars/20 + 3 s per image)`. Scheduler underneath unchanged.
 
 #### 3.2 Target Retention
-**Key:** `fsrs_desired_retention` | **Default:** `0.9` | **Slider:** 0.75–0.97, 21 steps (0.01 apart). **Commit:** one write on drag end (`onValueChangeFinished`). **No numeric readout shown** — only thumb position. Help: `How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.` Read per pull/grade ⇒ next review onward; already-scheduled dates untouched.
+**Key:** `fsrs_desired_retention` | **Default:** `0.9` | **Slider:** 0.75–0.97, 21 steps (0.01 apart). **Commit:** one write on drag end (`onValueChangeFinished`). The percentage is shown above the slider and follows the thumb while dragging. Help: `How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.` Read per pull/grade ⇒ next review onward; already-scheduled dates untouched.
 
 #### 3.3 Optimize FSRS Parameters
 Static text + help `Fits the scheduling weights to your own review history, the way Anki's Optimize does. Unlocks after 1000 reviews.` (`FsrsOptimizer.MIN_REVIEWS = 1000`).
@@ -1961,7 +1964,7 @@ Button `Optimize FSRS parameters`:
 - Running: label `Optimizing…` → `Optimizing… X/Y` + circular progress.
 - Under threshold: `Reviews logged: X of 1000 needed.`
 - Success: `Fitted on X review points from Y cards. Log loss vs your current weights: A → B.` (loss `%.4f`, `Locale.US`) + `Restore defaults` / `OK`.
-  - `Restore defaults` → `repository.restoreFsrsDefaults()` (drops fitted 21 weights for official set), clears state. **No confirmation** (destructive for fit, not library).
+  - `Restore defaults` → confirmation dialog, then `repository.restoreFsrsDefaults()` (drops fitted 21 weights for official set), clears state.
   - `OK` → dismiss message.
 - Failure: error-coloured `Optimization failed: <msg>` + `OK` (clears state; nothing persisted).
 - Cancelling/leaving Settings cancels silently.
@@ -1985,8 +1988,7 @@ Reading bonus: `Study.easyThresholdSeconds()` = `fastSeconds` + `ceil(chars/20 +
 **Key:** `anki_slow_seconds` | **Default:** `30` s | Same stepper/field. **Cross-field rule:** `value >= fastSeconds`. Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
 
 **Footnote (always shown):**
-`The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.`
-(→ **Stale**: the only consumer is Simplified study (default on). There is no "rebuild from attempts" path left.)
+`The response-time thresholds drive Simplified study's automatic grading. With Simplified study off you grade every card yourself.`
 
 #### 3.8 Advanced Anki Settings (Collapsible, Collapsed by Default)
 **Tag:** `advanced-anki-settings`
@@ -2004,7 +2006,7 @@ Reading bonus: `Study.easyThresholdSeconds()` = `fastSeconds` + `ceil(chars/20 +
 | `Leech threshold` | `Failures before a card is flagged tricky` | 8 | 1–100, step 1 | — | `anki_leech_threshold` |
 
 #### 3.9 Reset (Button)
-**Label:** `Reset` (TextButton, right of `Spaced repetition` heading). **No confirmation, no feedback.**
+**Label:** `Reset` (TextButton, right of `Spaced repetition` heading). Asks for confirmation because it resets more than the schedule knobs. `Restore defaults` under Optimize also asks before discarding fitted weights.
 
 Does: `repository.resetSchedulerConfig()` — rewrites **pacing knobs only**: max interval, relearn delay, leech threshold, day-start hour, easy threshold, hard threshold, target retention, ranking mode, introduce-new-cards. **Deliberately does NOT touch fitted FSRS weights** (`fsrs_parameters`); `Restore defaults` in optimizer block is the only way to drop those.
 
@@ -2014,7 +2016,7 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises, then re-
 
 ### 4. Backup & Data
 
-**Body order:** Heading `Data` → 5 full-width `Button`s (all `enabled = !busy`) + `Export Logs` (not gated) interleaved with 3 description lines → Heading `Storage` + `Refresh` → Heading `PDF export` + 2 switches.
+**Body order:** Heading `Data` → 5 full-width `Button`s and `Export Logs` (all `enabled = !busy`) interleaved with 3 description lines → Heading `Storage` + `Refresh` → Heading `PDF export` + 2 switches.
 
 #### 4.1 Buttons
 
@@ -2025,7 +2027,7 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises, then re-
 | 3 | `Backup (zip)` | `!busy` | `CreateDocument("application/zip")`, name `mcqapp-backup.zip` → full zip: `manifest` (dbVersion, appVersion, exportedAt, counts), `content` (bank JSON without scheduling), `study.json` (card states, review log, paper createdAt+sortOrder, in-progress test, panels, blueprints), `settings.json` (all DataStore prefs except `in_progress_test`) | System save dialog; success **silent** |
 | 4 | `Share backup (zip)` | `!busy` | Same zip to `cacheDir/shared/mcqapp-backup.zip`, then `Share file` chooser | Chooser |
 | 5 | `Restore backup` | `!busy` | `OpenDocument("application/zip", "application/octet-stream")` → **confirmation dialog first** | See below |
-| 6 | `Export Logs` | always | Shares app's log file via `FileProvider` + `ACTION_SEND` (`text/plain`), chooser title `Export Logs` | See failures |
+| 6 | `Export Logs` | `!busy` | Shares app's log file via `FileProvider` + `ACTION_SEND` (`text/plain`), chooser title `Export Logs` | See failures |
 
 **Restore Confirmation Dialog:**
 - Title: `Restore backup`
@@ -2055,14 +2057,14 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises, then re-
 |----------|------|
 | under `Backup (zip)` | `Everything — papers, questions, schedules, review history, attempts, bookmarks and settings — in one readable zip. Restores exactly the state it was taken from.` |
 | under `Restore backup` | `Replaces the whole library and all settings with the backup's contents. Anything added since the backup is gone.` |
-| under `Export Logs` | `Backs up every paper, bookmark and attempt to one JSON file. Re-import it anywhere to restore content and history.` |
+| under `Export all data (JSON)` | `Backs up every paper, category, question, passage, bookmark, attempt and card schedule to one JSON file. Re-import it anywhere to restore content and history. Settings and the review log are only in the zip backup.` |
 
 #### 4.3 Storage
 
 - Heading `Storage` + `Refresh` button → `refreshStorage()` re-runs `repository.storageReport()`. Also loaded once in ViewModel constructor.
 - While `storage == null`: `Measuring…`
 - Summary line: `Database: %1$s · %2$d papers · %3$d questions · %4$d attempts · %5$d bookmarks`
-  - `%1$s` = `StorageInfo.formatBytes(dbBytes)` of `context.getDatabasePath("mcq.db").length()` — **main DB file only** (`-wal`/`-shm` not counted); `?` if path throws; formats `<1024` as `N B`, `<1 MiB` as `%.1f KB`, else `%.1f MB`.
+  - `%1$s` = `StorageInfo.formatBytes(dbBytes)` of `context.getDatabasePath("mcq.db")` plus its `-wal` and `-shm` files, when present; `?` if the paths throw; formats `<1024` as `N B`, `<1 MiB` as `%.1f KB`, else `%.1f MB`.
   - `%2$d` papers = papers table row count.
   - `%3$d` questions = `countQuestions()`.
   - `%4$d` attempts = `attemptDao().countAll()` (finished attempts).
@@ -2195,7 +2197,7 @@ question_stats, etc.
 
 | Label | Source | Definition |
 |-------|--------|------------|
-| **Database** | `formatBytes(dbBytes)` | Main SQLite file size on disk (`pageSize * pageCount`). |
+| **Database** | `formatBytes(dbBytes)` | SQLite main file plus `mcq.db-wal` and `mcq.db-shm` when present. |
 | **Papers** | `report.papers` | `paperDao.getAll().size`. |
 | **Questions** | `report.questions` | Sum of questions across all papers (category + paper-level). |
 | **Attempts** | `report.attempts` | `attemptDao.countAll()`. |
@@ -2212,28 +2214,23 @@ Expand toggle at > 5 papers. Footnote: `Image weight counts embedded pictures; l
    have confirms; asymmetry looks accidental.)
 2. **Practice/Strict are global Settings toggles**, not on the setup sheet. The
    sheet looks identical for a strict mock and an instant-feedback practice run.
-3. **Fresh-sample note can be a promise the attempt doesn't keep.** Shown from
-   setting + type, but attempt records `NONE` (reads Mock) unless exclusion
-   removed whole blocks and left ≥ 2× the request.
-4. **`Balanced` help says "mix difficulty bands"; code allocates by category
-   size and interleaves topics.** Difficulty bands not used.
-5. **`At risk` help says "due or nearly due"; only due cards selected.**
-   `atRisk = dueAt ≤ now`.
-6. **`Unseen` help says "never answered"; code means no card / NEW / stale hash.**
-   A question can be "unseen" after being answered if content hash changed.
-7. **Blueprint editor's "N questions" is a rounded share, not the real quota.**
-   Editor computes `round(globalShare × length)`; Start uses recursive floors,
-   remainders, caps, steal-one. Can differ by ≥ 1; sheet preview uses real
-   allocation.
+3. **Fixed — fresh-sample note matches the rule.** It reads "when enough others
+   remain"; the attempt still records `NONE` (Mock) if exclusion could not apply.
+4. **Fixed — `Balanced` help describes the real allocation:** proportional per
+   category, interleaved by topic.
+5. **Fixed — `At risk` help says due now;** `atRisk = dueAt ≤ now`.
+6. **Fixed — `Unseen` help names the real rule:** no card / NEW / stale hash.
+7. **Fixed — the blueprint editor's "N questions" is the real quota**
+   (`BlueprintQuotas.allocate`, the same allocation Start uses).
 8. **A blueprint can be "short by 5" and still run the full length.** Deficit
    redistributed to siblings with room; "Not complete" is about quotas, not total.
-9. **Session banner calls Balanced/Blueprint "Practice".** Any non-Random type
-   gets `Practice · <Type> · N questions`; Results calls same attempt `Mock`.
+9. **Fixed — the banner matches the family.** Balanced/Blueprint read
+   `<Type> · N questions` (mock); only practice types read `Practice · …`.
 10. **Short scope announced three times:** `Short test — 17 questions`, preview
     `Random · 17 questions · 17 min · Short test · 17 questions`, session
     `Short test · 17 questions`.
-11. **Skipped graded question labelled `Wrong` on review card**, though header
-    counts it as `Skipped` and `Skipped` filter selects it.
+11. **Fixed — a graded skipped question reads `Skipped` on the review card**,
+    matching the header count and the `Skipped` filter.
 12. **`No all questions`.** Empty state built by lowercasing filter constant.
 13. **Delta-in-margin uses two yardsticks.** `What this result means` compares
     `|delta|` with this attempt's margin; `Comparable trend` compares with sum of
@@ -2256,10 +2253,9 @@ Expand toggle at > 5 papers. Footnote: `Image weight counts embedded pictures; l
     rows, ≥ 2 passage blocks.
 21. **"Possible guess" = 1–2 seconds, not "under 3".** Dwell 0 = "untimed",
     excluded; instant answer on untimed paper not flagged.
-22. **Several visible strings hard-coded**, not resources: screen titles
-    `Results`/`Attempt review`, stat labels `Correct`/`Wrong`/`Skipped`,
-    per-question `Not scored`/`Correct`/`Wrong`, `Time spent:`, bookmark
-    content descriptions, `Uncategorized`.
+22. **Fixed — the listed Results/Browse strings moved to resources:** screen
+    titles, stat labels, per-question status, bookmark content descriptions and
+    `Uncategorized`.
 23. **`No per-question timing was recorded` unreachable** — Time card renders
     only when `hasDwell` true.
 24. **Panel cannot be created from Random or Mistakes sample.** `New panel…`
@@ -2272,8 +2268,8 @@ Expand toggle at > 5 papers. Footnote: `Image weight counts embedded pictures; l
     (ungraded/skips/negative marking).
 28. **Trend cards group by requested count, not shown count** — 80-asked/84-shown
     and 80/80 same line; 90 and 80 different.
-29. **`Attempts` header disappears when every attempt is legacy** (nested under
-    `if (trends.isNotEmpty())`).
+29. **Fixed — the `Attempts` header always renders**, even when every attempt
+    is legacy.
 30. **`Slow` filter can hide everything on a fast paper.** Threshold
     `max(60 s, 2 × median)`; median 10 s still requires 60 s.
 

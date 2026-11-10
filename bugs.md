@@ -1,533 +1,356 @@
-# Bug hunt — before the next feature
+# MCQ App — Bugs, Misleading Help Text, and UX Issues
 
-Scope: read-only bug hunt over every feature named in the request. Each pass
-looks at the pure rules, the database path and the UI wiring, and records the
-finding with the file/line that proves it. Every finding below has now been
-verified against the code and fixed in the working tree on
-`bugfix/bug-hunt`; nothing is committed yet.
-
-Severity: **P1** wrong behaviour a learner can hit in normal use, **P2** wrong
-figure or state in a narrower case, **P3** cosmetic / wording / low-risk.
-
-Passes: 1 statistics, 2 test, 3 study, 4 FSRS (clean), 5 large papers, 6
-import/export, 7 restore/backup, 8 search, 9 passages, 10 bookmarks (clean).
-19 findings: 1 P1, 9 P2, 9 P3; the P1 was S5 ("Study again" after Stop).
-Verification found **17 genuine bugs** (all fixed) and **2 false positives**
-(S4, T4), which stay here with the evidence that ruled them out.
-
-Verification: the app and unit-test sources compile, and the full pure-JVM
-pass on this host is green — all 147 non-Robolectric test classes, 1301 tests,
-0 failures (2 skipped). The Robolectric/SQLite regression tests added here
-cannot run on this ARM64 host; CI (x86_64) is authoritative for them.
+> Collected during the README rewrite (code inventories of Settings, Statistics, Test, Study, Library/Browse/Editor/Passages/Bookmarks/Search, Import/Export/Backup). All references point to source files under `app/src/main/java/com/mcqapp/`.
 
 ---
 
-## 1. Statistics
+## Audit status (2026-11-10)
 
-### S1 (P2) — Exam margin uses the pooled sample size but the latest score
+Every item was checked against the source on branch `fix/bug-docs`. `Verified`
+means the code did what the item claimed; `Fixed` means it was changed in this
+branch. `Not a bug` means the behaviour is deliberate, documented, or a feature
+request rather than a defect.
 
-**Fixed.** `ExamStats.comparableMargin` now passes `latest.totalQuestions`
-(`latestShown`) as the sample, so the band describes the attempt whose score
-is shown; `deltaMarginPoints` also records the latest attempt's own margin.
+| # | Verdict | Action |
+|---|---------|--------|
+| 1 | Verified | Fixed: the failure dialog reads `exportErrorTitleRes`. |
+| 2 | Verified | Fixed: help now describes Simplified study auto-grading. |
+| 3 | Verified | Fixed: auto-advance is skipped in practice mode; help says when it fires. |
+| 4 | Verified | Fixed: help describes the per-category allocation. |
+| 5 | Verified | Not changed: the two definitions are deliberate and separately documented (Coverage is row-based; Unseen is the selector's pool). |
+| 6 | Verified | Fixed: same-form families use the across-attempt split-half; the per-attempt mean is only the different-form fallback. |
+| 7 | Verified | Fixed: the SEM string carries its unit (`questions`). |
+| 8 | Verified | Fixed: corrupt ratings are skipped by both charts. |
+| 9 | Verified | Not changed: History never had delete; this is a missing feature, not a defect. |
+| 10 | Verified | Fixed: help says due now. |
+| 11 | Verified | Fixed: help names the no-card / NEW / stale-hash rule. |
+| 12 | Verified | Fixed: help names all four fresh-sample types. |
+| 13 | Verified | Fixed: the target-retention percentage is shown and follows the thumb. |
+| 14 | Verified | Fixed: Reset asks first and the dialog names everything it resets. |
+| 15 | Verified | Fixed: help lists categories, questions, passages and schedules, and says settings/log are only in the zip. |
+| 16 | Verified | Fixed: the JSON help line sits under the JSON button. |
+| 17 | Verified | Fixed: full stop added. |
+| 18 | Verified | Fixed: `-wal` and `-shm` are included in the database figure. |
+| 19 | Verified | Fixed: Reset and Restore defaults both ask for confirmation. |
+| 20 | Verified | Fixed: Export Logs is disabled while busy. |
+| 21 | Verified | Not changed: silent success is a UX gap, not wrong behaviour; no completion feedback was added. |
+| 22 | Verified | Fixed: deleting a category asks for confirmation. |
+| 23 | Verified | Fixed: the comparability line says `fresh sample if enough others remain`. |
+| 24 | Verified | Fixed: the editor preview uses `BlueprintQuotas.allocate`, the same allocation Start uses. |
+| 25 | Verified | Fixed: Balanced and Blueprint show a mock banner, not `Practice`. |
+| 26 | Verified | Fixed: a skipped review is labelled and coloured `Skipped`. |
+| 27 | Verified | Fixed for the listed strings in `ResultsScreen` and the Browse filter; the bookmark strings already used resources. |
+| 28 | Verified | Not changed: leaving without submitting is a missing feature. |
+| 29 | Verified | Not changed: countdown/background policy is a design decision. |
+| 30 | Verified | Not a bug: the 60 s floor is documented in `ReviewFilters`. |
+| 31 | Verified | Fixed: the Attempts header always renders. |
+| 32 | Verified | Not changed: auto-select on import and same-name replace are design choices. |
+| 33 | Verified | Not changed: deleting an unselected theme is a missing affordance. |
+| 34 | Verified | Not a bug in practice: the hash is a pre-filter and `sameQuestionContent` is authoritative, so a table/formula-only duplicate is not dropped. Only a table/formula-only edit fails to reset the card. |
+| 35 | Verified | Not changed: stale-until-Refresh is accepted behaviour. |
+| 36 | Verified | Fixed: comment says eight tabs. |
+| 37 | Verified | Fixed: the `formatDuration` comment matches the pinned output. |
+| 38 | Verified | Not a bug: legend placement is a design choice. |
+| 39 | Verified | Fixed: label is the final tie-break. |
+| 40 | Verified | Not a bug: the same-day band is documented as deliberate in `bandOf`. |
+| 41 | Verified | Not changed: wording nit; the row shows the configured value. |
+| 42 | Verified | Not a bug: exclusions are documented and the guard string is shown. |
+| 43 | Verified | Not a bug: `stats_forecast_help` already explains the overdue start. |
+| 44 | Verified | Not a bug: due-this-week is a superset by design. |
+| 45 | Verified | Not a bug: Monday-first mapping is correct. |
 
-`ExamStatsBuilder.build` computes `shown` as the sum over every comparable
-attempt (`ExamStats.kt:248`, `val shown = comparable.sumOf { it.totalQuestions }`),
-then feeds that pooled count to `marginPoints(latestPercent, shown, population)`
-(`ExamStats.kt:277-278`). The ± margin is therefore attached to **one**
-attempt's percentage while `n` is the number of questions across **all**
-attempts. The UI prints it as `Approx. 95% margin ±x points · n=<shown>`
-(`ExamSection.kt:199-202`, `strings.xml:591`).
-
-Example: three comparable 20-question mocks, latest 60%. The true half-width
-for that attempt is about ±21 points; the code computes it with n=60, about
-±12 points. The margin shrinks by roughly √(attempts) as history grows, even
-though the latest attempt's sample did not grow. Any score change that is
-really inside the noise of a 20-question mock can therefore be reported as
-"outside the margin".
-
-### S2 (P2) — Exam trend/delta noise test uses one attempt's margin, not the difference's
-
-**Fixed.** `deltaIsNoise` now compares `|latest − first|` with the sum of both
-attempts' margins (the same rule `TestReport` already used), so a swing inside
-the combined band is called noise.
-
-`deltaIsNoise` (`ExamStats.kt:186-191`) compares `|latest - first|` with
-`marginPoints` of the latest attempt only. The report path already does this
-correctly by adding both margins (`TestReport.kt:712`:
-`(current.marginPoints ?: 0.0) + (previous.marginPoints ?: 0.0)`). For two
-independent 20-question attempts at 50%, the exam tab calls a 24-point swing
-"real" when the combined band is ~30 points.
-
-### S3 (P2) — Scoped retention breakdown is per question, labelled with its category
-
-**Fixed.** `RetentionAccumulator.countGroup` now keys on the category when a
-paper is selected, so the card is a real category breakdown; `RetentionData`
-carries `groupIsPaper` and `RetentionSection` titles the single-paper card
-"Retention by category". `StatsRetentionStreamTest.paperScopeKeepsOnlyItsOwnRows`
-was updated to the category grouping.
-
-`RetentionAccumulator.countGroup` keys on `questionId` whenever a paper is
-selected (`StatsAggregator.kt:786-789`), then `groupRetention()` labels each
-question row with that question's category title (`StatsAggregator.kt:874-881`).
-A scoped paper with 50 questions in 5 categories therefore renders up to 15
-rows with repeated category labels — one row per question — and silently drops
-the rest (`take(15)`), instead of aggregating the reviews by category. The card
-is still titled "Retention by paper" (`strings.xml:719`) in a single-paper
-view. `StatsRetentionStreamTest.kt` pinned the per-question grouping, so this
-was long-standing behaviour rather than a recent regression, but the label
-and the cap made the card read as a category breakdown it never was.
-
-### S4 (P2) — Session/sitting figures are computed over append order, so imported history is counted as sittings
-
-**Not a bug.** The premise — an import appends months of history in one
-block — does not hold. `Backup.restore` writes `ReviewLogRow.toEntity()` with
-`id = id` (`Backup.kt:1071`), and the backup writer emits rows in `id` order
-(`Backup.kt:727`), so a restore preserves the original live order (the tables
-are wiped first). The Anki/JSON importers write no `review_log` rows at all.
-Append order is therefore review order for every path that writes the log.
-
-`WorkloadAccumulator.countSession` and `GuessingAccumulator.add` both split
-sittings on a 30-minute gap in the order rows are fed
-(`StatsAggregator.kt:1009-1031`, `:1704-1718`), and `FsrsReplay.Stream` is fed
-by ascending `review_log.id` (`StatsStore.kt:371-381`). That is append order,
-not review time. A restored backup or an Anki import appends months of history
-in one block: consecutive rows from different cards are minutes or months
-apart in the clock, so the import invents hundreds of separate "sessions" and
-the 30-minute sitting position on the Guessing tab is equally meaningless for
-imported rows. Live rows are fine because id order and time order agree.
+Verification: `:app:compileDebugKotlin`, `:app:compileDebugUnitTestKotlin`,
+and the JVM tests `AutoAdvanceTest`, `BlueprintQuotasTest`, `StatsChartKitTest`,
+`ReliabilityTest`, `StatsAggregatorTest`, `StorageInfoTest` and
+`WorkloadAdditionsTest` (including the new corrupt-rating regression) pass on
+the NixOS arm64 host. Robolectric/SQLite tests remain CI-only there.
 
 ---
 
-## 2. Test
+## 🔴 Critical Bugs (Wrong Behaviour)
 
-### T1 (P2) — Report margin divides an answered-based accuracy by the shown count
+### 1. Failure dialog always titled "Export failed"
+**Files:** `ui/settings/SettingsScreen.kt` (~line 328), `ui/settings/SettingsRows.kt`
+- `SettingsScreen` tracks intended title in `exportErrorTitleRes` (assigned in 5 places: export, backup, restore, share, theme import, export-logs).
+- Dialog renders `stringResource(R.string.export_failed)` **unconditionally**.
+- A `Backup failed`, `Restore failed`, `Theme import failed`, or `Export Logs` failure appears under the wrong heading.
+- `exportErrorTitleRes` is written and never read (dead state).
 
-**Fixed.** The margin (and the prior attempt's, `trendOf` and
-`isTrendWorthy`) now uses `score.accuracyAsked`, whose denominator is the shown
-count, matching `TestStatistics.marginPoints`' documented sample. A new test
-pins the pairing.
+### 2. Stale help text: "Response-time thresholds don't apply to Study"
+**Files:** `res/values/strings.xml` (`anki_thresholds_help`), `ui/settings/StudySchedulerSection.kt`
+- Help: `The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.`
+- **Reality:** The only consumer of `anki_fast_seconds` / `anki_slow_seconds` is `Study.autoGrade()` running inside **Simplified study** (default **ON**).
+- There is no "rebuild a schedule from past attempts" path left (`StudyStore` explicitly stopped re-seeding from attempt history).
+- With Simplified study on, changing these two numbers silently changes how Study grades every card.
 
-`TestReportBuilder.scoreOf` defines `accuracy = correct / (correct + wrong)`, with
-skips excluded (`TestReport.kt:825-841`). The report's margin then passes that
-proportion with `sample = score.shown`, which includes skipped rows
-(`TestReport.kt:325-328`), and `TestStatistics.marginPoints` documents `sample`
-as the shown count (`TestReport.kt:1218`). Skipping questions leaves the
-numerator on one denominator and the sample size on another, so the reported
-± margin is too small — the more questions a learner skips, the more
-overconfident the report becomes. The same mismatch is repeated for the prior
-comparable attempt (`TestReport.kt:370-376`), for `isTrendWorthy`
-(`TestReport.kt:726-734`) and in `trendOf` (`TestReport.kt:686-705`), so the
-"change is inside the margin" judgement inherits it.
+### 3. Auto-advance advances on selection, not "after answering"
+**Files:** `domain/AutoAdvance.kt`, `ui/test/TestViewModel.kt`, `res/values/strings.xml` (`auto_advance_help`)
+- Help: `Move to the next question after answering (single-answer only)`
+- Code: `AutoAdvance.nextIndex()` is invoked from `TestViewModel.toggleOption()` — advances **the instant an option is tapped**, before any reveal/confirmation.
+- A declared guess still advances.
+- Only single-answer questions; never on last question.
 
-Example: 20 shown, 10 answered (8 correct), 10 skipped. Reported accuracy 80%
-with n=20; the 80% is measured on 10 answers, and the Wilson interval for it is
-about twice as wide.
+### 4. Balanced help says "mix difficulty bands"; code allocates by category size
+**Files:** `domain/signals/TestSelector.kt`, `res/values/strings.xml` (`test_type_balanced_help`)
+- Help: `Mix difficulty bands so easy, medium and hard questions all appear.`
+- Code: allocates requested count **proportionally per category** (largest remainder, min 1 where possible), then round-robin interleaves categories.
+- Difficulty bands are not used anywhere in the Balanced selector.
 
-### T2 (P2) — Negative marking is reconstructed from question counts, not marks
+### 5. Two different "unseen" definitions in the same app
+**Files:** `domain/stats/CoverageStats.kt`, `domain/TestProgress.kt`, `data/repository/McqRepository.kt`
+| Location | Definition |
+|----------|------------|
+| **Cards tab (Coverage)** | `studied` = any `card_state` row (even `NEW`). `unseen = max(questions − studied, 0)`. |
+| **Tests tab (Current scope)** | `unseen` = questions with **no** `card_state` row that both matches current `contentHash` **and** is not `NEW`. |
+- A `NEW` card counts as **studied** for Coverage but **unseen** for the Tests scope counter.
+- The README documents both; the app should pick one definition.
 
-**Fixed.** The applied rate is now stored on the attempt: `AttemptEntity` /
-`Attempt` / `AttemptDto` carry `negativeMarking` (DB **v24**, migration
-`MIGRATION_23_24` adds the nullable column), the save/export/import paths copy
-it, and `markingOf` prefers the stored rate, keeping the historic
-reconstruction only for pre-v24 rows. A test covers an unequal-marks attempt.
+### 6. Reliability uses wrong estimator (displayed `r` is mean of within-attempt split-half)
+**Files:** `domain/stats/Reliability.kt`, `domain/stats/ExamStats.kt`, `ui/stats/sections/TestsSection.kt`
+- `Reliability.splitHalfAcrossAttempts()` implements the across-attempt estimator and is documented as "the estimator comparable to kr20".
+- **It is never called** from the stats path.
+- Displayed `r` = mean of per-attempt split-half (odd vs even index in the order asked) → Spearman–Brown `2r/(1+r)`.
+- The across-attempt estimator exists but is dead code on the Statistics screen.
 
-`markingOf` recovers the penalty as `(correctCount - score) / wrongCount`
-(`TestReport.kt:848-858`). That treats every correct question as one mark.
-Questions carry their own `marks` (`domain/Marks.kt`, editable in the editor),
-and `maxScore` sums them, so on a paper with any question worth ≠ 1 the
-recovered value is not the penalty rate. Example: a 0.25-penalty paper with a
-4-mark question answered wrongly and a 2-mark question right stores
-`correctCount = 1`, `score = 2 - 1 = 1`; the formula returns `(1-1)/1 = 0.0`.
-The results header then says there was no negative marking when there was, and
-`guessingOf` is re-enabled for that attempt (`TestReport.kt:804`), showing a
-guessing correction the marking rules out.
+### 7. SEM printed on raw question-count scale with no unit
+**Files:** `domain/stats/ExamStats.kt`, `ui/stats/sections/TestsSection.kt`
+- `SEM` = `SD(total scores) × √(1 − r)` where SD is population SD of attempts' total scores (0..n).
+- Shown as `SEM %2$.1f` (e.g. "SEM 4.0") on the same line as `r = 0.58`.
+- **No unit** — reads like percentage points but is questions.
+- Suppressed when `r ≤ 0` or SD not finite.
 
-### T3 (P3) — A legacy route does not take over a saved bounded session's answers
+### 8. Grade mix drops corrupt ratings; Answer buttons folds them into Easy
+**Files:** `domain/stats/StatsAggregator.kt` (`DayBucket.add` vs `countAnswerButtons`)
+- `DayBucket.add`: `rating !in 1..4` → **skipped** (not counted in any segment).
+- `countAnswerButtons`: same corrupt ratings → **counted as Easy**.
+- The two cards (Grade mix over time vs Answer buttons) can disagree by one row.
 
-**Fixed.** `checkResumeOffer` now arms `dropStaleAnswersOnSave` for any
-mismatched session of the paper, bounded or legacy, so the first save drops the
-abandoned answer rows. Regression test
-`aLegacySessionDropsTheAbandonedBoundedSessionsAnswers`.
-
-`checkResumeOffer` arms `dropStaleAnswersOnSave` only when `sessionPlan != null`
-(`TestViewModel.kt:1148-1156`). Answer rows are keyed by `(paperId,
-questionId)`, and a legacy session (deep link, or the no-paper-record fallback
-at `LibraryScreen.kt:242`) has `sessionPlan == null`. If it starts on a paper
-whose slot holds a bounded session, its first `persistProgress` overwrites the
-header but leaves the bounded session's rows in place
-(`TestProgressStore.kt:84-92`). A later resume of the legacy session joins
-those rows into the drill (`offer` → `withAnswers`,
-`TestProgressStore.kt:116-121`), so it opens with answers the learner never
-gave in it. Live bounded sessions are protected; only the legacy start path is
-not.
-
-### T4 (P3) — A drill asking for no clock still inherits one
-
-**Not a bug.** A drill always asks for its minutes, and `0` from that dialog is
-not the untimed value: the documented precedence is a drill's own minutes
-(> 0), then the per-attempt override (where `0` *is* intentional "untimed"),
-then the paper. `ExamTimingSessionSecondsTest.aDrillWithoutMinutesUsesTheOverrideLikeAnySession`
-pins this contract.
-
-`ExamTiming.sessionSeconds` only honours `drillMinutes` when it is `> 0`
-(`ExamTiming.kt:55-60`). `0` is the untimed value used everywhere else in the
-same function, so a drill whose dialog produced 0 falls through to the
-per-attempt override or the paper's duration and runs timed. No current UI
-emits `drillCount` (only deep links do), which keeps this low.
+### 9. No attempt delete in History
+**Files:** `ui/history/HistoryScreen.kt`, `ui/history/HistoryViewModel.kt`
+- History has no delete/clear control and no confirmation for attempts.
+- Deleting a paper, category, question, panel, or blueprint **has** a confirm dialog.
+- Asymmetry looks accidental; the brief requested "delete confirmation" for attempts.
 
 ---
 
-## 3. Study
+## 🟠 Misleading Help Text (Strings Should Be Fixed)
 
-### S5 (P1) — "Study again" after Stop leaves the session stopped; the first grade is written and then re-gradable
+### 10. "At risk: due or nearly due" — only due cards selected
+**File:** `res/values/strings.xml` (`test_type_at_risk_help`)
+- Help: `Questions whose memory is due or nearly due, before they are forgotten.`
+- Code (`TestSelector.kt`): `atRisk` = `dueAt <= now`. A card one day early is **not** included.
+- "Nearly due" is not implemented.
 
-**Fixed.** `restart()` clears `stopped` before pulling, so the first grade
-persists once and advances. Regression test
-`restartAfterStopLetsTheFirstGradeAdvance` asserts exactly one `review_log` row.
+### 11. "Unseen: never answered" — code means no card / NEW / stale hash
+**File:** `res/values/strings.xml` (`test_type_unseen_help`)
+- Help: `Questions you have never answered in this scope.`
+- Code: `unseen` = no `card_state` row **OR** row is `NEW` **OR** `contentHash` stale (question edited since card built).
+- A question can be "unseen" after being answered if its content hash changed.
 
-`stop()` sets `stopped = true` (`StudyViewModel.kt:899-907`) and only `load()`
-clears it (`:251`). `restart()` (`:981-1044`), which is what the finished
-screen's "Study again" button calls, never clears the flag. It does pull a new
-card, so the session looks alive. The first grade then runs
-`recordStudyReview`, `advanceStats`, and hits `if (stopped.get())` before
-`pullCard()` (`:845-855` for four buttons, `:773-783` for simplified), so it
-returns with the same card still on screen, still revealed, and `pendingGrade`
-still set. The guard `failed to advance` is invisible (`gradeError` is null and
-`gradedAndStuck` is false, so the UI offers no Retry), and the grade/Next
-buttons stay enabled. Tapping again persists a **second** review for the same
-question: two `review_log` rows, two FSRS applications (so the interval,
-`reviewCount` and possibly the leech flag move twice), and doubled statistics.
-The same double-write is what `gradedAndStuck` exists to prevent
-(`StudyScreen.kt:364-366`), but that flag is only set on a pull exception.
+### 12. "Avoid recently tested questions" names only Random/Balanced
+**File:** `res/values/strings.xml` (`avoid_recent_questions_help`)
+- Help: `A Random or Balanced test skips questions asked in your last three comparable tests...`
+- Code (`TestType.supportsFreshSample`): also covers `EASIEST_QUESTIONS` and `BLUEPRINT`.
 
-Reproduction: study a few cards → Stop → Study again → grade the first card →
-the card stays → grade it again.
+### 13. Target retention slider shows no numeric value
+**File:** `ui/settings/StudySchedulerSection.kt`
+- Slider range 0.75–0.97, 21 steps, default 0.90.
+- **No label, no `%`, no "90%" text** — learner infers value only from thumb position.
+- Every other scheduler number is displayed exactly.
 
-### S6 (P3) — Study dwell runs on the wall clock
+### 14. "Reset" in Study section resets more than implied
+**Files:** `ui/settings/StudySchedulerSection.kt`, `data/repository/RepositorySettings.kt`
+- Visually attached to `Spaced repetition` heading.
+- Actually resets: max interval, relearn delay, leech threshold, day-start hour, easy threshold, hard threshold, **target retention, ranking mode, introduce-new-cards**.
+- Silently leaves fitted FSRS weights alone (correct, but undocumented in UI).
 
-**Fixed.** The per-question dwell and the sitting clock now use
-`SystemClock.elapsedRealtime()`; wall-clock time is kept only where the
-scheduler genuinely needs calendar time (due previews). A manual/NTP jump can
-no longer inflate or zero a dwell segment.
+### 15. JSON export help understates contents
+**File:** `res/values/strings.xml` (`export_all_help`)
+- Help: `Backs up every paper, bookmark and attempt to one JSON file.`
+- File also carries: categories, questions, passages, **`scheduling` map** (schedules/interval state).
+- Carries **no settings and no review-log history** (only Backup zip has those).
 
-Study measures the per-question clock with `System.currentTimeMillis()`
-(`StudyViewModel.kt:408`, `:508`, `:530`, `:603-628`), and the simplified flow
-feeds that elapsed time to `Study.autoGrade`, where it chooses Easy/Good/Hard
-(`StudyViewModel.kt:651-681`). The Test session deliberately moved the same
-measurement to `SystemClock.elapsedRealtime()` for exactly this reason
-(`TestViewModel.kt:285-294`, the D10 comment). A manual or NTP clock jump while
-studying can therefore inflate the dwell and turn a Good answer into a Hard
-one; a backwards jump silently drops the segment to zero. The session summary
-time is distorted the same way.
+### 16. Help line for "Export all data" sits under "Export Logs"
+**File:** `ui/settings/BackupDataSection.kt` (render order)
+- The description for `Export all data (JSON)` is placed under the `Export Logs` button.
 
-### S7 (P3, scalability) — Every study pull scans all of the paper's card rows
+### 17. Hard answer threshold help missing full stop
+**File:** `res/values/strings.xml` (`anki_slow_seconds_help`)
+- `...above this response time` (no period) while every sibling help string has one.
 
-**Fixed.** `StudyStore.resetEdited` now runs once per paper per process: the
-stale-hash scan repairs rows left by an older hash formula, while every
-content-changing write (editor, imports, passage moves) already deletes the
-affected `card_state` rows. The pull no longer pays a whole-history join after
-every served card.
-
-`getNextStudyCard` calls `resetEdited(paperId)` on every pull
-(`StudyStore.kt:143-151`), which runs `staleForPaper` (`Daos.kt:1757-1764`) — a
-join over every `card_state` row of the paper comparing two hashes. The query
-returns only edited cards, but its cost is the paper's whole study history, so
-on a 250k-card paper every served card pays that scan instead of only the
-pulls near an edit. The index cannot help: the predicate compares columns from
-two tables. This is structural, not measured on this host (no emulator/build
-here); it is the kind of cost the large-paper pass should time.
+### 18. Storage "Database:" figure excludes WAL
+**File:** `ui/settings/BackupDataSection.kt`, `domain/StorageInfo.kt`
+- Uses `context.getDatabasePath("mcq.db").length()` — **main DB file only**.
+- `-wal`/`-shm` not counted; label reads as total DB size.
 
 ---
 
-## 4. FSRS
+## 🟡 UX Issues (Design Trade-offs Worth Discussing)
 
-No confirmed defect. The formulas match FSRS-6, the optimizer port matches the
-reference update rules, and `rowsForQuestions` pages correctly (ordered and
-grouped by question). No section here for that reason; the pass is recorded so
-the numbering shows it was not skipped.
+### 19. Reset / Restore defaults unguarded
+**Files:** `ui/settings/StudySchedulerSection.kt` (`Reset`), `ui/settings/AppearanceSection.kt` (`Restore defaults` in optimizer)
+- Both destructive (pacing knobs / fitted FSRS weights).
+- Both act immediately with **no confirmation dialog and no feedback**.
+- `Restore backup` by contrast double-checks with `Replace everything`.
 
-## 5. Large papers (many categories / many questions)
+### 20. Export Logs not disabled while busy
+**File:** `ui/settings/BackupDataSection.kt`
+- 5 data buttons gated by `!busy`; `Export Logs` is **always enabled**.
+- A share can start mid-export/backup/restore.
 
-### L1 (P2) — Phase-3 scoped reads bind every selected category in one statement
+### 21. Success is silent for export/backup/share
+**File:** `ui/settings/SettingsScreen.kt`, `ui/settings/SettingsRows.kt`
+- Only restore reports back (dialog with summary).
+- Export/backup/share give no completion signal other than button flicker.
+- Cancelled picker gives none either.
 
-**Fixed.** `tagCountsChunked`, `questionIdsForTagChunked`,
-`bookmarkedIdsInScopeChunked` and `dwellSamplesInScopeChunked` split the scope
-at the existing 500-id budget; the tag counts are summed per folded tag and
-re-sorted, and the other three feed callers that build sets.
+### 22. Delete category immediate, no confirmation
+**File:** `ui/library/LibraryPaperCard.kt` (`ManageCategoryRow` menu)
+- Red menu item behind divider.
+- One tap deletes category **and all its questions**.
+- No confirm dialog (other deletes have confirms).
 
-The codebase is explicit that SQLite on the supported API 26–30 devices allows
-999 bind variables and that a 1000-category paper exists (`ChunkedQueries.kt:5-10`
-and its `chunks()` wrappers). Four scoped reads were missed:
+### 23. Fresh-sample note can be a promise the attempt doesn't keep
+**Files:** `ui/library/TestSetupSheet.kt`, `domain/TestPlan.kt`
+- Note shown from setting + type (Random, Balanced, Easiest, Blueprint).
+- At session load: exclusion applied **only if** whole passage blocks removed **and** remaining pool ≥ 2× request.
+- If not applied, attempt records `exclusionMode = NONE` (family = Mock) even though note was shown.
 
-- `tagCounts` — `Daos.kt:2181`, the Tag picker's counts (`McqRepository.kt:581-588`,
-  called from `LibraryViewModel.kt:748-751`);
-- `questionIdsForTag` — `Daos.kt:2196`, the Tag test's pool
-  (`McqRepository.kt:594-605`, called from `LibraryViewModel.kt:719-723` and
-  `TestViewModel.kt:374-378`);
-- `bookmarkedIdsInScope` — `Daos.kt:2215`, the Bookmarked test's pool
-  (`McqRepository.kt:606-613`);
-- `dwellSamplesInScope` — `Daos.kt:2235`, the Slowest test's median dwell
-  (`McqRepository.kt:693-705`).
+### 24. Blueprint editor shows rounded share, not real quota
+**File:** `ui/library/BlueprintEditorSheet.kt`
+- Share line: `round(globalShare × length)`.
+- Real allocation (Start): recursive floors, remainders, caps, steal-one.
+- Can differ by ≥ 1; sheet preview rows use real allocation.
 
-All four receive the **ticked** category ids (`LibraryScreen.kt:471/475`,
-`TestViewModel.kt:370-378`), not the expanded subtree, so they are safe for a
-normal small selection — but ticking more than ~996 maximal nodes (for example
-1000 flat categories, or 1000 leaves individually) binds over the ceiling and
-throws `SQLiteException: too many SQL variables` on Android 11 and older. The
-same reads are not used for ordinary random/focus tests, so this is a crash in
-a narrower case, not the main path. The fix is the existing `chunks()` wrapper
-pattern (or a paper-scoped query like browse's).
+### 25. Session banner calls Balanced/Blueprint "Practice"
+**Files:** `ui/test/TestSessionScreen.kt`, `ui/results/ResultsScreen.kt`
+- Any non-Random type gets banner `Practice · <Type> · N questions`.
+- Results calls same attempt `Mock` (for Balanced/Blueprint).
+- Template choice, not a claim about comparability, but confusing.
 
-### L2 (P3, scalability) — Resuming rebuilds a whole-paper id map to find <150 saved ids
+### 26. Skipped graded question labelled "Wrong" on review card
+**Files:** `ui/results/ResultsScreen.kt` (per-question card), `domain/Scoring.kt`
+- Header counts as `Skipped`; `Skipped` filter selects it.
+- Per-question card status word: `Wrong` (literal, not resource).
+- Container colour: red (wrong).
 
-**Fixed.** `reorderedTo` / `subsetInOrder` index only the saved ids and stream
-the base once (`savedIndex`), so the transient structure is O(saved) instead of
-a boxed map over every row of the paper. Existing semantics tests still cover
-the replay order, repeats and deleted ids.
+### 27. Several visible strings hard-coded (not in resources)
+**Files:** Multiple
+| String | Location |
+|--------|----------|
+| `Results` / `Attempt review` | `ResultsScreen.kt` (screen title) |
+| `Correct` / `Wrong` / `Skipped` | `ResultsScreen.kt` (stat labels) |
+| `Not scored` / `Correct` / `Wrong` | `ResultsScreen.kt` (per-question status) |
+| `Time spent:` | `ResultsScreen.kt` |
+| `Bookmark question` / `Remove bookmark` | `ResultsScreen.kt`, `ui/browse/BrowseQuestionCard.kt`, `ui/bookmarks/BookmarksScreen.kt` |
+| `Uncategorized` | `ui/browse/BrowseScreen.kt` |
 
-`TestSnapshot.orderOf` replays a frozen sample with
-`base.subsetInOrder(saved.selectedQuestionIds)` and a legacy snapshot with
-`base.reorderedTo(saved.questionIds)` (`TestSnapshot.kt:205-215`). Both build a
-`HashMap<String, Int>(size * 2)` plus a `BitSet(size)` over the **base order**,
-which is the whole paper for a paper-wide or scoped session
-(`SessionOrder.kt:196-256`). `base` is streamed precisely so a million-question
-paper is a byte pool plus two `IntArray`s (`QuestionStore.kt:161-178`), but the
-resume path then allocates one fresh `String` per row (`idOfRow`,
-`SessionOrder.kt:246-247`) and a boxed `Int` per entry in the map. A bounded
-20-question test on a million-question paper therefore pays a transient
->100 MB (unmeasured, no build/emulator on this host) and defeats the streaming
-design at exactly the moment the learner reopens the app. Building the lookup
-from `savedIds` and the pool (or streaming the order while comparing against a
-small saved-id set) would keep this O(saved) in memory.
+### 28. No way to leave a live sitting without submitting
+**File:** `ui/test/TestSessionScreen.kt` (BackHandler)
+- Top-bar back arrow opens submit dialog; `Cancel` returns to question.
+- Killing app = only "abandon" (leaves resumable snapshot).
 
----
+### 29. Countdown never pauses, but dwell clock does
+**Files:** `domain/ExamTiming.kt`, `domain/TestTiming.kt`, `ui/test/TestSessionScreen.kt`
+- Auto-submit can fire while submit dialog, palette, or answer review is open.
+- Background time still counts against timed paper.
 
-## 6. Import / export
+### 30. Slow filter threshold hides everything on fast paper
+**File:** `domain/ReviewFilters.kt`, `ui/results/ResultsScreen.kt`
+- `Slow` = `dwell >= max(60 s, 2 × median)`.
+- Median 10 s still requires 60 s; a question slower than median but under a minute is not "Slow".
 
-### I1 (P2) — Category parent links are written verbatim, so a remap or a subtree export orphans the child
+### 31. Attempts header disappears when every attempt is legacy
+**File:** `ui/history/HistoryScreen.kt`
+- `Attempts` header nested under `if (trends.isNotEmpty())`.
+- If all attempts are legacy, no trends → no header → attempt list appears without heading.
 
-**Fixed.** Both importers collect `(effective category, raw parent)` links and
-resolve them after the whole paper is written through the same raw → effective
-map that ids and titles use; a parent the destination does not hold (a subtree
-export) becomes `null`, so the category is a root. `PaperStore.buildTree` also
-treats any remaining dangling parent as a root. Regression tests cover the
-remapped parent (both paths) and the subtree root.
+### 32. Imported themes auto-selected, same-name silently replaces
+**Files:** `ui/settings/AppearanceSection.kt`, `ui/theme/CustomThemeCodec.kt`
+- Successful import selects the theme (writes `theme_palette`).
+- No success toast/dialog.
+- Same-name import (case-insensitive) **replaces** existing entry instead of adding.
 
-`CategoryEntity.parentId` is written straight from the incoming DTO in both
-import paths (`Importer.kt:273`, `:282`, `:293`; `StreamingImportSession.kt:157`).
-The category **id**, however, is not the incoming one in two supported cases:
+### 33. Remove this theme only for currently selected custom theme
+**File:** `ui/settings/AppearanceSection.kt`
+- Cannot delete a custom theme that is not selected without selecting it first (which changes the app's look).
 
-- the id belongs to another paper, so it is remapped to
-  `$effectivePaperId-$rawId` (`Importer.kt:252-267`);
-- the id is unknown but a category with the same title exists in this paper,
-  so the stored row's id is adopted (`Importer.kt:252-253`).
+### 34. Content hash excludes tables and MathML formulas
+**Files:** `data/io/ContentHash.kt`, `data/io/Importer.kt`
+- Hash covers stem textContent, all options, explanation, image positions.
+- **Tables and MathML invisible to hash** — hash collision triggers full `sameQuestionContent` comparison, but only on collision.
+- Two questions differing only in a table/formula share a hash.
 
-A child's `parentId` still names the file's raw parent id, which is then not a
-row in the destination paper. The tree is built only from `parentId == null`
-roots (`PaperStore.kt:76-92`), so the child and its whole subtree silently
-disappear from the drawer and from `CategorySelection`; `Paper.totalQuestions`
-also stops counting them (`Models.kt:310`). The questions stay in the DB
-and still appear in a whole-paper session, which makes the symptom look like a
-randomly missing section rather than an import failure.
-
-The same dangling parent is produced on the **export** side: exporting a
-nested category keeps its real `parentId` (`Exporter.kt:269-279`, header at
-`:431`), while the ancestor is not part of the exported subtree. Importing
-that document as a new paper (the usual "share one section" flow) creates the
-root category with a parent row that was never shipped. The Anki path is not
-affected because deck names carry the hierarchy itself.
-
-Fix direction: map raw category id -> effective id and resolve `parentId`
-through it on import, and/or normalise a selected export root's parentId to
-null (and treat an unknown parent as a root when building the tree).
-
-### I2 (P3) — "Update answers on duplicate" can write the key onto the wrong stored question
-
-**Fixed.** Both the whole-file and streaming refresh branches now pick the
-candidate with `ContentHash.sameQuestionContent(...)`, not the first hash hit,
-so a table/formula collision is imported as a new question instead of having
-another row's key, explanation, marks and tags overwritten. Regression test
-`updateAnswersDoesNotWriteAKeyOntoATableCollision`.
-
-With the Settings toggle on, the refresh branch takes the **first stored row
-sharing the content hash** without checking it is actually the same content:
-`candidates[contentHash]?.firstOrNull()` (`Importer.kt:390-392`,
-`StreamingImportSession.kt:450-452`). The hash deliberately cannot see tables
-or formulas (`ContentHash.kt:106-112` documents exactly that), and the branch
-skips the same `sameQuestionContent` guard the normal duplicate path applies
-(`Importer.kt:436-438`, helper at `:718-733`). So a file carrying a question that differs
-from a stored one only by a table option — a hash collision by design — has its
-answer key, explanation, marks, difficulty and tags written onto the stored
-question, and the incoming question is skipped (`return@forEachIndexed`).
-`candidates` is also grouped from an unordered hash match, so "first" is not
-necessarily the same id. Off by default, hence P3, but the effect is
-corruption rather than a skipped row.
-
-### I3 (P3) — In-file duplicate check treats a rich question and a flat-text question as the same
-
-**Fixed.** `sameQuestionContent(a: QuestionDto, b: QuestionDto)` normalises a
-flat side to one text element — for the question and for every option — before
-comparing, matching the stored-row variant. A table or formula only one side
-carries now reads as different content. Regression test
-`aFlatAndARichQuestionAreTheSameOnlyWhenTheirContentMatches`.
-
-`ContentHash.sameQuestionContent(a: QuestionDto, b: QuestionDto)` only compares
-elements when **both** sides have them (`ContentHash.kt:149-152`), and only
-compares an option's elements when both sides have them (`:156-160`). The
-stored-row variant normalises the flat side first (`dto.elements.ifEmpty {
-listOf(TextElement(dto.text)) }`, `ContentHash.kt:125-127`), so the two
-comparisons disagree. A file that mixes element-encoded and flat questions
-(a hand-authored file, or a merge of an export with a legacy one) whose visible
-text collides has the second one dropped as a duplicate even when the first
-carries a table or formula the second does not — the exact case the content
-check exists to protect (`ContentHash.kt:88-100`). Only affects duplicates
-within the one file, hence P3.
+### 35. Measuring... is a one-shot read
+**File:** `ui/settings/BackupDataSection.kt`, `ui/settings/SettingsViewModel.kt`
+- Report loaded in ViewModel constructor; only re-read on `Refresh` or after successful restore.
+- Importing a paper elsewhere leaves numbers stale until `Refresh` tapped.
 
 ---
 
-## 7. Restore / backup
+## 🟢 Minor / Cosmetic
 
-### R1 (P2) — A backup restore reverses the paper order (custom order is lost)
+### 36. StatsScreen doc comment says "six tabs"; there are eight
+**File:** `ui/stats/StatsScreen.kt:54`
 
-**Fixed.** `SettingsViewModel.backupAll` now writes
-`PaperCreated(id, createdAt, sortOrder)`; the restore side already applied a
-non-null `sortOrder` (`Backup.kt:962-965`), so the drawer comes back in the
-same order and a custom order survives.
+### 37. formatDuration doc comment wrong on all three examples
+**File:** `ui/stats/charts/ChartKit.kt:184-198`
+- Claims: `59 → "59s"`, `90 → "1.5m"`, `5400 → "1h 30m"`
+- Actual: `"59 s"` (space), `"1m"` (integer division), `"1 h 30 m"` (spaces).
 
-The only backup the UI writes is the streamed one (`SettingsViewModel.backupAll`,
-`:466-548`), and it builds its paper rows as
-`PaperCreated(it.id, it.createdAt)` (`:483-485`), leaving `sortOrder` at its
-`null` default. `PaperDto` has no sort order field either (`JsonDto.kt:102-115`),
-so `content.json` cannot carry it.
+### 38. Test result families legend lives on Overview tab, not Tests
+**File:** `ui/stats/sections/OverviewSection.kt`
 
-On restore the importer creates each paper as new, and a new paper takes the
-top slot: `sortOrder = (minSortOrder ?: 0L) - 1L` (`Importer.kt:148`,
-`StreamingImportSession.kt:294`). The export walks papers in display order
-(`Exporter.kt:41` via `paperDao().getAll()`, `ORDER BY sortOrder ASC`, `Daos.kt:15`),
-so with papers A, B, C the import assigns A=0, B=-1, C=-2 and the drawer shows
-C, B, A after a restore. Any custom order the user had set is discarded in the
-same pass, since only these freshly assigned values survive. `restoreStreaming` does try to apply the backup's order
-(`Backup.kt:962-965`) but only when `sortOrder` is non-null, and this writer
-never sets it.
+### 39. Group retention has no label tie-break
+**File:** `domain/stats/StatsAggregator.kt:892`
+- `compareBy(retention, -reviews)` while tag/category use `compareBy(retention, -reviews, label)`.
+- Equal-retention papers can swap order between builds.
 
-The in-memory `BackupSource.collect` does set it (`Backup.kt:665-667`), and the
-round-trip test uses `collect` (`BackupRestoreRoundTripTest.kt:218`), so the
-suite covers the path the UI does not use and misses this one. Fix direction:
-include `sortOrder` in `backupAll`'s `PaperCreated`, the same way `collect`
-does; the restore side already honours it.
+### 40. Same-day relearning steps land in 1–7 d interval band
+**File:** `domain/stats/StatsAggregator.kt:736-742`
+- `days <= 7` catches 0 days → mixes genuine 1–7-day lapses with same-day repeats.
 
----
+### 41. Leech threshold configurable (1..100) but strings don't name the number
+**Files:** `domain/SpacedRepetition.kt:163,200`, `res/values/strings.xml`
+- Default 8 (Anki default). Strings say "repeated forgetting across the whole history" without naming 8.
 
-## 8. Search
+### 42. Calibration excludes first review & learning steps; sample can be zero on busy account
+**File:** `domain/stats/StatsAggregator.kt:801-802, 878`
+- First review excluded (no state to predict from); learning steps excluded.
+- Guard text: `Calibration needs reviews of cards that already had a memory state.`
 
-### SE1 (P3) — The result count is the number loaded so far, and mostly lacks the "+"
+### 43. Forecast cumulative line starts from overdue count — first point above first bar
+**File:** `domain/stats/StatsAggregator.kt:1419-1432`
+- Correct but visually surprising; worth a sentence in docs.
 
-**Fixed.** The label now appends "+" unless the refresh and the latest append
-both reported `endOfPaginationReached`, so the loaded count is never presented
-as an exact total.
+### 44. dueThisWeek includes today and tomorrow (superset, not disjoint)
+**File:** `domain/stats/StatsAggregator.kt:1420`
 
-`SearchScreen` shows `"${hits.itemCount}${if (appending) "+" else ""} matches"`
-(`SearchScreen.kt:104-110`). With `enablePlaceholders = false`
-(`SearchViewModel.kt:75`), `itemCount` is only the rows Paging has loaded, and
-an append only starts when the list is scrolled near its end. A query with
-thousands of hits therefore shows e.g. "200 matches" with no "+", and the
-count jumps as the user scrolls. It reads as an exact total, which nothing
-computes (the prefilter count is not queried). Either query a count or label
-it "N loaded" / always show "+" when `nextKey` is non-null at the last load.
-
-Search otherwise came out clean: the prefilter (whole query OR longest word,
-escaped, Kotlin-folded) is a superset of the in-memory authority for all three
-scopes, the passage union is kept consistent with it, offsets advance by the
-prefilter's page size, and `SearchPagingSource` keeps fetching windows until
-it has enough hits, clearing `nextKey` on a short window.
+### 45. Weekday retention uses `floorMod(studyEpochDay + 3, 7)` → 0 = Monday
+**File:** `domain/stats/StatsAggregator.kt:878`
+- Not documented in UI; user sees Mon–Sun but mapping is implicit.
 
 ---
 
-## 9. Passages
+## Suggested Fix Priority
 
-### PA1 (P3) — Folded members land at the category tail, not beside their group, so a passage can end up split
-
-**Fixed.** Both importers now call the shared `AppDatabase.placeWithGroup` for
-each stray after moving it, which anchors it after the group's last member in
-the passage's category (the same placement an assignment uses). The
-`moveAfterAnchor` renumbering moved to `data/local/QuestionPlacement.kt` so the
-repository and the importers cannot drift. Regression test
-`aFoldedStraySitsBesideItsGroupNotAtTheCategoryTail`.
-
-When an imported file puts a passage's members in different categories, both
-importers move them into the passage's category and give them the category's
-next sort orders — i.e. append them after everything in that category
-(`Importer.kt:603-621`, `StreamingImportSession.kt:740-754`). The comment says
-they "at least arrive as one contiguous run", and they do form a run, but not
-the passage's run: if the passage already has members in that category, the
-category now holds two runs of the same passage, like
-`[A1 A2 B1 stray-A3]`.
-
-`PassageBlocks.blockBounds` treats every run as its own block
-(`PassageBlocks.kt:31-44`), so the session layer sees a 2-member passage and a
-1-member passage instead of one group:
-
-- `shuffled` / `sampled` can put the two runs far apart, interleaving unrelated
-  questions inside a comprehension set (`SessionOrder.kt:76-88, 314-327`);
-- `sampledBounded`'s knapsack can select one run and not the other
-  (`SessionOrder.kt:105-190`), so a test that promises whole-passage sampling
-  can ask only part of the set;
-- `minBlockSize` under-reports the group's real size (`SessionOrder.kt:245-255`).
-
-`excludingBlocksContaining` is unaffected (it excludes by passage index, all
-runs). Fix direction: after the fold, place the strays with `placeWithGroup`
-(right after the group's last member) instead of appending at the category tail,
-or call `placeWithGroup` for each stray once the category is updated.
-
-The rest of the passage surface came out clean: block-aware reorder pins the run
-edges (`PassageReorder.canMove`), the drill/sample only ever overshoots by a
-whole block, deleting a passage with members is refused, moving a passage
-moves every member with it, and a content edit resets the members' schedules.
+| Priority | Items |
+|----------|-------|
+| **P0 (bugs)** | 1, 2, 3, 4, 5, 6, 7, 8, 9 |
+| **P1 (misleading help)** | 10, 11, 12, 13, 14, 15, 16, 17, 18 |
+| **P2 (UX)** | 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35 |
+| **P3 (minor)** | 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 |
 
 ---
 
-## 10. Bookmarks
+## How to Use This List
 
-No confirmed defect in the normal flows. The list pages by cursor
-(`(bookmark.createdAt, questionId)` DESC, matched exactly by the WHERE clause),
-the cursor is only used as `nextKey` while `hasMore`, a toast-tap delete is
-idempotent, a question delete/paper delete/category delete removes the rows
-(`QuestionStore.kt:406,422`, `PaperStore.kt:202,261`), and the export keeps
-passage context and paper-title grouping.
-
-Two notes moved to Open questions rather than claimed as bugs: the "N
-bookmarks" header counts raw `bookmarks` rows while the list inner-joins
-`questions`, and the importers add bookmark rows without checking that the
-question exists, so only a hand-built or edited file can create the orphan
-that makes those two disagree.
+1. **Pick a batch** (e.g. P0 + P1) and create a feature branch `fix/bug-batch-1`.
+2. **Each fix** = one commit with a clear message referencing the bug number.
+3. **Update strings** in `res/values/strings.xml` where help text is wrong.
+4. **Add tests** where behaviour changes (e.g. AutoAdvance timing, Balanced selector, Reliability estimator).
+5. **Open draft PR**; owner decides merge order.
 
 ---
 
-## Open questions / not yet classified
-
-- Statistics: whether `getExamCategoryTotals`' `COUNT(*) AS asked` including
-  skipped rows is intended. It matches the report's `correct / asked` topic
-  rule (`TestReport.kt:103`), so it is not recorded as a bug.
-- Tests: `TestProgress.families` averages attempt percentages unweighted while
-  `ExamStats` weights by `score / maxScore`. Both are defensible readings of
-  "average"; only worth aligning if the two cards should agree.
-- Import/export: `PaperDto.passages` is ignored on import (the importers read
-  only the file's top-level `passages`), and the app's own writers emit both, so
-  every normal round-trip is safe. Only a third-party file that puts passages on
-  the paper would lose them; treating that as a bug would mean deciding which of
-  the two arrays wins.
-- Bookmarks: `BookmarksScreen` decides its empty state from
-  `observeBookmarkCount()` (raw rows over `bookmarks`), while its list is an
-  inner join with `questions` and drops questions whose category is gone
-  (`HistoryStore.kt:170-190`). The flows above keep the two in step, but a file
-  that names an unknown question id in its `bookmarks` array is still inserted
-  as a row (`Importer.kt:625-629`, `StreamingImportSession.kt:758-762`), which
-  would leave a count with an empty list and an export that says there is
-  nothing to export. The delete path deliberately tolerates such rows
-  (`QuestionStore.kt:401-405` says backup restores rely on that tolerance), so
-  this may be intended; not reproduced through the UI.
-- Study/Test hold every bookmark id in a `Set` (`StudyViewModel.kt:204-210`,
-  `TestViewModel.kt:255-262`) to paint one header icon; the bookmarks screen
-  deliberately avoids that (`HistoryStore.observeBookmarkCount`). Correct, but
-  a "bookmark everything" bank copies its id list into the session's state on
-  every toggle.
+*Generated 2026-11-10 from exhaustive code inventories. All file references are to `app/src/main/java/com/mcqapp/` unless noted.*

@@ -113,7 +113,13 @@ class SettingsUiTest {
         }
         compose.onNodeWithTag("advanced-anki-settings").performClick()
         waitFor("Maximum interval")
-        compose.onNodeWithText("Maximum interval", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Next day starts at", substring = true).assertIsDisplayed()
+        // Expanding below the fold does not move the viewport; both rows are
+        // composed but not visible until scrolled to.
+        compose.onNodeWithText("Maximum interval", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+        compose.onNodeWithText("Next day starts at", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 }

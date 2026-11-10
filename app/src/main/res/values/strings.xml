@@ -533,6 +533,8 @@
     <string name="likely_to_be_forgotten_soon">Likely to be forgotten soon</string>
     <string name="learning_step">Learning step</string>
     <string name="session_accuracy">Recalled %1$d%% of them</string>
+    <string name="session_stopped_early">Stopped before reviewing a card.</string>
+    <string name="session_time_split">Questions %1$s • Explanations %2$s • Total %3$s</string>
     <string name="new_cards_are_switched_off">New cards are switched off, so nothing new is being introduced.</string>
     <string name="introduce_new_cards">Introduce new cards</string>
     <string name="study_scope_many">%1$d categories</string>

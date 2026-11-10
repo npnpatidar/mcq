@@ -43,8 +43,20 @@ data class StudyResult(
     val nextIn: String
 )
 
-/** Why an empty session is empty. The copy is in strings.xml, resolved by StudyScreen. */
-enum class EmptyReason { None, NothingDue, NothingDueInScope, NothingTricky, NothingTrickyInScope }
+/**
+ * Why an empty session is empty. The copy is in strings.xml, resolved by
+ * StudyScreen. [StoppedEarly] is the voluntary stop before any review: the
+ * sitting is over, but "Session complete / 0 reviewed" would claim work that
+ * never happened.
+ */
+enum class EmptyReason {
+    None,
+    StoppedEarly,
+    NothingDue,
+    NothingDueInScope,
+    NothingTricky,
+    NothingTrickyInScope
+}
 
 /**
  * What the session is scoped to. The split keeps user-facing copy out of the
@@ -111,6 +123,18 @@ data class StudyUiState(
     val reviewed: Int = 0,
     val againCount: Int = 0,
     val goodCount: Int = 0,
+    /**
+     * Seconds of this sitting spent on the question itself. The sitting's
+     * clock keeps running while the answer and its explanation are read, so
+     * explanation time is the rest: [sessionTotalSeconds] - this.
+     */
+    val questionSeconds: Long = 0L,
+    /**
+     * The sitting's total seconds, frozen when it ends. Set once, at the
+     * summary, so the figure there stops counting instead of growing while
+     * the learner reads it.
+     */
+    val sessionTotalSeconds: Long = 0L,
     /** Reviews served since the last new card; explore mode paces on this. */
     val reviewsSinceNew: Int = 0,
     /** True once the pull has run dry — nothing eligible left right now. */
@@ -145,6 +169,14 @@ data class StudyUiState(
             } else {
                 0L
             }
+
+    /**
+     * Seconds of this sitting spent on the answers and explanations: the
+     * sitting clock runs while the question clock does not. Clamped because
+     * the two clocks are banked at slightly different instants.
+     */
+    val explanationSeconds: Long
+        get() = (sessionTotalSeconds - questionSeconds).coerceAtLeast(0L)
 
     /**
      * Suggested after every ten reviews. Dismissible, never blocking, and it
@@ -456,6 +488,12 @@ class StudyViewModel(
                 Logger.e("STUDY", "getStudyEligibility failed", e)
             }
         }
+        // The sitting is over even though nobody pressed anything: freeze both
+        // clocks here, or the summary's total keeps ticking while it is read.
+        pauseQuestionClock()
+        bankSessionClock()
+        publishSessionSeconds()
+        val totalSeconds = _sessionSeconds.value
         _state.update {
             it.copy(
                 current = null,
@@ -470,6 +508,7 @@ class StudyViewModel(
                 questionStartedAt = 0L,
                 questionElapsedSeconds = 0L,
                 clockRunning = false,
+                sessionTotalSeconds = totalSeconds,
                 finished = true,
                 emptyReason = when {
                     it.reviewed > 0 -> EmptyReason.None
@@ -511,12 +550,17 @@ class StudyViewModel(
         val current = _state.value
         if (!current.clockRunning) return
         val now = SystemClock.elapsedRealtime()
-        val elapsed = current.questionElapsedSeconds +
-            ((now - current.questionStartedAt).coerceAtLeast(0L) / 1000L)
+        // Banked once and added to both clocks: the card's own dwell, and the
+        // sitting's question time, which the summary splits from explanation
+        // time. Banking here means every path that stops the clock (reveal,
+        // scroll away, background, stop) is counted exactly once.
+        val segment = ((now - current.questionStartedAt).coerceAtLeast(0L) / 1000L)
+        val elapsed = current.questionElapsedSeconds + segment
         _state.update {
             it.copy(
                 questionStartedAt = now,
                 questionElapsedSeconds = elapsed,
+                questionSeconds = it.questionSeconds + segment,
                 clockRunning = false
             )
         }
@@ -889,10 +933,23 @@ class StudyViewModel(
 
     private fun advanceStats(grade: ReviewGrade) {
         _state.update {
+            val reviewed = it.reviewed + 1
             it.copy(
-                reviewed = it.reviewed + 1,
+                reviewed = reviewed,
                 againCount = it.againCount + if (grade == ReviewGrade.AGAIN) 1 else 0,
-                goodCount = it.goodCount + if (grade == ReviewGrade.AGAIN) 0 else 1
+                goodCount = it.goodCount + if (grade == ReviewGrade.AGAIN) 0 else 1,
+                // A review whose write lands after the stop already showed the
+                // "nothing reviewed" summary has to move it back to the tally:
+                // the sitting did have work, the disk was just slow.
+                emptyReason = if (
+                    it.finished &&
+                    it.emptyReason == EmptyReason.StoppedEarly &&
+                    reviewed > 0
+                ) {
+                    EmptyReason.None
+                } else {
+                    it.emptyReason
+                }
             )
         }
     }
@@ -901,16 +958,90 @@ class StudyViewModel(
      * A voluntary stopping point. Never blocks and never judges: the session
      * just closes with its tally, and the card on screen stays exactly where
      * the scheduler put it — due when it is due.
+     *
+     * A card that was already checked is the exception: Check proposes a grade
+     * and the footer promises "Next in …", so the review is written here the
+     * way Next would write it, before the summary claims the tally.
      */
     fun stop() {
         // Set before the state flip: an in-flight grade checks this after its
         // persist and refuses to serve a new card, which used to reopen the
-        // session the learner just ended (consolidated_bugs.md I4).
-        stopped.set(true)
+        // session the learner just ended (consolidated_bugs.md I4). Also the
+        // one-stop-per-sitting guard: back and "Done for now" can both arrive,
+        // and the pending write below must never run twice.
+        if (!stopped.compareAndSet(false, true)) return
+        if (_state.value.finished) return
+        // Both clocks stop before any write: the summary's figures are the
+        // ones up to the stop, not the ones after a slow disk.
         pauseQuestionClock()
         bankSessionClock()
         publishSessionSeconds()
-        _state.update { it.copy(finished = true, emptyReason = EmptyReason.None) }
+        val current = _state.value
+        val question = current.question
+        val proposed = current.pendingGrade
+        if (!current.simplified || !current.revealed || current.grading ||
+            question == null || proposed == null
+        ) {
+            // Nothing was pending: classic mode persists on each grade button,
+            // and an unchecked card has no decision to keep.
+            finishSession()
+            return
+        }
+        _state.update { it.copy(grading = true, gradeError = null) }
+        val dwellSeconds = current.questionElapsedSeconds
+        viewModelScope.launch {
+            try {
+                val next = repository.recordStudyReview(
+                    paperId = paperId,
+                    questionId = question.id,
+                    grade = proposed,
+                    dwellSeconds = dwellSeconds,
+                    wasGuess = current.isGuess,
+                    wasCorrect = isCorrect(question, current.selection)
+                )
+                Logger.i(
+                    "STUDY",
+                    "graded ${question.id} -> $proposed (on stop), next in " +
+                        "${next.intervalDays}d, leech=${next.leech}"
+                )
+                advanceStats(proposed)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Same rule as next(): only a real cancellation of this job is
+                // rethrown; a closed database must still reach the summary.
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(gradeError = "Could not save your grade: ${e.message}")
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "recordStudyReview(${question.id}) on stop failed", e)
+                // The stop itself never blocks: a failed write is reported on
+                // the summary instead of trapping the learner in the session.
+                _state.update {
+                    it.copy(gradeError = "Could not save your grade: ${e.message}")
+                }
+            }
+            finishSession()
+        }
+    }
+
+    /** Closes the sitting into the summary, with the tally and the times frozen. */
+    private fun finishSession() {
+        val totalSeconds = _sessionSeconds.value
+        _state.update {
+            it.copy(
+                grading = false,
+                finished = true,
+                sessionTotalSeconds = totalSeconds,
+                emptyReason = when {
+                    // Work was done: a finished sitting with its tally.
+                    it.reviewed > 0 -> EmptyReason.None
+                    // Stopped before the first review. "Session complete /
+                    // 0 reviewed" claimed a sitting that never happened; the
+                    // summary says what actually did.
+                    else -> EmptyReason.StoppedEarly
+                }
+            )
+        }
     }
 
     /**
@@ -1014,6 +1145,8 @@ class StudyViewModel(
                         reviewed = 0,
                         againCount = 0,
                         goodCount = 0,
+                        questionSeconds = 0L,
+                        sessionTotalSeconds = 0L,
                         reviewsSinceNew = 0,
                         finished = false,
                         emptyReason = EmptyReason.None,
@@ -1023,6 +1156,9 @@ class StudyViewModel(
                         grading = false,
                         pendingGrade = null,
                         lastResult = null,
+                        // A failed write reported on the old summary must not
+                        // follow the learner into the fresh sitting.
+                        gradeError = null,
                         isGuess = false,
                         questionStartedAt = 0L,
                         questionElapsedSeconds = 0L,

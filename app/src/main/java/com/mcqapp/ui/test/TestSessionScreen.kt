@@ -1,5 +1,6 @@
 package com.mcqapp.ui.test
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -296,6 +297,15 @@ fun TestSessionScreen(
         viewModel.setQuestionVisible(questionVisible)
     }
 
+    // Back inside a live sitting is the test's own "finish" affordance: it
+    // opens the same submit confirmation the Submit button does, instead of
+    // dropping the learner out with the paper ungraded. An overlay keeps its
+    // own back handling; while a submit is in flight there is nothing to
+    // confirm.
+    val backConfirmsSubmit =
+        questionVisible && !state.submitted && !state.saving
+    BackHandler(enabled = backConfirmsSubmit) { showSubmitDialog = true }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -306,7 +316,17 @@ fun TestSessionScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(
+                        onClick = {
+                            // The arrow is the same gesture: confirm, do not
+                            // leave the paper half done.
+                            if (backConfirmsSubmit) {
+                                showSubmitDialog = true
+                            } else {
+                                navController.popBackStack()
+                            }
+                        }
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },

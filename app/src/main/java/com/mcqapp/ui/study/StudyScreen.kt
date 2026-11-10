@@ -1,6 +1,7 @@
 package com.mcqapp.ui.study
 
 import android.app.Application
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -56,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -128,6 +130,12 @@ fun StudyScreen(
     val showStudyHeader =
         !state.loading && state.loadError == null && !state.finished
 
+    // Back is a voluntary stop, not a silent exit: it ends the sitting the
+    // same way "Done for now" does, so the tally and the restart option are
+    // not skipped. Once the summary is up the handler stands down and back
+    // leaves normally.
+    BackHandler(enabled = showStudyHeader) { viewModel.stop() }
+
     Scaffold(
         topBar = {
             if (showStudyHeader) {
@@ -135,7 +143,8 @@ fun StudyScreen(
                     state = state,
                     liveDwell = liveDwell,
                     sessionSeconds = sessionSeconds,
-                    onBack = { navController.popBackStack() },
+                    // The header's arrow is the same back gesture; both stop.
+                    onBack = { viewModel.stop() },
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
                     onToggleClock = { viewModel.toggleQuestionClock() },
@@ -902,8 +911,10 @@ private fun StudySummary(
     onDone: () -> Unit
 ) {
     // The ViewModel says why it is empty; the copy is resolved here (C19).
+    val stoppedEarly = state.emptyReason == EmptyReason.StoppedEarly
     val emptyText = when (state.emptyReason) {
         EmptyReason.None -> ""
+        EmptyReason.StoppedEarly -> stringResource(R.string.session_stopped_early)
         EmptyReason.NothingDue -> stringResource(R.string.nothing_due)
         EmptyReason.NothingDueInScope -> stringResource(R.string.nothing_due_in_scope)
         EmptyReason.NothingTricky -> stringResource(R.string.nothing_tricky)
@@ -916,6 +927,9 @@ private fun StudySummary(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // A stop that could not write the pending review says so here rather
+        // than in a session that is already gone.
+        GradeError(state.gradeError)
         if (emptyText.isNotEmpty()) {
             Text(
                 emptyText,
@@ -939,9 +953,22 @@ private fun StudySummary(
                 }
                 Spacer(Modifier.height(8.dp))
             }
-            // There is nothing to repeat, so only offer a way out.
-            Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.back_to_library))
+            SummaryTimes(state)
+            if (stoppedEarly) {
+                // The learner chose to stop, so the same sitting is still
+                // there to go back to — and Done stays one tap away.
+                OutlinedButton(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.study_again))
+                }
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.done))
+                }
+            } else {
+                // There is nothing to repeat, so only offer a way out.
+                Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.back_to_library))
+                }
             }
             return@Column
         } else {
@@ -968,6 +995,8 @@ private fun StudySummary(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            SummaryTimes(state)
             Spacer(Modifier.height(16.dp))
         }
         OutlinedButton(onClick = onRestart, modifier = Modifier.fillMaxWidth()) {
@@ -978,4 +1007,26 @@ private fun StudySummary(
             Text(stringResource(R.string.done))
         }
     }
+}
+
+/**
+ * How the sitting's time was spent: on the questions, on reading the answers
+ * and explanations, and both together. The two halves come from the clocks the
+ * ViewModel banks, so nothing here is estimated. Hidden for a session that
+ * never got going (a summary after zero seconds has no split to show).
+ */
+@Composable
+private fun SummaryTimes(state: StudyUiState) {
+    if (state.sessionTotalSeconds <= 0L) return
+    Text(
+        stringResource(
+            R.string.session_time_split,
+            Dwell.format(state.questionSeconds),
+            Dwell.format(state.explanationSeconds),
+            Dwell.format(state.sessionTotalSeconds)
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center
+    )
 }

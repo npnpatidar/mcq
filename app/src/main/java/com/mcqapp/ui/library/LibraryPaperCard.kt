@@ -17,10 +17,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -295,8 +295,11 @@ internal fun PaperCard(
                     onClick = { if (ticked.isEmpty()) onStart() else onScopedTest(ticked) },
                     modifier = Modifier.testTag("paper-test-${paper.id}")
                 ) {
+                    // A checked paper, not a green tick: the tick read as
+                    // "already done" or as the app's primary confirm action,
+                    // while this button starts a timed sitting.
                     Icon(
-                        Icons.Default.CheckCircle,
+                        Icons.Default.FactCheck,
                         contentDescription = stringResource(R.string.test_action)
                     )
                 }

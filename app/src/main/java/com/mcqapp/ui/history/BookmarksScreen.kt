@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -82,6 +83,10 @@ fun BookmarksScreen(
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val platformContext = androidx.compose.ui.platform.LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val platformResources = LocalResources.current
     // rememberSaveable: the system save dialog recreates the activity, and a
     // plain `remember` came back null so the re-delivered URI was dropped
     // (consolidated_bugs.md F4). Enums are Serializable and save as-is.
@@ -322,7 +327,7 @@ fun BookmarksScreen(
                                         platformContext.startActivity(
                                             Intent.createChooser(
                                                 intent,
-                                                platformContext.getString(R.string.share_chooser_title)
+                                                platformResources.getString(R.string.share_chooser_title)
                                             )
                                         )
                                     } catch (_: ActivityNotFoundException) {

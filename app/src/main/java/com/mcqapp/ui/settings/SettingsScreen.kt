@@ -69,6 +69,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -112,6 +113,10 @@ fun SettingsScreen(
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the share copy
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val feedback = LocalHapticFeedback.current
     // rememberSaveable: the pickers and confirm dialogs recreate the activity,
@@ -753,16 +758,16 @@ fun SettingsScreen(
                                         context.startActivity(
                                             android.content.Intent.createChooser(
                                                 intent,
-                                                context.getString(R.string.share_chooser_title)
+                                                resources.getString(R.string.share_chooser_title)
                                             )
                                         )
                                     } catch (_: ActivityNotFoundException) {
                                         exportErrorTitleRes = R.string.export_failed
-                                        exportError = context.getString(R.string.share_no_app)
+                                        exportError = resources.getString(R.string.share_no_app)
                                     }
                                 } else {
                                     exportErrorTitleRes = R.string.export_failed
-                                    exportError = context.getString(R.string.share_failed)
+                                    exportError = resources.getString(R.string.share_failed)
                                 }
                             }
                         },
@@ -783,16 +788,16 @@ fun SettingsScreen(
                                         context.startActivity(
                                             android.content.Intent.createChooser(
                                                 intent,
-                                                context.getString(R.string.share_chooser_title)
+                                                resources.getString(R.string.share_chooser_title)
                                             )
                                         )
                                     } catch (_: ActivityNotFoundException) {
                                         exportErrorTitleRes = R.string.export_failed
-                                        exportError = context.getString(R.string.share_no_app)
+                                        exportError = resources.getString(R.string.share_no_app)
                                     }
                                 } else {
                                     exportErrorTitleRes = R.string.backup_failed
-                                    exportError = context.getString(R.string.share_failed)
+                                    exportError = resources.getString(R.string.share_failed)
                                 }
                             }
                         },

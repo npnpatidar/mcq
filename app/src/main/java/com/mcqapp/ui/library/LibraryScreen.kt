@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -107,6 +108,10 @@ fun LibraryScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val resources = LocalResources.current
 
     // Dialog flags ride rotation (plain `remember` closed them and
     // discarded typed input) — consolidated_bugs.md F12.
@@ -751,7 +756,7 @@ fun LibraryScreen(
                                         context.startActivity(
                                             Intent.createChooser(
                                                 intent,
-                                                context.getString(R.string.share_chooser_title)
+                                                resources.getString(R.string.share_chooser_title)
                                             )
                                         )
                                     } catch (_: ActivityNotFoundException) {

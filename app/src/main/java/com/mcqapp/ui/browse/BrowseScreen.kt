@@ -76,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -131,6 +132,10 @@ fun BrowseScreen(
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val platformContext = androidx.compose.ui.platform.LocalContext.current
+    // LocalResources (not LocalContext.current) keeps the chooser title
+    // configuration-aware: LocalContext.getString() is not re-read when the
+    // Configuration changes (LocalContextGetResourceValueCall).
+    val platformResources = LocalResources.current
 
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
@@ -844,7 +849,7 @@ fun BrowseScreen(
                                             platformContext.startActivity(
                                                 Intent.createChooser(
                                                     intent,
-                                                    platformContext.getString(R.string.share_chooser_title)
+                                                    platformResources.getString(R.string.share_chooser_title)
                                                 )
                                             )
                                         } catch (_: ActivityNotFoundException) {

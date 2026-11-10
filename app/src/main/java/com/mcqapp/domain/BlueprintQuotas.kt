@@ -16,12 +16,116 @@ object BlueprintQuotas {
          * that terminal's subtree.
          */
         val perTerminal: Map<String, Int>,
-        /** Sum of perTerminal: the largest run this blueprint can produce now. */
+        /** Sum of perTerminal: the run this request can produce now. */
         val achievable: Int,
-        val requested: Int
+        val requested: Int,
+        /**
+         * Sum of terminal pools, independent of [requested]. This is the
+         * blueprint's whole supply: the setup sheet uses it to decide how long
+         * a run may be, because [achievable] is capped at the current request
+         * and would otherwise lock the length to itself.
+         */
+        val supply: Int = 0
     ) {
         val complete: Boolean get() = achievable >= requested
     }
+
+    /**
+     * What one row shows: its granted questions, the questions it could ever
+     * draw from, and its rounded share of the whole run. [percent] is an
+     * integer because the UI prints it with a percent sign.
+     */
+    data class RowShare(
+        val quota: Int,
+        val pool: Int,
+        val percent: Int
+    )
+
+    /**
+     * Per-node display numbers for an allocation: counts roll up the tree and
+     * terminal percentages are apportioned by largest remainder, so the
+     * top-level rows always add up to exactly 100% when anything is selected.
+     * Passages need no special case: every member question is one unit in
+     * [BlueprintSectionView.pool] and in [Allocation.perTerminal], so a
+     * passage's questions are counted once, under its own category.
+     */
+    fun shares(
+        sections: List<BlueprintSectionView>,
+        allocation: Allocation
+    ): Map<String, RowShare> = shares(sections, allocation.perTerminal)
+
+    /**
+     * The same display numbers for actual selected counts (whole passages can
+     * make a terminal larger than its quota). [terminalQuotas] is keyed by
+     * terminal category id.
+     */
+    fun shares(
+        sections: List<BlueprintSectionView>,
+        terminalQuotas: Map<String, Int>
+    ): Map<String, RowShare> {
+        val out = LinkedHashMap<String, RowShare>()
+        val allTerminals = mutableListOf<BlueprintSectionView>()
+        fun collectAll(views: List<BlueprintSectionView>) {
+            for (view in views) {
+                if (view.children.isEmpty()) allTerminals += view else collectAll(view.children)
+            }
+        }
+        collectAll(sections)
+        val total = allTerminals.sumOf { terminalQuotas[it.categoryId] ?: 0 }
+        if (total <= 0) {
+            fun zero(views: List<BlueprintSectionView>) {
+                for (view in views) {
+                    out[view.categoryId] = RowShare(0, view.pool, 0)
+                    zero(view.children)
+                }
+            }
+            zero(sections)
+            return out
+        }
+
+        // Terminal percentages by largest remainder: floors first, then one
+        // point each to the largest fractions (id order breaks ties). Capped
+        // quotas can leave a section with 0, which simply gets 0%.
+        val terminals = allTerminals
+        val exact = terminals.associate { it.categoryId to terminalQuotas[it.categoryId].orZero() * 100.0 / total }
+        val percent = terminals.associate { it.categoryId to floor(exact[it.categoryId] ?: 0.0).toInt() }.toMutableMap()
+        var left = 100 - percent.values.sum()
+        if (left > 0) {
+            val order = terminals.sortedWith(
+                compareByDescending<BlueprintSectionView> {
+                    (exact[it.categoryId] ?: 0.0) - floor(exact[it.categoryId] ?: 0.0)
+                }.thenBy { it.categoryId }
+            )
+            for (view in order) {
+                if (left <= 0) break
+                percent[view.categoryId] = (percent[view.categoryId] ?: 0) + 1
+                left--
+            }
+        }
+
+        fun rollUp(view: BlueprintSectionView): RowShare {
+            val share = if (view.children.isEmpty()) {
+                RowShare(
+                    quota = terminalQuotas[view.categoryId] ?: 0,
+                    pool = view.pool,
+                    percent = percent[view.categoryId] ?: 0
+                )
+            } else {
+                val kids = view.children.map { rollUp(it) }
+                RowShare(
+                    quota = kids.sumOf { it.quota },
+                    pool = kids.sumOf { it.pool },
+                    percent = kids.sumOf { it.percent }
+                )
+            }
+            out[view.categoryId] = share
+            return share
+        }
+        sections.forEach { rollUp(it) }
+        return out
+    }
+
+    private fun Int?.orZero(): Int = this ?: 0
 
     fun allocate(
         sections: List<BlueprintSectionView>,
@@ -29,12 +133,50 @@ object BlueprintQuotas {
         seed: Long = 0L
     ): Allocation {
         val safeCount = count.coerceAtLeast(0)
+        val supply = supplyOf(sections)
         if (safeCount <= 0 || sections.isEmpty()) {
-            return Allocation(perTerminal = emptyMap(), achievable = 0, requested = safeCount)
+            return Allocation(
+                perTerminal = emptyMap(),
+                achievable = 0,
+                requested = safeCount,
+                supply = supply
+            )
         }
         val perTerminal = allocateLevel(sections, safeCount, seed)
         val achievable = perTerminal.values.sum()
-        return Allocation(perTerminal = perTerminal, achievable = achievable, requested = safeCount)
+        return Allocation(
+            perTerminal = perTerminal,
+            achievable = achievable,
+            requested = safeCount,
+            supply = supply
+        )
+    }
+
+    /**
+     * The per-terminal quota this request *wants* before any pool cap. The
+     * difference from [allocate] is what a section is "short by": a capped
+     * quota never exceeds its pool, so comparing granted quotas to pools can
+     * never show a deficit.
+     */
+    fun demand(
+        sections: List<BlueprintSectionView>,
+        count: Int,
+        seed: Long = 0L
+    ): Map<String, Int> {
+        if (count <= 0 || sections.isEmpty()) return emptyMap()
+        return allocate(sections.map { it.withoutPools() }, count, seed).perTerminal
+    }
+
+    private fun BlueprintSectionView.withoutPools(): BlueprintSectionView =
+        copy(pool = Int.MAX_VALUE, children = children.map { it.withoutPools() })
+
+    /** Every eligible terminal's pool, rolled up past the current request. */
+    private fun supplyOf(views: List<BlueprintSectionView>): Int = views.sumOf { view ->
+        when {
+            !view.available || view.parts <= 0 -> 0
+            view.children.isEmpty() -> view.pool
+            else -> supplyOf(view.children)
+        }
     }
 
     /**

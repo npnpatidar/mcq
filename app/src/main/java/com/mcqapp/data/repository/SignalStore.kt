@@ -77,6 +77,7 @@ class SignalStore(private val db: AppDatabase) {
             QuestionSignals.of(
                 input = QuestionSignalInput(
                     questionId = question.questionId,
+                    passageId = question.passageId,
                     categoryId = question.categoryId,
                     categoryTitle = question.categoryTitle,
                     authoredDifficulty = Difficulty.fromLabel(question.difficulty),

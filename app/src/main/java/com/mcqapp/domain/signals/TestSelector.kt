@@ -151,7 +151,19 @@ data class SelectionPreview(
      * sheet uses them to save a sample as a fixed panel; display-only.
      */
     val ids: List<String> = emptyList(),
-    val sections: List<BlueprintSectionPreview> = emptyList()
+    val sections: List<BlueprintSectionPreview> = emptyList(),
+    /**
+     * Actual questions the preview selection took from each terminal, after
+     * whole passages were added. A passage can make this larger than the
+     * allocation quota; the setup preview prints these, not the quota.
+     */
+    val terminalCounts: Map<String, Int> = emptyMap(),
+    /**
+     * The blueprint's whole supply, independent of the previewed request.
+     * [pool] stays the achievable quota at the request (the startable figure);
+     * the setup sheet uses this to keep the length control usable.
+     */
+    val capacity: Int = pool
 )
 
 /**
@@ -275,10 +287,25 @@ object TestSelector {
                 )
             }
             val views = bp.sections.map { node -> viewOf(node, signals) }
-            val allocation = BlueprintQuotas.allocate(views, plan.count, plan.seed)
+            // Section quotas are a pure function of the tree and the request;
+            // the seed only orders questions inside them. Allocating with the
+            // same deterministic seed as Start's quota pass keeps a short-run
+            // section choice from differing between preview and run.
+            val allocation = BlueprintQuotas.allocate(views, plan.count)
+            val selected = selection?.ids.orEmpty().toSet()
+            // Actual per-terminal counts, including every member of a selected
+            // passage (the selector takes whole blocks, so this can exceed the
+            // allocation quota above).
+            val terminalCounts = bp.terminals.associate { terminal ->
+                val scope = terminal.scopeCategoryIds.toSet()
+                terminal.categoryId to signals.count {
+                    it.questionId in selected && it.categoryId in scope
+                }
+            }
             val previews = buildPreviews(views, allocation)
             return SelectionPreview(
                 pool = allocation.achievable,
+                capacity = allocation.supply,
                 composition = selection?.composition ?: Composition(
                     label = bp.label,
                     sections = blueprintTreeOf(bp, allocation),
@@ -286,7 +313,8 @@ object TestSelector {
                 ),
                 targets = targets,
                 ids = selection?.ids.orEmpty(),
-                sections = previews
+                sections = previews,
+                terminalCounts = terminalCounts
             )
         }
         return SelectionPreview(
@@ -715,17 +743,24 @@ object TestSelector {
         val bp = plan.blueprint ?: return Selection(emptyList())
         val inScope = signals.filter { it.categoryId in bp.union }
         val views = bp.sections.map { node -> viewOf(node, signals) }
-        val allocation = BlueprintQuotas.allocate(views, plan.count, plan.seed)
+        // Deterministic seed: question order still uses plan.seed below, but
+        // section quotas (and their short-run tiebreak) do not. That is what
+        // the setup preview shows, so preview and run never disagree.
+        val allocation = BlueprintQuotas.allocate(views, plan.count)
         val perTerminal = bp.terminals.mapNotNull { terminal ->
             val need = allocation.perTerminal[terminal.categoryId] ?: 0
             if (need <= 0) return@mapNotNull null
             val scope = terminal.scopeCategoryIds.toSet()
-            signals.filter { it.categoryId in scope }
-                .shuffled(Random(plan.seed xor terminal.categoryId.hashCode().toLong()))
-                .take(need)
+            // A passage is indivisible: take whole blocks until the quota is
+            // reached, so a quota can overshoot rather than split a passage.
+            takeWholePassages(
+                candidates = signals.filter { it.categoryId in scope },
+                target = need,
+                seed = plan.seed xor terminal.categoryId.hashCode().toLong()
+            )
         }
         val interleaved = interleave(perTerminal)
-        val (ids, fill) = fillWith(
+        val (ids, fill) = fillWithWholePassages(
             selected = interleaved,
             target = plan.count,
             seed = plan.seed,
@@ -743,6 +778,78 @@ object TestSelector {
                 ).segments
             )
         )
+    }
+
+    /** A passage and its members share one key; a standalone question is its own block. */
+    private fun passageKey(signal: Signals): String =
+        signal.passageId?.let { "p:$it" } ?: "q:${signal.questionId}"
+
+    private fun groupsByPassage(candidates: List<Signals>): Map<String, List<Signals>> {
+        val groups = LinkedHashMap<String, MutableList<Signals>>()
+        for (signal in candidates) groups.getOrPut(passageKey(signal)) { mutableListOf() } += signal
+        return groups
+    }
+
+    /**
+     * Whole passages in a seeded order until [target] questions are reached.
+     * The last block may overshoot: taking a passage's first member without
+     * the rest would show half a comprehension set.
+     */
+    private fun takeWholePassages(
+        candidates: List<Signals>,
+        target: Int,
+        seed: Long
+    ): List<Signals> {
+        if (target <= 0) return emptyList()
+        val out = mutableListOf<Signals>()
+        val groups = groupsByPassage(candidates.shuffled(Random(seed)))
+        for (group in groups.values) {
+            if (out.size >= target) break
+            out += group
+        }
+        return out
+    }
+
+    /**
+     * Fill stages and the last-resort pool, block-aware: adding a passage adds
+     * every member at once, and a passage already partly present is completed
+     * rather than extended one question at a time.
+     */
+    private fun fillWithWholePassages(
+        selected: List<Signals>,
+        target: Int,
+        seed: Long,
+        pool: List<Signals>,
+        stages: List<Pair<FillSource, List<Signals>>>
+    ): Pair<List<String>, List<Pair<FillSource, Int>>> {
+        val result = selected.toMutableList()
+        val taken = selected.mapTo(mutableSetOf()) { it.questionId }
+        val segments = mutableListOf<Pair<FillSource, Int>>()
+        if (result.size >= target) return result.map { it.questionId } to segments
+
+        fun addBlocks(candidates: List<Signals>): Int {
+            var added = 0
+            for (group in groupsByPassage(candidates).values) {
+                if (result.size >= target) break
+                val fresh = group.filter { taken.add(it.questionId) }
+                if (fresh.isNotEmpty()) {
+                    result += fresh
+                    added += fresh.size
+                }
+            }
+            return added
+        }
+
+        for ((source, candidates) in stages) {
+            if (result.size >= target) break
+            val added = addBlocks(candidates)
+            if (added > 0) segments += source to added
+        }
+        if (result.size < target) {
+            val added = addBlocks(pool.shuffled(Random(seed xor 7L)))
+            if (added > 0) segments += FillSource.RANDOM to added
+        }
+        return result.map { it.questionId } to segments
     }
 
     private fun viewOf(node: BlueprintSection, signals: List<Signals>): BlueprintSectionView {

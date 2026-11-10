@@ -39,6 +39,7 @@ data class BlueprintSectionView(
     val categoryId: String,
     val title: String,
     val parts: Int,
+    /** Questions this section can draw from: every passage member counts once. */
     val pool: Int,
     val available: Boolean,
     val children: List<BlueprintSectionView> = emptyList()

@@ -21,9 +21,14 @@ import org.junit.Test
 /** Blueprint selection (exam blueprint §7): quotas, union, composition v2. */
 class BlueprintSelectorTest {
 
-    private fun signal(id: String, category: String): Signals = QuestionSignals.of(
+    private fun signal(
+        id: String,
+        category: String,
+        passageId: String? = null
+    ): Signals = QuestionSignals.of(
         QuestionSignalInput(
             questionId = id,
+            passageId = passageId,
             categoryId = category,
             categoryTitle = category,
             card = CardSignal(
@@ -245,6 +250,87 @@ class BlueprintSelectorTest {
         // poolSize for BLUEPRINT is the union size, a display figure.
         assertEquals(12, TestSelector.poolSize(TestType.BLUEPRINT, thin, blueprint = blueprint))
         assertEquals(12, TestSelector.poolSize(TestType.BLUEPRINT, thin))
+    }
+
+    @Test
+    fun previewCarriesTheWholeSupplyNotTheRequestedQuota() {
+        val blueprint = PlanBlueprint(
+            label = "Wide",
+            sections = listOf(
+                BlueprintSection("h", "History", 1, scopeCategoryIds = listOf("h1")),
+                BlueprintSection("g", "Geography", 1, scopeCategoryIds = listOf("g1"))
+            )
+        )
+        val signals = buildList {
+            repeat(30) { add(signal("h1-q$it", "h1")) }
+            repeat(30) { add(signal("g1-q$it", "g1")) }
+        }
+        val preview = TestSelector.preview(plan(blueprint, count = 20), signals)
+        // The startable figure at this request is 20…
+        assertEquals(20, preview.pool)
+        // …but the blueprint's whole supply is 60, which is what the setup
+        // sheet uses as `available` so the length can grow past 20.
+        assertEquals(60, preview.capacity)
+    }
+
+    @Test
+    fun quotaPreviewAndRunAgreeEvenWithDifferentQuestionSeeds() {
+        val blueprint = flatBlueprint()
+        val signals = flatSignals()
+        // Two of three terminals: the short-run tiebreak is the only thing that
+        // can differ, and it must not depend on the question seed.
+        val previewPlan = plan(blueprint, count = 2, seed = 3L)
+        val preview = TestSelector.preview(previewPlan, signals)
+        val selection = TestSelector.select(plan(blueprint, count = 2, seed = 999L), signals)!!
+        assertEquals(
+            preview.sections.map { it.requested },
+            selection.composition.sections.map { it.requested }
+        )
+    }
+
+    @Test
+    fun aPassageIsTakenAllOrNone() {
+        val blueprint = PlanBlueprint(
+            label = "Comprehension",
+            sections = listOf(
+                BlueprintSection("h", "History", 1, scopeCategoryIds = listOf("h1"))
+            )
+        )
+        val passageIds = listOf("p-1", "p-2", "p-3")
+        val signals = buildList {
+            addAll(passageIds.map { signal(it, "h1", passageId = "passage") })
+            // Standalone questions give the selector alternatives, so the
+            // passage is genuinely optional rather than the whole pool.
+            repeat(20) { add(signal("h1-q$it", "h1")) }
+        }
+        val members = passageIds.toSet()
+        var sawPassage = false
+        for (seed in 0L until 40L) {
+            val selection = TestSelector.select(plan(blueprint, count = 4, seed = seed), signals)!!
+            val chosen = selection.ids.filter { it in members }
+            assertTrue(
+                "seed $seed split the passage: $chosen",
+                chosen.isEmpty() || chosen.toSet() == members
+            )
+            if (chosen.isNotEmpty()) sawPassage = true
+        }
+        assertTrue("no seed selected the passage", sawPassage)
+    }
+
+    @Test
+    fun previewCountsEveryMemberWhenAPassageOvershootsTheQuota() {
+        val blueprint = PlanBlueprint(
+            label = "Comprehension",
+            sections = listOf(
+                BlueprintSection("h", "History", 1, scopeCategoryIds = listOf("h1"))
+            )
+        )
+        val signals = (1..4).map { signal("p$it", "h1", passageId = "passage") }
+        val selection = TestSelector.select(plan(blueprint, count = 3), signals)!!
+        assertEquals(4, selection.ids.size)
+        val preview = TestSelector.preview(plan(blueprint, count = 3), signals)
+        assertEquals(4, preview.terminalCounts.getValue("h"))
+        assertEquals(4, preview.ids.size)
     }
 
     @Test

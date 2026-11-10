@@ -89,7 +89,7 @@ internal fun BlueprintEditorSheet(
     // The quota shown per row is the one Start will allocate, not a rounded
     // share: BlueprintQuotas uses recursive floors, remainders, pool caps and
     // the min-one steal, which can differ from round(share × length).
-    val previewQuotas = remember(parts, requestedCount, paper.categories) {
+    val previewViews = remember(parts, paper.categories) {
         fun viewOf(node: CategoryNode): BlueprintSectionView {
             val childViews = node.children
                 .filter { (parts[it.id] ?: 0) > 0 }
@@ -107,19 +107,33 @@ internal fun BlueprintEditorSheet(
                 children = childViews
             )
         }
-        val top = paper.categories
+        paper.categories
             .filter { (parts[it.id] ?: 0) > 0 }
             .map { viewOf(it) }
-        BlueprintQuotas.allocate(top, requestedCount)
     }
-    fun quotaOf(node: CategoryNode): Int {
+    val previewQuotas = remember(previewViews, requestedCount) {
+        BlueprintQuotas.allocate(previewViews, requestedCount)
+    }
+    // The same count/share numbers the saved preview shows after Save, so the
+    // figure does not change under the learner when they reopen the blueprint.
+    val previewShares = remember(previewViews, previewQuotas) {
+        BlueprintQuotas.shares(previewViews, previewQuotas)
+    }
+    // Uncapped ask: the only way to know a row is short, since a granted quota
+    // can never exceed its pool.
+    val previewDemand = remember(previewViews, requestedCount) {
+        BlueprintQuotas.demand(previewViews, requestedCount)
+    }
+    fun nodeQuota(node: CategoryNode, perTerminal: Map<String, Int>): Int {
         val includedChildren = node.children.filter { (parts[it.id] ?: 0) > 0 }
         return if (includedChildren.isEmpty()) {
-            previewQuotas.perTerminal[node.id] ?: 0
+            perTerminal[node.id] ?: 0
         } else {
-            includedChildren.sumOf { quotaOf(it) }
+            includedChildren.sumOf { nodeQuota(it, perTerminal) }
         }
     }
+    fun quotaOf(node: CategoryNode): Int = nodeQuota(node, previewQuotas.perTerminal)
+    fun wantedOf(node: CategoryNode): Int = nodeQuota(node, previewDemand)
     // Include [id] and every ancestor: a child implies its parent.
     fun ancestorsOf(id: String): List<String> {
         val out = mutableListOf<String>()
@@ -175,9 +189,13 @@ internal fun BlueprintEditorSheet(
         return share
     }
 
-    val included = parts.filterValues { it > 0 }
+    // Only categories still in this paper can be saved. A section whose
+    // category moved away is shown as a warning below instead of being
+    // silently dropped when the payload is rebuilt.
+    val included = parts.filter { (id, value) -> value > 0 && byId.containsKey(id) }
     val topLevel = included.keys.filter { byId[it]?.parentId == null }
     val totalParts = topLevel.sumOf { parts[it] ?: 0 }
+    val orphans = remember(initialSections) { orphanedSections(initialSections) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -235,6 +253,17 @@ internal fun BlueprintEditorSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (orphans.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(
+                        R.string.blueprint_editor_orphans,
+                        orphans.joinToString(", ") { it.title }
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             Spacer(Modifier.height(8.dp))
             for ((node, depth) in flat) {
                 val value = parts[node.id] ?: 0
@@ -269,6 +298,8 @@ internal fun BlueprintEditorSheet(
                         val local = localShareOf(node.id)
                         val global = globalShareOf(node.id)
                         val quota = quotaOf(node)
+                        val wanted = wantedOf(node)
+                        val share = previewShares[node.id]
                         Text(
                             stringResource(
                                 R.string.blueprint_editor_share,
@@ -281,11 +312,23 @@ internal fun BlueprintEditorSheet(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (quota > node.totalQuestionCount) {
+                        if (share != null) {
+                            Text(
+                                stringResource(
+                                    R.string.blueprint_editor_questions,
+                                    share.quota,
+                                    share.pool,
+                                    share.percent
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (node.children.isEmpty() && wanted > quota) {
                             Text(
                                 stringResource(
                                     R.string.blueprint_editor_short,
-                                    quota - node.totalQuestionCount
+                                    wanted - quota
                                 ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error
@@ -412,6 +455,12 @@ internal fun BlueprintEditorSheet(
         )
     }
 }
+
+/** Sections whose category is no longer part of [views]' paper. */
+internal fun orphanedSections(views: List<BlueprintSectionView>): List<BlueprintSectionView> =
+    views.flatMap { view ->
+        (if (view.available) emptyList() else listOf(view)) + orphanedSections(view.children)
+    }
 
 /** The parts of every node in a stored section-view tree, flattened. */
 private fun partsFromViews(sections: List<BlueprintSectionView>): Map<String, Int> {

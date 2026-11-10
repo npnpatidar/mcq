@@ -202,8 +202,10 @@ the requested length. It is **not** "questions per topic".
 - **Scope label:** `Whole paper` (nothing ticked) or `N categories` (ticked count,
   not expanded). For Blueprint: `Blueprint scope: the run asks only this
   blueprint's sections, whatever categories are ticked.`
-- **Pool line:** `N questions` (scope count), `N mistakes` (Mistakes), or `N in pool`
-  (signal types — the selector's own pool, not the raw scope).
+- **Pool line:** `N questions` (scope count), `N mistakes` (Mistakes), `N in pool`
+  (signal types — the selector's own pool, not the raw scope), or for a
+  blueprint the **total terminal supply** (count-independent, so the length can
+  grow past the current request).
 - **Composition:** shown for signal types, e.g. `Composition: 12 weakest + 8 random`.
   Weakest/Mixed also list each target: `Polity · 40% (8/20)`.
 
@@ -211,8 +213,10 @@ the requested length. It is **not** "questions per topic".
 
 Allowed: 20, 30, …, 150 (tens). Default 20. Slider stops exactly at those
 values; preset chips 20/50/80/100/120/150 (disabled when > pool). Max resolved:
-`min(pool, 150)` rounded down to a ten. Scope < 20 → **short test** (slider
-hidden, label `Short test — 17 questions`).
+`min(pool, 150)` rounded down to a ten. Exception: a **blueprint** rounds its
+request **up** to the next ten (99 supply → request 100, run 99) and below 20
+supply Start is refused instead of running a short test. Every other scope
+< 20 → **short test** (slider hidden, label `Short test — 17 questions`).
 
 ### 5. Time
 
@@ -232,9 +236,9 @@ N questions`.
 
 ### 7. Start Button
 
-Disabled while pool/mistakes/panel/blueprint loads, or blueprint < 20
-achievable. Label: `Start N-question test · M min` or `· untimed`. Disabled
-label: `Start test`.
+Disabled while pool/mistakes/panel/blueprint loads, or blueprint supply < 20
+(a short blueprint is refused, never started as a short test). Label:
+`Start N-question test · M min` or `· untimed`. Disabled label: `Start test`.
 
 ### 8. Panels
 
@@ -247,9 +251,25 @@ the questions themselves are not.`
 ### 9. Blueprints from the Sheet
 
 Picker: `Pick a blueprint` (chips `Name · sectionCount`). `New…` / `Edit
-blueprint` / trash (confirm). Under picker: resolved tree `Title · quota/pool`,
-`short by N` in red, `section ignored` struck through. Tree is the real
-recursive allocation at the current length.
+blueprint` / trash (confirm); **Edit** is disabled until the selected
+blueprint's section views have loaded, so it never opens an empty tree. While
+the section preview is still loading, the empty-scope warning is suppressed
+rather than flashing an error about a half-read state.
+
+Under picker: resolved tree `Title · N of M questions · P%`, `short by N` in
+red, `section ignored` struck through. The tree is the real recursive
+allocation at the current length; `N`, `M` and `P` roll up through
+subcategories and top-level percentages add to 100. `N` is the **actual**
+preview selection: when a whole passage pushes a section past its quota, the
+extra members are included in `N` and `P`. Passage members count as individual
+questions (a four-question passage adds 4 to its category's pool), never as
+one block.
+
+Passage selection is **all or none**: once any member is chosen for a section,
+its whole passage is added (the last block may overshoot the quota), and the
+fill stage does the same. A passage is never split between selected and
+unselected questions. The fresh-sample exclusion also drops the whole passage
+when any member is too recent.
 
 ### 10. Global / Per-Paper Settings That Change a Test
 
@@ -290,12 +310,13 @@ library selection is untouched.
 | `−` | Decrements; disabled at 0. Reaching 0 removes node **and its whole subtree**. |
 | Value | Current parts, 0…999. |
 | `+` | Increments to 999; if child, every ancestor forced to ≥ 1. |
-| Share line (parts > 0) | `4 of 10 parts · 40% · 12% · 10 questions` (local %, global %, rounded quota). |
-| Short line (parts > 0) | `Short by 7 at this length` when simple quota exceeds pool. |
+| Share line (parts > 0) | `4 of 10 parts · 40% · 12% · 10 questions` (local %, global %, real quota). |
+| Questions line (parts > 0) | `10 of 50 questions · 20% of the test` — planned quota, pool and percentage before Save; percentages roll up and passages count per member question. After Save the sheet switches to the **actual** selection, so a whole passage can raise `N` and change `P`. |
+| Short line (parts > 0) | `Short by 7 at this length` when the uncapped ask exceeds the granted quota (pool cap). |
 | Total line | `Total: 10 parts (History 40%, Polity 30%, Geography 30%)` |
 | Validation | `Give the blueprint a name.` / `Add at least one section before saving.` (Save disabled). |
-| Repository refusal | Exception message shown inline (duplicate name / hierarchy refusal). |
-| `Save` | Builds included nodes (parts > 0) recursively; selects blueprint; closes. |
+| Repository refusal | Exception message shown inline. Duplicate names are checked case-insensitively, scoped to the paper and excluding the row being renamed (the unique index is only the last resort); hierarchy/shape refusals also come back as sentences. |
+| `Save` | Builds included nodes (parts > 0) recursively; selects blueprint; closes. A section whose category left the paper is warned about and removed on save. Saving the already-selected blueprint reloads its views, so the sheet preview and counts update immediately instead of staying on the pre-edit tree. |
 | `Delete` | Only when editing; same confirm as sheet. |
 | `Cancel` | Closes without saving. |
 
@@ -331,10 +352,12 @@ Pools: History 40, Polity 10, Geography 20. Floors 40/10/20 = 70; 30 remain but 
 
 ### Starting, Short Sections, Result Labelling
 
-- `achievable` is the sheet's `available`; **not rounded to a ten**.
-- `achievable < 20` → Start refused (`This blueprint can only supply N questions; at least 20 are needed to start.`). A blueprint never runs as a short test.
+- The sheet's `available` is the blueprint's total terminal supply, independent of the current request. The length may round **up** to the next ten, so a 99-question supply is requested as 100 and still runs 99 (`resolve()` clamps to the exact achievable count).
+- **Supply** < 20 → Start refused (`This blueprint can only supply N questions; at least 20 are needed to start.`). A blueprint never runs as a short test, even when the current request's achievable count is below 20 for some other reason.
 - Terminal `quota > pool` → left short; nothing outside blueprint union used. `BLUEPRINT_FILL` only redistributes inside union.
-- Attempt records tree with each node's **requested** quota and label.
+- Attempt records the tree with each node's **requested** quota and label.
+  Selection is passage-aware, so a whole block can make the **shown** count
+  larger than the requested one (the session's `asked, shown` line says so).
 - Results: `Blueprint · <label>` card → `Complete: every section asked its full quota.` or `Not complete: a short section asked fewer than its quota.` Rows: `asked/requested · accuracy% ±margin` (Wilson half-width, no finite-population correction). `small sample` under 5 asked. Unresolvable rows counted.
 - Blueprint attempt = Mock (unless fresh sample applied) — never Practice.
 
@@ -402,7 +425,9 @@ every question).
 
 ### Session Banners & "Asked vs Shown"
 1. `Short test · N questions` (< 20).
-2. Type banner: `Practice · Mistakes · N`, `Practice · <Type> · N`, `Random · N`.
+2. Type banner: `Mock · <Type> · N` (a blueprint names itself as
+   `Mock · Blueprint · <name> · N`), `Practice · <Type> · N`,
+   `Practice · Mistakes · N`, or `Random · N`.
 3. If shown > asked: `80 asked, 84 shown — a passage is kept whole`.
 4. If shown < asked: `80 asked, 76 shown` (clamp/short scope/deleted).
 
@@ -2266,8 +2291,10 @@ Expand toggle at > 5 papers. Footnote: `Image weight counts embedded pictures; l
    (`BlueprintQuotas.allocate`, the same allocation Start uses).
 8. **A blueprint can be "short by 5" and still run the full length.** Deficit
    redistributed to siblings with room; "Not complete" is about quotas, not total.
-9. **Fixed — the banner matches the family.** Balanced/Blueprint read
-   `<Type> · N questions` (mock); only practice types read `Practice · …`.
+9. **Fixed — the banner matches the family.** Balanced reads
+   `Mock · Balanced · N questions`; Blueprint additionally names itself:
+   `Mock · Blueprint · <name> · N questions`; only practice types read
+   `Practice · …`.
 10. **Short scope announced three times:** `Short test — 17 questions`, preview
     `Random · 17 questions · 17 min · Short test · 17 questions`, session
     `Short test · 17 questions`.
@@ -2304,8 +2331,8 @@ Expand toggle at > 5 papers. Footnote: `Image weight counts embedded pictures; l
     only for signal-selected types.
 25. **Editor's parts can be 999 but sheet's length ≤ 150.** Parts are weights;
     harmless but "999" reads like a question count.
-26. **Blueprint never counts as short test.** Below 20 achievable → refuses to
-    start instead of running labelled short test.
+26. **Blueprint never counts as short test.** Below 20 total supply → refuses
+    to start instead of running a labelled short test.
 27. **History row's `correct/total` and percentage use different denominators**
     (ungraded/skips/negative marking).
 28. **Trend cards group by requested count, not shown count** — 80-asked/84-shown

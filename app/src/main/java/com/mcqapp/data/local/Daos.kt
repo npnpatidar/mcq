@@ -487,7 +487,8 @@ interface QuestionDao {
      * stem, options or explanation, so a large scope stays a light scan.
      */
     @Query(
-        "SELECT q.id AS questionId, q.categoryId AS categoryId, " +
+        "SELECT q.id AS questionId, q.passageId AS passageId, " +
+            "q.categoryId AS categoryId, " +
             "c.title AS categoryTitle, q.contentHash AS contentHash, " +
             "q.difficulty AS difficulty FROM questions q " +
             "INNER JOIN categories c ON c.id = q.categoryId " +
@@ -497,7 +498,8 @@ interface QuestionDao {
 
     /** [getSignalRowsByCategories] for a whole paper. */
     @Query(
-        "SELECT q.id AS questionId, q.categoryId AS categoryId, " +
+        "SELECT q.id AS questionId, q.passageId AS passageId, " +
+            "q.categoryId AS categoryId, " +
             "c.title AS categoryTitle, q.contentHash AS contentHash, " +
             "q.difficulty AS difficulty FROM questions q " +
             "INNER JOIN categories c ON c.id = q.categoryId " +
@@ -3151,6 +3153,7 @@ data class MinBlockRow(
  */
 data class QuestionSignalRow(
     val questionId: String,
+    val passageId: String?,
     val categoryId: String,
     val categoryTitle: String,
     val contentHash: String,

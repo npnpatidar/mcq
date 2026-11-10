@@ -337,7 +337,7 @@
     <string name="test_setup_blueprint_delete">Delete blueprint</string>
     <string name="test_setup_blueprint_delete_confirm">Delete “%1$s”? Its sections are lost; past attempts keep their recorded shape.</string>
     <string name="test_setup_blueprint_scope">Blueprint scope: the run asks only this blueprint\'s sections, whatever categories are ticked.</string>
-    <string name="test_setup_blueprint_section_row">%1$s · %2$d/%3$d</string>
+    <string name="test_setup_blueprint_section_row">%1$s · %2$d of %3$d questions · %4$d%%</string>
     <string name="test_setup_blueprint_section_short">short by %1$d</string>
     <string name="test_setup_blueprint_section_ignored">section ignored</string>
     <string name="test_setup_blueprint_fresh_warning">Fresh sample may leave a section short: excluding recent questions shrinks each section\'s pool.</string>
@@ -349,7 +349,9 @@
     <string name="blueprint_editor_parts_help">Parts weight each section inside its group; 0 leaves it out. A child implies its parent.</string>
     <string name="blueprint_editor_share_help">Parts · share inside its group · share of the paper · questions at this length</string>
     <string name="blueprint_editor_share">%1$d of %2$d parts · %3$d%% · %4$d%% · %5$d questions</string>
+    <string name="blueprint_editor_questions">%1$d of %2$d questions · %3$d%% of the test</string>
     <string name="blueprint_editor_short">Short by %1$d at this length</string>
+    <string name="blueprint_editor_orphans">Not in this paper any more, removed on save: %1$s</string>
     <string name="blueprint_editor_total">Total: %1$d parts (%2$s)</string>
     <string name="blueprint_editor_error_no_sections">Add at least one section before saving.</string>
     <string name="blueprint_editor_error_name">Give the blueprint a name.</string>
@@ -420,6 +422,7 @@
     <string name="test_banner_mistakes">Practice · Mistakes · %1$d questions</string>
     <string name="test_banner_practice">Practice · %1$s · %2$d questions</string>
     <string name="test_banner_mock">%1$s · %2$d questions</string>
+    <string name="test_banner_blueprint">Mock · Blueprint · %1$s · %2$d questions</string>
     <string name="test_banner_short">Short test · %1$d questions</string>
     <string name="test_asked_shown">%1$d asked, %2$d shown</string>
     <string name="study_again">Study again</string>

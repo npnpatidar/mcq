@@ -49,6 +49,8 @@ data class CardSignal(
  */
 data class QuestionSignalInput(
     val questionId: String,
+    /** Null for a standalone question; shared by every member of a passage. */
+    val passageId: String? = null,
     val categoryId: String? = null,
     val categoryTitle: String = "",
     /** The author's label, or null when the bank has none. */
@@ -81,6 +83,11 @@ data class QuestionSignalInput(
  */
 data class Signals(
     val questionId: String,
+    /**
+     * Null for a standalone question. A passage is indivisible: selectors that
+     * respect passages must take every member or none (blueprint selection).
+     */
+    val passageId: String? = null,
     val categoryId: String?,
     val categoryTitle: String,
     /** The author's label, or null when the bank has none. */
@@ -255,6 +262,7 @@ object QuestionSignals {
 
         return Signals(
             questionId = input.questionId,
+            passageId = input.passageId,
             categoryId = input.categoryId,
             categoryTitle = input.categoryTitle,
             authoredDifficulty = input.authoredDifficulty,

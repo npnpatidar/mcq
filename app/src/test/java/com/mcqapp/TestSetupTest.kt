@@ -1,7 +1,9 @@
 package com.mcqapp
 
+import com.mcqapp.domain.BlueprintSection
 import com.mcqapp.domain.ExamTiming
 import com.mcqapp.domain.ExclusionMode
+import com.mcqapp.domain.PlanBlueprint
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestComparability
 import com.mcqapp.domain.TestPlan
@@ -29,7 +31,8 @@ class TestSetupTest {
         categoryIds: List<String> = emptyList(),
         exclusionMode: ExclusionMode = ExclusionMode.NONE,
         minBlockSize: Int = 1,
-        variant: String? = null
+        variant: String? = null,
+        blueprint: PlanBlueprint? = null
     ) = TestSetup(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -44,7 +47,8 @@ class TestSetupTest {
         available = available,
         exclusionMode = exclusionMode,
         variant = variant,
-        minBlockSize = minBlockSize
+        minBlockSize = minBlockSize,
+        blueprint = blueprint
     )
 
     @Test
@@ -152,6 +156,7 @@ class TestSetupTest {
             listOf(
                 TestType.RANDOM,
                 TestType.BALANCED,
+                TestType.BLUEPRINT,
                 TestType.COVERAGE,
                 TestType.MISTAKES,
                 TestType.WEAKEST_TOPICS,
@@ -165,8 +170,7 @@ class TestSetupTest {
                 TestType.TAG,
                 TestType.AUTHORED_DIFFICULTY,
                 TestType.SLOWEST,
-                TestType.FIXED_PANEL,
-                TestType.BLUEPRINT
+                TestType.FIXED_PANEL
             ),
             TestSetup.STARTABLE_TYPES
         )
@@ -324,6 +328,43 @@ class TestSetupTest {
     fun bookmarkedAndSlowestNeedNoVariant() {
         assertTrue(setup(type = TestType.BOOKMARKED, available = 100).startable())
         assertTrue(setup(type = TestType.SLOWEST, available = 100).startable())
+    }
+
+    @Test
+    fun aBlueprintRequestRoundsUpToTheNextSelectableLength() {
+        assertEquals(0, TestPlan.maxRequestForBlueprint(0))
+        assertEquals(5, TestPlan.maxRequestForBlueprint(5))
+        assertEquals(19, TestPlan.maxRequestForBlueprint(19))
+        assertEquals(20, TestPlan.maxRequestForBlueprint(20))
+        assertEquals(30, TestPlan.maxRequestForBlueprint(21))
+        assertEquals(30, TestPlan.maxRequestForBlueprint(29))
+        assertEquals(100, TestPlan.maxRequestForBlueprint(91))
+        // One-question deficit: 99 needs a 100 request to run all 99.
+        assertEquals(100, TestPlan.maxRequestForBlueprint(99))
+        assertEquals(150, TestPlan.maxRequestForBlueprint(150))
+        assertEquals(150, TestPlan.maxRequestForBlueprint(4_000))
+    }
+
+    @Test
+    fun aNinetyNineQuestionBlueprintRunsAtItsWholeSupplyForARequestOfOneHundred() {
+        val blueprint = PlanBlueprint(
+            label = "UPSC",
+            sections = listOf(
+                BlueprintSection("c-polity", "Polity", 1, scopeCategoryIds = listOf("c-polity"))
+            )
+        )
+        val plan = setup(
+            type = TestType.BLUEPRINT,
+            requested = 100,
+            available = 99,
+            categoryIds = listOf("c-polity"),
+            variant = "1",
+            blueprint = blueprint
+        ).plan()
+        val ready = plan.resolve(99) as TestPlan.Resolution.Ready
+        assertEquals(99, ready.count)
+        assertTrue(ready.clamped)
+        assertFalse(ready.short)
     }
 
     @Test

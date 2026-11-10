@@ -613,6 +613,15 @@ fun TestSessionScreen(
                             // mock on the result page, so the banner must not
                             // call it Practice; only a real practice type gets
                             // that badge.
+                            // A blueprint names itself as well as its type: two
+                            // blueprint mocks of the same length are different
+                            // tests (exam_blueprint §9.3).
+                            bounded == com.mcqapp.domain.TestType.BLUEPRINT &&
+                                !state.blueprintLabel.isNullOrBlank() -> stringResource(
+                                R.string.test_banner_blueprint,
+                                state.blueprintLabel.orEmpty(),
+                                minOf(asked, shown)
+                            )
                             bounded != null &&
                                 bounded != com.mcqapp.domain.TestType.RANDOM &&
                                 bounded.isRepresentative -> stringResource(

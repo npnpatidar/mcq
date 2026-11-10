@@ -215,7 +215,9 @@ internal fun TestSetupSheet(
     var blueprintViews by remember(paper.id, variant) {
         mutableStateOf<List<BlueprintSectionView>?>(null)
     }
-    LaunchedEffect(paper.id, type, variant) {
+    /** Bumped after a save so editing the already-selected blueprint reloads it. */
+    var blueprintRefresh by remember(paper.id) { mutableIntStateOf(0) }
+    LaunchedEffect(paper.id, type, variant, blueprintRefresh) {
         if (type == TestType.BLUEPRINT && variant != null) {
             val id = variant?.toLongOrNull()
             blueprintViews = if (id != null) {
@@ -300,7 +302,11 @@ internal fun TestSetupSheet(
     var selectionPreview by remember(paper.id, expanded) {
         mutableStateOf<SelectionPreview?>(null)
     }
-    var previewLoading by remember(paper.id, expanded) { mutableStateOf(false) }
+    // Start true for a preview-driven type: the first frame must not read the
+    // not-yet-loaded pool as an empty scope and flash a red error.
+    var previewLoading by remember(paper.id, expanded, type) {
+        mutableStateOf(type.usesSignalSelector)
+    }
     LaunchedEffect(paper.id, expanded, type, requestCount, breadth, effectiveVariant) {
         if (!type.usesSignalSelector || panelBlocked) {
             selectionPreview = null
@@ -314,8 +320,12 @@ internal fun TestSetupSheet(
         previewLoading = false
     }
     // A custom type's pool comes from the preview: Start clamps against the
-    // pool the selector will actually draw from, not the whole scope.
+    // pool the selector will actually draw from, not the whole scope. A
+    // blueprint uses its total supply, not the achievable quota at the current
+    // request: the latter is capped at the request, so using it here would make
+    // the length control unable to grow past its own current value.
     val available = when {
+        type == TestType.BLUEPRINT -> selectionPreview?.capacity ?: 0
         type == TestType.MISTAKES -> mistakePool ?: 0
         isCustom -> selectionPreview?.pool ?: 0
         else -> questionPool
@@ -398,8 +408,13 @@ internal fun TestSetupSheet(
     )
     // The largest length this pool can actually supply. Chips above it are
     // disabled rather than left to the clamp message (§7.2, §14); the message
-    // still covers a length carried over from a larger scope or type.
-    val maxSelectable = TestPlan.maxAllowedFor(available)
+    // still covers a length carried over from a larger scope or type. A
+    // blueprint rounds up, because its run clamps to the exact quota sum.
+    val maxSelectable = if (type == TestType.BLUEPRINT) {
+        TestPlan.maxRequestForBlueprint(available)
+    } else {
+        TestPlan.maxAllowedFor(available)
+    }
     val maxLengthIndex = TestPlan.LENGTHS.indexOf(maxSelectable).coerceAtLeast(0)
 
     // A restored length is clamped to the current pool (plan §10). A length
@@ -603,12 +618,6 @@ internal fun TestSetupSheet(
                         style = MaterialTheme.typography.labelLarge
                     )
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        stringResource(R.string.test_setup_blueprint_scope),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(4.dp))
                     if (blueprints.isNullOrEmpty()) {
                         Text(
                             stringResource(R.string.test_setup_no_blueprints),
@@ -650,10 +659,15 @@ internal fun TestSetupSheet(
                             Text(stringResource(R.string.test_setup_blueprint_new))
                         }
                         if (variant != null) {
-                            TextButton(onClick = {
-                                editingBlueprintId = variant?.toLongOrNull()
-                                showBlueprintEditor = true
-                            }) {
+                            // The editor prefills from the section views; opening
+                            // it before they land would show a blank tree.
+                            TextButton(
+                                enabled = blueprintViews != null,
+                                onClick = {
+                                    editingBlueprintId = variant?.toLongOrNull()
+                                    showBlueprintEditor = true
+                                }
+                            ) {
                                 Text(stringResource(R.string.test_setup_blueprint_edit))
                             }
                         }
@@ -661,7 +675,12 @@ internal fun TestSetupSheet(
                     // The resolved section tree and achievable count, before Start.
                     val previewViews = blueprintViews.orEmpty()
                     if (previewViews.isNotEmpty()) {
-                        BlueprintPreviewRows(previewViews, requestCount, 0)
+                        BlueprintPreviewRows(
+                            views = previewViews,
+                            count = requestCount,
+                            actual = selectionPreview?.terminalCounts.orEmpty(),
+                            depth = 0
+                        )
                     }
                 }
                 else -> Unit
@@ -711,7 +730,7 @@ internal fun TestSetupSheet(
                         R.string.test_setup_pool_mistakes, mistakePool ?: 0
                     )
                     type.usesSignalSelector && selectionPreview != null -> stringResource(
-                        R.string.test_setup_pool_type, selectionPreview!!.pool
+                        R.string.test_setup_pool_type, available
                     )
                     else -> stringResource(R.string.test_setup_pool_questions, questionPool)
                 },
@@ -769,9 +788,11 @@ internal fun TestSetupSheet(
                         style = MaterialTheme.typography.labelLarge
                     )
                 }
-            } else if (setup.short()) {
+            } else if (setup.short() && type != TestType.BLUEPRINT) {
                 // The whole scope is below the minimum: there is nothing to
-                // choose, the session runs every question it holds.
+                // choose, the session runs every question it holds. A short
+                // blueprint is refused instead, so calling it a "short test"
+                // next to "at least 20 are needed" contradicts itself.
                 Text(
                     stringResource(R.string.test_setup_short_test, setup.resolvedCount()),
                     style = MaterialTheme.typography.labelLarge
@@ -896,6 +917,10 @@ internal fun TestSetupSheet(
                 )
             }
             val note = when {
+                // An in-flight preview has no pool yet; the empty-scope
+                // message here would be an error about a state we have not
+                // finished reading.
+                previewLoading -> null
                 poolLoading -> null
                 // The whole-paper notice above already says why a panel
                 // cannot run under a category scope.
@@ -1060,11 +1085,15 @@ internal fun TestSetupSheet(
             },
             onDismiss = { showBlueprintEditor = false },
             onSaved = { id ->
-                // Switch to the saved blueprint: the picker reloads so the
-                // edited or new blueprint is in the list.
+                // Switch to the saved blueprint and reload both the picker and
+                // the section views. Editing the blueprint already selected
+                // leaves `variant` unchanged, so the views effect needs an
+                // explicit refresh: without it the preview stays empty and
+                // Start is permanently disabled with "cannot use a blueprint".
                 variant = id.toString()
                 blueprints = null
                 blueprintViews = null
+                blueprintRefresh++
             }
         )
     }
@@ -1105,30 +1134,57 @@ internal fun TestSetupSheet(
 
 /**
  * The blueprint section tree the preview resolved: indented by depth, with
- * each node's quota over its pool. A subtree whose category was moved to
- * another paper is struck through and marked ignored. Quotas come from the
- * same recursive allocation the selector runs, so the tree shown here is the
- * tree Start would ask.
+ * each node's granted questions, its pool, and its share of the run. A subtree
+ * whose category was moved to another paper is struck through and marked
+ * ignored. Quotas and percentages come from the same allocation the selector
+ * runs, computed once at the root: re-allocating at each level with the full
+ * length would show a child a larger quota than its parent actually granted.
  */
 @Composable
 private fun BlueprintPreviewRows(
     views: List<BlueprintSectionView>,
     count: Int,
+    /** Actual selected counts from the preview; whole passages may exceed quotas. */
+    actual: Map<String, Int>,
     depth: Int
 ) {
     val allocation = remember(views, count) {
         runCatching { BlueprintQuotas.allocate(views, count) }.getOrNull()
     }
+    val shares = remember(views, allocation, actual) {
+        if (actual.isNotEmpty()) {
+            BlueprintQuotas.shares(views, actual)
+        } else {
+            allocation?.let { BlueprintQuotas.shares(views, it) }.orEmpty()
+        }
+    }
+    // What each section asked for before its pool capped it. Only then can a
+    // "short by" line mean anything: granted quotas never exceed their pool.
+    val demand = remember(views, count) {
+        runCatching { BlueprintQuotas.demand(views, count) }.getOrNull().orEmpty()
+    }
+    BlueprintPreviewNodeRows(views, shares, demand, depth)
+}
+
+@Composable
+private fun BlueprintPreviewNodeRows(
+    views: List<BlueprintSectionView>,
+    shares: Map<String, BlueprintQuotas.RowShare>,
+    demand: Map<String, Int>,
+    depth: Int
+) {
     for (view in views) {
-        val quota = sectionQuota(view, allocation?.perTerminal.orEmpty())
+        val share = shares[view.categoryId] ?: BlueprintQuotas.RowShare(0, view.pool, 0)
+        val wanted = sectionQuota(view, demand)
         Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     stringResource(
                         R.string.test_setup_blueprint_section_row,
                         view.title,
-                        quota,
-                        view.pool
+                        share.quota,
+                        share.pool,
+                        share.percent
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (view.available) MaterialTheme.colorScheme.onSurface
@@ -1146,19 +1202,19 @@ private fun BlueprintPreviewRows(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                } else if (quota > view.pool) {
+                } else if (view.children.isEmpty() && wanted > share.quota) {
                     Spacer(Modifier.width(6.dp))
                     Text(
                         stringResource(
                             R.string.test_setup_blueprint_section_short,
-                            quota - view.pool
+                            wanted - share.quota
                         ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
             }
-            BlueprintPreviewRows(view.children, count, depth + 1)
+            BlueprintPreviewNodeRows(view.children, shares, demand, depth + 1)
         }
     }
 }

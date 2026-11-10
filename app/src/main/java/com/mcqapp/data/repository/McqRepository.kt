@@ -841,6 +841,24 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         }
     }
 
+    /**
+     * The unique (paperId, name) index would surface as a raw
+     * `SQLiteConstraintException`; check first so the editor can show a
+     * sentence a learner can act on. Case-insensitive: two chips reading the
+     * same name in different case are just as indistinguishable.
+     */
+    private suspend fun requireUniqueBlueprintName(
+        paperId: String,
+        name: String,
+        exceptId: Long? = null
+    ) {
+        val trimmed = name.trim()
+        val taken = db.blueprintDao().forPaper(paperId).any { entity ->
+            entity.id != exceptId && entity.name.equals(trimmed, ignoreCase = true)
+        }
+        require(!taken) { "A blueprint named \"$trimmed\" already exists in this paper." }
+    }
+
     suspend fun createBlueprint(
         paperId: String,
         name: String,
@@ -848,6 +866,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     ): Long {
         val categories = db.categoryDao().getByPaper(paperId)
         validateBlueprintTree(paperId, name, sections, categories)
+        requireUniqueBlueprintName(paperId, name)
         return db.withTransaction {
             val id = db.blueprintDao().insertBlueprint(
                 BlueprintEntity(paperId = paperId, name = name.trim())
@@ -868,6 +887,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             ?: throw IllegalArgumentException("Blueprint not found")
         val categories = db.categoryDao().getByPaper(existing.paperId)
         validateBlueprintTree(existing.paperId, name, sections, categories)
+        requireUniqueBlueprintName(existing.paperId, name, exceptId = id)
         db.withTransaction {
             db.blueprintDao().updateName(id, name.trim())
             db.blueprintDao().clearSections(id)

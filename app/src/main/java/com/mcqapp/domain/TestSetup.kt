@@ -169,6 +169,9 @@ data class TestSetup(
         val STARTABLE_TYPES: List<TestType> = listOf(
             TestType.RANDOM,
             TestType.BALANCED,
+            // A blueprint is a representative mock beside Random/Balanced, so
+            // its chip sits with them rather than at the end of the row.
+            TestType.BLUEPRINT,
             TestType.COVERAGE,
             TestType.MISTAKES,
             TestType.WEAKEST_TOPICS,
@@ -182,8 +185,7 @@ data class TestSetup(
             TestType.TAG,
             TestType.AUTHORED_DIFFICULTY,
             TestType.SLOWEST,
-            TestType.FIXED_PANEL,
-            TestType.BLUEPRINT
+            TestType.FIXED_PANEL
         )
 
         /** Whether [type] can be started. */

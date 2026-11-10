@@ -391,20 +391,24 @@ Validation added to `TestPlan.validationError(available)`, in this order:
 a frozen set.
 
 `SelectionPreview` (used by the setup sheet) gains
-`val sections: List<BlueprintSectionPreview> = emptyList()` — the view tree
-plus per-node quotas. For a blueprint the preview's existing `pool` field
-carries **`allocation.achievable`**, not the union size, so the sheet's
-`available` (and therefore `resolve()`) clamps against what the sections can
-actually supply. `TestSetupSheet.isCustom` gains `BLUEPRINT` so the pool comes
-from the preview rather than the raw question pool.
+`val sections: List<BlueprintSectionPreview> = emptyList()` and
+`val capacity: Int = pool` — the view tree plus per-node quotas. For a
+blueprint the preview's `pool` still carries **`allocation.achievable`** (the
+startable figure at the previewed request), while `capacity` carries
+**`allocation.supply`**: the count-independent sum of terminal pools. The
+sheet's `available` uses `capacity` so the length control can grow past the
+current request; `resolve()` still clamps the run to the exact achievable
+count. `TestSetupSheet.isCustom` gains `BLUEPRINT` so the pool comes from the
+preview rather than the raw question pool.
 `TestSelector.poolSize(BLUEPRINT)` stays the union size; it is a display
 figure, while `achievable` is the startable one — the two are labelled
 differently in the sheet.
 
 ### 5.2 `TestPlan.resolve`
 
-A blueprint's `available` is the **achievable quota sum**, not the raw scope
-size. Add a branch beside the fixed-panel one:
+A blueprint's `available` is the **total terminal supply**, not the raw scope
+size and not the achievable quota at the current request (that is `pool`). Add
+a branch beside the fixed-panel one:
 
 ```kotlin
 if (type == TestType.BLUEPRINT) {
@@ -462,7 +466,7 @@ Three sites, all must agree:
 
 | Site | Change |
 |---|---|
-| `domain/TestSetup.kt` (`TestSetup`, `plan()`) | Add `blueprint: PlanBlueprint?` to the constructor data class and pass it through; `available` is supplied by the caller as the achievable sum; `comparability()` already returns `COMPARABLE` for a representative type |
+| `domain/TestSetup.kt` (`TestSetup`, `plan()`) | Add `blueprint: PlanBlueprint?` to the constructor data class and pass it through; `available` is supplied by the caller as the blueprint's total supply; `comparability()` already returns `COMPARABLE` for a representative type |
 | `ui/test/TestViewModel.kt` (`buildPlan`) | `variant` branch for `BLUEPRINT`: parse the id, load the blueprint's section tree once, expand each terminal with `CategorySelection.orderedIds`, build the `PlanBlueprint`, build the plan. A missing or empty blueprint is refused with a message, not started as Random |
 | `ui/library/LibraryViewModel.kt` (`previewPlan`) | Build the preview plan with the same tree and the same expansions so the preview and Start cannot disagree |
 
@@ -552,19 +556,20 @@ it to `MIGRATIONS`, and generate
 
 The unique `(paperId, name)` index is deliberate where panels use a plain one:
 three blueprints are chosen from a chip row, and two chips reading "UPSC" would
-be indistinguishable. The repository catches `SQLiteConstraintException` and
-returns the inline "a blueprint with this name exists" error; the editor never
-has to guess.
+be indistinguishable. The repository checks names case-insensitively (trimmed,
+scoped to the paper, excluding the row being replaced) before writing and
+throws a friendly `IllegalArgumentException`; the raw
+`SQLiteConstraintException` remains the last line of defence, never the message
+the editor shows.
 
 Why `ON DELETE CASCADE` on `categoryId` (and transitively on
 `parentSectionId`): a section over a deleted category is not a runnable rule,
 so it leaves the blueprint with the category — and because its children point
 at it, the whole blueprint subtree under that category leaves with it. The
 `available = false` case that remains is a category **moved to another paper**:
-the row is not deleted, the foreign key still holds, but the category is no
-longer in this paper's tree. The repository's `blueprintSectionViews` reports
+the row is not deleted, the foreign key still holds, but the category isno longer in this paper's tree. The repository's `blueprintSectionViews` reports
 it as unavailable, the plan builder drops that subtree (and records the union
-it actually used), and the editor offers to remove the stale row. State both
+it actually used), and the editor lists it as "removed on save". State both
 behaviours in the editor's help text.
 
 Deleting a blueprint section in the editor deletes its whole subtree in the
@@ -690,7 +695,10 @@ Notes:
 - `interleave` keeps sections from blocking each other in the presented order,
   exactly as Balanced/Coverage already do.
 - `fillWith` stays inside `inScope` (the blueprint's union), so a blueprint never
-  asks a question outside its own sections.
+  asks a question outside its own sections. Blueprint selection uses a
+  passage-aware variant: a passage is an indivisible block, so each terminal
+  takes whole passages until its quota is met (the last block may overshoot)
+  and the fill stage adds whole passages too. A passage is never split.
 - Nothing is re-read from the database: the label, titles, parts and expanded
   scopes come from the plan, which was frozen at Start. That is what makes the
   composition and a resume agree even if the stored blueprint is edited or
@@ -703,8 +711,11 @@ Notes:
   back to Random or to the whole paper.
 
 `TestSelector.poolSize(TestType.BLUEPRINT)` → the union size.
-`TestSelector.preview` returns the allocation as the composition, so the setup
-sheet shows the quotas **before** Start.
+`TestSelector.preview` returns the allocation as the composition, so the attempt
+records the quotas **before** Start. It also exposes `terminalCounts`, the
+actual selection after whole passages are added; the setup sheet prints those
+counts and percentages, so the row agrees with the session when a passage
+overshoots its quota.
 
 `signals` is read as membership in a terminal's expanded id set
 (`categoryId in scopeCategoryIds`), not equality — this is the tree expansion
@@ -1156,7 +1167,7 @@ survives a backup/restore; the migration opens cleanly from v24 and v23.
 
 - `BlueprintEditorSheet` (recursive tree editor, local + global share)
 - `TestSetupSheet` picker, section tree preview, scope-ownership rule
-  (`isCustom` gains `BLUEPRINT`; `available = achievable`)
+  (`isCustom` gains `BLUEPRINT`; `available = capacity`, with the request rounded up)
 - `TestSetup.blueprint`
 - `TestViewModel.buildPlan` (variant branch; loads and freezes the blueprint
   tree, expands each terminal)

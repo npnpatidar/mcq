@@ -284,6 +284,20 @@ data class TestPlan(
         fun passageTooLargeMessage(max: Int = MAX_LENGTH): String =
             "Every passage is larger than $max; split one or change the scope."
 
+        /**
+         * The largest length a blueprint may *request*. Unlike [maxAllowedFor]
+         * this rounds up: a blueprint's run clamps to the exact achievable
+         * count, so a 99-question supply needs a 100 request to run all 99.
+         * Below [MIN_LENGTH] the supply itself is the cap (a short blueprint
+         * is refused, not rounded up to 20).
+         */
+        fun maxRequestForBlueprint(capacity: Int): Int {
+            if (capacity <= 0) return 0
+            if (capacity < MIN_LENGTH) return capacity
+            val capped = capacity.coerceAtMost(MAX_LENGTH)
+            return ((capped + STEP - 1) / STEP) * STEP
+        }
+
         /** The pure form of [maxAllowed]; callable without a plan. */
         fun maxAllowedFor(available: Int): Int {
             if (available <= 0) return 0

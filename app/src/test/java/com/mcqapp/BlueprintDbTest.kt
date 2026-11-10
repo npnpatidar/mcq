@@ -19,6 +19,7 @@ import com.mcqapp.domain.stats.ExamGroup
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -126,6 +127,39 @@ class BlueprintDbTest {
         repository.deleteBlueprint(id)
         assertNull(repository.blueprint(id))
         assertTrue(repository.blueprintsForPaper("p1").isEmpty())
+    }
+
+    @Test
+    fun duplicateBlueprintNamesAreRefusedWithAFriendlyMessage() = runBlocking {
+        val oneSection = listOf(BlueprintSection("c-polity", parts = 1))
+        val id = repository.createBlueprint("p1", "UPSC", oneSection)
+        try {
+            // Whitespace and case do not make a distinguishable chip.
+            repository.createBlueprint("p1", "  upsc  ", oneSection)
+            fail("expected a duplicate-name refusal")
+        } catch (e: IllegalArgumentException) {
+            val message = e.message.orEmpty()
+            assertTrue(message, message.contains("already exists"))
+            assertFalse("raw SQLite error leaked", message.contains("UNIQUE"))
+        }
+
+        // Renaming to the same name (in another case) is not a clash with self.
+        repository.replaceBlueprint(id, "upsc", oneSection)
+        assertEquals("upsc", repository.blueprint(id)!!.name)
+
+        // Another blueprint in the same paper cannot take the name…
+        val other = repository.createBlueprint("p1", "SSC", oneSection)
+        try {
+            repository.replaceBlueprint(other, "UPSC", oneSection)
+            fail("expected a duplicate-name refusal on replace")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message.orEmpty().contains("already exists"))
+        }
+
+        // …but the check is scoped to the paper.
+        repository.ensurePaperAndCategory("p2", "Other", "c-other", "Other")
+        repository.createBlueprint("p2", "UPSC", listOf(BlueprintSection("c-other", parts = 1)))
+        assertEquals(2, repository.blueprintsForPaper("p1").size)
     }
 
     @Test

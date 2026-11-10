@@ -230,6 +230,142 @@ class BlueprintQuotasTest {
     }
 
     @Test
+    fun supplyIsCountIndependentWhileAchievableStaysCapped() {
+        val views = listOf(
+            view("thin", 2, 2),
+            view("b", 1, 100),
+            view("c", 1, 100)
+        )
+        val short = BlueprintQuotas.allocate(views, 20)
+        assertEquals(202, short.supply)
+        assertEquals(20, short.achievable)
+        assertEquals(2, short.perTerminal["thin"])
+        // The same tree at a larger request: capacity must not grow with it
+        // (this is what previously made the length control self-limiting).
+        val longer = BlueprintQuotas.allocate(views, 100)
+        assertEquals(202, longer.supply)
+        assertEquals(100, longer.achievable)
+        // Even an empty request reports the supply, so the sheet can size the
+        // length control before a preview preference is known.
+        assertEquals(202, BlueprintQuotas.allocate(views, 0).supply)
+        assertEquals(0, BlueprintQuotas.allocate(views, 0).achievable)
+    }
+
+    @Test
+    fun supplyRollsUpEligibleTerminalsAndSkipsUnavailableSubtrees() {
+        val physics = view("physics", 1, 5)
+        val chem = view("chemistry", 1, 50)
+        val science = internal("science", 1, listOf(physics, chem))
+        val gone = view("gone", 1, 500, available = false)
+        val history = view("history", 1, 100)
+        val alloc = BlueprintQuotas.allocate(listOf(science, history, gone), 40)
+        // Science 55 + History 100; the unavailable 500 contributes nothing.
+        assertEquals(155, alloc.supply)
+    }
+
+    @Test
+    fun demandReportsTheQuotaBeforePoolsCapIt() {
+        val physics = view("physics", 1, 5)
+        val chem = view("chemistry", 1, 50)
+        val science = internal("science", 1, listOf(physics, chem))
+        val history = view("history", 1, 100)
+        val views = listOf(science, history)
+        val demand = BlueprintQuotas.demand(views, 40)
+        // 20/20 at the top, then 10/10 inside Science: the ask, not the cap.
+        assertEquals(20, demand["history"])
+        assertEquals(10, demand["physics"])
+        assertEquals(10, demand["chemistry"])
+
+        // The actual allocation caps Physics at 5 and redistributes the rest.
+        val alloc = BlueprintQuotas.allocate(views, 40)
+        assertEquals(5, alloc.perTerminal["physics"])
+        assertEquals(15, alloc.perTerminal["chemistry"])
+        assertEquals(20, alloc.perTerminal["history"])
+        assertEquals(40, alloc.achievable)
+    }
+
+    @Test
+    fun demandIsEmptyForAnEmptyRequest() {
+        val views = listOf(view("a", 1, 10))
+        assertTrue(BlueprintQuotas.demand(views, 0).isEmpty())
+        assertTrue(BlueprintQuotas.demand(emptyList(), 20).isEmpty())
+    }
+
+    @Test
+    fun sharesRollUpCountsAndPercentagesAcrossSubcategories() {
+        val physics = view("physics", 3, 60)
+        val chem = view("chemistry", 2, 40)
+        val science = internal("science", 1, listOf(physics, chem))
+        val polity = view("polity", 1, 100)
+        val views = listOf(science, polity)
+        val alloc = BlueprintQuotas.allocate(views, 100)
+        val shares = BlueprintQuotas.shares(views, alloc)
+
+        // Science and Polity split the run 50/50; Science splits 60/40 inside.
+        assertEquals(50, shares.getValue("science").quota)
+        assertEquals(100, shares.getValue("science").pool)
+        assertEquals(50, shares.getValue("science").percent)
+        assertEquals(30, shares.getValue("physics").quota)
+        assertEquals(20, shares.getValue("chemistry").quota)
+        assertEquals(30, shares.getValue("physics").percent)
+        assertEquals(20, shares.getValue("chemistry").percent)
+        assertEquals(50, shares.getValue("polity").percent)
+        assertEquals(
+            100,
+            listOf("science", "polity").sumOf { shares.getValue(it).percent }
+        )
+    }
+
+    @Test
+    fun sharesUseQuestionsNotPartsAndSumTo100() {
+        // Two equal parts, but one section has five questions and the other 95:
+        // the percentages follow the questions (and any passage members in them).
+        val thin = view("thin", 1, 5)
+        val big = view("big", 1, 95)
+        val views = listOf(thin, big)
+        val shares = BlueprintQuotas.shares(views, BlueprintQuotas.allocate(views, 100))
+        assertEquals(5, shares.getValue("thin").quota)
+        assertEquals(5, shares.getValue("thin").pool)
+        assertEquals(5, shares.getValue("thin").percent)
+        assertEquals(95, shares.getValue("big").percent)
+
+        // Rounding is apportioned, not truncated independently: 4/3/3 at 10.
+        val thirds = listOf(view("a", 1, 100), view("b", 1, 100), view("c", 1, 100))
+        val rounded = BlueprintQuotas.shares(thirds, BlueprintQuotas.allocate(thirds, 10))
+        assertEquals(40, rounded.getValue("a").percent)
+        assertEquals(30, rounded.getValue("b").percent)
+        assertEquals(30, rounded.getValue("c").percent)
+        assertEquals(100, rounded.values.sumOf { it.percent })
+    }
+
+    @Test
+    fun passageMembersCountAsQuestionsNotAsOneBlock() {
+        // A four-question comprehension set is four questions of its category,
+        // not one unit: 4/10 of this run, not 1/2 of the two sections.
+        val passageCategory = view("passage", 1, 4)
+        val standalone = view("standalone", 1, 6)
+        val views = listOf(passageCategory, standalone)
+        val shares = BlueprintQuotas.shares(views, BlueprintQuotas.allocate(views, 10))
+        assertEquals(4, shares.getValue("passage").quota)
+        assertEquals(4, shares.getValue("passage").pool)
+        assertEquals(40, shares.getValue("passage").percent)
+        assertEquals(60, shares.getValue("standalone").percent)
+    }
+
+    @Test
+    fun sharesReportPoolsButZeroPercentWhenNothingIsAllocated() {
+        val physics = view("physics", 1, 5)
+        val science = internal("science", 1, listOf(physics))
+        val views = listOf(science)
+        val shares = BlueprintQuotas.shares(views, BlueprintQuotas.allocate(views, 0))
+        assertEquals(0, shares.getValue("physics").quota)
+        assertEquals(5, shares.getValue("physics").pool)
+        assertEquals(0, shares.getValue("physics").percent)
+        assertEquals(0, shares.getValue("science").percent)
+        assertEquals(0, shares.values.sumOf { it.percent })
+    }
+
+    @Test
     fun blueprintModelHelpers() {
         val leaf1 = com.mcqapp.domain.BlueprintSection("l1", "L1", 1, scopeCategoryIds = listOf("l1", "l2"))
         val leaf2 = com.mcqapp.domain.BlueprintSection("l2", "L2", 1, scopeCategoryIds = listOf("l3"))

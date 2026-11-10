@@ -91,6 +91,8 @@ data class TestUiState(
     val drillRequested: Int = 0,
     /** The bounded-Test selector name; null on a legacy session (section 12.2). */
     val testType: String? = null,
+    /** The chosen blueprint's name, for the in-session banner; null otherwise. */
+    val blueprintLabel: String? = null,
     /** The plan's requested length (0 on a legacy session); [questionCount] is the shown count. */
     val requestedCount: Int = 0,
     val resumeOffer: TestSnapshot? = null,
@@ -358,7 +360,15 @@ class TestViewModel(
                     val pool = if (recentIds.isEmpty()) {
                         signals
                     } else {
-                        signals.filterNot { it.questionId in recentIds }
+                        // A passage is all-or-none: if any member is too recent,
+                        // exclude the whole block rather than leaving a partial
+                        // comprehension set in the pool.
+                        val recentPassages = signals
+                            .filter { it.passageId != null && it.questionId in recentIds }
+                            .mapNotNullTo(mutableSetOf()) { it.passageId }
+                        signals.filterNot {
+                            it.questionId in recentIds || it.passageId in recentPassages
+                        }
                     }
                     val breadth = Breadth.entries
                         .firstOrNull { it.name == routeBreadth }
@@ -537,7 +547,8 @@ class TestViewModel(
                         isDrill = isDrill,
                         drillRequested = if (isDrill) drillCount else 0,
                         testType = effectivePlan?.type?.name,
-                        requestedCount = effectivePlan?.count ?: 0
+                        requestedCount = effectivePlan?.count ?: 0,
+                        blueprintLabel = finalPlan?.blueprint?.label
                     )
                 }
                 // The resume rebuild replays the saved ids, so it reads the
@@ -1312,6 +1323,7 @@ class TestViewModel(
                 // (absent) type: the header must not call it a Random test.
                 testType = sessionPlan?.type?.name,
                 requestedCount = sessionPlan?.count ?: 0,
+                blueprintLabel = sessionPlan?.blueprint?.label,
                 timeWarning = null,
                 resumeOffer = null
             )

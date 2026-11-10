@@ -120,20 +120,100 @@ class StudyViewModelPullTest {
         }
     }
 
+    /**
+     * A voluntary stop with nothing graded is not a completed session: the
+     * summary must not claim "Session complete / 0 reviewed". The card stays
+     * scheduled exactly where it was.
+     */
     @Test
-    fun stopEndsTheSessionWithItsTallyAndLeavesSchedulesIntact() {
+    fun stopBeforeAnyReviewSaysSoAndLeavesSchedulesIntact() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
         assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
 
         viewModel.stop()
         assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
-        // A voluntary stop, not an empty session: no "nothing due" claim.
-        assertEquals(EmptyReason.None, viewModel.state.value.emptyReason)
+        assertEquals(EmptyReason.StoppedEarly, viewModel.state.value.emptyReason)
         assertEquals(0, viewModel.state.value.reviewed)
         runBlocking {
             assertEquals(2, repository.cardState("p1", "q1")!!.reviewCount)
         }
+    }
+
+    /**
+     * Check proposed a grade and the footer said "Next in …": stopping before
+     * Next used to throw that review away. The stop writes the proposal the way
+     * Next would, so the tally and the schedule both reflect the card the
+     * learner had already decided about.
+     */
+    @Test
+    fun stoppingAfterCheckSavesTheProposedGradeAndCountsIt() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+        val logsBefore = runBlocking {
+            repository.db().reviewLogDao().historyForQuestion("q1").size
+        }
+        val stateBefore = runBlocking { repository.cardState("p1", "q1")!! }
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        assertEquals(ReviewGrade.GOOD, viewModel.state.value.pendingGrade)
+
+        viewModel.stop()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
+
+        // Counted as the review it was, not as a completed empty session.
+        assertEquals(EmptyReason.None, viewModel.state.value.emptyReason)
+        assertEquals(1, viewModel.state.value.reviewed)
+        assertEquals(1, viewModel.state.value.goodCount)
+        runBlocking {
+            val logs = repository.db().reviewLogDao().historyForQuestion("q1")
+            assertEquals("one stop must write exactly one review", logsBefore + 1, logs.size)
+            assertEquals(ReviewGrade.GOOD.ordinal + 1, logs.last().rating)
+            val after = repository.cardState("p1", "q1")!!
+            assertEquals(stateBefore.reviewCount + 1, after.reviewCount)
+            assertTrue("the grade must reschedule the card", after.dueAt != stateBefore.dueAt)
+        }
+
+        // A second stop is not a second review.
+        viewModel.stop()
+        runBlocking {
+            assertEquals(logsBefore + 1, repository.db().reviewLogDao().historyForQuestion("q1").size)
+        }
+    }
+
+    /**
+     * The summary's figures are frozen when the sitting ends: both clocks are
+     * banked, the total is recorded in the state, and the question time is a
+     * part of it (never more, or the explanation split would be negative).
+     */
+    @Test
+    fun stoppingFreezesTheSittingClockIntoTheSummary() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+
+        viewModel.stop()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.finished })
+        val state = viewModel.state.value
+        assertEquals(viewModel.sessionSeconds.value, state.sessionTotalSeconds)
+        assertTrue(
+            "question time ${state.questionSeconds} exceeds the sitting ${state.sessionTotalSeconds}",
+            state.questionSeconds <= state.sessionTotalSeconds
+        )
+        assertEquals(
+            state.sessionTotalSeconds - state.questionSeconds,
+            state.explanationSeconds
+        )
+
+        // "Study again" is a new sitting: no leftover times.
+        viewModel.restart()
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
+            !viewModel.state.value.finished && viewModel.state.value.current != null
+        })
+        assertEquals(0L, viewModel.state.value.sessionTotalSeconds)
+        assertEquals(0L, viewModel.state.value.questionSeconds)
     }
 
     @Test

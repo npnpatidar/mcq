@@ -598,10 +598,15 @@ class StudyAndSelectionUiTest {
 
         pressSystemBack()
 
-        // Still on Study: the stop ends the sitting, it does not leave it.
-        waitFor("Session complete")
-        compose.onNodeWithText("0 reviewed • 0 again • 0 remembered", substring = false)
-            .assertIsDisplayed()
+        // Still on Study: the stop ends the sitting, it does not leave it —
+        // and with nothing reviewed it says so, instead of claiming a
+        // completed session with a tally of zero.
+        waitFor("Stopped before reviewing a card")
+        assertTrue(
+            "a stop with nothing done must not read as a completed session",
+            compose.onAllNodesWithText("Session complete", substring = false)
+                .fetchSemanticsNodes().isEmpty()
+        )
 
         // The handler stands down on the summary, so back now leaves.
         pressSystemBack()

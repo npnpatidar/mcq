@@ -85,7 +85,8 @@
     <string name="review_order_help">Review always shows the order you were given. Scoring is unaffected: answers are matched by option, not position.</string>
     <string name="image_weight_help">Image weight counts embedded pictures; large banks shrink automatically at import.</string>
     <string name="export_all_help">Backs up every paper, bookmark and attempt to one JSON file. Re-import it anywhere to restore content and history.</string>
-    <string name="app_about_help">MCQ App — practice multiple-choice papers offline. Import JSON question banks, take timed tests with negative marking, review explanations, and track your history.</string>
+    <string name="app_about_help">MCQ App turns your own multiple-choice papers into practice, fully offline. Import a JSON question bank, then study it with spaced repetition or sit a timed test with negative marking and a full result breakdown. Every answer comes with its explanation, and your history, accuracy and weakest categories stay on the device.</string>
+    <string name="app_about_made_by">Made by Naresh</string>
     <string name="response_time_thresholds_help">The response-time thresholds only apply when rebuilding a schedule from past test attempts. In Study you grade every card yourself.</string>
     <string name="next_day_starts_at">Next day starts at</string>
     <string name="next_day_starts_at_help">Hour of the day a new study day begins, on this device\'s clock</string>

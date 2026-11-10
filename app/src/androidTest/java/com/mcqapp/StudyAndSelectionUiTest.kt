@@ -609,6 +609,36 @@ class StudyAndSelectionUiTest {
     }
 
     /**
+     * Back from a live test is the test's own finish affordance: it opens the
+     * submit confirmation rather than leaving the paper ungraded, and Cancel
+     * puts the learner back on the question.
+     */
+    @Test
+    fun systemBackInATestOpensTheSubmitConfirmation() {
+        seedPaper(
+            "ui-test-back", "UITestBack Paper", "ui-test-back-cat",
+            single("ui-test-back-q1", "ui-test-back-cat"),
+            single("ui-test-back-q2", "ui-test-back-cat")
+        )
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-title-ui-test-back").assertIsDisplayed()
+        compose.onNodeWithTag("paper-test-ui-test-back").performClick()
+        confirmTestStart()
+        waitFor("Question 1 of 2")
+
+        pressSystemBack()
+
+        // The same dialog the Submit button opens, not the library.
+        waitFor("Submit test?")
+        compose.onNodeWithTag("confirm-submit").assertIsDisplayed()
+
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+        compose.onNodeWithTag("confirm-submit").assertDoesNotExist()
+        // Still in the sitting, on the question that was showing.
+        compose.onNodeWithText("Question 1 of 2", substring = true).assertIsDisplayed()
+    }
+
+    /**
      * The break strip suggests at the ten-review marker, dismisses without
      * a fight, and a dismissal never blocks the pull: the next card arrives
      * as though the strip had never shown.

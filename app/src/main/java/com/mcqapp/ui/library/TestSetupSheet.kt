@@ -331,20 +331,6 @@ internal fun TestSetupSheet(
         else -> questionPool
     }
 
-    // The sampler's smallest block for the pool the selected type draws from.
-    // Null while the query is in flight, so Start waits instead of emitting a
-    // route the session would refuse at load.
-    var minBlockSize by remember(paper.id, expanded, type, available) {
-        mutableStateOf<Int?>(null)
-    }
-    LaunchedEffect(paper.id, expanded, type, available) {
-        minBlockSize = if (available <= 0) {
-            1
-        } else {
-            runCatching { loadMinBlockSize(type, expanded) }.getOrDefault(1)
-        }
-    }
-    val blockLoading = minBlockSize == null
     // A fixed panel's length is its size, so Start must wait for the picker's
     // summary; otherwise the first frame could start the default 20 of a
     // larger panel.
@@ -369,6 +355,25 @@ internal fun TestSetupSheet(
     // A blueprint below the minimum length cannot start: Start is refused
     // with the short-scope message, exactly like a small scope today.
     val blueprintTooShort = type == TestType.BLUEPRINT && available < TestPlan.MIN_LENGTH
+
+    // The sampler's smallest block for the pool the selected type draws from.
+    // Null while the query is in flight, so Start waits instead of emitting a
+    // route the session would refuse at load. The scope is the blueprint's
+    // union in Blueprint mode: the sheet clears the tick-set there, and a
+    // minimum over the whole paper would let a run start that the union's own
+    // smallest block cannot fit (blueprint.md §8 Bug 2).
+    val minBlockScope = TestSetup.blockScopeIds(expanded, type, blueprintPlan)
+    var minBlockSize by remember(paper.id, minBlockScope, type, available) {
+        mutableStateOf<Int?>(null)
+    }
+    LaunchedEffect(paper.id, minBlockScope, type, available) {
+        minBlockSize = if (available <= 0) {
+            1
+        } else {
+            runCatching { loadMinBlockSize(type, minBlockScope) }.getOrDefault(1)
+        }
+    }
+    val blockLoading = minBlockSize == null
 
     val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
         ExclusionMode.RECENT_3

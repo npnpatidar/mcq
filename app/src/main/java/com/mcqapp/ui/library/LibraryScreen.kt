@@ -478,8 +478,16 @@ fun LibraryScreen(
                     else -> viewModel.repository.getMinBlockSize(request.paper.id, scopeIds)
                 }
             },
-            loadPreview = { type, count, breadth, variant ->
-                viewModel.previewSelection(request.paper, request.categoryIds, type, count, breadth, variant)
+            loadPreview = { type, count, breadth, variant, exclusion ->
+                viewModel.previewSelection(
+                    request.paper,
+                    request.categoryIds,
+                    type,
+                    count,
+                    breadth,
+                    variant,
+                    exclusion
+                )
             },
             loadLastLength = { viewModel.lastTestLength() },
             loadTags = {

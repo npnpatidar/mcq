@@ -190,5 +190,30 @@ data class TestSetup(
 
         /** Whether [type] can be started. */
         fun isStartableType(type: TestType): Boolean = type in STARTABLE_TYPES
+
+        /**
+         * The ids the sampler's minimum-block pre-check must measure.
+         *
+         * Normally this is the ticked expansion. In Blueprint mode the sheet
+         * clears the tick-set because the blueprint owns its scope, and the
+         * selector only ever samples inside the blueprint's union — so the
+         * union is the scope whose smallest block decides whether the run fits.
+         * Measuring the whole paper instead is a minimum over a superset: it
+         * can only be smaller, and it lets a run start that the union's own
+         * smallest block cannot fit (blueprint.md §8 Bug 2).
+         *
+         * A Blueprint whose plan has not resolved yet has no union; the sheet
+         * keeps Start disabled until it lands, so the empty answer never gates
+         * a run.
+         */
+        fun blockScopeIds(
+            tickedExpanded: List<String>,
+            type: TestType,
+            blueprint: PlanBlueprint?
+        ): List<String> = if (type == TestType.BLUEPRINT) {
+            blueprint?.categoryIds.orEmpty()
+        } else {
+            tickedExpanded
+        }
     }
 }

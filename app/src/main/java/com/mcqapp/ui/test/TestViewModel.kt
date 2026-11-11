@@ -357,19 +357,7 @@ class TestViewModel(
                 // re-ranking after the metrics move.
                 val focusSelection = if (effectivePlan?.type?.usesSignalSelector == true) {
                     val signals = repository.getQuestionSignals(paperId, scopeIds)
-                    val pool = if (recentIds.isEmpty()) {
-                        signals
-                    } else {
-                        // A passage is all-or-none: if any member is too recent,
-                        // exclude the whole block rather than leaving a partial
-                        // comprehension set in the pool.
-                        val recentPassages = signals
-                            .filter { it.passageId != null && it.questionId in recentIds }
-                            .mapNotNullTo(mutableSetOf()) { it.passageId }
-                        signals.filterNot {
-                            it.questionId in recentIds || it.passageId in recentPassages
-                        }
-                    }
+                    val pool = TestSelector.withoutRecent(signals, recentIds)
                     val breadth = Breadth.entries
                         .firstOrNull { it.name == routeBreadth }
                         ?: Breadth.MEDIUM

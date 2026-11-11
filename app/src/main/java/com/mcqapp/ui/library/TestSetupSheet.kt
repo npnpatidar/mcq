@@ -110,9 +110,10 @@ internal fun TestSetupSheet(
      * The live composition preview for a signal-selected type. Display-only: a
      * failure leaves the preview blank and Start still runs the real selector.
      * [variant] is the custom choice (phase 3): the folded tag or difficulty
-     * name, or null.
+     * name, or null. [exclusion] is the Fresh rule Start will apply, so the
+     * preview reads the same pool.
      */
-    loadPreview: suspend (TestType, Int, Breadth, String?) -> SelectionPreview,
+    loadPreview: suspend (TestType, Int, Breadth, String?, ExclusionMode) -> SelectionPreview,
     /**
      * The length the learner last started a test with (plan §10). It is only a
      * starting point: [TestPlan.normalizeLength] snaps it to a selectable step
@@ -184,6 +185,12 @@ internal fun TestSetupSheet(
         TestPlan.EXPOSURE_VARIANT
     } else {
         variant
+    }
+    /** The Fresh rule this setup would record and Start would apply. */
+    val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
+        ExclusionMode.RECENT_3
+    } else {
+        ExclusionMode.NONE
     }
     /** The scope's distinct tags, loaded once for the Tag picker. */
     var tags by remember(paper.id, categoryIds) { mutableStateOf<List<com.mcqapp.data.local.TagCount>?>(null) }
@@ -307,7 +314,9 @@ internal fun TestSetupSheet(
     var previewLoading by remember(paper.id, expanded, type) {
         mutableStateOf(type.usesSignalSelector)
     }
-    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, effectiveVariant) {
+    LaunchedEffect(
+        paper.id, expanded, type, requestCount, breadth, effectiveVariant, exclusionMode
+    ) {
         if (!type.usesSignalSelector || panelBlocked) {
             selectionPreview = null
             previewLoading = false
@@ -315,7 +324,7 @@ internal fun TestSetupSheet(
         }
         previewLoading = true
         selectionPreview = runCatching {
-            loadPreview(type, requestCount, breadth, effectiveVariant)
+            loadPreview(type, requestCount, breadth, effectiveVariant, exclusionMode)
         }.getOrNull()
         previewLoading = false
     }
@@ -331,20 +340,6 @@ internal fun TestSetupSheet(
         else -> questionPool
     }
 
-    // The sampler's smallest block for the pool the selected type draws from.
-    // Null while the query is in flight, so Start waits instead of emitting a
-    // route the session would refuse at load.
-    var minBlockSize by remember(paper.id, expanded, type, available) {
-        mutableStateOf<Int?>(null)
-    }
-    LaunchedEffect(paper.id, expanded, type, available) {
-        minBlockSize = if (available <= 0) {
-            1
-        } else {
-            runCatching { loadMinBlockSize(type, expanded) }.getOrDefault(1)
-        }
-    }
-    val blockLoading = minBlockSize == null
     // A fixed panel's length is its size, so Start must wait for the picker's
     // summary; otherwise the first frame could start the default 20 of a
     // larger panel.
@@ -370,11 +365,24 @@ internal fun TestSetupSheet(
     // with the short-scope message, exactly like a small scope today.
     val blueprintTooShort = type == TestType.BLUEPRINT && available < TestPlan.MIN_LENGTH
 
-    val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
-        ExclusionMode.RECENT_3
-    } else {
-        ExclusionMode.NONE
+    // The sampler's smallest block for the pool the selected type draws from.
+    // Null while the query is in flight, so Start waits instead of emitting a
+    // route the session would refuse at load. The scope is the blueprint's
+    // union in Blueprint mode: the sheet clears the tick-set there, and a
+    // minimum over the whole paper would let a run start that the union's own
+    // smallest block cannot fit (blueprint.md §8 Bug 2).
+    val minBlockScope = TestSetup.blockScopeIds(expanded, type, blueprintPlan)
+    var minBlockSize by remember(paper.id, minBlockScope, type, available) {
+        mutableStateOf<Int?>(null)
     }
+    LaunchedEffect(paper.id, minBlockScope, type, available) {
+        minBlockSize = if (available <= 0) {
+            1
+        } else {
+            runCatching { loadMinBlockSize(type, minBlockScope) }.getOrDefault(1)
+        }
+    }
+    val blockLoading = minBlockSize == null
 
     val setupCategoryIds = blueprintPlan?.categoryIds ?: tickedIds
     val setupScopeKey = if (blueprintPlan != null) {

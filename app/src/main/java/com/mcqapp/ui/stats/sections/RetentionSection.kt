@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.GroupRetention
 import com.mcqapp.domain.stats.IntervalBand
 import com.mcqapp.domain.stats.RetentionData
@@ -148,7 +149,136 @@ private fun CalibrationCard(bundle: RetentionData) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp)
         )
+        bundle.calibrationReport?.let { report -> CalibrationEvidence(report) }
     }
+}
+
+/**
+ * The grade-level evidence (plan phase 2), inside the existing calibration
+ * card: the per-grade table, the adjacent contrast with its interval, and the
+ * honest "not enough evidence" lines. Deliberately plain text — the decision
+ * this feeds is months away at normal volume, and the report must say so
+ * rather than look like a dashboard that is failing.
+ */
+@Composable
+private fun CalibrationEvidence(report: Calibration.Report) {
+    Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (!report.hasPairs) {
+            Text(
+                stringResource(R.string.stats_calibration_excluded, report.excluded),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            return@Column
+        }
+        report.grades.filter { it.pairs > 0 }.forEach { grade ->
+            Text(
+                stringResource(
+                    R.string.stats_calibration_grade_row,
+                    grade.grade.stored,
+                    grade.pairs,
+                    grade.cards,
+                    formatPct(grade.recall ?: 0.0),
+                    formatPct(grade.predictedMean ?: 0.0)
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        ContrastLine(
+            label = stringResource(R.string.stats_calibration_easy_vs_good),
+            contrast = report.contrast1,
+            insufficient = report.contrast1.low == null
+        )
+        ContrastLine(
+            label = stringResource(R.string.stats_calibration_hard_vs_good),
+            contrast = report.contrast2,
+            insufficient = report.hardUnderpowered || report.contrast2.low == null
+        )
+        report.followUp.filter { it.grade != Calibration.LadderGrade.HARD }.forEach { follow ->
+            Text(
+                stringResource(
+                    R.string.stats_calibration_follow_up,
+                    follow.grade.stored,
+                    formatPct(follow.rate ?: 0.0),
+                    follow.due
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        report.firstExposure.filter { it.count > 0 }.forEach { exposure ->
+            Text(
+                stringResource(
+                    R.string.stats_calibration_first_exposure,
+                    exposure.grade.stored,
+                    exposure.count,
+                    formatPct(exposure.recall ?: 0.0)
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            stringResource(
+                if (report.followUpGatePassed) R.string.stats_calibration_follow_up_met
+                else R.string.stats_calibration_follow_up_not_met
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        val precision = report.readiness.halfWidth?.let { "±" + formatPp(it) + " pp" } ?: "—"
+        Text(
+            stringResource(
+                R.string.stats_calibration_readiness,
+                report.readiness.pairs,
+                report.readiness.bindingCards,
+                precision,
+                report.readiness.calendarDays
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ContrastLine(
+    label: String,
+    contrast: Calibration.Contrast,
+    insufficient: Boolean
+) {
+    val decision = when {
+        insufficient || contrast.low == null || contrast.high == null ->
+            stringResource(R.string.stats_calibration_not_enough)
+        contrast.direction == Calibration.Direction.LOWER ->
+            stringResource(R.string.stats_calibration_lower)
+        contrast.direction == Calibration.Direction.RAISE ->
+            stringResource(R.string.stats_calibration_raise)
+        else -> stringResource(R.string.stats_calibration_no_change)
+    }
+    Text(
+        stringResource(
+            R.string.stats_calibration_contrast,
+            label,
+            formatSignedPp(contrast.value ?: 0.0),
+            formatSignedPp(contrast.low ?: 0.0),
+            formatSignedPp(contrast.high ?: 0.0),
+            decision
+        ),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/** A probability as a one-decimal percentage point value. */
+private fun formatPp(value: Double): String =
+    String.format(java.util.Locale.ENGLISH, "%.1f", value * 100)
+
+/** Signed percentage points, for a contrast or an interval bound. */
+private fun formatSignedPp(value: Double): String {
+    val text = String.format(java.util.Locale.ENGLISH, "%.1f", value * 100)
+    return if (value >= 0) "+$text" else text
 }
 
 private fun Double.roundTo3(): String = String.format(java.util.Locale.ENGLISH, "%.3f", this)

@@ -30,7 +30,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -79,7 +78,6 @@ fun BookmarksScreen(
 
     var showFormatDialog by remember { mutableStateOf(false) }
     var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
-    var shareMode by rememberSaveable { mutableStateOf(false) }
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val platformContext = androidx.compose.ui.platform.LocalContext.current
@@ -251,11 +249,43 @@ fun BookmarksScreen(
     }
 
     if (showFormatDialog) {
+        fun closeFormatDialog() {
+            showFormatDialog = false
+            pendingFormat = null
+        }
+
+        fun saveBookmarksToFile() {
+            showFormatDialog = false
+            pendingFormat = exportFormat
+            exportSaver(exportFormat).launch(
+                PaperExporter.fileNameFor(
+                    com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                    exportFormat
+                )
+            )
+        }
+
+        fun shareBookmarks() {
+            scope.launch {
+                val intent = viewModel.shareBookmarksIntent(exportFormat)
+                closeFormatDialog()
+                if (intent != null) {
+                    try {
+                        platformContext.startActivity(
+                            Intent.createChooser(
+                                intent,
+                                platformResources.getString(R.string.share_chooser_title)
+                            )
+                        )
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
         AlertDialog(
-            onDismissRequest = {
-                showFormatDialog = false
-                pendingFormat = null
-            },
+            onDismissRequest = { closeFormatDialog() },
             title = {
                 Text(
                     pluralStringResource(
@@ -267,19 +297,6 @@ fun BookmarksScreen(
             },
             text = {
                 Column {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = !shareMode,
-                            onClick = { shareMode = false },
-                            label = { Text(stringResource(R.string.share_save)) }
-                        )
-                        FilterChip(
-                            selected = shareMode,
-                            onClick = { shareMode = true },
-                            label = { Text(stringResource(R.string.share_share)) }
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
                     if (isSharing) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -314,51 +331,19 @@ fun BookmarksScreen(
                 }
             },
             confirmButton = {
-                TextButton(
-                    enabled = !isSharing,
-                    onClick = {
-                        if (shareMode) {
-                            scope.launch {
-                                val intent = viewModel.shareBookmarksIntent(exportFormat)
-                                showFormatDialog = false
-                                pendingFormat = null
-                                if (intent != null) {
-                                    try {
-                                        platformContext.startActivity(
-                                            Intent.createChooser(
-                                                intent,
-                                                platformResources.getString(R.string.share_chooser_title)
-                                            )
-                                        )
-                                    } catch (_: ActivityNotFoundException) {
-                                        Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                            return@TextButton
-                        }
-                        showFormatDialog = false
-                        pendingFormat = exportFormat
-                        exportSaver(exportFormat).launch(
-                            PaperExporter.fileNameFor(
-                                com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
-                                exportFormat
-                            )
-                        )
+                Row {
+                    TextButton(enabled = !isSharing, onClick = { saveBookmarksToFile() }) {
+                        Text(stringResource(R.string.share_save))
                     }
-                ) {
-                    Text(
-                        stringResource(
-                            if (shareMode) R.string.share_share else R.string.export
-                        )
-                    )
+                    TextButton(enabled = !isSharing, onClick = { shareBookmarks() }) {
+                        Text(stringResource(R.string.share_share))
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    showFormatDialog = false
-                    pendingFormat = null
-                }) { Text(stringResource(R.string.cancel)) }
+                TextButton(enabled = !isSharing, onClick = { closeFormatDialog() }) {
+                    Text(stringResource(R.string.cancel))
+                }
             }
         )
     }

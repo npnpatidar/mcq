@@ -957,6 +957,28 @@ class StudyAndSelectionUiTest {
     }
 
     @Test
+    fun shareIsOneTapFromTheExportDialog() {
+        seedTwoRoots("ui-cexp-share", "UICShare Paper")
+        compose.setContent { McqNavHost(repository = repository) }
+
+        compose.onNodeWithTag("paper-show-ui-cexp-share").performScrollTo().performClick()
+        waitForTag("card-cat-ui-cexp-share-c1")
+        compose.onNodeWithTag("card-cat-ui-cexp-share-c1").performScrollTo().performClick()
+        compose.onNodeWithTag("paper-export-ui-cexp-share").performScrollTo().performClick()
+
+        val title = "Export selection (1 categories)"
+        compose.onNodeWithText(title, substring = false).assertIsDisplayed()
+        // No mode chip first: Share itself is the action. Under the old
+        // two-step dialog this click only selected the Share chip and the
+        // dialog stayed open.
+        compose.onNodeWithText("Share", substring = false).performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(title, substring = false)
+                .fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test
     fun cardTestFollowsTheSelection() {
         // Tick the SECOND root: a whole-paper Test would serve the first one,
         // so serving the second is the proof the scope was honoured.

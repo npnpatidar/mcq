@@ -29,7 +29,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -134,7 +133,6 @@ fun LibraryScreen(
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     var showExportFormatDialog by rememberSaveable { mutableStateOf(false) }
     var exportFormat by rememberSaveable { mutableStateOf(ExportFormat.JSON_INLINE) }
-    var shareMode by rememberSaveable { mutableStateOf(false) }
 
     // The format must travel in state: saver callbacks fire after the save
     // dialog, so anything baked into the callback itself goes stale.
@@ -389,7 +387,6 @@ fun LibraryScreen(
                                         }
                                     )
                                     exportFormat = ExportFormat.JSON_INLINE
-                                    shareMode = false
                                     showExportFormatDialog = true
                                 },
                                 onDelete = { viewModel.requestDelete(paper.id, paper.title) },
@@ -667,11 +664,71 @@ fun LibraryScreen(
     }
 
     if (showExportFormatDialog) {
+        fun closeExportDialog() {
+            showExportFormatDialog = false
+            viewModel.setPendingExport(null)
+        }
+
+        // Two direct actions: the format rows choose the format, and these
+        // buttons choose what to do with it. There is no separate mode chip to
+        // set first, so Save or Share is one tap.
+        fun saveExportToFile() {
+            val target = pendingExportTarget
+            if (target == null || (target.paperId == null && target.selection == null)) {
+                closeExportDialog()
+                return
+            }
+            val paper = papers.firstOrNull { it.id == target.paperId }
+            val selectionPaper = papers.firstOrNull { it.id == target.selection?.first }
+            showExportFormatDialog = false
+            viewModel.setPendingExport(target.copy(format = exportFormat))
+            exportSaver(exportFormat).launch(
+                if (target.selection != null) {
+                    PaperExporter.fileNameFor(
+                        "${selectionPaper?.title.orEmpty()} (selection)",
+                        exportFormat
+                    )
+                } else {
+                    PaperExporter.fileNameFor(paper?.title.orEmpty(), exportFormat)
+                }
+            )
+        }
+
+        fun shareExport() {
+            val target = pendingExportTarget ?: run {
+                closeExportDialog()
+                return
+            }
+            scope.launch {
+                val intent = if (target.selection != null) {
+                    viewModel.shareSelectionIntent(
+                        target.selection.first,
+                        target.selection.second,
+                        exportFormat
+                    )
+                } else if (target.paperId != null) {
+                    viewModel.sharePaperIntent(target.paperId, exportFormat)
+                } else {
+                    null
+                }
+                closeExportDialog()
+                if (intent != null) {
+                    try {
+                        context.startActivity(
+                            Intent.createChooser(
+                                intent,
+                                resources.getString(R.string.share_chooser_title)
+                            )
+                        )
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
         AlertDialog(
-            onDismissRequest = {
-                showExportFormatDialog = false
-                viewModel.setPendingExport(null)
-            },
+            onDismissRequest = { closeExportDialog() },
             title = {
                 Text(
                     if (pendingExportTarget?.selection != null) {
@@ -683,19 +740,6 @@ fun LibraryScreen(
             },
             text = {
                 Column {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = !shareMode,
-                            onClick = { shareMode = false },
-                            label = { Text(stringResource(R.string.share_save)) }
-                        )
-                        FilterChip(
-                            selected = shareMode,
-                            onClick = { shareMode = true },
-                            label = { Text(stringResource(R.string.share_share)) }
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
                     if (isSharing) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -730,72 +774,25 @@ fun LibraryScreen(
                 }
             },
             confirmButton = {
-                TextButton(
-                    enabled = !isSharing,
-                    onClick = {
-                        val target = pendingExportTarget
-                        val paper = papers.firstOrNull { it.id == target?.paperId }
-                        val selectionPaper = papers.firstOrNull { it.id == target?.selection?.first }
-                        if (shareMode) {
-                            scope.launch {
-                                val intent = if (target?.selection != null) {
-                                    viewModel.shareSelectionIntent(
-                                        target.selection.first,
-                                        target.selection.second,
-                                        exportFormat
-                                    )
-                                } else if (target?.paperId != null) {
-                                    viewModel.sharePaperIntent(target.paperId, exportFormat)
-                                } else {
-                                    null
-                                }
-                                showExportFormatDialog = false
-                                viewModel.setPendingExport(null)
-                                if (intent != null) {
-                                    try {
-                                        context.startActivity(
-                                            Intent.createChooser(
-                                                intent,
-                                                resources.getString(R.string.share_chooser_title)
-                                            )
-                                        )
-                                    } catch (_: ActivityNotFoundException) {
-                                        Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                            return@TextButton
-                        }
-                        showExportFormatDialog = false
-                        if (target != null && (target.paperId != null || target.selection != null)) {
-                            viewModel.setPendingExport(target.copy(format = exportFormat))
-                            exportSaver(exportFormat).launch(
-                                if (target.selection != null) {
-                                    PaperExporter.fileNameFor(
-                                        "${selectionPaper?.title.orEmpty()} (selection)",
-                                        exportFormat
-                                    )
-                                } else {
-                                    PaperExporter.fileNameFor(paper?.title.orEmpty(), exportFormat)
-                                }
-                            )
-                        } else {
-                            viewModel.setPendingExport(null)
-                        }
+                Row {
+                    TextButton(
+                        enabled = !isSharing,
+                        onClick = { saveExportToFile() }
+                    ) {
+                        Text(stringResource(R.string.share_save))
                     }
-                ) {
-                    Text(
-                        stringResource(
-                            if (shareMode) R.string.share_share else R.string.export
-                        )
-                    )
+                    TextButton(
+                        enabled = !isSharing,
+                        onClick = { shareExport() }
+                    ) {
+                        Text(stringResource(R.string.share_share))
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    showExportFormatDialog = false
-                    viewModel.setPendingExport(null)
-                }) { Text(stringResource(R.string.cancel)) }
+                TextButton(enabled = !isSharing, onClick = { closeExportDialog() }) {
+                    Text(stringResource(R.string.cancel))
+                }
             }
         )
     }

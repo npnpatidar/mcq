@@ -1679,6 +1679,11 @@ category at a time). File naming: `baseName(title) + suffix + extension`,
 `baseName` = title sanitized (remove `\/:*?"<>|`, collapse spaces to `-`, trim
 to 80 chars, fallback `paper`).
 
+**Format dialog** (Library paper, Browse selection, Bookmarks): choose a format
+row, then one action — **Save to file** or **Share** — or **Cancel**. There is
+no separate Save/Share mode chip: the action button is the choice, so sharing
+or saving is one tap after picking the format.
+
 ### 1. JSON Inline (`ExportFormat.JSON_INLINE`)
 - **MIME:** `application/json` | **Ext:** `.json` | **File:** `<base>.json`
 - **Contains:** Full `McqFileDto` envelope for one paper: `{version, papers:[paper], passages:[...]}`.

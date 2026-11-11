@@ -128,7 +128,6 @@ fun BrowseScreen(
     var exportFormat by rememberSaveable {
         mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE)
     }
-    var shareMode by rememberSaveable { mutableStateOf(false) }
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val platformContext = androidx.compose.ui.platform.LocalContext.current
@@ -244,7 +243,6 @@ fun BrowseScreen(
                         TextButton(
                             onClick = {
                                 exportFormat = com.mcqapp.data.export.ExportFormat.JSON_INLINE
-                                shareMode = false
                                 exportIds = selectedIds
                                 showExportDialog = true
                             },
@@ -790,24 +788,51 @@ fun BrowseScreen(
         }
 
         if (showExportDialog) {
+            fun finishSelectionExport() {
+                showExportDialog = false
+                selectionMode = false
+                selectedIds = emptySet()
+            }
+
+            fun saveSelectionToFile() {
+                showExportDialog = false
+                exportSaver(exportFormat).launch(
+                    com.mcqapp.data.export.PaperExporter.fileNameFor(
+                        exportTitle(), exportFormat
+                    )
+                )
+                // Selection mode ends with the export: the ids are now held by
+                // exportIds, and the user asked for a file.
+                selectionMode = false
+                selectedIds = emptySet()
+            }
+
+            fun shareSelection() {
+                scope.launch {
+                    val intent = viewModel.shareSelectionIntent(
+                        exportIds, exportTitle(), exportFormat
+                    )
+                    finishSelectionExport()
+                    if (intent != null) {
+                        try {
+                            platformContext.startActivity(
+                                Intent.createChooser(
+                                    intent,
+                                    platformResources.getString(R.string.share_chooser_title)
+                                )
+                            )
+                        } catch (_: ActivityNotFoundException) {
+                            Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+
             AlertDialog(
                 onDismissRequest = { showExportDialog = false },
                 title = { Text("Export ${exportIds.size} selected questions") },
                 text = {
                     Column {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = !shareMode,
-                                onClick = { shareMode = false },
-                                label = { Text(stringResource(R.string.share_save)) }
-                            )
-                            FilterChip(
-                                selected = shareMode,
-                                onClick = { shareMode = true },
-                                label = { Text(stringResource(R.string.share_share)) }
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
                         if (isSharing) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -842,53 +867,17 @@ fun BrowseScreen(
                     }
                 },
                 confirmButton = {
-                    TextButton(
-                        enabled = !isSharing,
-                        onClick = {
-                            if (shareMode) {
-                                scope.launch {
-                                    val intent = viewModel.shareSelectionIntent(
-                                        exportIds, exportTitle(), exportFormat
-                                    )
-                                    showExportDialog = false
-                                    if (intent != null) {
-                                        try {
-                                            platformContext.startActivity(
-                                                Intent.createChooser(
-                                                    intent,
-                                                    platformResources.getString(R.string.share_chooser_title)
-                                                )
-                                            )
-                                        } catch (_: ActivityNotFoundException) {
-                                            Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    selectionMode = false
-                                    selectedIds = emptySet()
-                                }
-                                return@TextButton
-                            }
-                            showExportDialog = false
-                            exportSaver(exportFormat).launch(
-                                com.mcqapp.data.export.PaperExporter.fileNameFor(
-                                    exportTitle(), exportFormat
-                                )
-                            )
-                            // Selection mode ends with the export: the ids are now
-                            // held by exportIds, and the user asked for a file.
-                            selectionMode = false
-                            selectedIds = emptySet()
+                    Row {
+                        TextButton(enabled = !isSharing, onClick = { saveSelectionToFile() }) {
+                            Text(stringResource(R.string.share_save))
                         }
-                    ) {
-                        Text(
-                            stringResource(
-                                if (shareMode) R.string.share_share else R.string.export
-                            )
-                        )
+                        TextButton(enabled = !isSharing, onClick = { shareSelection() }) {
+                            Text(stringResource(R.string.share_share))
+                        }
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showExportDialog = false }) {
+                    TextButton(enabled = !isSharing, onClick = { showExportDialog = false }) {
                         Text(stringResource(R.string.cancel))
                     }
                 }

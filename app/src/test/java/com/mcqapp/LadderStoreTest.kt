@@ -145,6 +145,8 @@ class LadderStoreTest {
                 reason = "prior"
             )
         )
+        // A restore rewrites the preferences before the seed reads them.
+        store().writeCuts(11L, 33L, 5)
         val seeded = ladder.seedAfterRestore()
         assertEquals(6, seeded)
         assertEquals("prior", db.ladderDao().version(6L)!!.reason)

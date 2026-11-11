@@ -747,6 +747,12 @@ object TestSelector {
         // section quotas (and their short-run tiebreak) do not. That is what
         // the setup preview shows, so preview and run never disagree.
         val allocation = BlueprintQuotas.allocate(views, plan.count)
+        // Section 9.6 bounds the *run*, not each terminal: the terminals' whole
+        // passages share one overshoot budget, so their overshoots cannot add
+        // up past the sampler limit. A block that does not fit is skipped while
+        // a smaller block later in the order may still be taken.
+        val limit = TestPlan.samplerLimit(plan.count)
+        val taken = mutableSetOf<String>()
         val perTerminal = bp.terminals.mapNotNull { terminal ->
             val need = allocation.perTerminal[terminal.categoryId] ?: 0
             if (need <= 0) return@mapNotNull null
@@ -754,10 +760,13 @@ object TestSelector {
             // A passage is indivisible: take whole blocks until the quota is
             // reached, so a quota can overshoot rather than split a passage.
             takeWholePassages(
-                candidates = signals.filter { it.categoryId in scope },
+                candidates = signals.filter {
+                    it.categoryId in scope && it.questionId !in taken
+                },
                 target = need,
-                seed = plan.seed xor terminal.categoryId.hashCode().toLong()
-            )
+                seed = plan.seed xor terminal.categoryId.hashCode().toLong(),
+                limit = limit - taken.size
+            ).also { selected -> taken += selected.map { it.questionId } }
         }
         val interleaved = interleave(perTerminal)
         val (ids, fill) = fillWithWholePassages(
@@ -765,7 +774,8 @@ object TestSelector {
             target = plan.count,
             seed = plan.seed,
             pool = inScope,
-            stages = listOf(FillSource.BLUEPRINT_FILL to inScope)
+            stages = listOf(FillSource.BLUEPRINT_FILL to inScope),
+            limit = limit
         )
         return Selection(
             ids = ids,
@@ -794,17 +804,24 @@ object TestSelector {
      * Whole passages in a seeded order until [target] questions are reached.
      * The last block may overshoot: taking a passage's first member without
      * the rest would show half a comprehension set.
+     *
+     * [limit] caps the returned size against questions already taken elsewhere
+     * in the same run (section 9.6): a block larger than the remaining budget
+     * is skipped, and the scan continues, so a smaller block later in the
+     * seeded order can still be taken.
      */
     private fun takeWholePassages(
         candidates: List<Signals>,
         target: Int,
-        seed: Long
+        seed: Long,
+        limit: Int = Int.MAX_VALUE
     ): List<Signals> {
-        if (target <= 0) return emptyList()
+        if (target <= 0 || limit <= 0) return emptyList()
         val out = mutableListOf<Signals>()
         val groups = groupsByPassage(candidates.shuffled(Random(seed)))
         for (group in groups.values) {
             if (out.size >= target) break
+            if (out.size + group.size > limit) continue
             out += group
         }
         return out
@@ -820,7 +837,9 @@ object TestSelector {
         target: Int,
         seed: Long,
         pool: List<Signals>,
-        stages: List<Pair<FillSource, List<Signals>>>
+        stages: List<Pair<FillSource, List<Signals>>>,
+        /** The run's overall cap, including everything in [selected]. */
+        limit: Int = Int.MAX_VALUE
     ): Pair<List<String>, List<Pair<FillSource, Int>>> {
         val result = selected.toMutableList()
         val taken = selected.mapTo(mutableSetOf()) { it.questionId }
@@ -831,6 +850,7 @@ object TestSelector {
             var added = 0
             for (group in groupsByPassage(candidates).values) {
                 if (result.size >= target) break
+                if (result.size + group.size > limit) continue
                 val fresh = group.filter { taken.add(it.questionId) }
                 if (fresh.isNotEmpty()) {
                     result += fresh

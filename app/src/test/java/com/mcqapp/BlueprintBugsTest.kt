@@ -134,7 +134,6 @@ class BlueprintBugsTest {
     // =====================================================================
 
     @Test
-    @Ignore("Bug 1 — blueprint.md §8: per-terminal overshoots are unbounded")
     fun bug1_twoTerminalsStayInsideTheSamplerLimit() {
         // Request 20 -> quotas 10 + 10; each terminal's pool is one passage.
         val signals = passage("a", "a", "pa", 15) + passage("b", "b", "pb", 12)
@@ -149,7 +148,6 @@ class BlueprintBugsTest {
     }
 
     @Test
-    @Ignore("Bug 1 — blueprint.md §8: per-terminal overshoots are unbounded")
     fun bug1_threeTerminalsStayInsideTheSamplerLimit() {
         // Three 12-member passages, request 20 -> quotas 7 + 7 + 6.
         val blueprint = PlanBlueprint(
@@ -169,7 +167,6 @@ class BlueprintBugsTest {
     }
 
     @Test
-    @Ignore("Bug 1 — blueprint.md §8: per-terminal overshoots are unbounded")
     fun bug1_shownCountNeverExceedsTheHardMaximum() {
         // Request 150 -> quotas 75 + 75; each pool is one 100-member passage.
         val signals = passage("a", "a", "pa", 100) + passage("b", "b", "pb", 100)
@@ -183,7 +180,6 @@ class BlueprintBugsTest {
     }
 
     @Test
-    @Ignore("Bug 1 — blueprint.md §8: the overshoot bound is not global")
     fun bug1_nestedTerminalsAreBoundedAsOneRun() {
         // The same two passages, but nested under one internal section: the
         // overshoot must still be bounded once for the run, not once per

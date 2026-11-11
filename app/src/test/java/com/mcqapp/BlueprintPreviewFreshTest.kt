@@ -296,9 +296,12 @@ class BlueprintPreviewFreshTest {
 
     @Test
     fun bug4Guard_belowTwiceTheRequestNothingIsExcluded() = runBlocking {
-        // Supply 60 (A 10, B 50); three attempts asked 50 distinct questions,
-        // leaving 10 for a request of 20. The rule keeps the full pool.
-        seedPaper(P_RULE, aStandalones = 10, bPassage = 0, bStandalones = 50)
+        // Supply 70 (A 10, B 60); three attempts of 20 asked 60 distinct
+        // questions, leaving 10 for a request of 20. The rule keeps the full
+        // pool. Every attempt must hold the requested 20 questions: the
+        // comparability key includes the attempt's length, so a short attempt
+        // is ignored rather than counted.
+        seedPaper(P_RULE, aStandalones = 10, bPassage = 0, bStandalones = 60)
         val paper = repository.getPaper(P_RULE)!!
         val (blueprintId, blueprint) = blueprintFor(P_RULE)
         val scopeKey = scopeKeyOf(paper, blueprint)
@@ -309,10 +312,10 @@ class BlueprintPreviewFreshTest {
             1_000L
         )
         saveAttempt(P_RULE, blueprintId, blueprint, scopeKey, 20, (11..30).map { "b$it" }, 2_000L)
-        saveAttempt(P_RULE, blueprintId, blueprint, scopeKey, 20, (31..40).map { "b$it" }, 3_000L)
+        saveAttempt(P_RULE, blueprintId, blueprint, scopeKey, 20, (31..50).map { "b$it" }, 3_000L)
 
         val recent = recentIds(P_RULE, scopeKey, 20)
-        assertEquals(50, recent.size)
+        assertEquals(60, recent.size)
         val signals = repository.getQuestionSignals(P_RULE, blueprint.categoryIds)
         val filtered = runPool(signals, recent)
         assertEquals(10, filtered.size)
@@ -322,7 +325,7 @@ class BlueprintPreviewFreshTest {
         )
 
         val preview = setupPreview(paper, blueprintId, count = 20)
-        assertEquals("no exclusion applies, so the full supply stays", 60, preview.capacity)
+        assertEquals("no exclusion applies, so the full supply stays", 70, preview.capacity)
         assertEquals(mapOf("c-a" to 10, "c-b" to 10), quotasOf(preview))
     }
 

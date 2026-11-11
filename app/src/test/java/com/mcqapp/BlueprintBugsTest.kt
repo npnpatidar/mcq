@@ -231,7 +231,6 @@ class BlueprintBugsTest {
     // =====================================================================
 
     @Test
-    @Ignore("Bug 3 — blueprint.md §8: preview and run do not share a sampling seed")
     fun bug3_oneTerminalCountIsStableAcrossRunSeeds() {
         val blueprint = oneTerminal()
         val signals = passageOrStandalones()
@@ -253,7 +252,6 @@ class BlueprintBugsTest {
     }
 
     @Test
-    @Ignore("Bug 3 — blueprint.md §8: preview and run do not share a sampling seed")
     fun bug3_everyTerminalCountIsStableAcrossRunSeeds() {
         val blueprint = flatBlueprint()
         // Each terminal: one 12-member passage plus 20 standalones, quota 10.

@@ -874,14 +874,21 @@ object TestSelector {
     }
 
     /**
-     * Whole passages in a seeded order until [target] questions are reached.
-     * The last block may overshoot: taking a passage's first member without
-     * the rest would show half a comprehension set.
+     * Whole passages for one terminal's quota, chosen with a 0/1 knapsack over
+     * the seeded block order (the same shape [SessionOrder.sampledBounded]
+     * uses for a whole run).
      *
-     * [limit] caps the returned size against questions already taken elsewhere
-     * in the same run (section 9.6): a block larger than the remaining budget
-     * is skipped, and the scan continues, so a smaller block later in the
-     * seeded order can still be taken.
+     * The seed shuffles the blocks first, then the DP finds the largest sum
+     * that reaches [target] without passing it; the seed therefore chooses
+     * *which* blocks realise the quota, never how many questions it shows. That
+     * is what makes the setup preview's counts hold for every run seed
+     * (blueprint.md §8 Bug 3).
+     *
+     * A quota no whole block can hit exactly takes one extra block: the
+     * smallest one the run's remaining [limit] still fits, so a passage is
+     * never split and the overshoot stays bounded. [limit] is what is left of
+     * the run's sampler budget after earlier terminals, so the terminals'
+     * overshoots share one bound (Bug 1).
      */
     private fun takeWholePassages(
         candidates: List<Signals>,
@@ -890,14 +897,49 @@ object TestSelector {
         limit: Int = Int.MAX_VALUE
     ): List<Signals> {
         if (target <= 0 || limit <= 0) return emptyList()
-        val out = mutableListOf<Signals>()
-        val groups = groupsByPassage(candidates.shuffled(Random(seed)))
-        for (group in groups.values) {
-            if (out.size >= target) break
-            if (out.size + group.size > limit) continue
-            out += group
+        val blocks = groupsByPassage(candidates.shuffled(Random(seed))).values.toList()
+        val capacity = minOf(target, limit)
+        // 0/1 knapsack over the shuffled blocks, capacity = the quota. Descending
+        // sums visit each block at most once; the first reach wins, so an earlier
+        // block in the seeded order supplies the tie-break.
+        val reachable = BooleanArray(capacity + 1)
+        reachable[0] = true
+        val predSum = IntArray(capacity + 1) { -1 }
+        val predBlock = IntArray(capacity + 1) { -1 }
+        for (slotIndex in blocks.indices) {
+            val blockSize = blocks[slotIndex].size
+            if (blockSize > capacity) continue
+            for (sum in capacity - blockSize downTo 0) {
+                if (!reachable[sum] || reachable[sum + blockSize]) continue
+                reachable[sum + blockSize] = true
+                predSum[sum + blockSize] = sum
+                predBlock[sum + blockSize] = slotIndex
+            }
         }
-        return out
+        var best = capacity
+        while (best > 0 && !reachable[best]) best--
+
+        val chosen = BooleanArray(blocks.size)
+        var cursor = best
+        while (cursor > 0) {
+            val slotIndex = predBlock[cursor]
+            chosen[slotIndex] = true
+            cursor = predSum[cursor]
+        }
+        // One overshoot, the smallest remaining block the run's budget fits.
+        if (best < target) {
+            var pick = -1
+            var pickSize = Int.MAX_VALUE
+            for (slotIndex in blocks.indices) {
+                if (chosen[slotIndex]) continue
+                val blockSize = blocks[slotIndex].size
+                if (best + blockSize > limit || blockSize >= pickSize) continue
+                pick = slotIndex
+                pickSize = blockSize
+            }
+            if (pick >= 0) chosen[pick] = true
+        }
+        return blocks.filterIndexed { index, _ -> chosen[index] }.flatten()
     }
 
     /**

@@ -14,6 +14,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.CategorySelection
+import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.ScopeKey
 import com.mcqapp.domain.TestPlan
@@ -765,7 +766,15 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         type: TestType,
         count: Int,
         breadth: Breadth,
-        variant: String? = null
+        variant: String? = null,
+        /**
+         * The Fresh rule the setup selected. Start drops the last three
+         * comparable attempts' questions (and their passages) when the
+         * remaining pool is at least twice the request; the preview must read
+         * the same pool, or it promises a supply and section counts the run
+         * will not see (blueprint.md §8 Bug 4).
+         */
+        exclusionMode: ExclusionMode = ExclusionMode.NONE
     ): SelectionPreview {
         // A blueprint owns its scope: the preview plan carries the frozen
         // section tree, and signals are read over the section union, so the
@@ -809,9 +818,37 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             count = count,
             scopeKey = scopeKey,
             variant = variant,
-            blueprint = blueprintPlan
+            blueprint = blueprintPlan,
+            exclusionMode = exclusionMode
         )
         val signals = repository.getQuestionSignals(paper.id, scopeIds)
+        // Fresh parity with Start (blueprint.md §8 Bug 4): the same comparable
+        // attempts, the same block-excluding filter, and the same rule that the
+        // filter only applies when the remainder is at least twice the request.
+        // A rule that cannot exclude anything reads as NONE, exactly as the
+        // attempt's saved metadata will.
+        val recentIds = if (
+            plan.exclusionMode == ExclusionMode.RECENT_3 && type.supportsFreshSample
+        ) {
+            repository.recentComparableQuestionIds(
+                paperId = paper.id,
+                testTypes = TestType.representativeNames(),
+                scopeKey = scopeKey,
+                requestedCount = count,
+                limit = 3
+            )
+        } else {
+            emptySet()
+        }
+        val filtered = TestSelector.withoutRecent(signals, recentIds)
+        val freshApplied = filtered.size < signals.size &&
+            TestPlan.freshSampleFits(filtered.size, count)
+        val effectivePlan = if (freshApplied) {
+            plan
+        } else {
+            plan.copy(exclusionMode = ExclusionMode.NONE)
+        }
+        val pool = if (freshApplied) filtered else signals
         // The custom pools the sheet previews are the pools Start reads.
         val customPool = when (type) {
             TestType.BOOKMARKED -> repository.bookmarkedIdsInScope(paper.id, categoryIds).toSet()
@@ -840,7 +877,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             emptyMap()
         }
         return TestSelector.preview(
-            plan, signals, breadth, customPool, medianDwellSeconds, exposure
+            effectivePlan, pool, breadth, customPool, medianDwellSeconds, exposure
         )
     }
 

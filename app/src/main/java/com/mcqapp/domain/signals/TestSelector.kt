@@ -255,6 +255,23 @@ object TestSelector {
     }
 
     /**
+     * The pool a Fresh (`RECENT_3`) run samples: every recent question is
+     * dropped together with its whole passage, so a comprehension set is never
+     * left half-recent. The setup preview and Start must both read the pool
+     * through this one rule, or the preview promises a supply the run will not
+     * see (blueprint.md §8 Bug 4).
+     */
+    fun withoutRecent(signals: List<Signals>, recentIds: Set<String>): List<Signals> {
+        if (recentIds.isEmpty()) return signals
+        val recentPassages = signals
+            .filter { it.passageId != null && it.questionId in recentIds }
+            .mapNotNullTo(mutableSetOf()) { it.passageId }
+        return signals.filterNot {
+            it.questionId in recentIds || it.passageId in recentPassages
+        }
+    }
+
+    /**
      * The display preview for [plan]: same selector, plus the chosen targets'
      * observed accuracy. Never persists anything; Start runs the real selection.
      */

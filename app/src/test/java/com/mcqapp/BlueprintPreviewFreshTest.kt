@@ -159,7 +159,7 @@ class BlueprintPreviewFreshTest {
         }
     }
 
-    /** The preview the setup sheet shows: no exclusion input at all. */
+    /** The preview the setup sheet shows: Fresh on, as the fixture's attempts assume. */
     private suspend fun setupPreview(
         paper: Paper,
         blueprintId: Long,
@@ -170,7 +170,8 @@ class BlueprintPreviewFreshTest {
         type = TestType.BLUEPRINT,
         count = count,
         breadth = Breadth.MEDIUM,
-        variant = blueprintId.toString()
+        variant = blueprintId.toString(),
+        exclusionMode = ExclusionMode.RECENT_3
     )
 
     /** The preview Start's own pool produces. */
@@ -203,7 +204,6 @@ class BlueprintPreviewFreshTest {
     // ---------------------------------------------------------------------
 
     @Test
-    @Ignore("Bug 4 — blueprint.md §8: the preview ignores Fresh-sample exclusion")
     fun bug4_previewShowsTheSectionFreshSampleEmpties() = runBlocking {
         // A has 40 questions, B has 60. Three attempts asked every A question
         // and 20 of B, so Start's pool keeps only B's 40.
@@ -233,7 +233,6 @@ class BlueprintPreviewFreshTest {
     }
 
     @Test
-    @Ignore("Bug 4 — blueprint.md §8: the preview ignores Fresh-sample exclusion")
     fun bug4_previewDropsAWholePassageWithOneRecentMember() = runBlocking {
         // B is a 20-member passage plus 70 standalones. One recent member
         // excludes the whole passage from Start's pool, not just that member.

@@ -110,9 +110,10 @@ internal fun TestSetupSheet(
      * The live composition preview for a signal-selected type. Display-only: a
      * failure leaves the preview blank and Start still runs the real selector.
      * [variant] is the custom choice (phase 3): the folded tag or difficulty
-     * name, or null.
+     * name, or null. [exclusion] is the Fresh rule Start will apply, so the
+     * preview reads the same pool.
      */
-    loadPreview: suspend (TestType, Int, Breadth, String?) -> SelectionPreview,
+    loadPreview: suspend (TestType, Int, Breadth, String?, ExclusionMode) -> SelectionPreview,
     /**
      * The length the learner last started a test with (plan §10). It is only a
      * starting point: [TestPlan.normalizeLength] snaps it to a selectable step
@@ -184,6 +185,12 @@ internal fun TestSetupSheet(
         TestPlan.EXPOSURE_VARIANT
     } else {
         variant
+    }
+    /** The Fresh rule this setup would record and Start would apply. */
+    val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
+        ExclusionMode.RECENT_3
+    } else {
+        ExclusionMode.NONE
     }
     /** The scope's distinct tags, loaded once for the Tag picker. */
     var tags by remember(paper.id, categoryIds) { mutableStateOf<List<com.mcqapp.data.local.TagCount>?>(null) }
@@ -307,7 +314,9 @@ internal fun TestSetupSheet(
     var previewLoading by remember(paper.id, expanded, type) {
         mutableStateOf(type.usesSignalSelector)
     }
-    LaunchedEffect(paper.id, expanded, type, requestCount, breadth, effectiveVariant) {
+    LaunchedEffect(
+        paper.id, expanded, type, requestCount, breadth, effectiveVariant, exclusionMode
+    ) {
         if (!type.usesSignalSelector || panelBlocked) {
             selectionPreview = null
             previewLoading = false
@@ -315,7 +324,7 @@ internal fun TestSetupSheet(
         }
         previewLoading = true
         selectionPreview = runCatching {
-            loadPreview(type, requestCount, breadth, effectiveVariant)
+            loadPreview(type, requestCount, breadth, effectiveVariant, exclusionMode)
         }.getOrNull()
         previewLoading = false
     }
@@ -374,12 +383,6 @@ internal fun TestSetupSheet(
         }
     }
     val blockLoading = minBlockSize == null
-
-    val exclusionMode = if (type.supportsFreshSample && avoidRecentQuestions) {
-        ExclusionMode.RECENT_3
-    } else {
-        ExclusionMode.NONE
-    }
 
     val setupCategoryIds = blueprintPlan?.categoryIds ?: tickedIds
     val setupScopeKey = if (blueprintPlan != null) {

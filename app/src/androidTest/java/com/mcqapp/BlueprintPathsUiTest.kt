@@ -111,14 +111,17 @@ class BlueprintPathsUiTest {
         compose.onNodeWithTag("blueprint-save").performScrollTo().performClick()
 
         // The saved blueprint is picked, and its resolved tree is shown:
-        // Science's 20 questions split evenly between its children.
+        // Science's 20 questions split evenly between its children. Each row
+        // prints the granted count, its pool and its share of the 20-question
+        // run: 10 of 15 questions, 50%.
         // onSaved already selected it, so the chip must not be clicked again —
         // the chip toggles, and a second click would deselect it.
         waitFor("UIBlueprint · 3")
         compose.onNodeWithText("UIBlueprint · 3", substring = false).assertIsDisplayed()
         compose.onNodeWithTag("test-setup-preset-20").performScrollTo().performClick()
-        waitFor("Physics · 10/15")
-        compose.onNodeWithText("Physics · 10/15", substring = false).assertExists()
+        waitFor("Physics · 10 of 15 questions")
+        compose.onNodeWithText("Physics · 10 of 15 questions · 50%", substring = false)
+            .assertExists()
 
         // No test session is started here: the banner/report tree is covered
         // by unit tests (TestReportBuilderTest, TestSelectorTest) and the

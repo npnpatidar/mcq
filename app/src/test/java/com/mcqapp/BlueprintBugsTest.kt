@@ -326,15 +326,12 @@ class BlueprintBugsTest {
     }
 
     @Test
-    @Ignore("Bug 5 — blueprint.md §8: only the Blueprint selector is block-aware")
     fun bug5_balancedNeverSplitsAPassage() = assertNoSplit(TestType.BALANCED)
 
     @Test
-    @Ignore("Bug 5 — blueprint.md §8: only the Blueprint selector is block-aware")
     fun bug5_coverageNeverSplitsAPassage() = assertNoSplit(TestType.COVERAGE)
 
     @Test
-    @Ignore("Bug 5 — blueprint.md §8: only the Blueprint selector is block-aware")
     fun bug5_weakestTopicsNeverSplitsAPassage() =
         assertNoSplit(TestType.WEAKEST_TOPICS)
 

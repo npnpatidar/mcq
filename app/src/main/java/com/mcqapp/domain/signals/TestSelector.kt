@@ -358,7 +358,7 @@ object TestSelector {
             val pool = signals
                 .filter { it.categoryId == category.categoryId }
                 .shuffled(Random(plan.seed xor category.categoryId.hashCode().toLong()))
-            selected += pool.take(need)
+            selected += takeBlocks(pool, need)
         }
         val targets = chosen
             .filter { (allocation[it.categoryId] ?: 0) > 0 }
@@ -390,7 +390,7 @@ object TestSelector {
         val n = plan.count.coerceAtLeast(0)
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val ranked = TestRanking.rankToughest(signals, signals.size)
-        val selected = cappedTop(ranked, n)
+        val selected = cappedTop(ranked, n, signals)
         val (ids, fill) = fill(
             selected = selected,
             pool = signals,
@@ -420,7 +420,7 @@ object TestSelector {
             limit = (n * 2).coerceAtLeast(n),
             excludeLeechesAndAtRisk = true
         )
-        val selected = top.shuffled(Random(plan.seed)).take(n)
+        val selected = takeBlocks(top.shuffled(Random(plan.seed)), n, signals)
         val (ids, fill) = fill(
             selected = selected,
             pool = signals,
@@ -448,7 +448,7 @@ object TestSelector {
         val ranked = signals.sortedWith(
             compareByDescending<Signals> { it.trickiness }.thenBy { it.questionId }
         )
-        val selected = cappedTop(ranked, n)
+        val selected = cappedTop(ranked, n, signals)
         val (ids, fill) = fillWith(
             selected = selected,
             target = n,
@@ -483,7 +483,7 @@ object TestSelector {
                     .thenBy { it.dueAt }
                     .thenBy { it.questionId }
             )
-        val selected = due.take(n)
+        val selected = takeBlocks(due, n, signals)
         val (ids, fill) = fillWith(
             selected = selected,
             target = n,
@@ -513,7 +513,7 @@ object TestSelector {
         val n = plan.count.coerceAtLeast(0)
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val pool = signals.filter { it.unseen }
-        val selected = pool.shuffled(Random(plan.seed)).take(n)
+        val selected = takeBlocks(pool.shuffled(Random(plan.seed)), n, signals)
         val leastRecent = signals
             .filterNot { it.unseen }
             .sortedWith(
@@ -565,7 +565,7 @@ object TestSelector {
             signals
                 .filter { it.categoryId == category.categoryId }
                 .shuffled(Random(plan.seed xor category.categoryId.hashCode().toLong()))
-                .take(need)
+                .let { takeBlocks(it, need) }
         }
         val interleaved = interleave(perCategory)
         val (ids, fill) = fillWith(
@@ -618,7 +618,7 @@ object TestSelector {
             } else {
                 candidates
             }
-            ordered.take(need)
+            takeBlocks(ordered, need)
         }
         val interleaved = interleave(perCategory)
         val (ids, fill) = fillWith(
@@ -707,14 +707,26 @@ object TestSelector {
         val unseenPart = unseen(plan.copy(count = shareOf(n, 15)), signals)
         val selected = mutableListOf<Signals>()
         val byId = signals.associateBy { it.questionId }
+        val blocks = groupsByPassage(signals)
         val taken = mutableSetOf<String>()
         val stages = mutableListOf<Pair<FillSource, Int>>()
         fun add(ids: List<String>, source: FillSource) {
             var added = 0
+            val seen = mutableSetOf<String>()
             for (id in ids) {
                 if (selected.size >= n) break
-                if (!taken.add(id)) continue
-                byId[id]?.let { selected += it; added++ }
+                val signal = byId[id] ?: continue
+                // A part is itself block-aware, but the cut at n (and a block
+                // that an earlier part already took) must not halve a passage:
+                // add the whole block from the scope.
+                val key = passageKey(signal)
+                if (!seen.add(key)) continue
+                for (member in blocks[key] ?: listOf(signal)) {
+                    if (taken.add(member.questionId)) {
+                        selected += member
+                        added++
+                    }
+                }
             }
             if (added > 0) stages += source to added
         }
@@ -802,6 +814,46 @@ object TestSelector {
         val groups = LinkedHashMap<String, MutableList<Signals>>()
         for (signal in candidates) groups.getOrPut(passageKey(signal)) { mutableListOf() } += signal
         return groups
+    }
+
+    /**
+     * Takes whole passages from an already ordered list until [target] is
+     * reached. The first member of a passage pulls in every member of it from
+     * [pool], so the cut never leaves half a comprehension set; [pool] defaults
+     * to [ranked] when the ordering already holds every member.
+     */
+    private fun takeBlocks(
+        ranked: List<Signals>,
+        target: Int,
+        pool: List<Signals> = ranked
+    ): List<Signals> {
+        if (target <= 0) return emptyList()
+        val groups = groupsByPassage(pool)
+        val out = mutableListOf<Signals>()
+        val seen = mutableSetOf<String>()
+        for (signal in ranked) {
+            if (out.size >= target) break
+            val key = passageKey(signal)
+            if (!seen.add(key)) continue
+            out += groups[key] ?: listOf(signal)
+        }
+        return out
+    }
+
+    /**
+     * Adds every member of each selected signal's passage from [pool], keeping
+     * the ranked order for the questions already selected. Used after a
+     * cap/rank pass, which walks single questions.
+     */
+    private fun completeBlocks(selected: List<Signals>, pool: List<Signals>): List<Signals> {
+        if (selected.isEmpty()) return selected
+        val keys = selected.mapTo(mutableSetOf()) { passageKey(it) }
+        val taken = selected.mapTo(mutableSetOf()) { it.questionId }
+        val out = selected.toMutableList()
+        for (signal in pool) {
+            if (passageKey(signal) in keys && taken.add(signal.questionId)) out += signal
+        }
+        return out
     }
 
     /**
@@ -971,7 +1023,7 @@ object TestSelector {
         val n = plan.count.coerceAtLeast(0)
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val pool = signals.filter { it.questionId in customPool }
-        val selected = pool.shuffled(Random(plan.seed)).take(n)
+        val selected = takeBlocks(pool.shuffled(Random(plan.seed)), n, signals)
         val (ids, fill) = fillWith(
             selected = selected,
             target = n,
@@ -1021,7 +1073,7 @@ object TestSelector {
         if (n == 0 || signals.isEmpty()) return Selection(emptyList())
         val chosen = authoredDifficultyOf(plan.variant) ?: return Selection(emptyList())
         val pool = signals.filter { it.authoredDifficulty == chosen }
-        val selected = pool.shuffled(Random(plan.seed)).take(n)
+        val selected = takeBlocks(pool.shuffled(Random(plan.seed)), n, signals)
         val adjacent = when (chosen) {
             Difficulty.EASY -> Difficulty.MEDIUM
             Difficulty.MEDIUM -> Difficulty.HARD
@@ -1068,7 +1120,7 @@ object TestSelector {
                 compareByDescending<Signals> { medianDwellSeconds[it.questionId] ?: 0L }
                     .thenBy { it.questionId }
             )
-        val selected = cappedTop(ranked, n)
+        val selected = cappedTop(ranked, n, signals)
         val (ids, fill) = fillWith(
             selected = selected,
             target = n,
@@ -1130,9 +1182,14 @@ object TestSelector {
     /**
      * The top [n] of an already ranked list under the 40% per-category cap,
      * relaxing the cap when it cannot fill the request and then topping up from
-     * the leftovers in rank order.
+     * the leftovers in rank order. Whole passages are completed from [pool]
+     * afterwards: the cap ranks questions, it never splits a comprehension set.
      */
-    private fun cappedTop(ranked: List<Signals>, n: Int): List<Signals> {
+    private fun cappedTop(
+        ranked: List<Signals>,
+        n: Int,
+        pool: List<Signals> = ranked
+    ): List<Signals> {
         if (n <= 0) return emptyList()
         val categoryCount = ranked.map { it.categoryId ?: it.questionId }.distinct().size
         var cap = ceil(CATEGORY_CAP_FRACTION * n).toInt().coerceAtLeast(1)
@@ -1156,7 +1213,7 @@ object TestSelector {
                 if (taken.add(signal.questionId)) selected += signal
             }
         }
-        return selected
+        return completeBlocks(selected, pool)
     }
 
     /** Round-robin the per-category sequences so topics interleave. */
@@ -1173,7 +1230,9 @@ object TestSelector {
 
     /**
      * Adds stages of candidates in order until [target] is reached, skipping
-     * duplicates. The recorded segments say which stage supplied each block.
+     * duplicates and adding a passage's whole block whenever one of its members
+     * is a candidate. The recorded segments say which stage supplied each
+     * block.
      */
     private fun fillWith(
         selected: List<Signals>,
@@ -1186,28 +1245,33 @@ object TestSelector {
         val taken = selected.mapTo(mutableSetOf()) { it.questionId }
         val segments = mutableListOf<Pair<FillSource, Int>>()
         if (result.size >= target) return result.map { it.questionId } to segments
-        for ((source, candidates) in stages) {
-            if (result.size >= target) break
+        val blocks = groupsByPassage(pool)
+
+        fun addBlocks(candidates: List<Signals>): Int {
             var added = 0
+            val seen = mutableSetOf<String>()
             for (signal in candidates) {
                 if (result.size >= target) break
-                if (taken.add(signal.questionId)) {
-                    result += signal
-                    added++
+                val key = passageKey(signal)
+                if (!seen.add(key)) continue
+                val group = blocks[key] ?: listOf(signal)
+                val fresh = group.filter { taken.add(it.questionId) }
+                if (fresh.isNotEmpty()) {
+                    result += fresh
+                    added += fresh.size
                 }
             }
+            return added
+        }
+
+        for ((source, candidates) in stages) {
+            if (result.size >= target) break
+            val added = addBlocks(candidates)
             if (added > 0) segments += source to added
         }
         // A deterministic last resort: the pool itself, shuffled by the seed.
         if (result.size < target) {
-            var added = 0
-            for (signal in pool.shuffled(Random(seed xor 7L))) {
-                if (result.size >= target) break
-                if (taken.add(signal.questionId)) {
-                    result += signal
-                    added++
-                }
-            }
+            val added = addBlocks(pool.shuffled(Random(seed xor 7L)))
             if (added > 0) segments += FillSource.RANDOM to added
         }
         return result.map { it.questionId } to segments
@@ -1291,7 +1355,8 @@ object TestSelector {
     /**
      * Fills a short focus sample in the defined ladder order and returns the
      * segments that did the filling. A focus test never silently becomes a
-     * random test: the composition says how much came from the fill.
+     * random test: the composition says how much came from the fill. Each stage
+     * adds a passage's whole block, so the fill cannot split one either.
      */
     private fun fill(
         selected: List<Signals>,
@@ -1304,20 +1369,30 @@ object TestSelector {
         val taken = selected.mapTo(mutableSetOf()) { it.questionId }
         val segments = mutableListOf<Pair<FillSource, Int>>()
         if (result.size >= target) return result.map { it.questionId } to segments
+        val blocks = groupsByPassage(pool)
 
-        val remaining = pool.filter { it.questionId !in taken }
-        if (authoredPriority != null) {
-            val preferred = remaining
-                .filter { it.authoredDifficulty == authoredPriority }
-                .shuffled(Random(seed xor 1L))
+        fun addBlocks(candidates: List<Signals>): Int {
             var added = 0
-            for (signal in preferred) {
+            val seen = mutableSetOf<String>()
+            for (signal in candidates) {
                 if (result.size >= target) break
-                if (taken.add(signal.questionId)) {
-                    result += signal
-                    added++
+                val key = passageKey(signal)
+                if (!seen.add(key)) continue
+                val group = blocks[key] ?: listOf(signal)
+                val fresh = group.filter { taken.add(it.questionId) }
+                if (fresh.isNotEmpty()) {
+                    result += fresh
+                    added += fresh.size
                 }
             }
+            return added
+        }
+
+        if (authoredPriority != null) {
+            val preferred = pool
+                .filter { it.authoredDifficulty == authoredPriority }
+                .shuffled(Random(seed xor 1L))
+            val added = addBlocks(preferred)
             if (added > 0) {
                 val source = if (authoredPriority == Difficulty.HARD) {
                     FillSource.AUTHORED_HARD
@@ -1329,17 +1404,10 @@ object TestSelector {
         }
 
         if (result.size < target) {
-            var added = 0
-            val rest = remaining
+            val rest = pool
                 .filter { it.questionId !in taken }
                 .shuffled(Random(seed xor 2L))
-            for (signal in rest) {
-                if (result.size >= target) break
-                if (taken.add(signal.questionId)) {
-                    result += signal
-                    added++
-                }
-            }
+            val added = addBlocks(rest)
             if (added > 0) segments += FillSource.RANDOM to added
         }
         return result.map { it.questionId } to segments

@@ -725,9 +725,13 @@ owns its scope), so `expanded` is empty and
 `McqRepository.getMinBlockSize(paperId, emptyList())` returns the smallest block
 in the **whole paper** (`minBlockSizeForPaper`), not in the blueprint union.
 
-**Why it is a bug.** The blueprint sampler only sees its union. A huge passage
-outside the union can make the pre-check refuse a perfectly runnable blueprint,
-and a huge passage inside the union can be masked by a small block outside it.
+**Why it is a bug.** The blueprint sampler only sees its union, so the union's
+smallest block is the one that decides whether a run can fit. A small block
+outside the union masks a huge passage inside it.
+
+The error is **one-sided**: the whole-paper minimum is a minimum over a
+superset, so it can never be *larger* than the union's. It can let a run start
+that the union would refuse, never refuse one that would run.
 
 **Example (false allow).** Paper: Polity has 30 standalone questions; History
 has one 60-question passage. Blueprint "History only", request 20.
@@ -736,6 +740,10 @@ has one 60-question passage. Blueprint "History only", request 20.
 - `samplerCanStart(20, 1)` = true, so Start is enabled;
 - the selector's History terminal has quota 20 and takes the whole 60-question
   passage -> **the learner asked for 20 and gets 60**, far above the 25 limit.
+
+The same happens with a small *passage* outside the union: if the paper has no
+standalone at all, `minBlockSizeForPaper` takes the smallest passage, so a
+5-question passage elsewhere hides a 60-question passage in the union.
 
 With the correct union minimum (60), `samplerCanStart(20, 60)` is false and the
 setup would show "No passage fits the requested length and overshoot limit".

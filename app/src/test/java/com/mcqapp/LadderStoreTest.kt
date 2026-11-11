@@ -38,19 +38,21 @@ class LadderStoreTest {
     private lateinit var db: AppDatabase
 
     @Before
-    fun setup() = runBlocking {
+    fun setup() {
         context = ApplicationProvider.getApplicationContext()
-        // A process-wide DataStore: start every test from an empty store.
-        context.dataStore.edit { it.clear() }
+        runBlocking {
+            // A process-wide DataStore: start every test from an empty store.
+            context.dataStore.edit { it.clear() }
+        }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
     }
 
     @After
-    fun teardown() = runBlocking {
+    fun teardown() {
         db.close()
-        context.dataStore.edit { it.clear() }
+        runBlocking { context.dataStore.edit { prefs -> prefs.clear() } }
     }
 
     private fun store() = SettingsStore(context)

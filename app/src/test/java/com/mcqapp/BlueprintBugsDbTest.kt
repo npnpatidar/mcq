@@ -127,7 +127,6 @@ class BlueprintBugsDbTest {
     // ---------------------------------------------------------------------
 
     @Test
-    @Ignore("Bug 2 — blueprint.md §8: the pre-check is measured over the whole paper")
     fun bug2_aStandaloneElsewhereDoesNotHideTheUnionsBigPassage() = runBlocking {
         val (id, blueprint) = planBlueprintFor("p1", "History only", "c-history")
         assertEquals(listOf("c-history"), blueprint.categoryIds)
@@ -148,7 +147,6 @@ class BlueprintBugsDbTest {
     }
 
     @Test
-    @Ignore("Bug 2 — blueprint.md §8: the pre-check is measured over the whole paper")
     fun bug2_aSmallPassageElsewhereDoesNotHideTheUnionsBigPassage() = runBlocking {
         // No standalone in this paper: both minima come from passages.
         val (id, blueprint) = planBlueprintFor("p2", "B only", "c-b")

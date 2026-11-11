@@ -957,7 +957,7 @@ class StudyAndSelectionUiTest {
     }
 
     @Test
-    fun shareIsOneTapFromTheExportDialog() {
+    fun exportDialogOffersDirectSaveShareAndCancel() {
         seedTwoRoots("ui-cexp-share", "UICShare Paper")
         compose.setContent { McqNavHost(repository = repository) }
 
@@ -966,16 +966,22 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("card-cat-ui-cexp-share-c1").performScrollTo().performClick()
         compose.onNodeWithTag("paper-export-ui-cexp-share").performScrollTo().performClick()
 
-        val title = "Export selection (1 categories)"
-        compose.onNodeWithText(title, substring = false).assertIsDisplayed()
-        // No mode chip first: Share itself is the action. Under the old
-        // two-step dialog this click only selected the Share chip and the
-        // dialog stayed open.
-        compose.onNodeWithText("Share", substring = false).performClick()
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithText(title, substring = false)
+        compose.onNodeWithText("Export selection (1 categories)", substring = false)
+            .assertIsDisplayed()
+        // The actions are direct buttons, not FilterChips with a Selected
+        // mode that a second confirm tap follows.
+        compose.onNodeWithText("Save to file", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("Share", substring = false)
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
+            .assertIsDisplayed()
+        compose.onNodeWithText("Cancel", substring = false).assertIsDisplayed()
+        assertTrue(
+            "the old two-step Export confirm is still present",
+            compose.onAllNodesWithText("Export", substring = false)
                 .fetchSemanticsNodes().isEmpty()
-        }
+        )
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+        compose.waitForIdle()
     }
 
     @Test

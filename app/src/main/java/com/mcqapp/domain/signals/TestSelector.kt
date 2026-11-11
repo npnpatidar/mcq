@@ -244,7 +244,11 @@ object TestSelector {
         }
         TestType.SLOWEST -> slowestEligible(signals, medianDwellSeconds).size
         TestType.BLUEPRINT -> {
-            val union = blueprint?.union ?: return signals.size
+            // Without its blueprint the union is unknown: counting the whole
+            // scope here would report questions the selector can never draw.
+            // The sheet always passes the frozen plan, so 0 is a caller bug
+            // made visible, not a figure to display.
+            val union = blueprint?.union ?: return 0
             signals.count { it.categoryId in union }
         }
         else -> signals.size

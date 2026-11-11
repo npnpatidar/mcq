@@ -362,7 +362,6 @@ class BlueprintBugsTest {
     // =====================================================================
 
     @Test
-    @Ignore("Bug 6 — blueprint.md §8: a blueprint pool without its blueprint is the whole scope")
     fun bug6_poolSizeWithoutABlueprintIsNotTheWholeScope() {
         val blueprint = oneTerminal("h1")
         val signals = standalones("h", "h1", 12) + standalones("out", "outside", 8)

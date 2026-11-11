@@ -247,9 +247,12 @@ class BlueprintSelectorTest {
         assertEquals(2, history.requested)
         assertEquals(2, history.view.pool)
 
-        // poolSize for BLUEPRINT is the union size, a display figure.
+        // poolSize for BLUEPRINT is the union size, a display figure. Without
+        // the blueprint there is no union to count, so the answer is zero
+        // rather than the whole scope (the old fallback reported questions the
+        // selector can never draw).
         assertEquals(12, TestSelector.poolSize(TestType.BLUEPRINT, thin, blueprint = blueprint))
-        assertEquals(12, TestSelector.poolSize(TestType.BLUEPRINT, thin))
+        assertEquals(0, TestSelector.poolSize(TestType.BLUEPRINT, thin))
     }
 
     @Test

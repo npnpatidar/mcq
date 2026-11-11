@@ -30,9 +30,12 @@ import com.mcqapp.domain.searchableText
         PanelEntity::class,
         PanelQuestionEntity::class,
         BlueprintEntity::class,
-        BlueprintSectionEntity::class
+        BlueprintSectionEntity::class,
+        LadderVersionEntity::class,
+        LadderBlockEntity::class,
+        StudySessionEntity::class
     ],
-    version = 25,
+    version = 26,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -54,6 +57,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun testProgressDao(): TestProgressDao
     abstract fun panelDao(): PanelDao
     abstract fun blueprintDao(): BlueprintDao
+    abstract fun ladderDao(): LadderDao
+    abstract fun studySessionDao(): StudySessionDao
 
     companion object {
         @Volatile
@@ -722,6 +727,78 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Grade provenance (v26): seven additive review columns, the ladder's
+         * version/block audit tables, the study-session timing table, and the
+         * per-card pairing index. All columns are nullable (or defaulted) so
+         * every pre-v26 row survives verbatim, with `ladderVersion = 0` and no
+         * provenance claims.
+         */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `proposedRating` INTEGER")
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `gradeSource` TEXT")
+                db.execSQL(
+                    "ALTER TABLE `review_log` ADD COLUMN `ladderVersion` " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `predictedRecall` REAL")
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `fsrsFitVersion` INTEGER")
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `readingAllowanceSeconds` INTEGER")
+                db.execSQL("ALTER TABLE `review_log` ADD COLUMN `wasSkipped` INTEGER")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS " +
+                        "`index_review_log_paperId_questionId_reviewedAt` " +
+                        "ON `review_log` (`paperId`, `questionId`, `reviewedAt`)"
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ladder_versions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, " +
+                        "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, " +
+                        "`previousId` INTEGER, `blockId` INTEGER, " +
+                        "`policyVersion` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_ladder_versions_effectiveFrom` " +
+                        "ON `ladder_versions` (`effectiveFrom`)"
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ladder_blocks` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`startAt` INTEGER NOT NULL, `endAt` INTEGER NOT NULL, " +
+                        "`ladderVersion` INTEGER NOT NULL, `fsrsFitVersion` INTEGER, " +
+                        "`policyVersion` INTEGER NOT NULL, " +
+                        "`easyPairs` INTEGER NOT NULL, `easyCards` INTEGER NOT NULL, " +
+                        "`goodPairs` INTEGER NOT NULL, `goodCards` INTEGER NOT NULL, " +
+                        "`hardPairs` INTEGER NOT NULL, `hardCards` INTEGER NOT NULL, " +
+                        "`delta1` REAL, `delta1Low` REAL, `delta1High` REAL, " +
+                        "`delta2` REAL, `delta2Low` REAL, `delta2High` REAL, " +
+                        "`followUpEasy` REAL, `followUpGood` REAL, " +
+                        "`outcome` TEXT NOT NULL, `decidedAt` INTEGER)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_ladder_blocks_startAt` " +
+                        "ON `ladder_blocks` (`startAt`)"
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `study_sessions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`paperId` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, " +
+                        "`endedAt` INTEGER NOT NULL, `activeSeconds` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_study_sessions_paperId_startedAt` " +
+                        "ON `study_sessions` (`paperId`, `startedAt`)"
+                )
+            }
+        }
+
+        /**
          * Keys `question_tags` off the stored CSV in the same normalisation as
          * the runtime writers. Keyset-paged by rowid, one compiled insert per
          * batch — the backfill touches every tagged question, so peak memory
@@ -924,7 +1001,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
-                    MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25
+                    MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
+                    MIGRATION_25_26
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

@@ -57,6 +57,10 @@ class RepositorySettingsTest {
             // leak into every later assertion in the run.
             ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
                 it.remove(stringPreferencesKey("fsrs_parameters"))
+                // The fit generation moves with the weights; it is not a
+                // pacing knob and would otherwise leak a bump into the next
+                // test's whole-config comparison.
+                it.remove(intPreferencesKey("fsrs_fit_version"))
                 // The last test length is a plain preference, not scheduler
                 // state: clear it too so one test's 60 cannot seed the next.
                 it.remove(intPreferencesKey("last_test_length"))
@@ -143,7 +147,9 @@ class RepositorySettingsTest {
         )
         store.setSchedulerConfig(written)
         val read = store.schedulerConfigNow()
-        assertEquals(written.sanitized(), read)
+        // The fit version is a weight-set generation, not a pacing value the
+        // caller writes; writing a new parameter list bumps it.
+        assertEquals(written.sanitized().copy(fsrsFitVersion = read.fsrsFitVersion), read)
     }
 
     @Test
@@ -216,7 +222,12 @@ class RepositorySettingsTest {
         )
         store.resetSchedulerConfig()
         val config = store.schedulerConfigNow()
-        assertEquals(SchedulerConfig().sanitized(), config)
+        // Pacing only: the reset deliberately leaves the fitted weights — and
+        // therefore their generation — alone.
+        assertEquals(
+            SchedulerConfig().sanitized().copy(fsrsFitVersion = config.fsrsFitVersion),
+            config
+        )
         assertTrue(config.introduceNewCards)
     }
 

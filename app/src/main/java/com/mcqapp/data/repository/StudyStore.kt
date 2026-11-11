@@ -499,6 +499,28 @@ internal class StudyStore(
         return out
     }
 
+    /**
+     * Records one finished sitting's real study time. The caller decides
+     * whether the sitting counts; a sitting with no reviews is not recorded,
+     * because opening the screen and backing out must not dilute the "lapses
+     * per hour" denominator.
+     */
+    suspend fun recordStudySession(
+        paperId: String,
+        startedAt: Long,
+        endedAt: Long,
+        activeSeconds: Long
+    ): Long {
+        return db.studySessionDao().insert(
+            com.mcqapp.data.local.StudySessionEntity(
+                paperId = paperId,
+                startedAt = startedAt,
+                endedAt = endedAt,
+                activeSeconds = activeSeconds
+            )
+        )
+    }
+
     /** The stored schedule for a card, or null if it has never been studied. */
     suspend fun cardState(
         paperId: String,
@@ -518,6 +540,13 @@ internal class StudyStore(
         paperId: String,
         questionId: String,
         grade: com.mcqapp.domain.ReviewGrade,
+        /**
+         * The config snapshot the session actually graded under. Passed in,
+         * never read here: a settings edit, a refit or a restore between the
+         * session's load and this write must not make the row claim a ladder
+         * version or forecast that was never used to grade it.
+         */
+        config: com.mcqapp.domain.SchedulerConfig,
         dwellSeconds: Long? = null,
         now: Long = System.currentTimeMillis(),
         /**
@@ -526,11 +555,27 @@ internal class StudyStore(
          */
         wasGuess: Boolean? = null,
         /** Whether the chosen options matched the key at answer time. */
-        wasCorrect: Boolean? = null
+        wasCorrect: Boolean? = null,
+        /** The app's proposal before any edit; null in classic mode. */
+        proposedGrade: com.mcqapp.domain.ReviewGrade? = null,
+        /** AUTO, EDITED or CHOSEN. */
+        gradeSource: com.mcqapp.domain.GradeSource =
+            com.mcqapp.domain.GradeProvenance.source(proposedGrade, edited = false),
+        /** The reading allowance subtracted from the Easy cut, when one applied. */
+        readingAllowanceSeconds: Long? = null,
+        /** The attempt was submitted with an empty selection. */
+        wasSkipped: Boolean? = null
     ): com.mcqapp.domain.CardState {
         val question = questions.getQuestion(questionId)
-        val scheduler = fsrs(settings.schedulerConfigNow())
+        val scheduler = fsrs(config)
         val existing = db.cardStateDao().get(paperId, questionId)?.toDomain()
+        // Computed before the grade is applied, from the state the learner
+        // actually answered against. The two null rules live in GradeProvenance.
+        val predictedRecall = com.mcqapp.domain.GradeProvenance.predictedRecall(
+            state = existing,
+            now = now,
+            retention = scheduler::retention
+        )
         val next = scheduler.next(existing ?: scheduler.initial(questionId), grade, now)
         db.withTransaction {
             db.cardStateDao().upsert(
@@ -554,7 +599,14 @@ internal class StudyStore(
                     difficultyAfter = next.difficulty,
                     intervalDaysAfter = next.intervalDays,
                     wasGuess = wasGuess,
-                    wasCorrect = wasCorrect
+                    wasCorrect = wasCorrect,
+                    proposedRating = proposedGrade?.ordinal?.plus(1),
+                    gradeSource = gradeSource.stored,
+                    ladderVersion = config.ladderVersion,
+                    predictedRecall = predictedRecall,
+                    fsrsFitVersion = config.fsrsFitVersion,
+                    readingAllowanceSeconds = readingAllowanceSeconds?.toInt(),
+                    wasSkipped = wasSkipped
                 )
             )
         }

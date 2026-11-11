@@ -115,6 +115,16 @@ data class StudyUiState(
     val clockRunning: Boolean = false,
     /** The grade Check proposed; Next persists it. Null until checked. */
     val pendingGrade: ReviewGrade? = null,
+    /**
+     * The app's original proposal. [pendingGrade] is rewritten by
+     * [StudyViewModel.changeGrade]; this one is not, so the saved row can say
+     * what the app decided before the learner edited it.
+     */
+    val proposedGrade: ReviewGrade? = null,
+    /** Whether [changeGrade] ran for this card; sticky, even if changed back. */
+    val gradeEdited: Boolean = false,
+    /** The reading allowance subtracted from the Easy cut, in seconds. */
+    val readingAllowanceSeconds: Long? = null,
     /** What the last check decided, for the result card. */
     val lastResult: StudyResult? = null,
     /** Every bookmarked question id, so the header can toggle the current one. */
@@ -223,6 +233,20 @@ class StudyViewModel(
 
     private var dwellJob: Job? = null
     private var clockPausedByUser = false
+
+    /** Wall-clock start of this sitting, for the study_sessions row. */
+    private var sessionStartedAtWall = System.currentTimeMillis()
+
+    /** One row per sitting; both exit paths and onCleared race here. */
+    private val sittingEnded = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Owns the session-row write. Not [viewModelScope]: onCleared cancels that,
+     * and the last sitting must still be recorded.
+     */
+    private val sessionScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
 
     /**
      * The last visibility the card reported (viewport or a covering surface).
@@ -453,6 +477,9 @@ class StudyViewModel(
                     grading = false,
                     gradedAndStuck = false,
                     pendingGrade = null,
+                    proposedGrade = null,
+                    gradeEdited = false,
+                    readingAllowanceSeconds = null,
                     lastResult = null,
                     isGuess = false,
                     questionStartedAt = now,
@@ -504,6 +531,9 @@ class StudyViewModel(
                 revealed = false,
                 grading = false,
                 pendingGrade = null,
+                proposedGrade = null,
+                gradeEdited = false,
+                readingAllowanceSeconds = null,
                 lastResult = null,
                 questionStartedAt = 0L,
                 questionElapsedSeconds = 0L,
@@ -520,6 +550,7 @@ class StudyViewModel(
                 freshAvailable = freshAvailable
             )
         }
+        endSitting()
     }
 
     fun toggleOption(optionId: String) {
@@ -724,6 +755,9 @@ class StudyViewModel(
             it.copy(
                 revealed = true,
                 pendingGrade = grade,
+                proposedGrade = grade,
+                gradeEdited = false,
+                readingAllowanceSeconds = easyAt,
                 lastResult = buildResult(
                     question, paused.selection, grade, paused.isGuess, dwellSeconds,
                     System.currentTimeMillis()
@@ -777,9 +811,12 @@ class StudyViewModel(
         if (!current.simplified || !current.revealed || current.pendingGrade == null) return
         val now = System.currentTimeMillis()
         val dwellSeconds = current.questionElapsedSeconds
+        // Sticky on purpose: changing Good back to the proposed Easy still
+        // means a learner decided, so the row is EDITED, not AUTO.
         _state.update {
             it.copy(
                 pendingGrade = grade,
+                gradeEdited = true,
                 lastResult = buildResult(
                     question,
                     it.selection,
@@ -813,9 +850,17 @@ class StudyViewModel(
                     paperId = paperId,
                     questionId = question.id,
                     grade = proposed,
+                    config = config,
                     dwellSeconds = dwellSeconds,
                     wasGuess = current.isGuess,
-                    wasCorrect = isCorrect(question, current.selection)
+                    wasCorrect = isCorrect(question, current.selection),
+                    proposedGrade = current.proposedGrade,
+                    gradeSource = com.mcqapp.domain.GradeProvenance.source(
+                        current.proposedGrade,
+                        edited = current.gradeEdited
+                    ),
+                    readingAllowanceSeconds = current.readingAllowanceSeconds,
+                    wasSkipped = current.selection.isEmpty()
                 )
                 persisted = true
                 Logger.i(
@@ -884,12 +929,18 @@ class StudyViewModel(
                     paperId = paperId,
                     questionId = question.id,
                     grade = grade,
+                    config = config,
                     dwellSeconds = dwellSeconds,
                     // The four-button flow has no guess switch: the learner is
                     // self-grading a revealed answer, which is the "earned"
                     // side of the dashboard by construction.
                     wasGuess = false,
-                    wasCorrect = isCorrect(question, current.selection)
+                    wasCorrect = isCorrect(question, current.selection),
+                    // Classic mode has no app proposal and no reading allowance.
+                    proposedGrade = null,
+                    gradeSource = com.mcqapp.domain.GradeSource.CHOSEN,
+                    readingAllowanceSeconds = null,
+                    wasSkipped = current.selection.isEmpty()
                 )
                 persisted = true
                 Logger.i(
@@ -995,9 +1046,17 @@ class StudyViewModel(
                     paperId = paperId,
                     questionId = question.id,
                     grade = proposed,
+                    config = config,
                     dwellSeconds = dwellSeconds,
                     wasGuess = current.isGuess,
-                    wasCorrect = isCorrect(question, current.selection)
+                    wasCorrect = isCorrect(question, current.selection),
+                    proposedGrade = current.proposedGrade,
+                    gradeSource = com.mcqapp.domain.GradeProvenance.source(
+                        current.proposedGrade,
+                        edited = current.gradeEdited
+                    ),
+                    readingAllowanceSeconds = current.readingAllowanceSeconds,
+                    wasSkipped = current.selection.isEmpty()
                 )
                 Logger.i(
                     "STUDY",
@@ -1027,6 +1086,7 @@ class StudyViewModel(
     /** Closes the sitting into the summary, with the tally and the times frozen. */
     private fun finishSession() {
         val totalSeconds = _sessionSeconds.value
+        endSitting()
         _state.update {
             it.copy(
                 grading = false,
@@ -1070,10 +1130,18 @@ class StudyViewModel(
      */
     fun enableNewCards() {
         val current = config ?: return
-        val updated = current.copy(introduceNewCards = true)
-        config = updated
         viewModelScope.launch {
             try {
+                // Re-base on the STORED config, not the session-start snapshot:
+                // writing the snapshot's weights would revert a fit performed
+                // mid-session (the same defect SettingsViewModel fixed).
+                val stored = try {
+                    repository.schedulerConfigNow()
+                } catch (_: Exception) {
+                    current
+                }
+                val updated = stored.copy(introduceNewCards = true)
+                config = updated
                 repository.setSchedulerConfig(updated)
                 _state.update { it.copy(introduceNewCards = true, loading = true) }
                 pullCard()
@@ -1155,6 +1223,9 @@ class StudyViewModel(
                         revealed = false,
                         grading = false,
                         pendingGrade = null,
+                        proposedGrade = null,
+                        gradeEdited = false,
+                        readingAllowanceSeconds = null,
                         lastResult = null,
                         // A failed write reported on the old summary must not
                         // follow the learner into the fresh sitting.
@@ -1178,6 +1249,9 @@ class StudyViewModel(
                 pullCard()
                 clockPausedByUser = false
                 resetSessionClock()
+                // A restart is a new sitting, with its own session row.
+                sessionStartedAtWall = System.currentTimeMillis()
+                sittingEnded.set(false)
                 _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
                 // loading was set true before the pull; the screen's `when`
@@ -1189,5 +1263,38 @@ class StudyViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Writes this sitting's study time once. Called from both exit paths and
+     * from [onCleared]; the flag makes the race harmless. A sitting with no
+     * reviews is not recorded.
+     */
+    private fun endSitting() {
+        if (_state.value.reviewed <= 0) {
+            sittingEnded.set(true)
+            return
+        }
+        if (!sittingEnded.compareAndSet(false, true)) return
+        val startedAt = sessionStartedAtWall
+        val endedAt = System.currentTimeMillis()
+        val activeSeconds = _sessionSeconds.value
+        sessionScope.launch {
+            try {
+                repository.recordStudySession(paperId, startedAt, endedAt, activeSeconds)
+            } catch (e: Exception) {
+                // Best effort: a lost timing row must never disturb the summary.
+                Logger.e("STUDY", "recordStudySession($paperId) failed", e)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        // The screen can be destroyed without either exit path running. Bank
+        // the clocks first, then flush; the write is idempotent.
+        bankSessionClock()
+        publishSessionSeconds()
+        endSitting()
+        super.onCleared()
     }
 }

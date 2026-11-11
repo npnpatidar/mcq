@@ -121,6 +121,111 @@ class StudyViewModelPullTest {
     }
 
     /**
+     * Phase 1 provenance: an untouched Check is AUTO, the session's ladder
+     * version and allowance are stored, and a real review carries the forecast
+     * computed before the answer.
+     */
+    @Test
+    fun anAcceptedProposalRecordsAutoProvenanceAndItsForecast() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+        val ladderVersion = runBlocking { repository.ladderVersion() }
+        assertTrue("the session must stamp a real ladder version", ladderVersion > 0)
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        val proposed = viewModel.state.value.pendingGrade!!
+        assertEquals(proposed, viewModel.state.value.proposedGrade)
+        viewModel.next()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 1 })
+
+        runBlocking {
+            val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
+            assertEquals(com.mcqapp.domain.GradeSource.AUTO.stored, row.gradeSource)
+            assertEquals(proposed.ordinal + 1, row.proposedRating)
+            assertEquals(ladderVersion, row.ladderVersion)
+            assertTrue("a real review must store a forecast", row.predictedRecall != null)
+            assertTrue("the allowance that was subtracted must be stored",
+                (row.readingAllowanceSeconds ?: 0) > 0)
+            assertEquals(false, row.wasSkipped)
+        }
+    }
+
+    /**
+     * The case the two fields exist for: change Good to Easy and back. The
+     * saved grade equals the proposal, but the learner decided, so the row is
+     * EDITED and the calibration must exclude it.
+     */
+    @Test
+    fun aGradeChangedAndChangedBackIsStillEdited() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        val proposed = viewModel.state.value.pendingGrade!!
+        viewModel.changeGrade(com.mcqapp.domain.ReviewGrade.EASY)
+        viewModel.changeGrade(proposed)
+        viewModel.next()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 1 })
+
+        runBlocking {
+            val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
+            assertEquals(proposed.ordinal + 1, row.rating)
+            assertEquals(proposed.ordinal + 1, row.proposedRating)
+            assertEquals(com.mcqapp.domain.GradeSource.EDITED.stored, row.gradeSource)
+        }
+    }
+
+    /**
+     * Phase 1 study time: a sitting with reviews writes exactly one row; a
+     * stop before any review writes none (the denominator must not be diluted
+     * by opening the screen and backing out).
+     */
+    @Test
+    fun aSittingWithReviewsWritesOneSessionRowAndAnEmptyOneWritesNone() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        viewModel.next()
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.reviewed == 1 })
+        viewModel.stop()
+        assertTrue(awaitCondition { viewModel.state.value.finished })
+
+        assertTrue("one sitting row must be written", awaitCondition {
+            runBlocking { repository.db().studySessionDao().getAll().size } == 1
+        })
+        runBlocking {
+            val row = repository.db().studySessionDao().getAll().single()
+            assertEquals("p1", row.paperId)
+            assertTrue("the row must carry real time", row.activeSeconds >= 0L)
+            assertTrue(row.endedAt >= row.startedAt)
+        }
+        // A repeated stop or a later onCleared must not add a second row.
+        viewModel.stop()
+        runBlocking {
+            assertEquals(1, repository.db().studySessionDao().getAll().size)
+        }
+    }
+
+    @Test
+    fun stopBeforeAnyReviewWritesNoSessionRow() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
+        viewModel.stop()
+        assertTrue(awaitCondition { viewModel.state.value.finished })
+        runBlocking {
+            assertTrue(repository.db().studySessionDao().getAll().isEmpty())
+        }
+    }
+
+    /**
      * A voluntary stop with nothing graded is not a completed session: the
      * summary must not claim "Session complete / 0 reviewed". The card stays
      * scheduled exactly where it was.

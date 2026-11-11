@@ -913,14 +913,30 @@ explicitly.
 | Blueprint length rounding/clamp | `TestSetupTest.aBlueprintRequestRoundsUpToTheNextSelectableLength`, `aNinetyNineQuestionBlueprintRunsAtItsWholeSupplyForARequestOfOneHundred` |
 | Repository tree, cascade, views | `BlueprintDbTest` |
 
-The tests above do **not** cover the four bugs in §8: no test asserts a global
-overshoot bound, the setup's union min-block, preview-vs-run actual counts, or
-Fresh-preview parity. A regression test for each bug would be:
+### The six bugs in §8, pinned
 
-1. two terminals with oversized passages -> shown `<= samplerLimit` or refusal;
-2. blueprint union passage larger than the paper's smallest block -> refusal;
-3. preview and Start with the same seed -> identical ids/`terminalCounts`;
-4. Fresh on -> preview supply equals the post-exclusion supply.
+Each bug has tests that assert the **correct** behaviour and are `@Ignore`d
+while the bug is open, so the suite stays green without ever asserting a bug.
+Un-ignore a test in the commit that fixes its bug: a pass is the proof the
+behaviour changed, and a still-failing one means the fix was partial.
+
+| Bug | Test |
+|---|---|
+| 1 — no global overshoot bound | `BlueprintBugsTest.bug1_twoTerminalsStayInsideTheSamplerLimit`, `bug1_threeTerminalsStayInsideTheSamplerLimit`, `bug1_shownCountNeverExceedsTheHardMaximum`, `bug1_nestedTerminalsAreBoundedAsOneRun` |
+| 2 — pre-check over the whole paper | `BlueprintBugsDbTest.bug2_aStandaloneElsewhereDoesNotHideTheUnionsBigPassage`, `bug2_aSmallPassageElsewhereDoesNotHideTheUnionsBigPassage` |
+| 3 — preview and run do not share a seed | `BlueprintBugsTest.bug3_oneTerminalCountIsStableAcrossRunSeeds`, `bug3_everyTerminalCountIsStableAcrossRunSeeds` |
+| 4 — preview ignores Fresh exclusion | `BlueprintPreviewFreshTest.bug4_previewShowsTheSectionFreshSampleEmpties`, `bug4_previewDropsAWholePassageWithOneRecentMember` |
+| 5 — only Blueprint is block-aware | `BlueprintBugsTest.bug5_balancedNeverSplitsAPassage`, `bug5_coverageNeverSplitsAPassage`, `bug5_weakestTopicsNeverSplitsAPassage` |
+| 6 — `poolSize` without a blueprint | `BlueprintBugsTest.bug6_poolSizeWithoutABlueprintIsNotTheWholeScope` |
+
+The matching `…Guard` tests are **not** ignored. They pin behaviour that is
+already correct, so a fix cannot over-correct: a legal overshoot still runs,
+preview and run agree when they share one seed, the gate still allows a
+fitting block, the Fresh below-2x rule is respected, a different requested
+length is not comparable, and Blueprint never splits a passage.
+
+Un-ignoring all fourteen pins against the code of this commit fails every one,
+each with the reason given in §8.
 
 ---
 

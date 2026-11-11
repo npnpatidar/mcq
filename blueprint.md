@@ -351,24 +351,34 @@ when a sibling is thin (Example E: `b` and `c` receive 9 against a demand of 5).
 build view tree from the frozen PlanBlueprint
   -> allocate quotas (seed 0)
   -> for each terminal with quota > 0:
-         take whole passages from its scope until the quota is met
+         take whole passages from its scope with a block knapsack
+         against the quota, sharing one run-wide sampler budget
   -> interleave the terminals question by question
   -> if still below plan.count, fill inside the blueprint union
+     within the same budget
   -> ids + Composition(label, section tree, segments)
 ```
 
 ### 4.2 One terminal's take
 
-For a terminal with quota `need`:
+For a terminal with quota `need`, where `limit` is what is left of the run's
+sampler budget:
 
 ```kotlin
 val scope = terminal.scopeCategoryIds.toSet()
-val candidates = signals.filter { it.categoryId in scope }
-takeWholePassages(candidates, target = need, seed = plan.seed xor terminalId.hashCode())
+val candidates = signals.filter { it.categoryId in scope && it !in taken }
+takeWholePassages(
+    candidates,
+    target = need,
+    seed = plan.seed xor terminalId.hashCode(),
+    limit = limit - taken.size
+)
 ```
 
-Without passages this is effectively a deterministic shuffle followed by
-`take(need)`. With passages it is block-aware (§4.3).
+Without passages this is effectively a seeded shuffle followed by `take(need)`.
+With passages it is block-aware (§4.3). The budget starts at
+`TestPlan.samplerLimit(plan.count)`, so the terminals' overshoots cannot add up
+past the limit or `MAX_LENGTH` (Bug 1).
 
 ### 4.3 Whole passages
 
@@ -379,19 +389,26 @@ Passage grouping key:
 "q:<questionId>" for a standalone question
 ```
 
-`takeWholePassages(candidates, target, seed)`:
+`takeWholePassages(candidates, target, seed, limit)`:
 
 1. shuffle the individual candidates with `Random(seed)`;
 2. group them by passage key, preserving first appearance order;
-3. walk the groups and add **every member** of a group;
-4. stop when the accumulated count is `>= target`.
+3. run a 0/1 knapsack over the blocks with capacity `min(target, limit)` and
+   take the largest sum that reaches the quota without passing it; the first
+   reach in the shuffled order supplies the tie-break;
+4. if no sum reaches `target`, add one extra block: the smallest remaining
+   block that `best + blockSize <= limit` still fits.
 
 Consequences:
 
-- a terminal's actual count can be `target + (lastBlockSize - 1)`;
+- the shown count is deterministic for a plan: the seed changes *which* blocks
+  realise the quota, never how many questions it shows (Bug 3);
+- a terminal's count can exceed `target` by at most one block, and the run
+  never passes `min(TestPlan.samplerLimit(count), MAX_LENGTH)`;
 - a passage is never split *within that terminal's candidate list*;
-- if the first block is larger than the target, it alone can overshoot;
-- the chosen block depends on the seed.
+- if every block is larger than the quota, the smallest fitting one is the
+  overshoot; if none fits the remaining budget the terminal takes nothing and
+  the fill stage may still place a smaller block.
 
 ### 4.4 Interleave
 
@@ -408,12 +425,12 @@ regroup passages; passage membership is already fixed.
 ### 4.5 Fill
 
 `fillWithWholePassages(selected, target = plan.count, pool = inScope,
-stages = [BLUEPRINT_FILL -> inScope])`:
+stages = [BLUEPRINT_FILL -> inScope], limit = samplerLimit(plan.count))`:
 
 1. if the selected count is already `>= target`, stop;
 2. for each stage, group the candidates by passage (in raw signal order, not
    shuffled), and add every member not already taken, one block at a time,
-   until `target` is reached;
+   until `target` is reached — skipping a block that would pass `limit`;
 3. if still short, repeat with the whole union shuffled by `seed xor 7`, and
    record that as `RANDOM`.
 
@@ -451,7 +468,13 @@ stored results, not from `requested`.
   `pool = achievable`;
 - `capacity = supply`;
 - for a blueprint, `sections[*].requested` are the quotas;
-- `terminalCounts` are the **actual** counts after whole passages.
+- `terminalCounts` are the **actual** counts after whole passages. They are a
+  function of the plan, not of the run seed: the knapsack fixes how many
+  questions each terminal shows, and the seed only chooses which blocks
+  (Bug 3);
+- the preview reads the same Fresh (`RECENT_3`) pool Start will use
+  (`TestSelector.withoutRecent` plus the below-2x rule), so `capacity` and the
+  section rows describe the supply the run actually sees (Bug 4).
 
 The setup sheet:
 
@@ -476,8 +499,9 @@ The setup sheet:
   quota sum.
 - Start (`TestViewModel.buildPlan`) rebuilds the `PlanBlueprint` from the
   repository (dropping unavailable sections), assigns a **new random seed**
-  (`Random.nextLong()`), and selects again. The setup's preview ids are display
-  only; the run's ids are the frozen selection for that new seed.
+  (`Random.nextLong()`), and selects again. The seed only changes *which*
+  questions realise each quota: the shown counts are deterministic, so the
+  run's counts match the preview's even though its ids may differ (Bug 3).
 
 ---
 
@@ -498,13 +522,13 @@ the run.
 | 2 | Passage fits under the quota | passage plus other blocks until quota | quota 6, passage 4 + standalones -> 6 |
 | 3 | Passage exactly the quota | passage only | quota 4, passage 4 -> 4 |
 | 4 | Passage larger than the quota | whole passage, overshoot | quota 2, 4-member passage -> 4 |
-| 5 | Several passages | blocks in seeded order until quota met; last may overshoot | quota 2, blocks 4 and 4 -> 4 |
+| 5 | Several passages | knapsack picks the largest whole-block sum within the quota; seed only picks which blocks | quota 2, blocks 4 and 4 -> 0 exact, one smallest block -> 4 |
 | 6 | Quota larger than the pool | allocation already capped the quota at the pool; the terminal takes everything | pool 3, quota 10 -> 3 |
 | 7 | Short run (`count < sections`) | top sections get 1 each; a 1-question terminal with a 4-member passage still takes 4 | request 3 -> actual could be 6+ |
-| 8 | Several terminals with passages | each terminal overshoots its own quota; overshoots add up | quotas 10 + 10, blocks 15 + 12 -> 27 |
+| 8 | Several terminals with passages | terminals share one sampler budget, so their overshoots cannot add past the limit | quotas 10 + 10, blocks 15 + 12 -> 15 (second would pass 25) |
 | 9 | Whole union short | allocation reaches the union supply; fill finds nothing | supply 12, request 20 -> 12 |
 | 10 | All questions are one passage | one block is the whole run | request 20, 60-member passage -> 60 |
-| 11 | Passage seed changes | the block order, and therefore which passage appears, changes | preview seed vs run seed |
+| 11 | Passage seed changes | the block order, and therefore which passage appears, changes — the shown count does not | preview seed vs run seed |
 | 12 | Fresh-sample exclusion | any recent member excludes the whole passage before selection | a 4-member passage with 1 recent member is gone |
 
 ### 5.3 Membership vs adjacency
@@ -516,9 +540,9 @@ passage blocks while shuffling; if shuffle is disabled, the interleaved order is
 kept. That is an ordering detail, not a split: every member is still in the
 run.
 
-### 5.4 Preview counts and quota counts differ on purpose
+### 5.4 Quota counts and actual counts can differ on purpose
 
-For a terminal with quota 3 and a 4-member passage as the first block:
+For a terminal with quota 3 and a 4-member passage as the only block:
 
 ```text
 allocation quota (composition/section row) = 3
@@ -526,7 +550,10 @@ actual terminal count (preview terminalCounts, run) = 4
 ```
 
 The preview's section row prints the **actual** count when it is available, so
-the learner sees 4, while the "quota plan" still records 3.
+the learner sees 4, while the "quota plan" still records 3. This difference is
+deliberate (whole passages are indivisible); what the preview must not do is
+disagree with the run. Since the knapsack fixes the count, both sides show 4
+for any run seed — the seed only chooses which blocks realise each quota.
 
 ---
 
@@ -653,12 +680,15 @@ deeper tree produces weak per-section claims: the quotas get small quickly.
     the remaining sections still run.
 12. **Deleted category.** The database cascade removes the section and its
     blueprint subtree; nothing is left to mark.
-13. **Fresh sample (`RECENT_3`).** Before selection, Start removes recent
-    comparable questions and any passage containing one, then applies the
-    filter only if the remaining pool is at least twice the request. A thin
-    section can therefore go short.
+13. **Fresh sample (`RECENT_3`).** Before selection, Start and the setup
+    preview remove recent comparable questions and any passage containing one,
+    then apply the filter only if the remaining pool is at least twice the
+    request. A thin section can therefore go short. Both sides read the pool
+    through `TestSelector.withoutRecent`, so the preview shows what the run
+    will use.
 14. **Determinism.** Quotas use seed 0; question order and passage choice use
-    `plan.seed xor terminalId.hashCode()`. A resumed run replays frozen ids.
+    `plan.seed xor terminalId.hashCode()`. The seed chooses which blocks
+    realise a quota, not the shown count. A resumed run replays frozen ids.
 15. **Interleave with unequal terminal lists.** Round-robin finishes the longer
     lists after the shorter ones are exhausted.
 16. **Fill never leaves the union.** `BLUEPRINT_FILL` and the last-resort
@@ -673,6 +703,10 @@ deeper tree produces weak per-section claims: the quotas get small quickly.
 The following are behaviors I consider bugs (or at least contract violations)
 against the app's own stated rules. Each has a concrete example and the
 behavior I think is correct.
+
+**Status: all six are fixed** on `feature/blueprint-fixes`, stacked on the docs
+branch that recorded them. Each fix un-ignores its own pins (see §9); the
+original description is kept below as the record of what was wrong.
 
 ### Bug 1 — Blueprint selection has no global overshoot / `MAX_LENGTH` bound
 
@@ -714,6 +748,12 @@ The setup sheet's Start gate and the selection must use the same check, and the
 preview must print the true shown count. Per-terminal overshoot inside that
 bound is fine and intended.
 
+**Fixed.** `TestSelector.blueprint` computes `TestPlan.samplerLimit(plan.count)`
+once and passes what is left of it to each terminal's `takeWholePassages` (and
+to the fill). A block that no longer fits is skipped and the scan continues, so
+a smaller block later can still be taken. Four pins are un-ignored; the
+guard that a legal 24 <= 25 overshoot still runs stays green.
+
 ---
 
 ### Bug 2 — The setup's minimum-block pre-check uses the whole paper, not the blueprint union
@@ -754,6 +794,12 @@ use that in `TestSetup.samplerRefusal`. Also use the same union for any
 "largest passage" guidance. This must cover internal terminals: the relevant
 block is any passage whose category is in the union.
 
+**Fixed.** `TestSetup.blockScopeIds(tickedExpanded, type, blueprint)` returns
+the union in Blueprint mode and the ticked expansion otherwise; the sheet keys
+its `loadMinBlockSize` query on that answer, so switching blueprints
+re-measures. `BlueprintSetupScopeTest` pins the choice, and the two Robolectric
+pins are un-ignored (CI is authoritative for them).
+
 ---
 
 ### Bug 3 — Preview actual counts can disagree with the run because the seed is chosen at Start
@@ -786,6 +832,14 @@ same seed and the ids are identical. If that is not possible, show quotas
 (deterministic) as the contract and label `terminalCounts` as an estimate; do
 not promise that the preview row matches the session.
 
+**Fixed, second way.** Rather than threading a route seed, the shown count is
+made seed-independent: `takeWholePassages` is now a 0/1 knapsack over the
+seeded block order, taking the largest sum that reaches the quota without
+passing it, plus at most one smallest fitting block when no exact sum exists.
+The seed still chooses *which* blocks (and so the ids and passage variety), but
+never how many questions are shown, so the preview's `terminalCounts` describe
+the run. The two pins are un-ignored; the same-seed guard stays green.
+
 ---
 
 ### Bug 4 — The setup preview ignores Fresh-sample (`RECENT_3`) exclusion
@@ -815,6 +869,13 @@ recent ids, filter the signals, and pass the effective pool to
 gate the length on the fresh one. `available`/`capacity` should be the pool the
 run will actually see.
 
+**Fixed.** `TestSelector.withoutRecent` is the one block-excluding filter,
+shared by Start and `LibraryViewModel.previewSelection`. The preview takes the
+setup's `ExclusionMode`, reads the same comparable attempts, and applies the
+filter only when `freshSampleFits(remaining, count)`; a rule that excludes
+nothing reads as `NONE`, exactly as the attempt's metadata will. The two pins
+are un-ignored (Robolectric; CI is authoritative).
+
 ---
 
 ### Bug 5 — Other signal selectors can split a passage (related, not blueprint-only)
@@ -842,6 +903,12 @@ the frozen focus ids. At minimum, Balanced (representative) should be
 block-safe like Blueprint. If splitting is intentional for practice types,
 document it and stop claiming universal block safety.
 
+**Fixed.** Two shared helpers — `takeBlocks` (rank blocks by their first
+member, pull in every member from the pool) and `completeBlocks` (repair a
+selection made by a cap/rank pass) — are used by every selector; the fill
+ladders and `Mixed` add whole blocks too. The three pins (Balanced, Coverage,
+Weakest topics) are un-ignored.
+
 ---
 
 ### Bug 6 (minor) — `poolSize(BLUEPRINT)` without a blueprint counts the whole scope
@@ -862,12 +929,19 @@ The existing test passes only because its signals happen to contain nothing
 outside the union. **Correct behavior:** return `0` or require the blueprint
 explicitly.
 
+**Fixed.** Without a blueprint there is no union to count, so `poolSize`
+returns 0. The one existing assertion that pinned the old fallback was updated
+(its signals held nothing outside the union, so it read 12 either way) and the
+Bug 6 pin is un-ignored.
+
 ---
 
 ### Not bugs (intentional behavior worth not "fixing")
 
-- **Per-terminal overshoot.** Taking a whole passage past a quota is deliberate;
-  the bug above is the missing *global* bound, not the per-terminal overshoot.
+- **Per-terminal overshoot inside the run-wide limit.** Taking a whole passage
+  past a quota is deliberate. It is bounded once for the run by
+  `samplerLimit(count)`, and the *count* is deterministic for a plan: the seed
+  chooses which blocks realise a quota, never how many questions are shown.
 - **Actual > requested.** A blueprint run can legitimately be longer than the
   requested count because of passages.
 - **Short-run emphasis.** A run shorter than the number of sections picks the
@@ -876,11 +950,13 @@ explicitly.
   sample.
 - **`demand` can be lower than the awarded quota.** Redistribution from a thin
   sibling is allowed to give a section more than its pool-free ideal.
-- **Fill stages are currently dead code in normal runs.** The allocation
-  invariant already reaches `min(count, supply)`, so `BLUEPRINT_FILL` and the
-  last-resort `RANDOM` almost never add a question. They are defensive. If a
-  future change breaks the invariant, note that `BLUEPRINT_FILL` scans raw
-  signal order (not shuffled), so it would be biased toward early questions.
+- **Fill stages are a defensive path in normal runs.** The allocation
+  invariant reaches `min(count, supply)`, so `BLUEPRINT_FILL` and the
+  last-resort `RANDOM` almost never add a question; they exist in case a
+  selector leaves a gap. Both are block-aware and honour the same run-wide
+  limit, skipping a block that would pass it. `BLUEPRINT_FILL` still scans raw
+  signal order (not shuffled), so when it does fire it is biased toward early
+  questions — an acceptable bias for a safety net.
 
 ---
 
@@ -910,33 +986,36 @@ explicitly.
 | Passage all-or-none | `BlueprintSelectorTest.aPassageIsTakenAllOrNone` |
 | Preview counts passage members | `BlueprintSelectorTest.previewCountsEveryMemberWhenAPassageOvershootsTheQuota` |
 | Determinism | `BlueprintSelectorTest.selectionIsDeterministicForTheSeed` |
+| Shown count independent of run seed | `BlueprintBugsTest.bug3_oneTerminalCountIsStableAcrossRunSeeds`, `bug3_everyTerminalCountIsStableAcrossRunSeeds` |
+| Whole blocks in every selector | `BlueprintBugsTest.bug5_balancedNeverSplitsAPassage`, `bug5_coverageNeverSplitsAPassage`, `bug5_weakestTopicsNeverSplitsAPassage` |
+| Setup measures the blueprint union | `BlueprintSetupScopeTest` |
+| Fresh pool shared by preview and Start | `TestSelector.withoutRecent`; pins in `BlueprintPreviewFreshTest` |
 | Blueprint length rounding/clamp | `TestSetupTest.aBlueprintRequestRoundsUpToTheNextSelectableLength`, `aNinetyNineQuestionBlueprintRunsAtItsWholeSupplyForARequestOfOneHundred` |
 | Repository tree, cascade, views | `BlueprintDbTest` |
 
 ### The six bugs in §8, pinned
 
-Each bug has tests that assert the **correct** behaviour and are `@Ignore`d
-while the bug is open, so the suite stays green without ever asserting a bug.
-Un-ignore a test in the commit that fixes its bug: a pass is the proof the
-behaviour changed, and a still-failing one means the fix was partial.
+Each bug has tests that assert the **correct** behaviour. They were `@Ignore`d
+while the bug was open, so the suite stayed green without ever asserting a bug;
+the commit that fixed each bug deleted its `@Ignore`. All fourteen pins now run.
 
-| Bug | Test |
-|---|---|
-| 1 — no global overshoot bound | `BlueprintBugsTest.bug1_twoTerminalsStayInsideTheSamplerLimit`, `bug1_threeTerminalsStayInsideTheSamplerLimit`, `bug1_shownCountNeverExceedsTheHardMaximum`, `bug1_nestedTerminalsAreBoundedAsOneRun` |
-| 2 — pre-check over the whole paper | `BlueprintBugsDbTest.bug2_aStandaloneElsewhereDoesNotHideTheUnionsBigPassage`, `bug2_aSmallPassageElsewhereDoesNotHideTheUnionsBigPassage` |
-| 3 — preview and run do not share a seed | `BlueprintBugsTest.bug3_oneTerminalCountIsStableAcrossRunSeeds`, `bug3_everyTerminalCountIsStableAcrossRunSeeds` |
-| 4 — preview ignores Fresh exclusion | `BlueprintPreviewFreshTest.bug4_previewShowsTheSectionFreshSampleEmpties`, `bug4_previewDropsAWholePassageWithOneRecentMember` |
-| 5 — only Blueprint is block-aware | `BlueprintBugsTest.bug5_balancedNeverSplitsAPassage`, `bug5_coverageNeverSplitsAPassage`, `bug5_weakestTopicsNeverSplitsAPassage` |
-| 6 — `poolSize` without a blueprint | `BlueprintBugsTest.bug6_poolSizeWithoutABlueprintIsNotTheWholeScope` |
+| Bug | Test | Status |
+|---|---|---|
+| 1 — no global overshoot bound | `BlueprintBugsTest.bug1_twoTerminalsStayInsideTheSamplerLimit`, `bug1_threeTerminalsStayInsideTheSamplerLimit`, `bug1_shownCountNeverExceedsTheHardMaximum`, `bug1_nestedTerminalsAreBoundedAsOneRun` | fixed, un-ignored |
+| 2 — pre-check over the whole paper | `BlueprintBugsDbTest.bug2_aStandaloneElsewhereDoesNotHideTheUnionsBigPassage`, `bug2_aSmallPassageElsewhereDoesNotHideTheUnionsBigPassage` | fixed, un-ignored (Robolectric) |
+| 3 — preview and run do not share a seed | `BlueprintBugsTest.bug3_oneTerminalCountIsStableAcrossRunSeeds`, `bug3_everyTerminalCountIsStableAcrossRunSeeds` | fixed, un-ignored |
+| 4 — preview ignores Fresh exclusion | `BlueprintPreviewFreshTest.bug4_previewShowsTheSectionFreshSampleEmpties`, `bug4_previewDropsAWholePassageWithOneRecentMember` | fixed, un-ignored (Robolectric) |
+| 5 — only Blueprint is block-aware | `BlueprintBugsTest.bug5_balancedNeverSplitsAPassage`, `bug5_coverageNeverSplitsAPassage`, `bug5_weakestTopicsNeverSplitsAPassage` | fixed, un-ignored |
+| 6 — `poolSize` without a blueprint | `BlueprintBugsTest.bug6_poolSizeWithoutABlueprintIsNotTheWholeScope` | fixed, un-ignored |
 
-The matching `…Guard` tests are **not** ignored. They pin behaviour that is
-already correct, so a fix cannot over-correct: a legal overshoot still runs,
-preview and run agree when they share one seed, the gate still allows a
-fitting block, the Fresh below-2x rule is respected, a different requested
-length is not comparable, and Blueprint never splits a passage.
+The matching `…Guard` tests are **not** ignored and were never changed. They pin
+behaviour that was already correct, so a fix cannot over-correct: a legal
+overshoot still runs, preview and run agree when they share one seed, the gate
+still allows a fitting block, the Fresh below-2x rule is respected, a different
+requested length is not comparable, and Blueprint never splits a passage.
 
-Un-ignoring all fourteen pins against the code of this commit fails every one,
-each with the reason given in §8.
+`BlueprintSetupScopeTest` is the pure-JVM pin for Bug 2's other half (which ids
+the setup measures); the Robolectric pins drive the database-backed gate.
 
 ---
 
@@ -950,7 +1029,9 @@ each with the reason given in §8.
 | What is "short by"? | `BlueprintQuotas.demand` |
 | How do percentages work? | `BlueprintQuotas.shares` (largest remainder) |
 | How are questions taken? | `TestSelector.blueprint` |
-| How are passages kept whole? | `passageKey`, `groupsByPassage`, `takeWholePassages` |
+| How are passages kept whole? | `passageKey`, `groupsByPassage`, `takeWholePassages` (blueprint), `takeBlocks`/`completeBlocks` (every other selector) |
+| How is the run's overshoot bounded? | `TestPlan.samplerLimit`, the `limit` threaded through `TestSelector.blueprint` |
+| How is the Fresh pool shared? | `TestSelector.withoutRecent`, `TestPlan.freshSampleFits` |
 | How is a short run filled? | `fillWithWholePassages` |
 | What is recorded on the attempt? | `Composition`, `CompositionSection`, `CompositionSegment` |
 | What does the setup show? | `TestSelector.preview`, `SelectionPreview`, `TestSetupSheet.BlueprintPreviewRows` |

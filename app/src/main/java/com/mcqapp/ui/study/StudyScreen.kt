@@ -77,10 +77,12 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
+import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.domain.Scoring
 import com.mcqapp.ui.StudyViewModelFactory
 import com.mcqapp.ui.haptics.rememberHaptics
+import com.mcqapp.ui.theme.verdictColors
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -504,6 +506,18 @@ private fun StudyStickyHeader(
     val haptics = rememberHaptics()
     val currentBookmarked =
         state.question?.id?.let { it in state.bookmarked } == true
+    // The question clock doubles as a dwell gauge: green while the card is in
+    // the Easy window, amber through Good, red once it reaches Hard. Thresholds
+    // are the card's own ladder (reading time included) from the same rule the
+    // check grades with, and the time itself stays the primary signal.
+    val verdicts = verdictColors()
+    val clockColor = when (
+        Study.dwellBand(liveDwell, state.dwellEasySeconds, state.dwellHardSeconds)
+    ) {
+        Study.DwellBand.EASY -> verdicts.rising
+        Study.DwellBand.GOOD -> verdicts.tricky
+        Study.DwellBand.HARD -> MaterialTheme.colorScheme.error
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -604,12 +618,13 @@ private fun StudyStickyHeader(
                                 else resources.getString(R.string.clock_paused)
                         }
                 ) {
-                    Icon(Icons.Default.Timer, contentDescription = null)
+                    Icon(Icons.Default.Timer, contentDescription = null, tint = clockColor)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         Dwell.format(liveDwell) +
                             if (state.clockRunning) ""
-                            else " · ${stringResource(R.string.clock_paused)}"
+                            else " · ${stringResource(R.string.clock_paused)}",
+                        color = clockColor
                     )
                 }
             }

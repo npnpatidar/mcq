@@ -331,6 +331,49 @@ object Study {
         return config.fastSeconds + readingBonus
     }
 
+    /**
+     * The two dwell thresholds a card is graded against: Easy below the first,
+     * Hard at or above the second, Good between them. Reading time lifts both
+     * ends by the same amount, so Good stays reachable on a long question.
+     *
+     * The Simplified-mode check grades from this pair and the header clock
+     * colours itself from the same pair, so the two can never disagree about
+     * where a card sits on the ladder.
+     */
+    data class DwellLadder(val easySeconds: Long, val hardSeconds: Long)
+
+    fun dwellLadder(
+        config: SchedulerConfig,
+        question: Question,
+        passage: Passage?
+    ): DwellLadder {
+        val easy = easyThresholdSeconds(config, question, passage)
+        return DwellLadder(
+            easySeconds = easy,
+            hardSeconds = config.slowSeconds + (easy - config.fastSeconds)
+        )
+    }
+
+    /** The three bands of the dwell ladder, for the study clock's colour. */
+    enum class DwellBand { EASY, GOOD, HARD }
+
+    /**
+     * Where [dwellSeconds] sits on the ladder described by [easySeconds] and
+     * [hardSeconds]. Boundaries match [inferGrade] exactly, with one deliberate
+     * difference: 0 reads as Easy. On a live clock the first instant of a card
+     * is the easiest time it will ever have, while grade inference treats 0 as
+     * untracked timing and calls it Good.
+     */
+    fun dwellBand(
+        dwellSeconds: Long,
+        easySeconds: Long,
+        hardSeconds: Long
+    ): DwellBand = when {
+        dwellSeconds < easySeconds -> DwellBand.EASY
+        dwellSeconds < hardSeconds -> DwellBand.GOOD
+        else -> DwellBand.HARD
+    }
+
     /** Every card eligible right now, split into the pull order's pools. */
     data class CandidatePools(
         /** Learning/relearning steps due now: short-term repetition first. */

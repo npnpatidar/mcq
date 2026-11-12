@@ -13,6 +13,7 @@ import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.Scoring
 import com.mcqapp.domain.Shuffle
+import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.util.IntervalFormat
@@ -113,6 +114,14 @@ data class StudyUiState(
     val questionElapsedSeconds: Long = 0L,
     /** Whether the question clock is running and should be shown as live. */
     val clockRunning: Boolean = false,
+    /**
+     * The dwell thresholds the card on screen is graded against, reading time
+     * included. The header clock colours itself from this pair, and it comes
+     * from the same [Study.dwellLadder] the check path grades with, so the
+     * colour and the grade never disagree about where the card sits.
+     */
+    val dwellEasySeconds: Long = Study.FAST_SECONDS,
+    val dwellHardSeconds: Long = Study.SLOW_SECONDS,
     /** The grade Check proposed; Next persists it. Null until checked. */
     val pendingGrade: ReviewGrade? = null,
     /** What the last check decided, for the result card. */
@@ -442,12 +451,22 @@ class StudyViewModel(
             val passage = question.passageId?.let { pid ->
                 repository.getPassagesByIds(listOf(pid)).firstOrNull()
             }
+            // The card's own ladder, reading time included: the clock's colour
+            // and the check's grade both read it, so a long question gets the
+            // same extra Easy/Good room in both places.
+            val ladder = Study.dwellLadder(
+                config = config ?: SchedulerConfig(),
+                question = question,
+                passage = passage
+            )
             val now = SystemClock.elapsedRealtime()
             _state.update {
                 it.copy(
                     current = card,
                     question = question,
                     passage = passage,
+                    dwellEasySeconds = ladder.easySeconds,
+                    dwellHardSeconds = ladder.hardSeconds,
                     selection = emptySet(),
                     revealed = false,
                     grading = false,
@@ -705,8 +724,9 @@ class StudyViewModel(
         val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
         // Reading time lifts both ends of the ladder by the same amount, so
         // Good stays reachable on long questions and deliberation beyond the
-        // Easy window is not mistaken for a struggle.
-        val easyAt = com.mcqapp.domain.Study.easyThresholdSeconds(
+        // Easy window is not mistaken for a struggle. The header clock reads
+        // the same pair.
+        val ladder = com.mcqapp.domain.Study.dwellLadder(
             config = schedulerConfig,
             question = question,
             passage = paused.passage
@@ -717,8 +737,8 @@ class StudyViewModel(
             dwellSeconds = dwellSeconds,
             isGuess = paused.isGuess,
             config = schedulerConfig,
-            fastSeconds = easyAt,
-            slowSeconds = schedulerConfig.slowSeconds + (easyAt - schedulerConfig.fastSeconds)
+            fastSeconds = ladder.easySeconds,
+            slowSeconds = ladder.hardSeconds
         )
         _state.update {
             it.copy(

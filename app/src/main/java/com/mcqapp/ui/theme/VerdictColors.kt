@@ -1,5 +1,6 @@
 package com.mcqapp.ui.theme
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -73,3 +74,35 @@ fun verdictColors(): VerdictColors {
 /** Cheap relative-luminance test; avoids a dependency for one boolean. */
 private fun Color.luminanceIsDark(): Boolean =
     (0.299 * red + 0.587 * green + 0.114 * blue) < 0.5
+
+/**
+ * The three tints the Study question clock uses for its dwell bands.
+ *
+ * The clock is the one caller that paints *text* in these semantics, and the
+ * palette literals above are tuned for containers rather than for the surface
+ * they sit on: the light amber is 3.70:1 on the light surface, under the
+ * 4.5:1 the rest of the scheme guarantees. The tints keep the traffic-light
+ * meaning (Easy green, Good amber, Hard error) and are then walked to
+ * legibility against whichever surface the active theme uses.
+ */
+data class ClockBandColors(val easy: Color, val good: Color, val hard: Color)
+
+/** [ClockBandColors] for one scheme, with every tint legible on its surface. */
+internal fun clockBandColorsFor(scheme: ColorScheme): ClockBandColors {
+    val dark = scheme.background.luminanceIsDark()
+    return ClockBandColors(
+        easy = readableOn(
+            if (dark) scheme.primary else VerdictColors.Light.rising,
+            scheme.surface
+        ),
+        good = readableOn(
+            if (dark) scheme.tertiary else VerdictColors.Light.tricky,
+            scheme.surface
+        ),
+        hard = readableOn(scheme.error, scheme.surface)
+    )
+}
+
+@Composable
+@ReadOnlyComposable
+fun clockBandColors(): ClockBandColors = clockBandColorsFor(MaterialTheme.colorScheme)

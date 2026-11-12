@@ -516,6 +516,8 @@ private fun StudyStickyHeader(
     val clockColor = when (
         Study.dwellBand(liveDwell, state.dwellEasySeconds, state.dwellHardSeconds)
     ) {
+        // The first second has banked no time, so it makes no colour claim.
+        Study.DwellBand.NEUTRAL -> MaterialTheme.colorScheme.onSurface
         Study.DwellBand.EASY -> clockColors.easy
         Study.DwellBand.GOOD -> clockColors.good
         Study.DwellBand.HARD -> clockColors.hard

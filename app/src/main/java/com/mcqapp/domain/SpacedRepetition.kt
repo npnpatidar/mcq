@@ -354,25 +354,39 @@ object Study {
         )
     }
 
-    /** The three bands of the dwell ladder, for the study clock's colour. */
-    enum class DwellBand { EASY, GOOD, HARD }
+    /**
+     * The bands of the dwell ladder, for the study clock's colour. [NEUTRAL] is
+     * the first second only: no time is banked yet, so the clock makes no
+     * colour claim until it has something to claim.
+     */
+    enum class DwellBand { NEUTRAL, EASY, GOOD, HARD }
 
     /**
      * Where [dwellSeconds] sits on the ladder described by [easySeconds] and
-     * [hardSeconds]. Boundaries match [inferGrade] exactly, with one deliberate
-     * difference: 0 reads as Easy. On a live clock the first instant of a card
-     * is the easiest time it will ever have, while grade inference treats 0 as
-     * untracked timing and calls it Good.
+     * [hardSeconds]. From one second up, the boundaries match [inferGrade]
+     * exactly. At 0 the clock is neutral: grade inference treats 0 as untracked
+     * timing and calls it Good, while a live clock that has not banked its first
+     * second should not yet claim any band at all.
      */
     fun dwellBand(
         dwellSeconds: Long,
         easySeconds: Long,
         hardSeconds: Long
     ): DwellBand = when {
+        dwellSeconds <= 0 -> DwellBand.NEUTRAL
         dwellSeconds < easySeconds -> DwellBand.EASY
         dwellSeconds < hardSeconds -> DwellBand.GOOD
         else -> DwellBand.HARD
     }
+
+    /**
+     * The whole-second dwell a check freezes and stores: milliseconds are the
+     * source of truth, rounded half-up once, at the moment the grade is
+     * proposed. The clock display truncates instead, because a clock reading
+     * 3 s then 4 s is what a learner expects.
+     */
+    fun gradedDwellSeconds(elapsedMillis: Long): Long =
+        (elapsedMillis.coerceAtLeast(0L) + 500L) / 1000L
 
     /** Every card eligible right now, split into the pull order's pools. */
     data class CandidatePools(

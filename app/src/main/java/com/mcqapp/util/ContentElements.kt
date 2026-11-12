@@ -4,7 +4,9 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -95,7 +97,13 @@ private fun TableElement(element: ContentElement.TableElement) {
             .border(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         element.rows.forEach { row ->
-            Row {
+            // Cells must be as tall as the tallest cell in their row, or a
+            // short cell stops at its last line and its own bottom border
+            // draws a line mid-row: a wrapped neighbour then looks like it has
+            // rowspanned (Screenshot/table.jpg). Sizing the row to its minimum
+            // intrinsic height and letting every cell fill it keeps the grid
+            // lines on the row boundaries.
+            Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                 row.forEach { cell ->
                     // Cells carry the same inline markup as a TextElement: a
                     // bare Text() rendered every tag literally. Pictures and
@@ -107,6 +115,7 @@ private fun TableElement(element: ContentElement.TableElement) {
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier
                             .weight(1f)
+                            .fillMaxHeight()
                             .border(0.5.dp, MaterialTheme.colorScheme.outline)
                             .padding(4.dp)
                     )

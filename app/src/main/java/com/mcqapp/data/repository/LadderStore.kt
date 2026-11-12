@@ -4,6 +4,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.LadderBlockEntity
 import com.mcqapp.data.local.LadderVersionEntity
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.LadderPolicy
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -149,9 +150,50 @@ internal class LadderStore(
         id
     }
 
-    /** Records one closed evidence block (including one that decided nothing). */
-    suspend fun recordBlock(block: LadderBlockEntity): Long =
-        db.ladderDao().insertBlock(block)
+    /**
+     * Records one closed evidence block that decided nothing, so the audit
+     * trail shows a window that was scored and declined instead of looking like
+     * a controller that never ran (plan §2.4). Idempotent: a window that already
+     * has a row (a proposal applied or dismissed) is left alone.
+     *
+     * Returns the new row's id, or null when the window was already recorded.
+     */
+    suspend fun recordBlock(
+        block: Calibration.Block,
+        ladderVersion: Int,
+        fsrsFitVersion: Int,
+        outcome: String,
+        followUpEasy: Double?,
+        followUpGood: Double?,
+        decidedAt: Long
+    ): Long? = mutex.withLock {
+        if (db.ladderDao().blockAtStart(block.startAt) != null) return@withLock null
+        db.ladderDao().insertBlock(
+            LadderBlockEntity(
+                startAt = block.startAt,
+                endAt = block.endAt,
+                ladderVersion = ladderVersion,
+                fsrsFitVersion = fsrsFitVersion,
+                policyVersion = POLICY_VERSION,
+                easyPairs = block.easyPairs,
+                easyCards = block.easyCards,
+                goodPairs = block.goodPairs,
+                goodCards = block.goodCards,
+                hardPairs = block.hardPairs,
+                hardCards = block.hardCards,
+                delta1 = block.delta1,
+                delta1Low = block.delta1Low,
+                delta1High = block.delta1High,
+                delta2 = null,
+                delta2Low = null,
+                delta2High = null,
+                followUpEasy = followUpEasy,
+                followUpGood = followUpGood,
+                outcome = outcome,
+                decidedAt = decidedAt
+            )
+        )
+    }
 
     /**
      * Applies the learner's accepted proposal: the evidence block lands first,

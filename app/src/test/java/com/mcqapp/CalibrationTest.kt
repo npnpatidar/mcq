@@ -92,6 +92,63 @@ class CalibrationTest {
         Calibration.report(cards.flatMap { it }, now = now, epochStart = t0)
 
     @Test
+    fun `labels before the epoch are not pooled`() {
+        // The old label belongs to the previous ladder version; its outcome
+        // arrives inside the epoch, which must not make it evidence.
+        val old = card(
+            questionId = "old",
+            grade = Calibration.LadderGrade.EASY,
+            outcome = false,
+            labelAt = t0 - 60 * day,
+            outcomeAt = t0 + day
+        )
+        val current = card(
+            questionId = "new",
+            grade = Calibration.LadderGrade.EASY,
+            outcome = true,
+            labelAt = t0 + 2 * day
+        )
+        val result = Calibration.report(
+            old + current,
+            now = t0 + 400 * day,
+            epochStart = t0
+        )
+        assertEquals(1, result.pairs)
+        assertEquals(0, result.excluded)
+        assertEquals(t0, result.epochStart)
+    }
+
+    @Test
+    fun `a refit start passed as the epoch excludes the pre-refit labels`() {
+        // StatsStore rebases the epoch on the first label under the current
+        // weights; the report must honour that boundary the same way it honours
+        // a ladder-version change.
+        val beforeRefit = card(
+            questionId = "before",
+            grade = Calibration.LadderGrade.EASY,
+            outcome = false,
+            labelAt = t0 + day,
+            outcomeAt = t0 + 6 * day
+        )
+        val afterRefit = card(
+            questionId = "after",
+            grade = Calibration.LadderGrade.GOOD,
+            outcome = true,
+            labelAt = t0 + 10 * day,
+            outcomeAt = t0 + 15 * day
+        )
+        val refitAt = t0 + 10 * day
+        val result = Calibration.report(
+            beforeRefit + afterRefit,
+            now = refitAt + 400 * day,
+            epochStart = refitAt
+        )
+        assertEquals(1, result.pairs)
+        assertEquals(Calibration.LadderGrade.GOOD, result.grades.first { it.pairs > 0 }.grade)
+        assertEquals(refitAt, result.blocks.single().startAt)
+    }
+
+    @Test
     fun `pairs are adjacent reviews within one paper-scoped card`() {
         // The same question id in two papers is two cards; each pairs with its
         // own next review, never across papers.
@@ -102,6 +159,23 @@ class CalibrationTest {
             epochStart = t0
         )
         assertEquals(2, result.pairs)
+    }
+
+    @Test
+    fun `a block carries its own card counts per grade`() {
+        val result = Calibration.report(
+            card(questionId = "a", grade = Calibration.LadderGrade.EASY) +
+                card(questionId = "b", grade = Calibration.LadderGrade.EASY) +
+                card(questionId = "c", grade = Calibration.LadderGrade.GOOD),
+            now = t0 + 400 * day,
+            epochStart = t0
+        )
+        val block = result.blocks.single()
+        assertEquals(2, block.easyPairs)
+        assertEquals(2, block.easyCards)
+        assertEquals(1, block.goodPairs)
+        assertEquals(1, block.goodCards)
+        assertEquals(0, block.hardCards)
     }
 
     @Test

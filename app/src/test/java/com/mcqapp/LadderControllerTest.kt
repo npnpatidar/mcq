@@ -13,6 +13,7 @@ import com.mcqapp.data.repository.LadderStore
 import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.StatsStore
 import com.mcqapp.data.repository.dataStore
+import com.mcqapp.domain.stats.LadderPolicy
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,6 +124,34 @@ class LadderControllerTest {
         assertEquals(LadderController.Result.Disabled, result)
         assertEquals(8L, SettingsStore(context).schedulerConfigNow().fastSeconds)
         assertTrue(db.ladderDao().allBlocks().isEmpty())
+    }
+
+    @Test
+    fun aClosedWindowThatDecidedNothingIsStillRecorded() = runBlocking {
+        // No reviews: the first window closes empty. The audit trail must show
+        // a scored, declined window rather than a controller that never ran.
+        SettingsStore(context).writeCuts(8L, 30L, 3)
+        db.ladderDao().insertVersion(
+            LadderVersionEntity(
+                id = 3,
+                easySeconds = 8L,
+                slowSeconds = 30L,
+                effectiveFrom = t0,
+                reason = "prior"
+            )
+        )
+        SettingsStore(context).setAutomaticLadderAdaptation(true)
+
+        val result = controller().run(now = t0 + 120 * day)
+
+        assertEquals(
+            LadderPolicy.Status.BLOCK_EMPTY,
+            (result as LadderController.Result.NoChange).status
+        )
+        val block = db.ladderDao().allBlocks().single()
+        assertEquals(t0, block.startAt)
+        assertEquals(0, block.easyPairs + block.goodPairs + block.hardPairs)
+        assertEquals("insufficient-evidence", block.outcome)
     }
 
     @Test

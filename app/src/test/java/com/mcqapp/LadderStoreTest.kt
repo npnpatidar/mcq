@@ -195,8 +195,11 @@ class LadderStoreTest {
             endAt = startAt + 28L * 86_400_000L,
             pairs = 400,
             easyPairs = 100,
+            easyCards = 80,
             goodPairs = 80,
+            goodCards = 65,
             hardPairs = 40,
+            hardCards = 20,
             closed = true
         ),
         delta1 = -0.08,

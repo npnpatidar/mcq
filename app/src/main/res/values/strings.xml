@@ -800,7 +800,7 @@
     <string name="stats_ladder_undo">Undo last change</string>
     <string name="stats_ladder_last_change">Last change: Easy cut %1$ds → %2$ds.</string>
     <string name="stats_ladder_error">Could not update the Easy cut: %1$s</string>
-    <string name="stats_ladder_hard_note">The Hard cut is shown but not tuned: %1$d pairs is not enough to judge it.</string>
+    <string name="stats_ladder_hard_note">The Hard cut is shown but not tuned: only %1$d Hard cards carry a usable pair.</string>
     <string name="stats_calibration_excluded">%1$d candidate pairs excluded (overrides, guesses, skips, new cards, missing forecast or outcome)</string>
     <string name="stats_by_group">Retention by paper</string>
     <string name="stats_by_group_help">Share of reviews answered correctly; weakest first.</string>

@@ -180,17 +180,16 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         config: SchedulerConfig
     ): Calibration.Report {
         val version = config.ladderVersion
-        val epochStart = if (version > 0) {
+        val versionStart = if (version > 0) {
             db.ladderDao().version(version.toLong())?.effectiveFrom ?: 0L
         } else {
             0L
         }
-        val closedBlockEnd = if (epochStart > 0L && now > epochStart) {
-            epochStart + ((now - epochStart) / BLOCK_MS) * BLOCK_MS
-        } else {
-            0L
-        }
         var maxReviewedAt = 0L
+        // The weight-set boundary is tracked unscoped: a refit anywhere in the
+        // log changes the forecast yardstick for every paper's report.
+        var fitStartedAt = Long.MAX_VALUE
+        var staleFitSeen = false
         val rows = ArrayList<Calibration.Row>()
         var afterId = 0L
         while (true) {
@@ -198,11 +197,33 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             if (page.isEmpty()) break
             page.forEach { row ->
                 if (row.reviewedAt > maxReviewedAt) maxReviewedAt = row.reviewedAt
+                if (versionStart > 0L && row.reviewedAt >= versionStart) {
+                    val fit = row.fsrsFitVersion
+                    if (fit != null && fit != config.fsrsFitVersion) staleFitSeen = true
+                    if (fit == config.fsrsFitVersion && row.reviewedAt < fitStartedAt) {
+                        fitStartedAt = row.reviewedAt
+                    }
+                }
                 if (scopePaperId != null && row.paperId != scopePaperId) return@forEach
                 rows += row.toCalibrationRow()
             }
             afterId = page.last().id
             if (page.size < PAGE_SIZE) break
+        }
+        // Plan §7: a refit ends the epoch. The reviews before it were forecast
+        // with another weight set, so the epoch restarts at the first label
+        // recorded under the current weights. A refit with no such label yet is
+        // pending, and freezes the ladder.
+        val refitInEpoch = staleFitSeen && fitStartedAt == Long.MAX_VALUE
+        val epochStart = when {
+            versionStart <= 0L -> 0L
+            staleFitSeen && fitStartedAt != Long.MAX_VALUE -> maxOf(versionStart, fitStartedAt)
+            else -> versionStart
+        }
+        val closedBlockEnd = if (epochStart > 0L && now > epochStart) {
+            epochStart + ((now - epochStart) / BLOCK_MS) * BLOCK_MS
+        } else {
+            0L
         }
         val key = CalibrationCacheKey(
             scopePaperId = scopePaperId,
@@ -212,11 +233,6 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             maxReviewedAt = maxReviewedAt
         )
         calibrationCache[key]?.let { return it }
-        val refitInEpoch = rows.any {
-            it.reviewedAt >= epochStart &&
-                it.fsrsFitVersion != null &&
-                it.fsrsFitVersion != config.fsrsFitVersion
-        }
         val report = Calibration.report(rows, now, epochStart, refitInEpoch)
         calibrationCache.clear()
         calibrationCache[key] = report
@@ -249,8 +265,13 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val maxReviewedAt: Long
     )
 
-    /** One entry: the report for the exact inputs a refresh would change. */
-    private val calibrationCache = HashMap<CalibrationCacheKey, Calibration.Report>()
+    /**
+     * One entry: the report for the exact inputs a refresh would change. The
+     * Stats tab loads on `Dispatchers.Default` and the session-end controller
+     * on `Dispatchers.IO`, so the map must tolerate two threads.
+     */
+    private val calibrationCache =
+        java.util.concurrent.ConcurrentHashMap<CalibrationCacheKey, Calibration.Report>()
 
     /**
      * The overview tab, streamed: the log is replayed and the cards are paged

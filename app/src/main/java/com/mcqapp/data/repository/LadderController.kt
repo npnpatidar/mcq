@@ -1,6 +1,8 @@
 package com.mcqapp.data.repository
 
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.LadderPolicy
 import com.mcqapp.util.Logger
 
@@ -72,7 +74,10 @@ internal class LadderController(
         val decided = db.ladderDao().allBlocks().map { it.startAt }.toSet()
         val evaluation = LadderPolicy.evaluate(report, config, decided, now)
         val proposal = evaluation.proposal
-            ?: return Result.NoChange(evaluation.status)
+        if (proposal == null) {
+            recordClosedBlocks(evaluation, report, config, now)
+            return Result.NoChange(evaluation.status)
+        }
 
         val version = ladderStore.applyProposal(
             proposal = proposal,
@@ -87,7 +92,90 @@ internal class LadderController(
         return Result.Applied(version, proposal)
     }
 
+    /**
+     * Plan §2.4: every closed block leaves a row, including one that decided
+     * nothing. Without this, a controller that scores a window and declines is
+     * indistinguishable from one that stopped running, and the safety valve's
+     * history has holes.
+     *
+     * The latest window carries the outcome the policy reached, *unless* it is
+     * merely not ready yet: readiness is measured over the whole epoch and can
+     * still be met before the next window closes, and a row here would read as
+     * `ALREADY_DECIDED` and suppress that chance. Such a window gets its
+     * `insufficient-evidence` row on the first run after a newer window closes,
+     * which is when it can no longer be acted on.
+     *
+     * `recordBlock` skips any window that already has a row, so applying and
+     * dismissing keep their own outcomes.
+     */
+    private suspend fun recordClosedBlocks(
+        evaluation: LadderPolicy.Evaluation,
+        report: Calibration.Report,
+        config: SchedulerConfig,
+        now: Long
+    ) {
+        if (evaluation.status == LadderPolicy.Status.BLOCK_OPEN) return
+        val followUp = report.followUp.associateBy { it.grade }
+        val followUpEasy = followUp[Calibration.LadderGrade.EASY]?.rate
+        val followUpGood = followUp[Calibration.LadderGrade.GOOD]?.rate
+        val latestStart = evaluation.blockStartAt
+
+        report.blocks
+            .filter { it.closed && it.startAt != latestStart }
+            .forEach { block ->
+                ladderStore.recordBlock(
+                    block = block,
+                    ladderVersion = config.ladderVersion,
+                    fsrsFitVersion = config.fsrsFitVersion,
+                    outcome = "insufficient-evidence",
+                    followUpEasy = followUpEasy,
+                    followUpGood = followUpGood,
+                    decidedAt = now
+                )
+            }
+
+        val startAt = latestStart ?: return
+        if (evaluation.status == LadderPolicy.Status.ALREADY_DECIDED ||
+            evaluation.status == LadderPolicy.Status.NOT_READY
+        ) {
+            return
+        }
+        val block = report.blocks.firstOrNull { it.startAt == startAt }
+            ?: emptyBlock(startAt, report.epochStart)
+        val outcome = when (evaluation.status) {
+            LadderPolicy.Status.REFIT -> "frozen-refit"
+            LadderPolicy.Status.BLOCK_EMPTY -> "insufficient-evidence"
+            else -> "no-change"
+        }
+        ladderStore.recordBlock(
+            block = block,
+            ladderVersion = config.ladderVersion,
+            fsrsFitVersion = config.fsrsFitVersion,
+            outcome = outcome,
+            followUpEasy = followUpEasy,
+            followUpGood = followUpGood,
+            decidedAt = now
+        )
+    }
+
+    /** A closed window that held no usable pair still gets an audit row. */
+    private fun emptyBlock(startAt: Long, epochStart: Long) = Calibration.Block(
+        index = ((startAt - epochStart) / BLOCK_MS).toInt(),
+        startAt = startAt,
+        endAt = startAt + BLOCK_MS,
+        pairs = 0,
+        easyPairs = 0,
+        easyCards = 0,
+        goodPairs = 0,
+        goodCards = 0,
+        hardPairs = 0,
+        hardCards = 0,
+        closed = true
+    )
+
     private companion object {
+        const val BLOCK_MS = Calibration.BLOCK_DAYS * 86_400_000L
+
         val GUARDED_REASONS = setOf(
             LadderReason.PROPOSAL.stored,
             LadderReason.AUTOMATIC.stored

@@ -1,6 +1,6 @@
 # Plan: calibrating the automatic grade
 
-**Status:** uncommitted working note. Nothing here is built, released or pushed until the owner
+**Status:** implemented on `main` (phases 1–5). Nothing here is released until the owner
 says so. The design it implements is `calibration.md`; this file is the engineering breakdown,
 with the code touched and the order to do it in.
 

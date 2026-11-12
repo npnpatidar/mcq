@@ -170,8 +170,11 @@ object Calibration {
         val endAt: Long,
         val pairs: Int,
         val easyPairs: Int,
+        val easyCards: Int,
         val goodPairs: Int,
+        val goodCards: Int,
         val hardPairs: Int,
+        val hardCards: Int,
         val closed: Boolean,
         /**
          * Easy-vs-Good δ for this window alone. Present only on the last two
@@ -231,7 +234,14 @@ object Calibration {
     /**
      * Builds the report. [now] decides which blocks are closed and which
      * labels' outcomes are due; [epochStart] is the effective time of the
-     * current ladder version (0 when no version exists).
+     * current ladder version (0 when no version exists), moved forward when a
+     * refit ended the epoch.
+     *
+     * Only labels dated inside the epoch are pooled (plan §2.4): a review from
+     * before the current ladder version, or before the current weight set, was
+     * graded and forecast under different rules, so it is not evidence about
+     * the cuts in force now. Its row may still supply an outcome for a label
+     * inside the epoch; the label side is what starts the epoch.
      */
     fun report(
         reviews: List<Row>,
@@ -252,6 +262,7 @@ object Calibration {
 
         val firstCounts = HashMap<LadderGrade, IntArray>() // count, correct
         reviews.forEach { row ->
+            if (epochStart > 0L && row.reviewedAt < epochStart) return@forEach
             if (row.stateBefore == CardStateKind.NEW && row.wasCorrect != null) {
                 val grade = gradeOf(row.rating) ?: return@forEach
                 val counts = firstCounts.getOrPut(grade) { IntArray(2) }
@@ -268,6 +279,9 @@ object Calibration {
             val ordered = rows.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             for (index in ordered.indices) {
                 val label = ordered[index]
+                // Pre-epoch labels are dropped before any counter sees them:
+                // follow-up and the exclusions describe this epoch's evidence.
+                if (epochStart > 0L && label.reviewedAt < epochStart) continue
                 val outcome = ordered.getOrNull(index + 1)
                 // Follow-up counts every label whose scheduled outcome is due,
                 // whether the outcome arrived or not, so long intervals are not
@@ -548,14 +562,20 @@ object Calibration {
             } else {
                 null
             }
+            val easyRows = rows.filter { it.grade == LadderGrade.EASY }
+            val goodRows = rows.filter { it.grade == LadderGrade.GOOD }
+            val hardRows = rows.filter { it.grade == LadderGrade.HARD }
             Block(
                 index = index,
                 startAt = start,
                 endAt = start + BLOCK_MS,
                 pairs = rows.size,
-                easyPairs = rows.count { it.grade == LadderGrade.EASY },
-                goodPairs = rows.count { it.grade == LadderGrade.GOOD },
-                hardPairs = rows.count { it.grade == LadderGrade.HARD },
+                easyPairs = easyRows.size,
+                easyCards = easyRows.map { it.paperId to it.questionId }.toSet().size,
+                goodPairs = goodRows.size,
+                goodCards = goodRows.map { it.paperId to it.questionId }.toSet().size,
+                hardPairs = hardRows.size,
+                hardCards = hardRows.map { it.paperId to it.questionId }.toSet().size,
                 closed = isClosed,
                 delta1 = contrast?.value,
                 delta1Low = contrast?.low,

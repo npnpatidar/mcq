@@ -64,8 +64,11 @@ class LadderPolicyTest {
                 endAt = 1_000L + 28L * 86_400_000L,
                 pairs = pairs,
                 easyPairs = 100,
+                easyCards = 50,
                 goodPairs = 100,
+                goodCards = 50,
                 hardPairs = 40,
+                hardCards = 20,
                 closed = blockClosed
             )
         ),
@@ -232,8 +235,11 @@ class LadderPolicyTest {
         endAt = 1_000L + (index + 1) * 28L * 86_400_000L,
         pairs = 400,
         easyPairs = 100,
+        easyCards = 50,
         goodPairs = 100,
+        goodCards = 50,
         hardPairs = 40,
+        hardCards = 20,
         closed = closed,
         delta1 = delta,
         delta1Low = low,

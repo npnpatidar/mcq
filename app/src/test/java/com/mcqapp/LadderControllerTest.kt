@@ -74,7 +74,7 @@ class LadderControllerTest {
             val easy = index % 2 == 0
             val questionId = "q$index"
             val labelAt = t0 + (index % 20) * day
-            val labelCorrect = if (easy) index % 10 == 0 else index % 10 != 0
+            val labelCorrect = if (easy) index % 10 == 0 else index % 10 in 1..7
             rows += ReviewLogEntity(
                 paperId = "p1",
                 questionId = questionId,
@@ -95,6 +95,7 @@ class LadderControllerTest {
                 rating = 3,
                 reviewedAt = labelAt + 5 * day,
                 stateBefore = "REVIEW",
+                intervalDaysAfter = 200,
                 wasCorrect = labelCorrect,
                 predictedRecall = 0.9
             )

@@ -99,7 +99,14 @@ object LadderPolicy {
 
     data class Evaluation(
         val status: Status,
-        val proposal: Proposal? = null
+        val proposal: Proposal? = null,
+        /**
+         * The latest window that has closed, in this report's epoch
+         * coordinates, even when the answer is not a proposal. The caller
+         * records this window so a declined block is still evidence. Null
+         * before any window has closed.
+         */
+        val blockStartAt: Long? = null
     )
 
     /**
@@ -123,27 +130,41 @@ object LadderPolicy {
         if (latestIndex < 0) return Evaluation(Status.BLOCK_OPEN)
         val latestStart = report.epochStart + latestIndex * BLOCK_MS
         val block = report.blocks.firstOrNull { it.startAt == latestStart }
-            ?: return Evaluation(Status.BLOCK_EMPTY)
-        if (!block.closed) return Evaluation(Status.BLOCK_OPEN)
-        if (block.startAt in decidedBlockStarts) return Evaluation(Status.ALREADY_DECIDED)
-        if (report.readiness.refitInEpoch) return Evaluation(Status.REFIT)
-        if (!report.readiness.ready) return Evaluation(Status.NOT_READY)
-        if (!report.followUpGatePassed) return Evaluation(Status.NOT_READY)
+            ?: return Evaluation(Status.BLOCK_EMPTY, blockStartAt = latestStart)
+        if (!block.closed) return Evaluation(Status.BLOCK_OPEN, blockStartAt = latestStart)
+        if (block.startAt in decidedBlockStarts) {
+            return Evaluation(Status.ALREADY_DECIDED, blockStartAt = latestStart)
+        }
+        if (report.readiness.refitInEpoch) {
+            return Evaluation(Status.REFIT, blockStartAt = latestStart)
+        }
+        if (!report.readiness.ready) {
+            return Evaluation(Status.NOT_READY, blockStartAt = latestStart)
+        }
+        if (!report.followUpGatePassed) {
+            return Evaluation(Status.NOT_READY, blockStartAt = latestStart)
+        }
 
         val contrast = report.contrast1
-        val value = contrast.value ?: return Evaluation(Status.NO_EFFECT)
-        val low = contrast.low ?: return Evaluation(Status.NO_EFFECT)
-        val high = contrast.high ?: return Evaluation(Status.NO_EFFECT)
+        val value = contrast.value
+            ?: return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
+        val low = contrast.low
+            ?: return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
+        val high = contrast.high
+            ?: return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
         // The interval has to exclude zero, not merely miss it after rounding.
-        if (low <= 0.0 && high >= 0.0) return Evaluation(Status.NO_EFFECT)
-        val minimumDetectable = report.readiness.halfWidth ?: return Evaluation(Status.NO_EFFECT)
+        if (low <= 0.0 && high >= 0.0) {
+            return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
+        }
+        val minimumDetectable = report.readiness.halfWidth
+            ?: return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
         if (abs(value) < MIN_EFFECT || abs(value) < minimumDetectable) {
-            return Evaluation(Status.NO_EFFECT)
+            return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
         }
         val direction = when {
             value <= -MIN_EFFECT -> Calibration.Direction.LOWER
             value >= MIN_EFFECT -> Calibration.Direction.RAISE
-            else -> return Evaluation(Status.NO_EFFECT)
+            else -> return Evaluation(Status.NO_EFFECT, blockStartAt = latestStart)
         }
 
         val current = config.fastSeconds
@@ -158,7 +179,7 @@ object LadderPolicy {
             proposed !in MIN_EASY_SECONDS..MAX_EASY_SECONDS ||
             proposed > config.slowSeconds - MIN_GAP_TO_HARD
         ) {
-            return Evaluation(Status.BOUNDS)
+            return Evaluation(Status.BOUNDS, blockStartAt = latestStart)
         }
 
         fun grade(which: Calibration.LadderGrade): Calibration.GradeStat =
@@ -170,6 +191,7 @@ object LadderPolicy {
 
         return Evaluation(
             status = Status.PROPOSE,
+            blockStartAt = latestStart,
             proposal = Proposal(
                 easySeconds = proposed,
                 currentEasySeconds = current,

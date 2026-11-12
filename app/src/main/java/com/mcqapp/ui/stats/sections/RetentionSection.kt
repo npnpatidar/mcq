@@ -418,7 +418,7 @@ private fun LadderDecision(
         Text(
             stringResource(
                 R.string.stats_ladder_hard_note,
-                report.grades.first { it.grade == Calibration.LadderGrade.HARD }.pairs
+                report.contrast2.bindingCards
             ),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant

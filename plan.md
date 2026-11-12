@@ -656,6 +656,9 @@ not fine as a control signal.
 
 ## 6. Phase 6 — the evaluation nobody can skip
 
+The pre-registration, block schedule, analysis formula and stopping rule live in
+`ladder-evaluation.md`.
+
 **ABBA, not ABAB.** With A in blocks 1 and 3 and B in 2 and 4, A's average calendar position is
 lower than B's, so a learner who improves over time makes B look better. Use a balanced order
 with at least six fixed blocks of three or more weeks.

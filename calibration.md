@@ -272,7 +272,7 @@ What replaces it:
 - **Guardrails, with stated margins:** lapses per hundred graduated reviews no worse than 20% relative, and study minutes per review no worse than 10%. Both are policy contrasts rather than fixed characteristics — the ladder changes when cards graduate and how often they are due, so numerator and denominator move with the policy. That is acceptable for a balanced comparison and unacceptable as a control signal.
 - **If an exam-facing outcome is ever wanted**, the only non-circular one available is accuracy on unseen, test-style questions sat under exam conditions, before and after. That is a study, not a feature, and it is out of scope here.
 
-A single-learner alternating comparison is the strongest evidence available and is worth doing once, before the loop is allowed to adjust automatically. Until then, adjustments should be proposed and confirmed rather than applied silently.
+A single-learner alternating comparison is the strongest evidence available. `ladder-evaluation.md` pre-registers it as an eight-block ABBA comparison with a within-card paired recall outcome and the two cost guardrails above. Run it with automatic adaptation off; a positive result is suggestive at n = 1, not an exam-performance claim. Until it is run, automatic mode should stay off.
 
 ---
 
@@ -282,7 +282,8 @@ A single-learner alternating comparison is the strongest evidence available and 
 2. **Report, do not adjust.** Compute the contrast by grade and show it. This is also how the first real evidence arrives.
 3. **Fix the two measurement bugs** that a change of this kind would otherwise inherit: dwell is truncated per screen segment while the allowance is rounded up, and the clock's zero-second band disagrees with the grader. Neither is a calibration feature; both move the boundary the calibration reads.
 4. **Propose, confirm.** Let the learner apply a suggested adjustment and compare epochs.
-5. **Automate, with damping and reversal**, once the proposal path has shown the loop is stable on real data.
+5. **Automate, with damping and reversal**, once the proposal path has shown the loop is stable on real data. Automatic mode is off by default.
+6. **Evaluate** with the pre-registered ABBA comparison in `ladder-evaluation.md`, automatic adaptation off, before keeping the candidate cut.
 
 Steps 1 to 3 are the ones that make everything else possible, and none of them changes a grade except at the boundary.
 

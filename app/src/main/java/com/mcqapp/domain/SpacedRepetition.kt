@@ -191,7 +191,18 @@ data class SchedulerConfig(
      * to the defaults in [sanitized], so a corrupt preference can never break
      * scheduling; well-formed lists are clipped to the official bounds.
      */
-    val fsrsParameters: List<Double> = FsrsScheduler.DEFAULT_FSRS_PARAMETERS
+    val fsrsParameters: List<Double> = FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+    /**
+     * The ladder version the cut points belong to (v26). 0 means no version
+     * has been written yet — every pre-v26 review was graded without one.
+     */
+    val ladderVersion: Int = 0,
+    /**
+     * Which weight set [fsrsParameters] belongs to (v26). 0 is the shipped
+     * default set; every refit bumps it, so a review cannot claim a forecast
+     * that a different fit produced.
+     */
+    val fsrsFitVersion: Int = 0
 ) {
     /** Guards against values that would break scheduling entirely. */
     fun sanitized(): SchedulerConfig = copy(
@@ -202,6 +213,8 @@ data class SchedulerConfig(
         dayStartHour = dayStartHour.coerceIn(0, 23),
         fastSeconds = fastSeconds.coerceIn(1, 3600),
         slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600),
+        ladderVersion = ladderVersion.coerceAtLeast(0),
+        fsrsFitVersion = fsrsFitVersion.coerceAtLeast(0),
         fsrsParameters = fsrsParameters
             .takeIf { list ->
                 list.size == FsrsScheduler.PARAMETER_COUNT && list.all { it.isFinite() }
@@ -217,6 +230,61 @@ data class SchedulerConfig(
  * These rules are about *what to study*, not *how memory decays*, so they stay
  * shared no matter which [Scheduler] is in use.
  */
+/** Where one review's saved grade came from (v26, `review_log.gradeSource`). */
+enum class GradeSource(val stored: String) {
+    /** The app's proposal was saved unchanged. */
+    AUTO("AUTO"),
+
+    /** The learner changed the app's proposal before saving it. */
+    EDITED("EDITED"),
+
+    /** Classic mode: the learner chose a grade and the app proposed none. */
+    CHOSEN("CHOSEN")
+}
+
+/**
+ * The provenance rules the calibration depends on, kept pure so they can be
+ * tested without a database. They are deliberately small: the ladder measures
+ * only AUTO labels, and a row that claims AUTO when it was edited would
+ * contaminate every statistic downstream.
+ */
+object GradeProvenance {
+
+    /**
+     * [edited] is sticky. A learner who changes Easy to Good and back saves a
+     * grade equal to the proposal, but the row is still EDITED: it is a
+     * decision that went through the learner, not the app's output. Deriving
+     * the source from the two grades alone cannot see that case, which is why
+     * the session tracks the edit rather than recomputing it here.
+     */
+    fun source(proposed: ReviewGrade?, edited: Boolean): GradeSource = when {
+        proposed == null -> GradeSource.CHOSEN
+        edited -> GradeSource.EDITED
+        else -> GradeSource.AUTO
+    }
+
+    /**
+     * The forecast a review row may store, from the card state immediately
+     * before the answer. Two nulls are deliberate:
+     *
+     * - a new card has no memory, and `retention` returns 0.0 for it — a
+     *   stored 0.0 is indistinguishable from a genuine near-zero prediction;
+     * - an imported card with no review timestamp but a positive stability
+     *   makes `retention` repeat the schedule's own assumption back, which is
+     *   not a forecast.
+     */
+    fun predictedRecall(
+        state: CardState?,
+        now: Long,
+        retention: (CardState, Long) -> Double
+    ): Double? {
+        if (state == null) return null
+        if (state.state == CardStateKind.NEW) return null
+        if (state.lastReviewedAt == 0L && state.stability > 0.0) return null
+        return retention(state, now)
+    }
+}
+
 object Study {
 
     const val DAY_MS = DayBoundary.DAY_MS
@@ -330,6 +398,63 @@ object Study {
         ).toLong()
         return config.fastSeconds + readingBonus
     }
+
+    /**
+     * The two dwell thresholds a card is graded against: Easy below the first,
+     * Hard at or above the second, Good between them. Reading time lifts both
+     * ends by the same amount, so Good stays reachable on a long question.
+     *
+     * The Simplified-mode check grades from this pair and the header clock
+     * colours itself from the same pair, so the two can never disagree about
+     * where a card sits on the ladder.
+     */
+    data class DwellLadder(val easySeconds: Long, val hardSeconds: Long)
+
+    fun dwellLadder(
+        config: SchedulerConfig,
+        question: Question,
+        passage: Passage?
+    ): DwellLadder {
+        val easy = easyThresholdSeconds(config, question, passage)
+        return DwellLadder(
+            easySeconds = easy,
+            hardSeconds = config.slowSeconds + (easy - config.fastSeconds)
+        )
+    }
+
+    /**
+     * The bands of the dwell ladder, for the study clock's colour. [NEUTRAL] is
+     * the first second only: no time is banked yet, so the clock makes no
+     * colour claim until it has something to claim.
+     */
+    enum class DwellBand { NEUTRAL, EASY, GOOD, HARD }
+
+    /**
+     * Where [dwellSeconds] sits on the ladder described by [easySeconds] and
+     * [hardSeconds]. From one second up, the boundaries match [inferGrade]
+     * exactly. At 0 the clock is neutral: grade inference treats 0 as untracked
+     * timing and calls it Good, while a live clock that has not banked its first
+     * second should not yet claim any band at all.
+     */
+    fun dwellBand(
+        dwellSeconds: Long,
+        easySeconds: Long,
+        hardSeconds: Long
+    ): DwellBand = when {
+        dwellSeconds <= 0 -> DwellBand.NEUTRAL
+        dwellSeconds < easySeconds -> DwellBand.EASY
+        dwellSeconds < hardSeconds -> DwellBand.GOOD
+        else -> DwellBand.HARD
+    }
+
+    /**
+     * The whole-second dwell a check freezes and stores: milliseconds are the
+     * source of truth, rounded half-up once, at the moment the grade is
+     * proposed. The clock display truncates instead, because a clock reading
+     * 3 s then 4 s is what a learner expects.
+     */
+    fun gradedDwellSeconds(elapsedMillis: Long): Long =
+        (elapsedMillis.coerceAtLeast(0L) + 500L) / 1000L
 
     /** Every card eligible right now, split into the pull order's pools. */
     data class CandidatePools(

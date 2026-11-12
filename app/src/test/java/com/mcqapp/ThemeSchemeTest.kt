@@ -8,6 +8,7 @@ import com.mcqapp.ui.theme.AppTheme
 import com.mcqapp.ui.theme.CustomTheme
 import com.mcqapp.ui.theme.CustomThemeCodec
 import com.mcqapp.ui.theme.InvalidThemeException
+import com.mcqapp.ui.theme.clockBandColorsFor
 import com.mcqapp.ui.theme.contrastRatio
 import com.mcqapp.ui.theme.resolveScheme
 import org.junit.Assert.assertEquals
@@ -111,6 +112,47 @@ class ThemeSchemeTest {
                     ratio >= 3.0
                 )
             }
+        }
+    }
+
+    @Test
+    fun everyThemeRendersTheStudyClockBandsLegibly() {
+        // The Study clock tints its own text, so unlike the semantic container
+        // palette it has to clear 4.5:1 directly on the surface. A band that
+        // collapsed into its neighbour would also erase the distinction the
+        // three colours exist for, so distinctness is part of the contract.
+        val parsed = CustomThemeCodec.parse(SAMPLE_THEME)
+        val custom = CustomTheme("custom-test", parsed.name, parsed.spec)
+        val themes: List<Pair<String, ColorScheme>> =
+            AppTheme.entries.flatMap { theme ->
+                listOf(
+                    "${theme.key} light" to theme.scheme(false),
+                    "${theme.key} dark" to theme.scheme(true)
+                )
+            } + listOf(
+                "custom light" to custom.scheme(false),
+                "custom dark" to custom.scheme(true)
+            )
+
+        for ((label, scheme) in themes) {
+            val bands = clockBandColorsFor(scheme)
+            val entries = listOf(
+                "easy" to bands.easy,
+                "good" to bands.good,
+                "hard" to bands.hard
+            )
+            for ((name, color) in entries) {
+                val ratio = contrastRatio(color, scheme.surface)
+                assertTrue(
+                    "$label: $name clock is only %.2f:1 against the surface".format(ratio),
+                    ratio >= 4.5
+                )
+            }
+            assertEquals(
+                "$label: two clock bands render the same colour",
+                entries.size,
+                entries.map { it.second }.toSet().size
+            )
         }
     }
 

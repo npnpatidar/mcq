@@ -59,9 +59,13 @@ internal class FsrsTuner(
         return result
     }
 
-    /** Drops fitted weights; scheduling returns to the official defaults. */
+    /**
+     * Drops fitted weights; scheduling returns to the official defaults. The
+     * fit version goes back to 0, not up: a reset is not a fit, and rows must
+     * not claim they were scheduled under a weight set nobody fitted.
+     */
     suspend fun restoreDefaults() {
-        settings.setFsrsParameters(FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
+        settings.writeWeights(FsrsScheduler.DEFAULT_FSRS_PARAMETERS, forceVersion = 0)
         Logger.i("TUNER", "FSRS parameters restored to defaults")
     }
 

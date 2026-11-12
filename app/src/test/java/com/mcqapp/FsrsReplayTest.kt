@@ -6,6 +6,7 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.stats.FsrsReplay
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +38,43 @@ class FsrsReplayTest {
         difficultyAfter = difficultyAfter,
         intervalDaysAfter = intervalDaysAfter
     )
+
+    /**
+     * A question reused in two papers is two cards. Grouping by `questionId`
+     * alone compared one paper's label against the other paper's memory state;
+     * the history must be per (paperId, questionId).
+     */
+    @Test
+    fun aQuestionReusedInTwoPapersReplaysSeparately() {
+        val t0 = 1_750_000_000_000L
+        val seeded = CardStateKind.REVIEW
+        val reviews = listOf(
+            row(
+                1, questionId = "q1", paperId = "p1", rating = 3, reviewedAt = t0,
+                stateBefore = seeded, stabilityAfter = 10.0, difficultyAfter = 5.0,
+                intervalDaysAfter = 10
+            ),
+            row(
+                2, questionId = "q1", paperId = "p1", rating = 3,
+                reviewedAt = t0 + 3 * day, stateBefore = seeded
+            ),
+            row(
+                3, questionId = "q1", paperId = "p2", rating = 3,
+                reviewedAt = t0 + 1_000, stateBefore = seeded, stabilityAfter = 1.0,
+                difficultyAfter = 5.0, intervalDaysAfter = 1
+            ),
+            row(
+                4, questionId = "q1", paperId = "p2", rating = 3,
+                reviewedAt = t0 + 1_000 + 3 * day, stateBefore = seeded
+            )
+        )
+        val replayed = FsrsReplay.replay(reviews, scheduler).associateBy { it.paperId to it.reviewedAt }
+        val p1 = replayed["p1" to t0 + 3 * day]!!.predictedRetention
+        val p2 = replayed["p2" to t0 + 1_000 + 3 * day]!!.predictedRetention
+        assertNotNull(p1)
+        assertNotNull(p2)
+        assertTrue("the two cards' forecasts must come from their own memory", p1 != p2)
+    }
 
     @Test
     fun emptyInputReplaysToEmpty() {

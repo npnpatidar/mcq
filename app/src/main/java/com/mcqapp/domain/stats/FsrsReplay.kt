@@ -53,14 +53,16 @@ object FsrsReplay {
         scheduler: FsrsScheduler
     ): List<ReplayReview> {
         if (reviews.isEmpty()) return emptyList()
-        // Keyed by (questionId, id): RawReview's contract only requires id
-        // uniqueness WITHIN a question's history, and global keying let two
-        // cards' colliding ids overwrite each other's predictions
-        // (consolidated_bugs.md I2).
-        val predicted = HashMap<Pair<String, Long>, Double?>()
-        val intervalBefore = HashMap<Pair<String, Long>, Int?>()
-        val counterfactual = HashMap<Pair<String, Long>, Int?>()
-        reviews.groupBy { it.questionId }.forEach { (_, rows) ->
+        // Keyed by (paperId, questionId, id): a card is scheduled per paper,
+        // and RawReview's contract only requires id uniqueness WITHIN a
+        // question's history. Global keying let two cards' colliding ids
+        // overwrite each other's predictions (consolidated_bugs.md I2);
+        // question-only keying compared a question reused in two papers
+        // against the other paper's memory state.
+        val predicted = HashMap<Triple<String, String, Long>, Double?>()
+        val intervalBefore = HashMap<Triple<String, String, Long>, Int?>()
+        val counterfactual = HashMap<Triple<String, String, Long>, Int?>()
+        reviews.groupBy { it.paperId to it.questionId }.forEach { (_, rows) ->
             val ordered = rows.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             // A seeded history's first row has no knowable pre-state: it is the
             // record of memory that predates the log. Its post-state, which the
@@ -72,14 +74,15 @@ object FsrsReplay {
                 val pre = state
                 // Only a graduated card carries a knowable recall prediction:
                 // learning-step rows have short-term memory, not a schedule.
-                predicted[row.questionId to row.id] = pre
+                val key = Triple(row.paperId, row.questionId, row.id)
+                predicted[key] = pre
                     ?.takeIf {
                         it.state == CardStateKind.REVIEW || it.state == CardStateKind.RELEARNING
                     }
                     ?.takeIf { it.stability > 0.0 }
                     ?.let { scheduler.retention(it, row.reviewedAt) }
-                intervalBefore[row.questionId to row.id] = previousInterval
-                counterfactual[row.questionId to row.id] = wouldBeGoodInterval(
+                intervalBefore[key] = previousInterval
+                counterfactual[key] = wouldBeGoodInterval(
                     row = row,
                     pre = pre,
                     // A seeded first row's pre-state is unknowable, so the
@@ -113,11 +116,14 @@ object FsrsReplay {
                 stabilityAfter = row.stabilityAfter,
                 difficultyAfter = row.difficultyAfter,
                 intervalDaysAfter = row.intervalDaysAfter,
-                predictedRetention = predicted[row.questionId to row.id],
-                intervalBeforeDays = intervalBefore[row.questionId to row.id],
+                predictedRetention =
+                    predicted[Triple(row.paperId, row.questionId, row.id)],
+                intervalBeforeDays =
+                    intervalBefore[Triple(row.paperId, row.questionId, row.id)],
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
-                wouldBeGoodIntervalDays = counterfactual[row.questionId to row.id]
+                wouldBeGoodIntervalDays =
+                    counterfactual[Triple(row.paperId, row.questionId, row.id)]
             )
         }
     }
@@ -144,18 +150,21 @@ object FsrsReplay {
      * agreement and the non-monotonic append-order rule.
      */
     class Stream(private val scheduler: FsrsScheduler) {
-        private val states = HashMap<String, CardState>()
-        private val previousIntervals = HashMap<String, Int>()
+        // A card is (paperId, questionId): the same question in two papers is
+        // scheduled independently, so it must replay independently too.
+        private val states = HashMap<Pair<String, String>, CardState>()
+        private val previousIntervals = HashMap<Pair<String, String>, Int>()
 
         fun accept(row: RawReview): ReplayReview {
-            val pre = states[row.questionId]
+            val card = row.paperId to row.questionId
+            val pre = states[card]
             val predicted = pre
                 ?.takeIf {
                     it.state == CardStateKind.REVIEW || it.state == CardStateKind.RELEARNING
                 }
                 ?.takeIf { it.stability > 0.0 }
                 ?.let { scheduler.retention(it, row.reviewedAt) }
-            val intervalBefore = previousIntervals[row.questionId]
+            val intervalBefore = previousIntervals[card]
             // A seeded history's first row has no knowable pre-state: it is the
             // record of memory that predates the log. Its post-state, which the
             // row itself carries, seeds everything after it.
@@ -175,8 +184,8 @@ object FsrsReplay {
                     row.reviewedAt
                 )
             }
-            states[row.questionId] = post
-            previousIntervals[row.questionId] = post.intervalDays
+            states[card] = post
+            previousIntervals[card] = post.intervalDays
             return ReplayReview(
                 paperId = row.paperId,
                 questionId = row.questionId,

@@ -11,6 +11,7 @@ import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.CardSnapshot
 import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.CoveragePaper
@@ -116,8 +117,140 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         } else {
             db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds)
         }
-        return accumulator.toData(tagsOfQuestion, categoriesForSlice)
+        val data = accumulator.toData(tagsOfQuestion, categoriesForSlice)
+        val report = loadCalibration(scopePaperId, now, config)
+        // About 13 blocks a year: cheap enough to read whole rather than add
+        // another one-row query for a set the policy checks membership in.
+        val decidedBlockStarts = db.ladderDao().allBlocks().map { it.startAt }.toSet()
+        val currentVersion = config.ladderVersion
+            .takeIf { it > 0 }
+            ?.let { db.ladderDao().version(it.toLong()) }
+        val previousVersion = currentVersion?.previousId
+            ?.let { db.ladderDao().version(it) }
+        val lastChange = if (
+            currentVersion != null &&
+            previousVersion != null &&
+            currentVersion.reason != "prior"
+        ) {
+            com.mcqapp.domain.stats.LadderChange(
+                fromEasySeconds = previousVersion.easySeconds,
+                toEasySeconds = currentVersion.easySeconds,
+                reason = currentVersion.reason,
+                at = currentVersion.effectiveFrom
+            )
+        } else {
+            null
+        }
+        return data.copy(
+            calibrationReport = report,
+            ladderEvaluation = com.mcqapp.domain.stats.LadderPolicy.evaluate(
+                report = report,
+                config = config,
+                decidedBlockStarts = decidedBlockStarts,
+                now = now
+            ),
+            ladderCanRollback = currentVersion?.previousId != null,
+            ladderLastChange = lastChange
+        )
     }
+
+    /**
+     * The calibration report alone, for the phase-5 controller. It shares the
+     * retention cache, so a session-end run and the next Stats visit do not
+     * pay for two full-log passes over unchanged data.
+     */
+    internal suspend fun loadCalibrationReport(
+        scopePaperId: String?,
+        now: Long,
+        config: SchedulerConfig
+    ): Calibration.Report = loadCalibration(scopePaperId, now, config)
+
+    /**
+     * Grade-level calibration (plan phase 2). A second, keyset-paged pass over
+     * the log that keeps only the rows the pairing can use. The result is
+     * cached on the exact inputs a refresh would change; an open block cannot
+     * serve a stale answer forever because `max(reviewedAt)` is in the key.
+     *
+     * The stored `predictedRecall` is reused, never re-derived: a refit would
+     * otherwise silently rewrite history's forecasts.
+     */
+    private suspend fun loadCalibration(
+        scopePaperId: String?,
+        now: Long,
+        config: SchedulerConfig
+    ): Calibration.Report {
+        val version = config.ladderVersion
+        val epochStart = if (version > 0) {
+            db.ladderDao().version(version.toLong())?.effectiveFrom ?: 0L
+        } else {
+            0L
+        }
+        val closedBlockEnd = if (epochStart > 0L && now > epochStart) {
+            epochStart + ((now - epochStart) / BLOCK_MS) * BLOCK_MS
+        } else {
+            0L
+        }
+        var maxReviewedAt = 0L
+        val rows = ArrayList<Calibration.Row>()
+        var afterId = 0L
+        while (true) {
+            val page = db.reviewLogDao().pageAfterId(afterId, PAGE_SIZE)
+            if (page.isEmpty()) break
+            page.forEach { row ->
+                if (row.reviewedAt > maxReviewedAt) maxReviewedAt = row.reviewedAt
+                if (scopePaperId != null && row.paperId != scopePaperId) return@forEach
+                rows += row.toCalibrationRow()
+            }
+            afterId = page.last().id
+            if (page.size < PAGE_SIZE) break
+        }
+        val key = CalibrationCacheKey(
+            scopePaperId = scopePaperId,
+            ladderVersion = version,
+            fsrsFitVersion = config.fsrsFitVersion,
+            blockEnd = closedBlockEnd,
+            maxReviewedAt = maxReviewedAt
+        )
+        calibrationCache[key]?.let { return it }
+        val refitInEpoch = rows.any {
+            it.reviewedAt >= epochStart &&
+                it.fsrsFitVersion != null &&
+                it.fsrsFitVersion != config.fsrsFitVersion
+        }
+        val report = Calibration.report(rows, now, epochStart, refitInEpoch)
+        calibrationCache.clear()
+        calibrationCache[key] = report
+        return report
+    }
+
+    private fun ReviewLogEntity.toCalibrationRow() = Calibration.Row(
+        id = id,
+        paperId = paperId,
+        questionId = questionId,
+        rating = rating,
+        reviewedAt = reviewedAt,
+        gradeSource = gradeSource,
+        proposedRating = proposedRating,
+        ladderVersion = ladderVersion,
+        fsrsFitVersion = fsrsFitVersion,
+        predictedRecall = predictedRecall,
+        stateBefore = stateBefore.toCardStateKind(),
+        wasGuess = wasGuess,
+        wasCorrect = wasCorrect,
+        wasSkipped = wasSkipped,
+        intervalDaysAfter = intervalDaysAfter
+    )
+
+    private data class CalibrationCacheKey(
+        val scopePaperId: String?,
+        val ladderVersion: Int,
+        val fsrsFitVersion: Int,
+        val blockEnd: Long,
+        val maxReviewedAt: Long
+    )
+
+    /** One entry: the report for the exact inputs a refresh would change. */
+    private val calibrationCache = HashMap<CalibrationCacheKey, Calibration.Report>()
 
     /**
      * The overview tab, streamed: the log is replayed and the cards are paged
@@ -449,5 +582,8 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
          * the enriched rows the aggregator reads still span the whole log.
          */
         const val PAGE_SIZE = 5_000
+
+        /** One evidence block's width, for the cache's closed-block boundary. */
+        const val BLOCK_MS = Calibration.BLOCK_DAYS * 86_400_000L
     }
 }

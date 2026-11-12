@@ -2052,12 +2052,62 @@ interface ReviewLogDao {
      * subquery so the ids are never listed. Must run before the category (and
      * its cascade) is deleted; the FK here points at the paper, not the
      * question, so the question cascade cannot reach the log.
-     */
-    @Query(
-        "DELETE FROM review_log WHERE questionId IN " +
+     */    @Query("DELETE FROM review_log WHERE questionId IN " +
             "(SELECT id FROM questions WHERE categoryId = :categoryId)"
     )
     suspend fun deleteAllForCategory(categoryId: String): Int
+}
+
+/**
+ * The grading ladder's audit trail (v26): its versions and its closed evidence
+ * blocks. Written by [com.mcqapp.data.repository.LadderStore], read by the
+ * calibration report its own tables keep honest.
+ */
+@Dao
+interface LadderDao {
+    @Insert
+    suspend fun insertVersion(version: LadderVersionEntity): Long
+
+    /** Backup restore: rows carry their original ids. */
+    @Insert
+    suspend fun insertVersions(versions: List<LadderVersionEntity>)
+
+    @Insert
+    suspend fun insertBlock(block: LadderBlockEntity): Long
+
+    /** Backup restore: rows carry their original ids. */
+    @Insert
+    suspend fun insertBlocks(blocks: List<LadderBlockEntity>)
+
+    @Query("SELECT * FROM ladder_versions ORDER BY id ASC")
+    suspend fun allVersions(): List<LadderVersionEntity>
+
+    @Query("SELECT * FROM ladder_blocks ORDER BY id ASC")
+    suspend fun allBlocks(): List<LadderBlockEntity>
+
+    /** The decision already recorded for one fixed window, if any. */
+    @Query("SELECT * FROM ladder_blocks WHERE startAt = :startAt LIMIT 1")
+    suspend fun blockAtStart(startAt: Long): LadderBlockEntity?
+
+    @Query("SELECT * FROM ladder_versions WHERE id = :id")
+    suspend fun version(id: Long): LadderVersionEntity?
+
+    @Query("SELECT MAX(id) FROM ladder_versions")
+    suspend fun maxVersionId(): Long?
+}
+
+/** One row per study sitting; written at the end of the sitting. */
+@Dao
+interface StudySessionDao {
+    @Insert
+    suspend fun insert(session: StudySessionEntity): Long
+
+    /** Backup restore: rows carry their original ids. */
+    @Insert
+    suspend fun insertAll(sessions: List<StudySessionEntity>)
+
+    @Query("SELECT * FROM study_sessions ORDER BY id ASC")
+    suspend fun getAll(): List<StudySessionEntity>
 }
 
 @Dao

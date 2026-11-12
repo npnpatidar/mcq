@@ -803,7 +803,7 @@ class StudyViewModel(
                 pendingGrade = grade,
                 proposedGrade = grade,
                 gradeEdited = false,
-                readingAllowanceSeconds = easyAt,
+                readingAllowanceSeconds = ladder.easySeconds,
                 lastResult = buildResult(
                     question, paused.selection, grade, paused.isGuess, dwellSeconds,
                     System.currentTimeMillis()

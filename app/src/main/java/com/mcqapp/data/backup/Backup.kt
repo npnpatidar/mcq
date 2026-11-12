@@ -8,9 +8,12 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.BlueprintEntity
 import com.mcqapp.data.local.BlueprintSectionEntity
 import com.mcqapp.data.local.CardStateEntity
+import com.mcqapp.data.local.LadderBlockEntity
+import com.mcqapp.data.local.LadderVersionEntity
 import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.local.StudySessionEntity
 import com.mcqapp.data.io.Importer
 import com.mcqapp.util.ImportTooLargeException
 import com.mcqapp.util.Logger
@@ -58,7 +61,7 @@ object McqBackupFormat {
     const val FORMAT = "mcqapp-backup"
 
     /** Bumped when the layout changes; readers accept any version ≤ [VERSION]. */
-    const val VERSION = 1
+    const val VERSION = 2
 
     const val MANIFEST = "manifest.json"
     const val CONTENT = "content.json"
@@ -157,7 +160,66 @@ object McqBackupFormat {
         // Added with the v19 columns. Defaults keep older backups readable;
         // null means the row predates guess tracking.
         val wasGuess: Boolean? = null,
-        val wasCorrect: Boolean? = null
+        val wasCorrect: Boolean? = null,
+        // Added with the v26 columns. A v1 backup decodes these as null/0;
+        // `ladderVersion` is non-null because 0 is its meaningful default.
+        val proposedRating: Int? = null,
+        val gradeSource: String? = null,
+        val ladderVersion: Int = 0,
+        val predictedRecall: Double? = null,
+        val fsrsFitVersion: Int? = null,
+        val readingAllowanceSeconds: Int? = null,
+        val wasSkipped: Boolean? = null
+    )
+
+    /** One `ladder_versions` row; small, so it travels as a plain list. */
+    @Serializable
+    data class LadderVersionRow(
+        val id: Long,
+        val easySeconds: Long,
+        val slowSeconds: Long,
+        val effectiveFrom: Long,
+        val reason: String,
+        val previousId: Long? = null,
+        val blockId: Long? = null,
+        val policyVersion: Int = 0
+    )
+
+    /** One `ladder_blocks` row, including blocks that decided nothing. */
+    @Serializable
+    data class LadderBlockRow(
+        val id: Long,
+        val startAt: Long,
+        val endAt: Long,
+        val ladderVersion: Int,
+        val fsrsFitVersion: Int? = null,
+        val policyVersion: Int = 0,
+        val easyPairs: Int = 0,
+        val easyCards: Int = 0,
+        val goodPairs: Int = 0,
+        val goodCards: Int = 0,
+        val hardPairs: Int = 0,
+        val hardCards: Int = 0,
+        val delta1: Double? = null,
+        val delta1Low: Double? = null,
+        val delta1High: Double? = null,
+        val delta2: Double? = null,
+        val delta2Low: Double? = null,
+        val delta2High: Double? = null,
+        val followUpEasy: Double? = null,
+        val followUpGood: Double? = null,
+        val outcome: String,
+        val decidedAt: Long? = null
+    )
+
+    /** One `study_sessions` row: real study time for one sitting. */
+    @Serializable
+    data class StudySessionRow(
+        val id: Long,
+        val paperId: String,
+        val startedAt: Long,
+        val endedAt: Long,
+        val activeSeconds: Long
     )
 
     /**
@@ -195,6 +257,11 @@ object McqBackupFormat {
          * because an attempt's `variant` refers to the blueprint by id.
          */
         val blueprints: List<BlueprintRow> = emptyList(),
+        /** The ladder's audit trail (v26). Small: a handful of rows a year. */
+        val ladderVersions: List<LadderVersionRow> = emptyList(),
+        val ladderBlocks: List<LadderBlockRow> = emptyList(),
+        /** Study sittings (v26); real time, not summed dwell. */
+        val studySessions: List<StudySessionRow> = emptyList(),
         val inProgressTest: String? = null
     )
 
@@ -254,6 +321,9 @@ object McqBackupFormat {
         suspend fun paperCreated(row: PaperCreated) {}
         suspend fun panel(row: PanelRow) {}
         suspend fun blueprint(row: BlueprintRow) {}
+        suspend fun ladderVersion(row: LadderVersionRow) {}
+        suspend fun ladderBlock(row: LadderBlockRow) {}
+        suspend fun studySession(row: StudySessionRow) {}
         suspend fun inProgressTest(json: String?) {}
         suspend fun settings(settings: SettingsFile) {}
     }
@@ -395,6 +465,15 @@ object McqBackupFormat {
                 "blueprints" -> stream.readArray {
                     sink.blueprint(row(BlueprintRow.serializer(), it))
                 }
+                "ladderVersions" -> stream.readArray {
+                    sink.ladderVersion(row(LadderVersionRow.serializer(), it))
+                }
+                "ladderBlocks" -> stream.readArray {
+                    sink.ladderBlock(row(LadderBlockRow.serializer(), it))
+                }
+                "studySessions" -> stream.readArray {
+                    sink.studySession(row(StudySessionRow.serializer(), it))
+                }
                 "inProgressTest" -> sink.inProgressTest(
                     row(String.serializer().nullable, stream.readValue())
                 )
@@ -515,7 +594,14 @@ object McqBackupFormat {
         difficultyAfter = entity.difficultyAfter,
         intervalDaysAfter = entity.intervalDaysAfter,
         wasGuess = entity.wasGuess,
-        wasCorrect = entity.wasCorrect
+        wasCorrect = entity.wasCorrect,
+        proposedRating = entity.proposedRating,
+        gradeSource = entity.gradeSource,
+        ladderVersion = entity.ladderVersion,
+        predictedRecall = entity.predictedRecall,
+        fsrsFitVersion = entity.fsrsFitVersion,
+        readingAllowanceSeconds = entity.readingAllowanceSeconds,
+        wasSkipped = entity.wasSkipped
     )
 
     /**
@@ -531,7 +617,10 @@ object McqBackupFormat {
         paperCreated: List<PaperCreated>,
         inProgressTest: String?,
         panels: List<PanelRow> = emptyList(),
-        blueprints: List<BlueprintRow> = emptyList()
+        blueprints: List<BlueprintRow> = emptyList(),
+        ladderVersions: List<LadderVersionRow> = emptyList(),
+        ladderBlocks: List<LadderBlockRow> = emptyList(),
+        studySessions: List<StudySessionRow> = emptyList()
     ) {
         w.write("{\"cardState\":[")
         var first = true
@@ -561,6 +650,21 @@ object McqBackupFormat {
         blueprints.forEachIndexed { i, row ->
             if (i > 0) w.write(",")
             w.write(json.encodeToString(BlueprintRow.serializer(), row))
+        }
+        w.write("],\"ladderVersions\":[")
+        ladderVersions.forEachIndexed { i, row ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(LadderVersionRow.serializer(), row))
+        }
+        w.write("],\"ladderBlocks\":[")
+        ladderBlocks.forEachIndexed { i, row ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(LadderBlockRow.serializer(), row))
+        }
+        w.write("],\"studySessions\":[")
+        studySessions.forEachIndexed { i, row ->
+            if (i > 0) w.write(",")
+            w.write(json.encodeToString(StudySessionRow.serializer(), row))
         }
         w.write("],\"inProgressTest\":")
         w.write(if (inProgressTest == null) "null" else json.encodeToString(String.serializer(), inProgressTest))
@@ -701,6 +805,9 @@ class BackupSource(private val db: AppDatabase) {
                 },
                 panels = panels(),
                 blueprints = backupBlueprints(),
+                ladderVersions = ladderVersions(),
+                ladderBlocks = ladderBlocks(),
+                studySessions = db.studySessionDao().getAll().map { it.toRow() },
                 inProgressTest = inProgressTest
             )
             papers = paperRows.size
@@ -775,6 +882,54 @@ class BackupSource(private val db: AppDatabase) {
     /** Alias for [backupBlueprints] mirroring [panels]. */
     suspend fun blueprints(): List<McqBackupFormat.BlueprintRow> = backupBlueprints()
 
+    /** The ladder's versions, small enough to carry as a list. */
+    suspend fun ladderVersions(): List<McqBackupFormat.LadderVersionRow> =
+        db.ladderDao().allVersions().map {
+            McqBackupFormat.LadderVersionRow(
+                id = it.id,
+                easySeconds = it.easySeconds,
+                slowSeconds = it.slowSeconds,
+                effectiveFrom = it.effectiveFrom,
+                reason = it.reason,
+                previousId = it.previousId,
+                blockId = it.blockId,
+                policyVersion = it.policyVersion
+            )
+        }
+
+    /** The ladder's closed evidence blocks, decided or not. */
+    suspend fun ladderBlocks(): List<McqBackupFormat.LadderBlockRow> =
+        db.ladderDao().allBlocks().map {
+            McqBackupFormat.LadderBlockRow(
+                id = it.id,
+                startAt = it.startAt,
+                endAt = it.endAt,
+                ladderVersion = it.ladderVersion,
+                fsrsFitVersion = it.fsrsFitVersion,
+                policyVersion = it.policyVersion,
+                easyPairs = it.easyPairs,
+                easyCards = it.easyCards,
+                goodPairs = it.goodPairs,
+                goodCards = it.goodCards,
+                hardPairs = it.hardPairs,
+                hardCards = it.hardCards,
+                delta1 = it.delta1,
+                delta1Low = it.delta1Low,
+                delta1High = it.delta1High,
+                delta2 = it.delta2,
+                delta2Low = it.delta2Low,
+                delta2High = it.delta2High,
+                followUpEasy = it.followUpEasy,
+                followUpGood = it.followUpGood,
+                outcome = it.outcome,
+                decidedAt = it.decidedAt
+            )
+        }
+
+    /** Sittings, for the study-time guardrail. */
+    suspend fun studySessions(): List<McqBackupFormat.StudySessionRow> =
+        db.studySessionDao().getAll().map { it.toRow() }
+
     /**
      * Pages every card into [emit] in physical (`rowid`) order — the order
      * `getAll()` returns and the order the backup has always written — with one
@@ -832,7 +987,22 @@ class BackupSource(private val db: AppDatabase) {
         difficultyAfter = difficultyAfter,
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
-        wasCorrect = wasCorrect
+        wasCorrect = wasCorrect,
+        proposedRating = proposedRating,
+        gradeSource = gradeSource,
+        ladderVersion = ladderVersion,
+        predictedRecall = predictedRecall,
+        fsrsFitVersion = fsrsFitVersion,
+        readingAllowanceSeconds = readingAllowanceSeconds,
+        wasSkipped = wasSkipped
+    )
+
+    internal fun StudySessionEntity.toRow() = McqBackupFormat.StudySessionRow(
+        id = id,
+        paperId = paperId,
+        startedAt = startedAt,
+        endedAt = endedAt,
+        activeSeconds = activeSeconds
     )
 
     private companion object {
@@ -952,6 +1122,7 @@ class BackupRestorer(private val db: AppDatabase) {
             }
             for (panel in backup.study.panels) restorePanel(panel)
             for (bp in backup.study.blueprints) restoreBlueprint(bp)
+            restoreLadder(backup.study)
         }
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read
@@ -1078,6 +1249,18 @@ class BackupRestorer(private val db: AppDatabase) {
                         restoreBlueprint(row)
                     }
 
+                    override suspend fun ladderVersion(row: McqBackupFormat.LadderVersionRow) {
+                        db.ladderDao().insertVersion(row.toEntity())
+                    }
+
+                    override suspend fun ladderBlock(row: McqBackupFormat.LadderBlockRow) {
+                        db.ladderDao().insertBlock(row.toEntity())
+                    }
+
+                    override suspend fun studySession(row: McqBackupFormat.StudySessionRow) {
+                        db.studySessionDao().insert(row.toEntity())
+                    }
+
                     override suspend fun inProgressTest(json: String?) {
                         inProgress = json
                     }
@@ -1178,6 +1361,63 @@ class BackupRestorer(private val db: AppDatabase) {
         reviewCount = reviewCount
     )
 
+    /** Restores the ladder's audit trail with its original ids. */
+    private suspend fun restoreLadder(study: McqBackupFormat.StudyFile) {
+        if (study.ladderVersions.isNotEmpty()) {
+            db.ladderDao().insertVersions(study.ladderVersions.map { it.toEntity() })
+        }
+        if (study.ladderBlocks.isNotEmpty()) {
+            db.ladderDao().insertBlocks(study.ladderBlocks.map { it.toEntity() })
+        }
+        if (study.studySessions.isNotEmpty()) {
+            db.studySessionDao().insertAll(study.studySessions.map { it.toEntity() })
+        }
+    }
+
+    private fun McqBackupFormat.LadderVersionRow.toEntity() = LadderVersionEntity(
+        id = id,
+        easySeconds = easySeconds,
+        slowSeconds = slowSeconds,
+        effectiveFrom = effectiveFrom,
+        reason = reason,
+        previousId = previousId,
+        blockId = blockId,
+        policyVersion = policyVersion
+    )
+
+    private fun McqBackupFormat.LadderBlockRow.toEntity() = LadderBlockEntity(
+        id = id,
+        startAt = startAt,
+        endAt = endAt,
+        ladderVersion = ladderVersion,
+        fsrsFitVersion = fsrsFitVersion,
+        policyVersion = policyVersion,
+        easyPairs = easyPairs,
+        easyCards = easyCards,
+        goodPairs = goodPairs,
+        goodCards = goodCards,
+        hardPairs = hardPairs,
+        hardCards = hardCards,
+        delta1 = delta1,
+        delta1Low = delta1Low,
+        delta1High = delta1High,
+        delta2 = delta2,
+        delta2Low = delta2Low,
+        delta2High = delta2High,
+        followUpEasy = followUpEasy,
+        followUpGood = followUpGood,
+        outcome = outcome,
+        decidedAt = decidedAt
+    )
+
+    private fun McqBackupFormat.StudySessionRow.toEntity() = StudySessionEntity(
+        id = id,
+        paperId = paperId,
+        startedAt = startedAt,
+        endedAt = endedAt,
+        activeSeconds = activeSeconds
+    )
+
     private fun McqBackupFormat.ReviewLogRow.toEntity() = ReviewLogEntity(
         id = id,
         paperId = paperId,
@@ -1190,7 +1430,14 @@ class BackupRestorer(private val db: AppDatabase) {
         difficultyAfter = difficultyAfter,
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
-        wasCorrect = wasCorrect
+        wasCorrect = wasCorrect,
+        proposedRating = proposedRating,
+        gradeSource = gradeSource,
+        ladderVersion = ladderVersion,
+        predictedRecall = predictedRecall,
+        fsrsFitVersion = fsrsFitVersion,
+        readingAllowanceSeconds = readingAllowanceSeconds,
+        wasSkipped = wasSkipped
     )
 
     private companion object {

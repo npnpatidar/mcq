@@ -278,8 +278,14 @@ data class CardStateEntity(
     ],
     // (paperId, reviewedAt) covers the per-paper/per-day aggregates the
     // statistics screen and badges read; the bare paperId prefix of it
-    // replaces the old standalone paperId index.
-    indices = [Index("questionId", "reviewedAt"), Index("paperId", "reviewedAt")]
+    // replaces the old standalone paperId index. The triple additionally
+    // serves the calibration pairing read, which walks one card's history in
+    // order: (paperId, reviewId) alone would sort into a temp B-tree.
+    indices = [
+        Index("questionId", "reviewedAt"),
+        Index("paperId", "reviewedAt"),
+        Index("paperId", "questionId", "reviewedAt")
+    ]
 )
 data class ReviewLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -300,7 +306,116 @@ data class ReviewLogEntity(
      */
     val wasGuess: Boolean? = null,
     /** Whether the chosen options matched the key, at answer time. Null pre-v19. */
-    val wasCorrect: Boolean? = null
+    val wasCorrect: Boolean? = null,
+    /**
+     * The grade the app proposed before any edit (v26). Null in classic mode,
+     * which has no proposal. Kept beside [gradeSource] because the two differ
+     * in exactly one case: the learner changes the grade and changes it back,
+     * where saved equals proposed but the source is still EDITED.
+     */
+    val proposedRating: Int? = null,
+    /** AUTO, EDITED or CHOSEN (v26). Null on rows written before v26. */
+    val gradeSource: String? = null,
+    /** The ladder version in force; 0 means "written before versioning". */
+    @ColumnInfo(defaultValue = "0")
+    val ladderVersion: Int = 0,
+    /** FSRS retrievability computed immediately before this answer (v26). */
+    val predictedRecall: Double? = null,
+    /** Which weight set produced [predictedRecall]. 0 = shipped defaults. */
+    val fsrsFitVersion: Int? = null,
+    /** The reading allowance that was subtracted, in seconds (v26). */
+    val readingAllowanceSeconds: Int? = null,
+    /** The attempt was submitted with an empty selection, not answered (v26). */
+    val wasSkipped: Boolean? = null
+)
+
+/**
+ * One row per change of the grading ladder's cut points (v26).
+ *
+ * The cuts themselves still live in DataStore, where the scheduler reads
+ * them; this table is the audit trail that lets a review row say which
+ * version graded it. A version can exist with no evidence block (`prior`, a
+ * manual edit, a restore) and a block can exist with no version (a closed
+ * window that decided nothing), which is why they are separate tables.
+ */
+@Entity(tableName = "ladder_versions", indices = [Index("effectiveFrom")])
+data class LadderVersionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val easySeconds: Long,
+    val slowSeconds: Long,
+    val effectiveFrom: Long,
+    /** prior, manual, proposal, automatic or rollback. */
+    val reason: String,
+    /** The version this one replaced; null for a seed. */
+    val previousId: Long? = null,
+    /** The evidence block that triggered the change; null for seeds and manual edits. */
+    val blockId: Long? = null,
+    /** Which build of the decision rule made the call. */
+    val policyVersion: Int = 0
+)
+
+/**
+ * One closed evidence window of the grading ladder (v26), including windows
+ * that decided nothing.
+ *
+ * Written even when the outcome is no-change or insufficient-evidence: at
+ * this volume nearly every window declines to act, and a controller whose
+ * null decisions are stored nowhere is indistinguishable from a stalled one.
+ * The rollback rule needs two consecutive post-change blocks, neither of
+ * which owns a version row, which is the second reason this is its own table.
+ */
+@Entity(tableName = "ladder_blocks", indices = [Index("startAt")])
+data class LadderBlockEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val startAt: Long,
+    val endAt: Long,
+    val ladderVersion: Int,
+    val fsrsFitVersion: Int? = null,
+    val policyVersion: Int = 0,
+    val easyPairs: Int = 0,
+    val easyCards: Int = 0,
+    val goodPairs: Int = 0,
+    val goodCards: Int = 0,
+    val hardPairs: Int = 0,
+    val hardCards: Int = 0,
+    val delta1: Double? = null,
+    val delta1Low: Double? = null,
+    val delta1High: Double? = null,
+    val delta2: Double? = null,
+    val delta2Low: Double? = null,
+    val delta2High: Double? = null,
+    val followUpEasy: Double? = null,
+    val followUpGood: Double? = null,
+    /** no-change, raise-c1, lower-c1, insufficient-evidence or frozen-refit. */
+    val outcome: String,
+    val decidedAt: Long? = null
+)
+
+/**
+ * One sitting on the study screen (v26): real study time, not question time.
+ *
+ * Cascades with its paper. Without that, deleting a paper would leave orphan
+ * hours in the "lapses per hour" denominator while review_log (which also
+ * cascades) lost the lapses — tidying the library would improve the metric.
+ */
+@Entity(
+    tableName = "study_sessions",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaperEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paperId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("paperId", "startedAt")]
+)
+data class StudySessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val paperId: String,
+    val startedAt: Long,
+    val endedAt: Long,
+    val activeSeconds: Long
 )
 
 /**

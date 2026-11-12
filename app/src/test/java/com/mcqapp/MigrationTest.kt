@@ -203,7 +203,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_21_22,
         AppDatabase.MIGRATION_22_23,
         AppDatabase.MIGRATION_23_24,
-        AppDatabase.MIGRATION_24_25
+        AppDatabase.MIGRATION_24_25,
+        AppDatabase.MIGRATION_25_26
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1253,6 +1254,91 @@ class MigrationTest {
                 )
                 db.categoryDao().deleteById("c1")
                 assertTrue(db.blueprintDao().sections(bp2).isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * A genuine v25 file: the production chain from the v21 seed through 25,
+     * with one review already logged. The 25->26 migration must leave that row
+     * intact, stamp it ladderVersion 0 / no provenance, and create the three
+     * new tables with their indices and cascades.
+     */
+    private fun createV25WithSeed() {
+        createV21WithTaggedQuestion()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(21) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_21_22.migrate(raw)
+            AppDatabase.MIGRATION_22_23.migrate(raw)
+            AppDatabase.MIGRATION_23_24.migrate(raw)
+            AppDatabase.MIGRATION_24_25.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO review_log (id,paperId,questionId,rating,reviewedAt," +
+                    "elapsedSeconds,wasGuess,wasCorrect) VALUES " +
+                    "(1,'p1','q1',3,5000,12,0,1)"
+            )
+            raw.version = 25
+        }
+    }
+
+    @Test
+    fun `migration 25 to 26 keeps old reviews and creates the ladder tables`() {
+        runBlocking {
+            createV25WithSeed()
+            val db = openMigrated()
+            try {
+                // Opening ran 25->26; Room's identity check proves the schema.
+                val old = db.reviewLogDao().historyForQuestion("q1").single()
+                assertEquals(3, old.rating)
+                assertEquals(12L, old.elapsedSeconds)
+                assertEquals(1, old.wasCorrect?.let { if (it) 1 else 0 })
+                assertEquals(0, old.ladderVersion)
+                assertNull(old.gradeSource)
+                assertNull(old.proposedRating)
+                assertNull(old.predictedRecall)
+                assertNull(old.wasSkipped)
+
+                // The new tables are usable and the cascade is wired.
+                val versionId = db.ladderDao().insertVersion(
+                    com.mcqapp.data.local.LadderVersionEntity(
+                        easySeconds = 8,
+                        slowSeconds = 30,
+                        effectiveFrom = 100L,
+                        reason = "prior"
+                    )
+                )
+                assertEquals(versionId, db.ladderDao().version(versionId)!!.id)
+                db.ladderDao().insertBlock(
+                    com.mcqapp.data.local.LadderBlockEntity(
+                        startAt = 1L,
+                        endAt = 2L,
+                        ladderVersion = versionId.toInt(),
+                        outcome = "no-change"
+                    )
+                )
+                assertEquals(1, db.ladderDao().allBlocks().size)
+                db.studySessionDao().insert(
+                    com.mcqapp.data.local.StudySessionEntity(
+                        paperId = "p1",
+                        startedAt = 100L,
+                        endedAt = 200L,
+                        activeSeconds = 100L
+                    )
+                )
+                assertEquals(1, db.studySessionDao().getAll().size)
+                // Deleting the paper cascades its session, so tidying the
+                // library cannot leave orphan hours in the denominator.
+                db.paperDao().deleteById("p1")
+                assertTrue(db.studySessionDao().getAll().isEmpty())
             } finally {
                 db.close()
             }

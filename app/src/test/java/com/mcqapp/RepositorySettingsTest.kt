@@ -15,6 +15,7 @@ import com.mcqapp.domain.TestPlan
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -43,6 +44,23 @@ class RepositorySettingsTest {
     private fun store(): SettingsStore =
         SettingsStore(ApplicationProvider.getApplicationContext<Context>())
 
+    /**
+     * The DataStore is process-wide, and v26 gave the scheduler config two
+     * generation fields (`ladderVersion`, `fsrsFitVersion`) that other test
+     * classes write. Clear them before a whole-config comparison, not only
+     * after this class, or a neighbour's version leaks in.
+     */
+    @Before
+    fun resetGenerationKeys() {
+        runBlocking {
+            ApplicationProvider.getApplicationContext<Context>().dataStore.edit { prefs ->
+                prefs.remove(stringPreferencesKey("fsrs_parameters"))
+                prefs.remove(intPreferencesKey("fsrs_fit_version"))
+                prefs.remove(intPreferencesKey("ladder_version"))
+            }
+        }
+    }
+
     @After
     fun restoreDefaults() {
         // The DataStore singleton is JVM-wide under Robolectric with the file
@@ -57,6 +75,11 @@ class RepositorySettingsTest {
             // leak into every later assertion in the run.
             ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
                 it.remove(stringPreferencesKey("fsrs_parameters"))
+                // The generation fields move with the weights/ladder; they
+                // are not pacing knobs and would otherwise leak a bump into
+                // the next test's whole-config comparison.
+                it.remove(intPreferencesKey("fsrs_fit_version"))
+                it.remove(intPreferencesKey("ladder_version"))
                 // The last test length is a plain preference, not scheduler
                 // state: clear it too so one test's 60 cannot seed the next.
                 it.remove(intPreferencesKey("last_test_length"))
@@ -143,7 +166,15 @@ class RepositorySettingsTest {
         )
         store.setSchedulerConfig(written)
         val read = store.schedulerConfigNow()
-        assertEquals(written.sanitized(), read)
+        // The fit version is a weight-set generation, not a pacing value the
+        // caller writes; writing a new parameter list bumps it.
+        assertEquals(
+            written.sanitized().copy(
+                ladderVersion = read.ladderVersion,
+                fsrsFitVersion = read.fsrsFitVersion
+            ),
+            read
+        )
     }
 
     @Test
@@ -216,7 +247,15 @@ class RepositorySettingsTest {
         )
         store.resetSchedulerConfig()
         val config = store.schedulerConfigNow()
-        assertEquals(SchedulerConfig().sanitized(), config)
+        // Pacing only: the reset deliberately leaves the fitted weights — and
+        // therefore their generation — alone.
+        assertEquals(
+            SchedulerConfig().sanitized().copy(
+                ladderVersion = config.ladderVersion,
+                fsrsFitVersion = config.fsrsFitVersion
+            ),
+            config
+        )
         assertTrue(config.introduceNewCards)
     }
 

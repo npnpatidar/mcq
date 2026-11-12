@@ -538,7 +538,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                     paperCreated = paperCreated,
                                     inProgressTest = inProgressTest,
                                     panels = source.panels(),
-                                    blueprints = source.backupBlueprints()
+                                    blueprints = source.backupBlueprints(),
+                                    ladderVersions = source.ladderVersions(),
+                                    ladderBlocks = source.ladderBlocks(),
+                                    studySessions = source.studySessions()
                                 )
                             },
                             settings = settings

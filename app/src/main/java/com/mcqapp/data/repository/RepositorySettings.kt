@@ -249,6 +249,12 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     // tokens) falls back to the defaults in SchedulerConfig.sanitized.
     private val fsrsParametersKey = stringPreferencesKey("fsrs_parameters")
 
+    /** Which weight set `fsrs_parameters` belongs to (v26). 0 = shipped defaults. */
+    private val fsrsFitVersionKey = intPreferencesKey("fsrs_fit_version")
+
+    /** The ladder version the cut points belong to (v26). */
+    private val ladderVersionKey = intPreferencesKey("ladder_version")
+
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
         context.dataStore.data.map { prefs ->
             val d = com.mcqapp.domain.SchedulerConfig()
@@ -268,7 +274,9 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                     stored.split(',')
                         .mapNotNull { token -> token.toDoubleOrNull() }
                         .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
-                } ?: d.fsrsParameters
+                } ?: d.fsrsParameters,
+                ladderVersion = prefs[ladderVersionKey] ?: 0,
+                fsrsFitVersion = prefs[fsrsFitVersionKey] ?: 0
             ).sanitized()
         }
 
@@ -287,24 +295,63 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
-            prefs[fsrsParametersKey] = c.fsrsParameters.joinToString(",")
         }
+        // The weights are written by [writeWeights], the single place that can
+        // also bump their fit version in the same edit. A no-op when the
+        // caller preserved the stored set (the Settings path does).
+        writeWeights(c.fsrsParameters)
     }
 
     /**
-     * Writes only the fitted weights, in one DataStore edit. Callers that
-     * change nothing else use this instead of a whole-config round trip: a
-     * read-modify-write across two suspensions could race a concurrent write
-     * and hand back a stale copy of the pacing knobs.
+     * The only writer of `fsrs_parameters` (v26). Writes the set and, when it
+     * differs from the stored one, bumps `fsrs_fit_version` in the same
+     * DataStore edit, so a review can never record a forecast whose weights
+     * were never actually in force.
+     *
+     * [forceVersion] is for a restore (which knows the backup's version) and
+     * for resetting to the shipped defaults, which writes version 0 — a reset
+     * is not a fit and must not look like one.
      */
-    suspend fun setFsrsParameters(parameters: List<Double>) {
+    suspend fun writeWeights(parameters: List<Double>, forceVersion: Int? = null) {
         val weights = com.mcqapp.domain.SchedulerConfig(fsrsParameters = parameters)
             .sanitized()
             .fsrsParameters
+        val serialized = weights.joinToString(",")
         context.dataStore.edit { prefs ->
-            prefs[fsrsParametersKey] = weights.joinToString(",")
+            if (prefs[fsrsParametersKey] != serialized) {
+                prefs[fsrsParametersKey] = serialized
+                val current = prefs[fsrsFitVersionKey] ?: 0
+                prefs[fsrsFitVersionKey] = forceVersion ?: (current + 1)
+            } else if (forceVersion != null) {
+                prefs[fsrsFitVersionKey] = forceVersion
+            }
         }
     }
+
+    /** A single-key write of the fitted weights; bumps the fit version. */
+    suspend fun setFsrsParameters(parameters: List<Double>) = writeWeights(parameters)
+
+    /**
+     * The atomic cut-point write LadderStore owns: the two cuts and the
+     * version number land in one DataStore edit, so a crash cannot leave a
+     * value without its version. The history row is written afterwards and
+     * repaired from these preferences on the next read if it is missing.
+     */
+    internal suspend fun writeCuts(
+        easySeconds: Long,
+        slowSeconds: Long,
+        ladderVersion: Int
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[schedKey("fast_seconds")] = easySeconds.toDouble()
+            prefs[schedKey("slow_seconds")] = slowSeconds.toDouble()
+            prefs[ladderVersionKey] = ladderVersion
+        }
+    }
+
+    /** The stored ladder version, or null when none has been written yet. */
+    internal suspend fun ladderVersionOrNull(): Int? =
+        context.dataStore.data.map { it[ladderVersionKey] }.first()
 
     /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
@@ -393,6 +440,11 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
      * cleared) state out — a malformed entry is skipped, never fatal.
      */
     suspend fun restore(settings: McqBackupFormat.SettingsFile) {
+        // The weights ride a separate edit through [writeWeights], because the
+        // fit version has to move with them; every other preference is a
+        // straight replace.
+        var restoredWeights: List<Double>? = null
+        var restoredFitVersion: Int? = null
         context.dataStore.edit { prefs ->
             // The resume snapshot is restored separately, and only after this
             // call. Clearing it here would destroy a live snapshot on a
@@ -403,6 +455,16 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             for ((name, entry) in settings.preferences) {
                 if (name == progressKey.name) continue
                 val value = entry.value
+                if (name == fsrsParametersKey.name) {
+                    val text = (value as? JsonPrimitive)?.content ?: continue
+                    restoredWeights = text.split(',').mapNotNull { it.toDoubleOrNull() }
+                        .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
+                    continue
+                }
+                if (name == fsrsFitVersionKey.name) {
+                    restoredFitVersion = (value as? JsonPrimitive)?.intOrNull
+                    continue
+                }
                 when (entry.type) {
                     "boolean" -> (value as? JsonPrimitive)?.booleanOrNull?.let {
                         prefs[booleanPreferencesKey(name)] = it
@@ -425,5 +487,12 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                 }
             }
         }
+        // A pre-v26 backup carries weights but no fit version. Version 0 is
+        // the honest label there: the backup cannot say which fit produced
+        // them, and claiming a bump would invent provenance.
+        writeWeights(
+            restoredWeights ?: com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+            forceVersion = restoredFitVersion ?: 0
+        )
     }
 }

@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.Flow
 class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     private val settings = SettingsStore(context)
+    private val ladderStore = LadderStore(db, settings)
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
     private val passageStore = PassageStore(db, mapper, questionStore)
@@ -147,11 +148,39 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun setFontScale(scale: Float) = settings.setFontScale(scale)
 
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> = settings.schedulerConfig()
-    suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig =
-        settings.schedulerConfigNow()
-    suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) =
+
+    /**
+     * The config a session grades under. Reading it also seeds the ladder
+     * version if this install has never had one, so the very first review is
+     * stamped with a version that has a history row behind it.
+     */
+    suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig {
+        ladderStore.currentVersion()
+        return settings.schedulerConfigNow()
+    }
+
+    /**
+     * Writes the whole scheduler config. A changed cut goes through
+     * [LadderStore] first, so the new value always owns a version row; the
+     * remaining fields are the settings store's business.
+     */
+    suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
+        ladderStore.recordConfigCuts(config)
         settings.setSchedulerConfig(config)
-    suspend fun resetSchedulerConfig() = settings.resetSchedulerConfig()
+    }
+
+    suspend fun resetSchedulerConfig() {
+        settings.resetSchedulerConfig()
+        val defaults = com.mcqapp.domain.SchedulerConfig().sanitized()
+        ladderStore.setCuts(
+            easySeconds = defaults.fastSeconds,
+            slowSeconds = defaults.slowSeconds,
+            reason = LadderReason.MANUAL
+        )
+    }
+
+    /** The current ladder version; a manual Settings save of a cut writes one. */
+    internal suspend fun ladderVersion(): Int = ladderStore.currentVersion()
 
     // --- FSRS parameter optimization ---
 
@@ -302,9 +331,15 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** Every preference, typed, for the backup's settings.json. */
     suspend fun settingsSnapshot() = settings.snapshot()
 
-    /** Full replace of every preference from a backup. */
-    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) =
+    /**
+     * Full replace of every preference from a backup. Restored cuts get a
+     * fresh `prior` ladder version continuing the restored numbering; the
+     * restored blocks stay as a prior epoch's evidence.
+     */
+    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
         settings.restore(snapshot)
+        ladderStore.seedAfterRestore()
+    }
 
     // --- search & storage (no collaborator: they span everything) ---
 
@@ -1321,11 +1356,37 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         dwellSeconds: Long? = null,
         now: Long = System.currentTimeMillis(),
         wasGuess: Boolean? = null,
-        wasCorrect: Boolean? = null
+        wasCorrect: Boolean? = null,
+        proposedGrade: com.mcqapp.domain.ReviewGrade? = null,
+        gradeSource: com.mcqapp.domain.GradeSource =
+            com.mcqapp.domain.GradeProvenance.source(proposedGrade, edited = false),
+        readingAllowanceSeconds: Long? = null,
+        wasSkipped: Boolean? = null,
+        /** The session's own config snapshot; null resolves the stored one. */
+        config: com.mcqapp.domain.SchedulerConfig? = null
     ): com.mcqapp.domain.CardState =
         studyStore.recordStudyReview(
-            paperId, questionId, grade, dwellSeconds, now, wasGuess, wasCorrect
+            paperId = paperId,
+            questionId = questionId,
+            grade = grade,
+            config = config ?: schedulerConfigNow(),
+            dwellSeconds = dwellSeconds,
+            now = now,
+            wasGuess = wasGuess,
+            wasCorrect = wasCorrect,
+            proposedGrade = proposedGrade,
+            gradeSource = gradeSource,
+            readingAllowanceSeconds = readingAllowanceSeconds,
+            wasSkipped = wasSkipped
         )
+
+    /** Records one finished sitting's real study time (skips empty sittings). */
+    suspend fun recordStudySession(
+        paperId: String,
+        startedAt: Long,
+        endedAt: Long,
+        activeSeconds: Long
+    ): Long = studyStore.recordStudySession(paperId, startedAt, endedAt, activeSeconds)
 
     // --- bookmarks, attempts, mistakes ---
 

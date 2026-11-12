@@ -26,6 +26,7 @@ import com.mcqapp.ui.library.LibraryScreen
 import com.mcqapp.ui.library.LibraryViewModel
 import com.mcqapp.ui.results.ResultsScreen
 import com.mcqapp.ui.search.SearchScreen
+import com.mcqapp.ui.sessions.SessionsScreen
 import com.mcqapp.ui.settings.SettingsScreen
 import com.mcqapp.ui.study.StudyScreen
 import com.mcqapp.ui.test.TestSessionScreen
@@ -159,6 +160,10 @@ fun McqNavHost(repository: McqRepository) {
         }
         composable("history") {
             HistoryScreen(repository = repository, navController = navController)
+        }
+        composable("sessions") {
+            Logger.i("NAV", "sessions screen")
+            SessionsScreen(repository = repository, navController = navController)
         }
         composable("stats") {
             Logger.i("NAV", "stats screen")

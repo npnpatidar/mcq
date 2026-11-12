@@ -126,7 +126,8 @@ object StatsAggregator {
             memory = memoryOf(ctx, overview.kpis()),
             cards = cardsOf(ctx),
             guessing = guessingOf(ctx),
-            progress = progressOf(ctx)
+            progress = progressOf(ctx),
+            sessions = sessionsOf(ctx)
         )
     }
 
@@ -155,6 +156,35 @@ object StatsAggregator {
     /** The progress tab on its own (plan §5). */
     fun buildProgress(input: Input, scopePaperId: String?, range: Range): ProgressData =
         progressOf(Context.of(input, scopePaperId, range))
+
+    /**
+     * The sessions tab on its own. [collectEntries] switches on the full
+     * sitting list the sidebar history shows; the statistics tab leaves it off
+     * and pays only for the chart counters.
+     */
+    fun buildSessions(
+        input: Input,
+        scopePaperId: String?,
+        range: Range,
+        collectEntries: Boolean = true
+    ): SessionsData {
+        val ctx = Context.of(input, scopePaperId, range)
+        val accumulator = SessionsAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone,
+            collectEntries = collectEntries,
+            paperTitleOf = ctx.input.paperTitleOf
+        )
+        // The whole log: the accumulator applies the scope and the range
+        // itself, exactly as the streamed store build does.
+        ctx.input.reviews.forEach(accumulator::add)
+        return accumulator.toData(
+            if (collectEntries) ctx.input.categoryOfQuestion else emptyMap()
+        )
+    }
 
     /**
      * The overview pass: the scope-filtered log and the scope-filtered cards
@@ -254,6 +284,22 @@ object StatsAggregator {
         // itself, and the streamed build pages the same rows.
         ctx.input.reviews.forEach(accumulator::add)
         return accumulator.toData()
+    }
+
+    private fun sessionsOf(ctx: Context): SessionsData {
+        val accumulator = SessionsAccumulator(
+            scopePaperId = ctx.scopePaperId,
+            range = ctx.range,
+            now = ctx.input.now,
+            cfg = ctx.cfg,
+            zone = ctx.zone,
+            // The whole-page build keeps the entries so a caller can inspect
+            // the sittings without a second pass.
+            collectEntries = true,
+            paperTitleOf = ctx.input.paperTitleOf
+        )
+        ctx.input.reviews.forEach(accumulator::add)
+        return accumulator.toData(ctx.input.categoryOfQuestion)
     }
 
     // --- overview accumulator ----------------------------------------------
@@ -1432,6 +1478,247 @@ object StatsAggregator {
                 AnswerButtonsData.Kind.MATURE,
                 AnswerButtonsData.Kind.RELEARNING
             )
+        }
+    }
+
+    // --- sessions accumulator ------------------------------------------------
+
+    /**
+     * The Sessions tab and the history list as one pass of the log. Sittings
+     * follow the Workload accumulator's rule exactly: a gap of more than 30
+     * minutes, or a backwards clock, starts a new one. Exactly 30 minutes stays
+     * in the same sitting.
+     *
+     * The statistics tab only needs counters, so [collectEntries] stays false
+     * and the per-sitting question map is never built. The sidebar history
+     * turns it on; the store then reads the categories for the reviewed ids
+     * only and folds them into [SessionsData.sessions].
+     */
+    class SessionsAccumulator(
+        private val scopePaperId: String?,
+        private val range: Range,
+        private val now: Long,
+        private val cfg: SchedulerConfig,
+        private val zone: Long,
+        private val collectEntries: Boolean,
+        private val paperTitleOf: Map<String, String> = emptyMap()
+    ) {
+        private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
+        private val todayDay = studyEpochDay(todayStart, cfg, zone)
+        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+
+        private var earliest: Long? = null
+        private var lastReviewAt = Long.MIN_VALUE
+        private var current: SessionBuilder? = null
+
+        private var totalSessions = 0
+        private var totalReviews = 0
+        private var totalSeconds = 0L
+
+        private val sessionsByDay = HashMap<Long, Int>()
+        private val durationBins = IntArray(DURATION_LABELS.size)
+        private val startHours = IntArray(24)
+        private val weekdays = IntArray(7)
+        private val accuracySumByDay = HashMap<Long, Double>()
+
+        private val entries = ArrayList<StudySession>()
+        private val entryQuestions = ArrayList<Map<String, Int>>()
+        private val reviewedIds = HashSet<String>()
+
+        /** Feeds one replayed review, in the log's append order. */
+        fun add(review: ReplayReview) {
+            if (scopePaperId != null && review.paperId != scopePaperId) return
+            if (rangeStart != null && review.reviewedAt < rangeStart) return
+            val seen = earliest
+            if (seen == null || review.reviewedAt < seen) earliest = review.reviewedAt
+            val gap = if (lastReviewAt == Long.MIN_VALUE) {
+                Long.MAX_VALUE
+            } else {
+                review.reviewedAt - lastReviewAt
+            }
+            if (current == null || gap < 0 || gap > SITTING_GAP_MS) {
+                finish()
+                current = SessionBuilder(review.reviewedAt, collectEntries)
+            }
+            current!!.add(review)
+            lastReviewAt = review.reviewedAt
+        }
+
+        /** The distinct questions reviewed in range; empty without entries. */
+        fun reviewedQuestionIds(): Set<String> = reviewedIds
+
+        /**
+         * Builds the charts (and the entries when collected). [categoryOfQuestion]
+         * is read by the store after the pass, for the reviewed ids only; an
+         * empty map simply leaves each sitting's topics empty.
+         */
+        fun toData(categoryOfQuestion: Map<String, String> = emptyMap()): SessionsData {
+            finish()
+            val sessions = if (!collectEntries) {
+                emptyList()
+            } else {
+                entries.mapIndexed { index, entry ->
+                    entry.copy(
+                        categories = categoriesOf(entryQuestions[index], categoryOfQuestion)
+                    )
+                }.sortedWith(
+                    compareByDescending<StudySession> { it.startedAt }
+                        .thenByDescending { it.endedAt }
+                )
+            }
+            val windowStart = rangeStart ?: earliest
+            val perDay: List<StackedPoint>
+            val accuracyTrend: List<SeriesPoint>
+            if (windowStart == null) {
+                perDay = emptyList()
+                accuracyTrend = emptyList()
+            } else {
+                val granularity = granularityFor(windowStart, todayDay, cfg, zone)
+                val buckets = bucketList(
+                    studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                )
+                val sessionsByBucket = HashMap<Long, Int>()
+                sessionsByDay.forEach { (day, count) ->
+                    val key = bucketKeyOf(day, granularity)
+                    sessionsByBucket[key] = (sessionsByBucket[key] ?: 0) + count
+                }
+                val accuracyByBucket = HashMap<Long, Double>()
+                accuracySumByDay.forEach { (day, sum) ->
+                    val key = bucketKeyOf(day, granularity)
+                    accuracyByBucket[key] = (accuracyByBucket[key] ?: 0.0) + sum
+                }
+                perDay = buckets.map { bucket ->
+                    val count = sessionsByBucket[bucket.key] ?: 0
+                    StackedPoint(bucket.label, listOf(count.toDouble()), count)
+                }
+                accuracyTrend = buckets.map { bucket ->
+                    val count = sessionsByBucket[bucket.key] ?: 0
+                    SeriesPoint(
+                        label = bucket.label,
+                        value = if (count == 0) null else (accuracyByBucket[bucket.key] ?: 0.0) / count,
+                        count = count
+                    )
+                }
+            }
+            return SessionsData(
+                totalSessions = totalSessions,
+                totalReviews = totalReviews,
+                totalSeconds = totalSeconds,
+                sessionsPerDay = perDay,
+                durationHistogram = DURATION_LABELS.mapIndexed { index, label ->
+                    SeriesPoint(label, durationBins[index].toDouble(), durationBins[index])
+                },
+                startHours = (0 until 24).map { SessionHour(it, startHours[it]) },
+                weekdays = (0..6).map { SessionWeekday(it, weekdays[it]) },
+                accuracyTrend = accuracyTrend,
+                todayDay = todayDay,
+                sessions = sessions
+            )
+        }
+
+        private fun finish() {
+            val session = current ?: return
+            current = null
+            if (session.reviews == 0) return
+            totalSessions++
+            totalReviews += session.reviews
+            val durationMs = (session.endedAt - session.startedAt).coerceAtLeast(0L)
+            totalSeconds += durationMs / 1000L
+            val day = studyEpochDay(session.startedAt, cfg, zone)
+            sessionsByDay[day] = (sessionsByDay[day] ?: 0) + 1
+            val minutes = (durationMs / 60_000L).toInt()
+            var bin = DURATION_EDGES.indexOfFirst { minutes < it }
+            if (bin < 0) bin = DURATION_LABELS.size - 1
+            durationBins[bin]++
+            val hour = (Math.floorMod(session.startedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
+            startHours[hour]++
+            weekdays[weekdayOf(day)]++
+            val accuracy = (session.reviews - session.again).toDouble() / session.reviews
+            accuracySumByDay[day] = (accuracySumByDay[day] ?: 0.0) + accuracy
+            if (collectEntries) {
+                entries += session.toEntry(day, paperTitleOf)
+                entryQuestions += session.questionReviews
+                reviewedIds += session.questionReviews.keys
+            }
+        }
+
+        private fun categoriesOf(
+            questionReviews: Map<String, Int>,
+            categoryOfQuestion: Map<String, String>
+        ): List<SessionSlice> {
+            if (questionReviews.isEmpty() || categoryOfQuestion.isEmpty()) return emptyList()
+            val counts = HashMap<String, Int>()
+            questionReviews.forEach { (questionId, reviews) ->
+                val title = categoryOfQuestion[questionId] ?: return@forEach
+                counts[title] = (counts[title] ?: 0) + reviews
+            }
+            return counts.map { SessionSlice(it.key, it.value) }
+                .sortedWith(compareByDescending<SessionSlice> { it.reviews }.thenBy { it.label })
+        }
+
+        private class SessionBuilder(val startedAt: Long, private val collect: Boolean) {
+            var endedAt = startedAt
+            var reviews = 0
+            var again = 0
+            var hard = 0
+            var good = 0
+            var easy = 0
+            var timedSeconds = 0L
+            var timedReviews = 0
+            val paperReviews = HashMap<String, Int>()
+            val questionReviews = HashMap<String, Int>()
+
+            fun add(review: ReplayReview) {
+                // A backwards clock starts a new sitting before this row is
+                // fed, so endedAt never moves behind startedAt.
+                endedAt = review.reviewedAt
+                reviews++
+                when (review.rating) {
+                    1 -> again++
+                    2 -> hard++
+                    3 -> good++
+                    4 -> easy++
+                }
+                review.elapsedSeconds?.let {
+                    timedSeconds += it
+                    timedReviews++
+                }
+                paperReviews[review.paperId] = (paperReviews[review.paperId] ?: 0) + 1
+                if (collect) {
+                    questionReviews[review.questionId] =
+                        (questionReviews[review.questionId] ?: 0) + 1
+                }
+            }
+
+            fun toEntry(day: Long, paperTitleOf: Map<String, String>): StudySession {
+                val papers = paperReviews.map { (paperId, count) ->
+                    SessionSlice(paperTitleOf[paperId] ?: paperId, count)
+                }.sortedWith(
+                    compareByDescending<SessionSlice> { it.reviews }.thenBy { it.label }
+                )
+                return StudySession(
+                    startedAt = startedAt,
+                    endedAt = endedAt,
+                    day = day,
+                    reviews = reviews,
+                    questions = questionReviews.size,
+                    again = again,
+                    hard = hard,
+                    good = good,
+                    easy = easy,
+                    timedSeconds = timedSeconds,
+                    timedReviews = timedReviews,
+                    papers = papers
+                )
+            }
+        }
+
+        private companion object {
+            /** The Workload accumulator's rule: exactly 30 minutes still joins. */
+            const val SITTING_GAP_MS = 30 * 60 * 1000L
+            val DURATION_EDGES = listOf(5, 15, 30, 60, 120)
+            val DURATION_LABELS =
+                listOf("0–4m", "5–14m", "15–29m", "30–59m", "1–2 h", "2 h+")
         }
     }
 

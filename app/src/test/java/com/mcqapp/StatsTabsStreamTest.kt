@@ -274,4 +274,40 @@ class StatsTabsStreamTest {
         }
         assertTrue("no case reached an introduction", sawIntroduced)
     }
+
+    @Test
+    fun streamedSessionsMatchTheInMemoryBuild() = runBlocking {
+        seed()
+        val loaded = input()
+        var sawSitting = false
+        cases.forEach { (scope, range) ->
+            val streamed = repository.statsSessions(scope, range, now)
+            val inMemory = StatsAggregator.buildSessions(loaded, scope, range, collectEntries = false)
+            assertEquals("scope=$scope range=$range", inMemory, streamed)
+            assertTrue("the chart build must not keep entries", streamed.sessions.isEmpty())
+            sawSitting = sawSitting || streamed.totalSessions > 0
+        }
+        assertTrue("no case reached a sitting", sawSitting)
+    }
+
+    @Test
+    fun streamedSessionHistoryMatchesTheInMemoryBuild() = runBlocking {
+        seed()
+        val loaded = input()
+        var sawEntries = false
+        cases.forEach { (scope, range) ->
+            val streamed = repository.sessionHistory(scope, range, now)
+            val inMemory = StatsAggregator.buildSessions(loaded, scope, range, collectEntries = true)
+            assertEquals("scope=$scope range=$range", inMemory, streamed)
+            assertEquals(inMemory.sessions.size, streamed.sessions.size)
+            sawEntries = sawEntries || streamed.sessions.isNotEmpty()
+        }
+        assertTrue("no case reached a history entry", sawEntries)
+        // The history list shows the newest sitting first.
+        val history = repository.sessionHistory(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            history.sessions.map { it.startedAt }.sortedDescending(),
+            history.sessions.map { it.startedAt }
+        )
+    }
 }

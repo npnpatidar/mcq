@@ -2085,6 +2085,10 @@ interface LadderDao {
     @Query("SELECT * FROM ladder_blocks ORDER BY id ASC")
     suspend fun allBlocks(): List<LadderBlockEntity>
 
+    /** The decision already recorded for one fixed window, if any. */
+    @Query("SELECT * FROM ladder_blocks WHERE startAt = :startAt LIMIT 1")
+    suspend fun blockAtStart(startAt: Long): LadderBlockEntity?
+
     @Query("SELECT * FROM ladder_versions WHERE id = :id")
     suspend fun version(id: Long): LadderVersionEntity?
 

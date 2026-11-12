@@ -4,8 +4,12 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.LadderBlockEntity
 import com.mcqapp.data.local.LadderVersionEntity
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.stats.LadderPolicy
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+/** The cuts or version moved after a proposal was shown; nothing is applied. */
+class LadderProposalStaleException(message: String) : IllegalStateException(message)
 
 /** Why a ladder version exists, as stored in `ladder_versions.reason`. */
 enum class LadderReason(val stored: String) {
@@ -148,6 +152,125 @@ internal class LadderStore(
     /** Records one closed evidence block (including one that decided nothing). */
     suspend fun recordBlock(block: LadderBlockEntity): Long =
         db.ladderDao().insertBlock(block)
+
+    /**
+     * Applies the learner's accepted proposal: the evidence block lands first,
+     * then the cut and its `proposal` version in one DataStore edit. Rejects a
+     * proposal whose cuts, version or block no longer match what was shown.
+     */
+    suspend fun applyProposal(proposal: LadderPolicy.Proposal, now: Long = System.currentTimeMillis()): Int =
+        mutex.withLock {
+            requireCurrentProposalLocked(proposal)
+            val blockId = db.ladderDao().insertBlock(proposal.toBlock(
+                outcome = proposal.outcome,
+                decidedAt = now
+            ))
+            val id = nextVersionId()
+            settings.writeCuts(proposal.easySeconds, proposal.currentSlowSeconds, id)
+            db.ladderDao().insertVersion(
+                LadderVersionEntity(
+                    id = id.toLong(),
+                    easySeconds = proposal.easySeconds,
+                    slowSeconds = proposal.currentSlowSeconds,
+                    effectiveFrom = now,
+                    reason = LadderReason.PROPOSAL.stored,
+                    previousId = proposal.ladderVersion.toLong(),
+                    blockId = blockId,
+                    policyVersion = POLICY_VERSION
+                )
+            )
+            id
+        }
+
+    /**
+     * A dismissed proposal is still evidence: the block is written as
+     * `no-change`, so the same window cannot propose again and the next
+     * proposal waits for a new closed block.
+     */
+    suspend fun dismissProposal(proposal: LadderPolicy.Proposal, now: Long = System.currentTimeMillis()): Long =
+        mutex.withLock {
+            requireCurrentProposalLocked(proposal)
+            db.ladderDao().insertBlock(proposal.toBlock(outcome = "no-change", decidedAt = now))
+        }
+
+    /**
+     * Walks one step back along the version chain. The new `rollback` row's
+     * [LadderVersionEntity.previousId] is the *restored* version's previous id,
+     * not the row being undone, so a second reset continues back rather than
+     * stepping forward onto the change it just removed.
+     */
+    suspend fun rollback(now: Long = System.currentTimeMillis()): Int? = mutex.withLock {
+        ensureVersionLocked()
+        val currentId = settings.ladderVersionOrNull() ?: return@withLock null
+        val current = db.ladderDao().version(currentId.toLong()) ?: return@withLock null
+        val targetId = current.previousId ?: return@withLock null
+        val target = db.ladderDao().version(targetId) ?: return@withLock null
+        val id = nextVersionId()
+        settings.writeCuts(target.easySeconds, target.slowSeconds, id)
+        db.ladderDao().insertVersion(
+            LadderVersionEntity(
+                id = id.toLong(),
+                easySeconds = target.easySeconds,
+                slowSeconds = target.slowSeconds,
+                effectiveFrom = now,
+                reason = LadderReason.ROLLBACK.stored,
+                previousId = target.previousId,
+                blockId = null,
+                policyVersion = POLICY_VERSION
+            )
+        )
+        id
+    }
+
+    /**
+     * Must run under [mutex]. A proposal is only valid for the exact cuts,
+     * version and still-undecided block the report showed.
+     */
+    private suspend fun requireCurrentProposalLocked(proposal: LadderPolicy.Proposal) {
+        val config = settings.schedulerConfigNow()
+        if (config.ladderVersion != proposal.ladderVersion ||
+            config.fastSeconds != proposal.currentEasySeconds ||
+            config.slowSeconds != proposal.currentSlowSeconds
+        ) {
+            throw LadderProposalStaleException("The grading ladder changed after this proposal was shown")
+        }
+        if (db.ladderDao().blockAtStart(proposal.block.startAt) != null) {
+            throw LadderProposalStaleException("This evidence block has already been decided")
+        }
+        if (proposal.easySeconds !in LadderPolicy.MIN_EASY_SECONDS..LadderPolicy.MAX_EASY_SECONDS ||
+            proposal.easySeconds > config.slowSeconds - LadderPolicy.MIN_GAP_TO_HARD ||
+            proposal.easySeconds == config.fastSeconds
+        ) {
+            throw LadderProposalStaleException("The proposed Easy cut is outside the allowed range")
+        }
+    }
+
+    private fun LadderPolicy.Proposal.toBlock(
+        outcome: String,
+        decidedAt: Long
+    ) = LadderBlockEntity(
+        startAt = block.startAt,
+        endAt = block.endAt,
+        ladderVersion = ladderVersion,
+        fsrsFitVersion = fsrsFitVersion,
+        policyVersion = LadderPolicy.POLICY_VERSION,
+        easyPairs = easyPairs,
+        easyCards = easyCards,
+        goodPairs = goodPairs,
+        goodCards = goodCards,
+        hardPairs = hardPairs,
+        hardCards = hardCards,
+        delta1 = delta1,
+        delta1Low = delta1Low,
+        delta1High = delta1High,
+        delta2 = null,
+        delta2Low = null,
+        delta2High = null,
+        followUpEasy = followUpEasy,
+        followUpGood = followUpGood,
+        outcome = outcome,
+        decidedAt = decidedAt
+    )
 
     /**
      * Must run under [mutex]. Returns the current version, writing the missing

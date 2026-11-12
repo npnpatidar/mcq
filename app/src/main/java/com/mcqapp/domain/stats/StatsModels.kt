@@ -626,7 +626,15 @@ data class RetentionData(
      * it; empty reports are still rendered, because "not enough evidence" is
      * the expected answer for months and must be visible.
      */
-    val calibrationReport: Calibration.Report? = null
+    val calibrationReport: Calibration.Report? = null,
+    /**
+     * Phase 4's answer to "may the ladder act, and should it move now?" Null
+     * only when the surface did not ask; every status is renderable so a
+     * controller that declines is not mistaken for one that is stalled.
+     */
+    val ladderEvaluation: LadderPolicy.Evaluation? = null,
+    /** True when the current version has an earlier one to restore. */
+    val ladderCanRollback: Boolean = false
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

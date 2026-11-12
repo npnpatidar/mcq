@@ -167,7 +167,16 @@ fun StatsScreen(
                                     onOpenSettings = { navController.navigate("settings") }
                                 )
                             }
-                            StatsViewModel.Tab.RETENTION -> state.retention?.let { RetentionSection(it) }
+                            StatsViewModel.Tab.RETENTION -> state.retention?.let { retention ->
+                                RetentionSection(
+                                    bundle = retention,
+                                    onApplyLadderProposal = viewModel::applyLadderProposal,
+                                    onDismissLadderProposal = viewModel::dismissLadderProposal,
+                                    onUndoLadderChange = viewModel::undoLadderChange,
+                                    ladderBusy = state.ladderBusy,
+                                    ladderError = state.ladderError
+                                )
+                            }
                             StatsViewModel.Tab.WORKLOAD -> state.workload?.let { data ->
                                 WorkloadSection(
                                     bundle = data,

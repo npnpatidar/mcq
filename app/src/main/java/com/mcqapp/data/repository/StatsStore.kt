@@ -118,7 +118,23 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds)
         }
         val data = accumulator.toData(tagsOfQuestion, categoriesForSlice)
-        return data.copy(calibrationReport = loadCalibration(scopePaperId, now, config))
+        val report = loadCalibration(scopePaperId, now, config)
+        // About 13 blocks a year: cheap enough to read whole rather than add
+        // another one-row query for a set the policy checks membership in.
+        val decidedBlockStarts = db.ladderDao().allBlocks().map { it.startAt }.toSet()
+        val currentVersion = config.ladderVersion
+            .takeIf { it > 0 }
+            ?.let { db.ladderDao().version(it.toLong()) }
+        return data.copy(
+            calibrationReport = report,
+            ladderEvaluation = com.mcqapp.domain.stats.LadderPolicy.evaluate(
+                report = report,
+                config = config,
+                decidedBlockStarts = decidedBlockStarts,
+                now = now
+            ),
+            ladderCanRollback = currentVersion?.previousId != null
+        )
     }
 
     /**

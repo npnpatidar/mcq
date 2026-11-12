@@ -11,6 +11,8 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.stats.Calibration
+import com.mcqapp.domain.stats.LadderPolicy
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -172,5 +174,110 @@ class LadderStoreTest {
             forceVersion = 0
         )
         assertEquals(0, settings.schedulerConfigNow().fsrsFitVersion)
+    }
+
+    private fun proposal(
+        version: Int,
+        startAt: Long = 1_000L,
+        currentEasy: Long = 8L,
+        easy: Long = 7L
+    ) = LadderPolicy.Proposal(
+        easySeconds = easy,
+        currentEasySeconds = currentEasy,
+        currentSlowSeconds = 30L,
+        stepSeconds = 1L,
+        direction = Calibration.Direction.LOWER,
+        ladderVersion = version,
+        fsrsFitVersion = 0,
+        block = Calibration.Block(
+            index = 0,
+            startAt = startAt,
+            endAt = startAt + 28L * 86_400_000L,
+            pairs = 400,
+            easyPairs = 100,
+            goodPairs = 80,
+            hardPairs = 40,
+            closed = true
+        ),
+        delta1 = -0.08,
+        delta1Low = -0.13,
+        delta1High = -0.03,
+        easyPairs = 100,
+        easyCards = 80,
+        goodPairs = 80,
+        goodCards = 65,
+        hardPairs = 40,
+        hardCards = 35,
+        followUpEasy = 0.94,
+        followUpGood = 0.92,
+        outcome = "lower-c1"
+    )
+
+    @Test
+    fun applyingAProposalWritesTheBlockThenTheVersionAndCuts() = runBlocking {
+        val ladder = LadderStore(db, store())
+        val version = ladder.currentVersion()
+
+        val newVersion = ladder.applyProposal(proposal(version), now = 5_000L)
+
+        assertEquals(7L, store().schedulerConfigNow().fastSeconds)
+        assertEquals(30L, store().schedulerConfigNow().slowSeconds)
+        val row = db.ladderDao().version(newVersion.toLong())!!
+        assertEquals("proposal", row.reason)
+        assertEquals(version.toLong(), row.previousId)
+        assertEquals("lower-c1", db.ladderDao().allBlocks().single().outcome)
+        assertEquals(db.ladderDao().allBlocks().single().id, row.blockId)
+        assertEquals(newVersion, store().schedulerConfigNow().ladderVersion)
+    }
+
+    @Test
+    fun dismissingAProposalRecordsNoChangeAndMovesNothing() = runBlocking {
+        val ladder = LadderStore(db, store())
+        val version = ladder.currentVersion()
+
+        ladder.dismissProposal(proposal(version), now = 5_000L)
+
+        assertEquals(8L, store().schedulerConfigNow().fastSeconds)
+        assertEquals(version, store().schedulerConfigNow().ladderVersion)
+        assertEquals(1, db.ladderDao().allVersions().size)
+        val block = db.ladderDao().blockAtStart(1_000L)!!
+        assertEquals("no-change", block.outcome)
+        assertEquals(5_000L, block.decidedAt)
+    }
+
+    @Test
+    fun aStaleOrAlreadyDecidedProposalIsRejected() = runBlocking {
+        val ladder = LadderStore(db, store())
+        val version = ladder.currentVersion()
+        val proposal = proposal(version)
+        ladder.applyProposal(proposal)
+
+        var rejected = false
+        try {
+            ladder.applyProposal(proposal)
+        } catch (e: com.mcqapp.data.repository.LadderProposalStaleException) {
+            rejected = true
+        }
+        assertTrue(rejected)
+        assertEquals(1, db.ladderDao().allBlocks().size)
+    }
+
+    @Test
+    fun repeatedRollbacksWalkBackAlongTheVersionChain() = runBlocking {
+        val ladder = LadderStore(db, store())
+        ladder.currentVersion()
+        ladder.setCuts(9L, 31L, LadderReason.MANUAL)
+        ladder.setCuts(7L, 31L, LadderReason.PROPOSAL)
+
+        val first = ladder.rollback()!!
+        assertEquals(9L, db.ladderDao().version(first.toLong())!!.easySeconds)
+        assertEquals("rollback", db.ladderDao().version(first.toLong())!!.reason)
+        assertEquals(9L, store().schedulerConfigNow().fastSeconds)
+
+        val second = ladder.rollback()!!
+        assertEquals(8L, db.ladderDao().version(second.toLong())!!.easySeconds)
+        assertEquals(8L, store().schedulerConfigNow().fastSeconds)
+        // The seed is the end of the chain; a third reset has nowhere to go.
+        assertEquals(null, ladder.rollback())
     }
 }

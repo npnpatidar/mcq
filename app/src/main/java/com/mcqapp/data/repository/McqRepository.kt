@@ -182,6 +182,17 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     /** The current ladder version; a manual Settings save of a cut writes one. */
     internal suspend fun ladderVersion(): Int = ladderStore.currentVersion()
 
+    /** Applies an accepted Easy-cut proposal and records its evidence block. */
+    suspend fun applyLadderProposal(proposal: com.mcqapp.domain.stats.LadderPolicy.Proposal): Int =
+        ladderStore.applyProposal(proposal)
+
+    /** Records a dismissed proposal as a no-change block. */
+    suspend fun dismissLadderProposal(proposal: com.mcqapp.domain.stats.LadderPolicy.Proposal): Long =
+        ladderStore.dismissProposal(proposal)
+
+    /** Restores the previous ladder version; null when there is no earlier one. */
+    suspend fun rollbackLadder(): Int? = ladderStore.rollback()
+
     // --- FSRS parameter optimization ---
 
     /** Reviews logged across every paper: the optimizer's unlock gauge. */

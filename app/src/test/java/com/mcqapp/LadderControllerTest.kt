@@ -41,19 +41,23 @@ class LadderControllerTest {
     private val t0 = 1_750_000_000_000L
 
     @Before
-    fun setup() = runBlocking {
-        context = ApplicationProvider.getApplicationContext()
-        context.dataStore.edit { it.clear() }
-        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
-        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper"))
+    fun setup() {
+        runBlocking {
+            context = ApplicationProvider.getApplicationContext()
+            context.dataStore.edit { it.clear() }
+            db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+                .allowMainThreadQueries()
+                .build()
+            db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper"))
+        }
     }
 
     @After
-    fun teardown() = runBlocking {
-        db.close()
-        context.dataStore.edit { prefs -> prefs.clear() }
+    fun teardown() {
+        runBlocking {
+            db.close()
+            context.dataStore.edit { prefs -> prefs.clear() }
+        }
     }
 
     private fun controller() = LadderController(

@@ -13,6 +13,7 @@ import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ProgressData
 import com.mcqapp.domain.stats.RetentionData
+import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
 import com.mcqapp.util.Logger
@@ -37,7 +38,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as McqApplication).repository
 
     /** One tab of the statistics screen; each owns a slice of the payload. */
-    enum class Tab { OVERVIEW, RETENTION, WORKLOAD, MEMORY, CARDS, GUESSING, TESTS, PROGRESS }
+    enum class Tab { OVERVIEW, RETENTION, WORKLOAD, SESSIONS, MEMORY, CARDS, GUESSING, TESTS, PROGRESS }
 
     data class UiState(
         val tab: Tab = Tab.OVERVIEW,
@@ -46,6 +47,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         val overview: OverviewData? = null,
         val retention: RetentionData? = null,
         val workload: WorkloadData? = null,
+        val sessions: SessionsData? = null,
         val memory: MemoryData? = null,
         val cards: CardsData? = null,
         val guessing: GuessingData? = null,
@@ -68,6 +70,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 Tab.OVERVIEW -> overview != null
                 Tab.RETENTION -> retention != null
                 Tab.WORKLOAD -> workload != null
+                Tab.SESSIONS -> sessions != null
                 Tab.MEMORY -> memory != null
                 Tab.CARDS -> cards != null
                 Tab.GUESSING -> guessing != null
@@ -284,6 +287,9 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                     Tab.WORKLOAD -> current.copy(
                         workload = repository.statsWorkload(scope, range, now)
                     )
+                    Tab.SESSIONS -> current.copy(
+                        sessions = repository.statsSessions(scope, range, now)
+                    )
                     Tab.MEMORY -> current.copy(
                         memory = repository.statsMemory(scope, range, now)
                     )
@@ -338,7 +344,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         Tab.WORKLOAD -> built.workload?.responseTime?.slowest?.map { it.questionId }
         Tab.CARDS -> built.cards?.leeches?.map { it.questionId }
         Tab.GUESSING -> built.guessing?.shaky?.map { it.questionId }
-        Tab.RETENTION, Tab.MEMORY, Tab.TESTS, Tab.PROGRESS -> null
+        Tab.RETENTION, Tab.MEMORY, Tab.SESSIONS, Tab.TESTS, Tab.PROGRESS -> null
     }.orEmpty().distinct()
 
     /**
@@ -347,36 +353,45 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun UiState.onlyFresh(tab: Tab, built: UiState): UiState = when (tab) {
         Tab.OVERVIEW -> copy(
-            overview = built.overview, retention = null, workload = null, memory = null,
-            cards = null, guessing = null, testProgress = null, progress = null
+            overview = built.overview, retention = null, workload = null, sessions = null,
+            memory = null, cards = null, guessing = null, testProgress = null, progress = null
         )
         Tab.RETENTION -> copy(
-            overview = null, retention = built.retention, workload = null, memory = null,
-            cards = null, guessing = null, testProgress = null, progress = null
+            overview = null, retention = built.retention, workload = null, sessions = null,
+            memory = null, cards = null, guessing = null, testProgress = null, progress = null
         )
         Tab.WORKLOAD -> copy(
-            overview = null, retention = null, workload = built.workload, memory = null,
-            cards = null, guessing = null, testProgress = null, progress = null
+            overview = null, retention = null, workload = built.workload, sessions = null,
+            memory = null, cards = null, guessing = null, testProgress = null, progress = null
+        )
+        Tab.SESSIONS -> copy(
+            overview = null, retention = null, workload = null, sessions = built.sessions,
+            memory = null, cards = null, guessing = null, testProgress = null, progress = null
         )
         Tab.MEMORY -> copy(
-            overview = null, retention = null, workload = null, memory = built.memory,
-            cards = null, guessing = null, testProgress = null, progress = null
+            overview = null, retention = null, workload = null, sessions = null,
+            memory = built.memory, cards = null, guessing = null, testProgress = null,
+            progress = null
         )
         Tab.CARDS -> copy(
-            overview = null, retention = null, workload = null, memory = null,
-            cards = built.cards, guessing = null, testProgress = null, progress = null
+            overview = null, retention = null, workload = null, sessions = null,
+            memory = null, cards = built.cards, guessing = null, testProgress = null,
+            progress = null
         )
         Tab.GUESSING -> copy(
-            overview = null, retention = null, workload = null, memory = null,
-            cards = null, guessing = built.guessing, testProgress = null, progress = null
+            overview = null, retention = null, workload = null, sessions = null,
+            memory = null, cards = null, guessing = built.guessing, testProgress = null,
+            progress = null
         )
         Tab.TESTS -> copy(
-            overview = null, retention = null, workload = null, memory = null,
-            cards = null, guessing = null, testProgress = built.testProgress, progress = null
+            overview = null, retention = null, workload = null, sessions = null,
+            memory = null, cards = null, guessing = null,
+            testProgress = built.testProgress, progress = null
         )
         Tab.PROGRESS -> copy(
-            overview = null, retention = null, workload = null, memory = null,
-            cards = null, guessing = null, testProgress = null, progress = built.progress
+            overview = null, retention = null, workload = null, sessions = null,
+            memory = null, cards = null, guessing = null, testProgress = null,
+            progress = built.progress
         )
     }.copy(loading = false, loadError = null)
 }

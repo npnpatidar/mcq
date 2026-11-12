@@ -41,17 +41,19 @@ import androidx.navigation.NavController
 import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.stats.StatsAggregator
+import com.mcqapp.ui.common.StatsRangeChips
 import com.mcqapp.ui.stats.sections.CardsSection
 import com.mcqapp.ui.stats.sections.GuessingSection
 import com.mcqapp.ui.stats.sections.MemorySection
 import com.mcqapp.ui.stats.sections.OverviewSection
 import com.mcqapp.ui.stats.sections.ProgressSection
 import com.mcqapp.ui.stats.sections.RetentionSection
+import com.mcqapp.ui.stats.sections.SessionsSection
 import com.mcqapp.ui.stats.sections.TestsSection
 import com.mcqapp.ui.stats.sections.WorkloadSection
 
 /**
- * The statistics page: scope and range selectors on top, eight tabs of graphs
+ * The statistics page: scope and range selectors on top, nine tabs of graphs
  * below, and a per-card drill-down sheet reachable from every ranked list.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,6 +113,7 @@ fun StatsScreen(
                     R.string.tab_overview,
                     R.string.tab_retention,
                     R.string.tab_workload,
+                    R.string.tab_sessions,
                     R.string.tab_memory,
                     R.string.tab_cards,
                     R.string.tab_guessing,
@@ -184,6 +187,9 @@ fun StatsScreen(
                                     onOpenCard = { openCard(it.paperId, it.questionId) }
                                 )
                             }
+                            StatsViewModel.Tab.SESSIONS -> state.sessions?.let { data ->
+                                SessionsSection(data)
+                            }
                             StatsViewModel.Tab.MEMORY -> state.memory?.let { MemorySection(it) }
                             StatsViewModel.Tab.CARDS -> state.cards?.let { data ->
                                 CardsSection(
@@ -253,31 +259,10 @@ private fun ScopeSelector(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RangeSelector(
     selected: StatsAggregator.Range,
     onSelect: (StatsAggregator.Range) -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        listOf(
-            StatsAggregator.Range.D7 to R.string.range_7d,
-            StatsAggregator.Range.D30 to R.string.range_30d,
-            StatsAggregator.Range.D90 to R.string.range_90d,
-            StatsAggregator.Range.D365 to R.string.range_365d,
-            StatsAggregator.Range.ALL to R.string.range_all
-        ).forEach { (range, labelRes) ->
-            FilterChip(
-                selected = selected == range,
-                onClick = { onSelect(range) },
-                label = { Text(stringResource(labelRes)) }
-            )
-        }
-    }
+    StatsRangeChips(selected = selected, onSelect = onSelect)
 }

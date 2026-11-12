@@ -57,6 +57,7 @@ import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ProgressData
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.RetentionData
+import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
 import kotlinx.coroutines.flow.Flow
@@ -309,6 +310,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         range: StatsAggregator.Range,
         now: Long
     ): GuessingData = statsStore.loadGuessing(scopePaperId, range, now)
+
+    /**
+     * The sessions tab alone, streamed: chart counters only. [sessionHistory]
+     * is the sidebar's variant, which also keeps every sitting and reads the
+     * topics those sittings touched.
+     */
+    internal suspend fun statsSessions(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): SessionsData =
+        statsStore.loadSessions(scopePaperId, range, now, collectEntries = false)
+
+    /** The sidebar history: every sitting in range, newest first. */
+    internal suspend fun sessionHistory(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long
+    ): SessionsData =
+        statsStore.loadSessions(scopePaperId, range, now, collectEntries = true)
 
     /** One question's logged reviews, oldest first, for the drill-down sheet. */
     suspend fun reviewHistory(questionId: String): List<com.mcqapp.domain.stats.ReviewHistoryEntry> =

@@ -25,6 +25,7 @@ import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.Reliability
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.ReviewHistoryEntry
+import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
 
@@ -432,6 +433,43 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         )
         replayInto(scheduler, accumulator::add)
         return accumulator.toData()
+    }
+
+    /**
+     * The sessions tab and the sidebar history, streamed. With
+     * [collectEntries] the sitting list is kept and the topic titles are read
+     * for the reviewed ids only, after the pass; the statistics tab leaves both
+     * off and pays only for the chart counters.
+     */
+    suspend fun loadSessions(
+        scopePaperId: String?,
+        range: StatsAggregator.Range,
+        now: Long,
+        collectEntries: Boolean
+    ): SessionsData {
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val accumulator = StatsAggregator.SessionsAccumulator(
+            scopePaperId = scopePaperId,
+            range = range,
+            now = now,
+            cfg = config,
+            zone = DayBoundary.zoneOffset(now),
+            collectEntries = collectEntries,
+            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
+        )
+        replayInto(scheduler, accumulator::add)
+        val categoryOfQuestion = if (!collectEntries) {
+            emptyMap()
+        } else {
+            val reviewedIds = accumulator.reviewedQuestionIds().toList()
+            if (reviewedIds.isEmpty()) {
+                emptyMap()
+            } else {
+                db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds)
+            }
+        }
+        return accumulator.toData(categoryOfQuestion)
     }
 
     /**

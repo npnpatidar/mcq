@@ -586,7 +586,9 @@ data class StatsBundle(
     val weakest: List<WeakCard>,
     val leeches: List<WeakCard>,
     val guessing: GuessingData,
-    val progress: ProgressData
+    val progress: ProgressData,
+    /** Session-level charts, and the history entries when a caller asked. */
+    val sessions: SessionsData = SessionsData()
 )
 
 /**
@@ -672,6 +674,79 @@ data class SessionSummary(
 ) {
     data class SessionBin(val label: String, val count: Int)
 }
+
+/** One paper or topic's share of a sitting, for the history list. */
+data class SessionSlice(val label: String, val reviews: Int)
+
+/**
+ * One inferred study sitting: consecutive graded reviews no more than 30
+ * minutes apart, the same rule the Workload tab's summary uses. [startedAt]
+ * and [endedAt] are the first and last review's wall-clock times, so
+ * [durationSeconds] includes the pauses inside the sitting but never the time
+ * after it ended.
+ *
+ * [questions] is the distinct cards reviewed; [reviews] counts every answer,
+ * because a lapsed card can be served twice inside one sitting.
+ */
+data class StudySession(
+    val startedAt: Long,
+    val endedAt: Long,
+    /** Study day (the configured 04:00 boundary) the sitting started on. */
+    val day: Long,
+    val reviews: Int,
+    val questions: Int,
+    val again: Int,
+    val hard: Int,
+    val good: Int,
+    val easy: Int,
+    /** Per-review dwell time; unmeasured reviews contribute nothing. */
+    val timedSeconds: Long,
+    val timedReviews: Int,
+    val papers: List<SessionSlice>,
+    /** Topic titles, newest map read; empty when the caller did not ask. */
+    val categories: List<SessionSlice> = emptyList()
+) {
+    val durationSeconds: Long
+        get() = ((endedAt - startedAt) / 1000L).coerceAtLeast(0L)
+
+    /** Reviews not answered Again: the same pass rule as the review stats. */
+    val passed: Int get() = reviews - again
+
+    val accuracy: Double?
+        get() = if (reviews == 0) null else passed.toDouble() / reviews
+
+    val meanSecondsPerReview: Double?
+        get() = if (timedReviews == 0) null else timedSeconds.toDouble() / timedReviews
+}
+
+/** One hour of the day and how many sittings started in it. */
+data class SessionHour(val hour: Int, val sessions: Int)
+
+/** 0 = Monday .. 6 = Sunday, and how many sittings started that weekday. */
+data class SessionWeekday(val weekday: Int, val sessions: Int)
+
+/**
+ * The Sessions tab's charts and, when asked for, the sittings themselves.
+ * [sessions] is empty for the statistics tab, which only charts the aggregate;
+ * the sidebar history asks for the list and pays for it.
+ */
+data class SessionsData(
+    val totalSessions: Int = 0,
+    val totalReviews: Int = 0,
+    /** Summed wall-clock length of every sitting, in seconds. */
+    val totalSeconds: Long = 0L,
+    val sessionsPerDay: List<StackedPoint> = emptyList(),
+    /** How long sittings ran: `0–4m`, `5–14m`, ... */
+    val durationHistogram: List<SeriesPoint> = emptyList(),
+    val startHours: List<SessionHour> = emptyList(),
+    val weekdays: List<SessionWeekday> = emptyList(),
+    /** Mean sitting accuracy per time bucket; each sitting weighs the same. */
+    val accuracyTrend: List<SeriesPoint> = emptyList(),
+    /** Study epoch day of the build, for the history list's Today header. */
+    val todayDay: Long = 0L,
+    /** Newest first; empty unless the build collected entries. */
+    val sessions: List<StudySession> = emptyList()
+)
 
 /** Workload tab: how the review volume and pace are distributed. */
 data class WorkloadData(
@@ -793,7 +868,8 @@ data class StatsSections(
     val memory: MemoryData,
     val cards: CardsData,
     val guessing: GuessingData,
-    val progress: ProgressData
+    val progress: ProgressData,
+    val sessions: SessionsData = SessionsData()
 )
 
 /** Flattens the per-tab slices back into the whole-page payload. */
@@ -824,5 +900,6 @@ fun StatsSections.toBundle(): StatsBundle = StatsBundle(
     weakest = overview.weakest,
     leeches = cards.leeches,
     guessing = guessing,
-    progress = progress
+    progress = progress,
+    sessions = sessions
 )

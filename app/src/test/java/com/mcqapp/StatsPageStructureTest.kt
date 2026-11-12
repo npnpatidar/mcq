@@ -35,12 +35,24 @@ class StatsPageStructureTest {
     }
 
     @Test
+    fun theSessionsHistoryRouteIsRegistered() {
+        val nav = source("src/main/java/com/mcqapp/ui/navigation/McqNavHost.kt")
+        assertTrue("route \"sessions\" missing", nav.contains("""composable("sessions")"""))
+        assertTrue("route must render SessionsScreen", nav.contains("ui.sessions.SessionsScreen"))
+        val drawer = source("src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt")
+        assertTrue("drawer entry missing", drawer.contains("onOpenSessions"))
+        val library = source("src/main/java/com/mcqapp/ui/library/LibraryScreen.kt")
+        assertTrue("drawer wiring missing", library.contains("""navigate("sessions")"""))
+    }
+
+    @Test
     fun everyStatsTabAndRangeHasALabel() {
         val defined = Regex("""<string name="([a-z0-9_]+)">""")
             .findAll(File("src/main/res/values/strings.xml").readText())
             .map { it.groupValues[1] }.toSet()
         val expected = listOf(
-            "tab_overview", "tab_retention", "tab_workload", "tab_memory", "tab_cards",
+            "tab_overview", "tab_retention", "tab_workload", "tab_sessions", "tab_memory",
+            "tab_cards",
             "range_7d", "range_30d", "range_90d", "range_365d", "range_all",
             "stats", "stats_no_data", "stats_load_error"
         )

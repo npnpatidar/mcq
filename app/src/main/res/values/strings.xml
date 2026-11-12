@@ -148,6 +148,33 @@
     <string name="formula">Formula</string>
     <string name="go_back">Go back</string>
     <string name="history">History</string>
+    <string name="sessions">Sessions</string>
+    <string name="sessions_load_error">Sessions could not be loaded.</string>
+    <string name="sessions_empty">No study sessions in this range yet.</string>
+    <string name="sessions_help">Sittings are split by a 30-minute gap and run from the first review to the last.</string>
+    <string name="sessions_summary">%1$d reviews · %2$s of study time</string>
+    <string name="sessions_clock">%1$s – %2$s</string>
+    <string name="sessions_line">%1$s · %2$s recalled · %3$s on cards</string>
+    <string name="sessions_grades">Again %1$d · Hard %2$d · Good %3$d · Easy %4$d</string>
+    <string name="sessions_papers">Papers: %1$s</string>
+    <string name="sessions_topics">Topics: %1$s</string>
+    <string name="sessions_more_topics">+%1$d more</string>
+    <string name="sessions_show_all_topics">Show all topics</string>
+    <string name="sessions_show_less">Show less</string>
+    <string name="sessions_today">Today</string>
+    <string name="sessions_yesterday">Yesterday</string>
+    <plurals name="sessions_count">
+        <item quantity="one">%1$d session</item>
+        <item quantity="other">%1$d sessions</item>
+    </plurals>
+    <plurals name="sessions_questions">
+        <item quantity="one">%1$d question</item>
+        <item quantity="other">%1$d questions</item>
+    </plurals>
+    <plurals name="sessions_reviews">
+        <item quantity="one">%1$d review</item>
+        <item quantity="other">%1$d reviews</item>
+    </plurals>
     <string name="image">Image</string>
     <string name="image_for_this_option">Image for this option</string>
     <string name="image_url">Image URL</string>
@@ -579,6 +606,7 @@
     <string name="tab_overview">Overview</string>
     <string name="tab_retention">Retention</string>
     <string name="tab_workload">Workload</string>
+    <string name="tab_sessions">Sessions</string>
     <string name="tab_memory">Memory</string>
     <string name="tab_cards">Cards</string>
     <string name="tab_guessing">Guessing</string>
@@ -846,6 +874,16 @@
     <string name="stats_sessions_longest_minutes">Longest: %1$s</string>
     <string name="stats_sessions_seconds">Seconds per review: %1$s</string>
     <string name="stats_sessions_histogram">Reviews per sitting</string>
+    <string name="stats_sessions_per_day">Sessions per day</string>
+    <string name="stats_sessions_per_day_help">Sittings started each day. A sitting is split by a 30-minute gap between reviews.</string>
+    <string name="stats_session_length">Session length</string>
+    <string name="stats_session_length_help">How long each sitting ran, from its first review to its last.</string>
+    <string name="stats_session_start">When sessions start</string>
+    <string name="stats_session_start_help">Sittings by the hour their first review landed.</string>
+    <string name="stats_sessions_weekday">Sessions by weekday</string>
+    <string name="stats_sessions_weekday_help">Sittings started on each weekday.</string>
+    <string name="stats_session_accuracy">Recall per session</string>
+    <string name="stats_session_accuracy_help">The share of each sitting answered other than Again, with every sitting weighted equally.</string>
     <string name="stats_pass_rate">Pass</string>
     <string name="stats_young">Young</string>
     <string name="stats_mature">Mature</string>

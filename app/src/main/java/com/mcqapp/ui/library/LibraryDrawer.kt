@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -59,6 +60,7 @@ internal fun DrawerContent(
     papers: List<Paper>,
     onCloseDrawer: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenSessions: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenBookmarks: () -> Unit,
     onOpenSearch: () -> Unit,
@@ -104,6 +106,22 @@ internal fun DrawerContent(
                     Icon(Icons.Default.History, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Text(stringResource(R.string.history))
+                }
+            }
+            item(contentType = "action") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onCloseDrawer()
+                            onOpenSessions()
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.DateRange, contentDescription = null)
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(R.string.sessions))
                 }
             }
             item(contentType = "action") {

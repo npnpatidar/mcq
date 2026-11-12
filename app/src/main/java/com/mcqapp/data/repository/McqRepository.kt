@@ -90,6 +90,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val signalStore = SignalStore(db)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings)
+    private val ladderController = LadderController(db, settings, ladderStore, statsStore)
     private val testProgress = TestProgressStore(db, settings)
 
     fun db(): AppDatabase = db
@@ -109,6 +110,11 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     fun simplifiedStudy(): Flow<Boolean> = settings.simplifiedStudy()
     suspend fun setSimplifiedStudy(enabled: Boolean) = settings.setSimplifiedStudy(enabled)
+
+    /** Phase 5: run the ladder policy automatically at the end of a sitting. */
+    fun automaticLadderAdaptation(): Flow<Boolean> = settings.automaticLadderAdaptation()
+    suspend fun setAutomaticLadderAdaptation(enabled: Boolean) =
+        settings.setAutomaticLadderAdaptation(enabled)
 
     fun shuffleOptions(): Flow<Boolean> = settings.shuffleOptions()
     suspend fun setShuffleOptions(enabled: Boolean) = settings.setShuffleOptions(enabled)
@@ -192,6 +198,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Restores the previous ladder version; null when there is no earlier one. */
     suspend fun rollbackLadder(): Int? = ladderStore.rollback()
+
+    /**
+     * Runs phase 5's automatic controller. Called at the end of a sitting; a
+     * no-op unless the learner switched automatic grading on.
+     */
+    internal suspend fun runLadderController(now: Long = System.currentTimeMillis()): LadderController.Result =
+        ladderController.run(now)
 
     // --- FSRS parameter optimization ---
 

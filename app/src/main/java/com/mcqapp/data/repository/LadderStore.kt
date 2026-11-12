@@ -158,7 +158,11 @@ internal class LadderStore(
      * then the cut and its `proposal` version in one DataStore edit. Rejects a
      * proposal whose cuts, version or block no longer match what was shown.
      */
-    suspend fun applyProposal(proposal: LadderPolicy.Proposal, now: Long = System.currentTimeMillis()): Int =
+    suspend fun applyProposal(
+        proposal: LadderPolicy.Proposal,
+        reason: LadderReason = LadderReason.PROPOSAL,
+        now: Long = System.currentTimeMillis()
+    ): Int =
         mutex.withLock {
             requireCurrentProposalLocked(proposal)
             val blockId = db.ladderDao().insertBlock(proposal.toBlock(
@@ -173,7 +177,7 @@ internal class LadderStore(
                     easySeconds = proposal.easySeconds,
                     slowSeconds = proposal.currentSlowSeconds,
                     effectiveFrom = now,
-                    reason = LadderReason.PROPOSAL.stored,
+                    reason = reason.stored,
                     previousId = proposal.ladderVersion.toLong(),
                     blockId = blockId,
                     policyVersion = POLICY_VERSION

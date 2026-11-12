@@ -247,6 +247,27 @@ class CalibrationTest {
     }
 
     @Test
+    fun `closed blocks carry the delta the safety valve reads`() {
+        val result = Calibration.report(
+            card(questionId = "easy", grade = Calibration.LadderGrade.EASY, outcome = true) +
+                card(
+                    questionId = "good",
+                    grade = Calibration.LadderGrade.GOOD,
+                    outcome = false,
+                    labelAt = t0 + 2 * day,
+                    outcomeAt = t0 + 7 * day
+                ),
+            now = t0 + 120 * day,
+            epochStart = t0
+        )
+
+        val block = result.blocks.single()
+        assertTrue(block.closed)
+        assertEquals(0.2 - (-0.8), block.delta1!!, 1e-9)
+        assertNull("one card per class has no estimable interval", block.delta1Low)
+    }
+
+    @Test
     fun `the direction table follows the sign of delta1`() {
         fun contrast(value: Double) = Calibration.Contrast(
             value = value,

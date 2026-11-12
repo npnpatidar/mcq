@@ -162,7 +162,8 @@ class StatsRetentionStreamTest {
                 streamed.copy(
                     calibrationReport = null,
                     ladderEvaluation = null,
-                    ladderCanRollback = false
+                    ladderCanRollback = false,
+                    ladderLastChange = null
                 )
             )
             assertTrue("the retention load must carry the calibration report",

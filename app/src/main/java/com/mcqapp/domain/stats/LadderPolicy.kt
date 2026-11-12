@@ -196,6 +196,29 @@ object LadderPolicy {
     }
 
     /**
+     * Plan §4.4's safety valve, run before an automatic step. A change is
+     * walked back only when **both** of the last two closed windows show δ1
+     * beyond their own minimum detectable effect in the direction the change
+     * was meant to fix. One noisy block is not enough, and "the next block did
+     * not improve" would be regression to the mean.
+     */
+    fun safetyValve(
+        blocks: List<Calibration.Block>,
+        previousEasySeconds: Long,
+        currentEasySeconds: Long
+    ): Boolean {
+        if (previousEasySeconds == currentEasySeconds) return false
+        val lower = currentEasySeconds < previousEasySeconds
+        val closed = blocks.filter { it.closed }.takeLast(2)
+        if (closed.size < 2) return false
+        return closed.all { block ->
+            val delta = block.delta1 ?: return@all false
+            val mde = block.minimumDetectableEffect ?: return@all false
+            if (lower) delta <= -mde else delta >= mde
+        }
+    }
+
+    /**
      * One step: ten percent of the current cut, at least one second, and no
      * more than two seconds while the cut is near its default. The measured
      * band mass (3.15% of reviews within ±1 s) is why a bigger step would buy

@@ -110,8 +110,19 @@ data class StudyUiState(
     val isGuess: Boolean = false,
     /** When the active question-clock segment started. */
     val questionStartedAt: Long = 0L,
-    /** Time already banked for the card on screen, excluding the current segment. */
-    val questionElapsedSeconds: Long = 0L,
+    /**
+     * Time already banked for the card on screen, excluding the current
+     * segment. Milliseconds are the source of truth: every segment is banked
+     * exactly, and the clock display truncates once. Fractional seconds used to
+     * be dropped per segment, so a card interrupted four times lost up to four
+     * seconds against its Easy budget.
+     */
+    val questionElapsedMillis: Long = 0L,
+    /**
+     * The whole-second dwell frozen at Check, rounded half-up. Next, a grade
+     * change and Stop all persist this value; none of them rereads the clock.
+     */
+    val gradedDwellSeconds: Long = 0L,
     /** Whether the question clock is running and should be shown as live. */
     val clockRunning: Boolean = false,
     /**
@@ -133,11 +144,11 @@ data class StudyUiState(
     val againCount: Int = 0,
     val goodCount: Int = 0,
     /**
-     * Seconds of this sitting spent on the question itself. The sitting's
-     * clock keeps running while the answer and its explanation are read, so
-     * explanation time is the rest: [sessionTotalSeconds] - this.
+     * Milliseconds of this sitting spent on questions. Banked per segment and
+     * truncated only for display, so the summary does not lose a fraction each
+     * time the question clock pauses.
      */
-    val questionSeconds: Long = 0L,
+    val questionMillis: Long = 0L,
     /**
      * The sitting's total seconds, frozen when it ends. Set once, at the
      * summary, so the figure there stops counting instead of growing while
@@ -167,17 +178,28 @@ data class StudyUiState(
     val currentSelection: Set<String> get() = selection
     val isCurrentRevealed: Boolean get() = revealed
 
+    /** The banked question time, truncated for display. */
+    val questionElapsedSeconds: Long
+        get() = questionElapsedMillis / 1000L
+
     /**
      * Total active seconds on the card on screen: banked time plus the current
-     * segment while the clock is running.
+     * segment while the clock is running. Truncated only here, for display;
+     * [gradedDwellSeconds] is what a check freezes and stores.
      */
     val dwellSeconds: Long
-        get() = questionElapsedSeconds +
-            if (clockRunning) {
-                (SystemClock.elapsedRealtime() - questionStartedAt).coerceAtLeast(0L) / 1000L
-            } else {
-                0L
-            }
+        get() = (
+            questionElapsedMillis +
+                if (clockRunning) {
+                    (SystemClock.elapsedRealtime() - questionStartedAt).coerceAtLeast(0L)
+                } else {
+                    0L
+                }
+            ) / 1000L
+
+    /** Seconds of this sitting spent on the question itself, for the summary. */
+    val questionSeconds: Long
+        get() = questionMillis / 1000L
 
     /**
      * Seconds of this sitting spent on the answers and explanations: the
@@ -475,7 +497,8 @@ class StudyViewModel(
                     lastResult = null,
                     isGuess = false,
                     questionStartedAt = now,
-                    questionElapsedSeconds = 0L,
+                    questionElapsedMillis = 0L,
+                    gradedDwellSeconds = 0L,
                     // A fresh card is clocked only if the screen last said it
                     // is in view. Advancing from the fixed footer can accept a
                     // card while the previous one was scrolled past; a flip to
@@ -525,7 +548,8 @@ class StudyViewModel(
                 pendingGrade = null,
                 lastResult = null,
                 questionStartedAt = 0L,
-                questionElapsedSeconds = 0L,
+                questionElapsedMillis = 0L,
+                gradedDwellSeconds = 0L,
                 clockRunning = false,
                 sessionTotalSeconds = totalSeconds,
                 finished = true,
@@ -573,13 +597,12 @@ class StudyViewModel(
         // sitting's question time, which the summary splits from explanation
         // time. Banking here means every path that stops the clock (reveal,
         // scroll away, background, stop) is counted exactly once.
-        val segment = ((now - current.questionStartedAt).coerceAtLeast(0L) / 1000L)
-        val elapsed = current.questionElapsedSeconds + segment
+        val segment = (now - current.questionStartedAt).coerceAtLeast(0L)
         _state.update {
             it.copy(
                 questionStartedAt = now,
-                questionElapsedSeconds = elapsed,
-                questionSeconds = it.questionSeconds + segment,
+                questionElapsedMillis = it.questionElapsedMillis + segment,
+                questionMillis = it.questionMillis + segment,
                 clockRunning = false
             )
         }
@@ -720,7 +743,9 @@ class StudyViewModel(
         if (!current.simplified || current.revealed || current.grading) return
         pauseQuestionClock()
         val paused = _state.value
-        val dwellSeconds = paused.questionElapsedSeconds
+        // Freeze the graded dwell here, rounded once from the millisecond total.
+        // Next, a grade change and Stop all persist this same value.
+        val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
         val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
         // Reading time lifts both ends of the ladder by the same amount, so
         // Good stays reachable on long questions and deliberation beyond the
@@ -743,6 +768,7 @@ class StudyViewModel(
         _state.update {
             it.copy(
                 revealed = true,
+                gradedDwellSeconds = dwellSeconds,
                 pendingGrade = grade,
                 lastResult = buildResult(
                     question, paused.selection, grade, paused.isGuess, dwellSeconds,
@@ -796,7 +822,9 @@ class StudyViewModel(
         val question = current.question ?: return
         if (!current.simplified || !current.revealed || current.pendingGrade == null) return
         val now = System.currentTimeMillis()
-        val dwellSeconds = current.questionElapsedSeconds
+        // The dwell was frozen at Check; changing the grade must not reread a
+        // clock that could have moved while the answer was being read.
+        val dwellSeconds = current.gradedDwellSeconds
         _state.update {
             it.copy(
                 pendingGrade = grade,
@@ -825,7 +853,7 @@ class StudyViewModel(
         if (current.grading) return
         _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
-        val dwellSeconds = _state.value.questionElapsedSeconds
+        val dwellSeconds = _state.value.gradedDwellSeconds
         viewModelScope.launch {
             var persisted = false
             try {
@@ -892,7 +920,10 @@ class StudyViewModel(
         if (current.grading) return
         _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
-        val dwellSeconds = _state.value.questionElapsedSeconds
+        // Classic mode has no Check, so the grade tap is the freeze point.
+        val paused = _state.value
+        val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
+        _state.update { it.copy(gradedDwellSeconds = dwellSeconds) }
         viewModelScope.launch {
             // Persist and pull are split: a pull failure after a persisted
             // grade must not read as a failed grade — the review is already
@@ -1008,7 +1039,7 @@ class StudyViewModel(
             return
         }
         _state.update { it.copy(grading = true, gradeError = null) }
-        val dwellSeconds = current.questionElapsedSeconds
+        val dwellSeconds = current.gradedDwellSeconds
         viewModelScope.launch {
             try {
                 val next = repository.recordStudyReview(
@@ -1165,7 +1196,7 @@ class StudyViewModel(
                         reviewed = 0,
                         againCount = 0,
                         goodCount = 0,
-                        questionSeconds = 0L,
+                        questionMillis = 0L,
                         sessionTotalSeconds = 0L,
                         reviewsSinceNew = 0,
                         finished = false,
@@ -1181,7 +1212,8 @@ class StudyViewModel(
                         gradeError = null,
                         isGuess = false,
                         questionStartedAt = 0L,
-                        questionElapsedSeconds = 0L,
+                        questionElapsedMillis = 0L,
+                        gradedDwellSeconds = 0L,
                         clockRunning = false,
                         breakDismissedAt = 0,
                         // The stale card must not linger: a restart is a fresh

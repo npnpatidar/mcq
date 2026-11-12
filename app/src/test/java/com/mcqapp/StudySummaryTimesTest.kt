@@ -14,13 +14,13 @@ class StudySummaryTimesTest {
 
     @Test
     fun explanationTimeIsTheRestOfTheSitting() {
-        val state = StudyUiState(questionSeconds = 120L, sessionTotalSeconds = 300L)
+        val state = StudyUiState(questionMillis = 120_000L, sessionTotalSeconds = 300L)
         assertEquals(180L, state.explanationSeconds)
     }
 
     @Test
     fun aSittingSpentOnlyOnQuestionsHasNoExplanationTime() {
-        val state = StudyUiState(questionSeconds = 95L, sessionTotalSeconds = 95L)
+        val state = StudyUiState(questionMillis = 95_000L, sessionTotalSeconds = 95L)
         assertEquals(0L, state.explanationSeconds)
     }
 
@@ -31,7 +31,7 @@ class StudySummaryTimesTest {
      */
     @Test
     fun theSplitNeverGoesNegative() {
-        val state = StudyUiState(questionSeconds = 7L, sessionTotalSeconds = 5L)
+        val state = StudyUiState(questionMillis = 7_000L, sessionTotalSeconds = 5L)
         assertEquals(0L, state.explanationSeconds)
     }
 
@@ -41,5 +41,12 @@ class StudySummaryTimesTest {
         assertEquals(0L, state.questionSeconds)
         assertEquals(0L, state.sessionTotalSeconds)
         assertEquals(0L, state.explanationSeconds)
+    }
+
+    @Test
+    fun questionTimeIsBankedInMillisecondsAndShownTruncated() {
+        val state = StudyUiState(questionMillis = 95_900L, sessionTotalSeconds = 300L)
+
+        assertEquals(95L, state.questionSeconds)
     }
 }

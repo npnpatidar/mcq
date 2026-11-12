@@ -13,8 +13,9 @@ import org.junit.Test
 /**
  * The Study header clock colours itself from the same dwell ladder the check
  * grades with: Easy below the first threshold, Good between the two, Hard at
- * or above the second. These tests pin the boundaries and the reading-time
- * extension, so the colour and the grade cannot drift apart.
+ * or above the second, and a neutral first second before any time is banked.
+ * These tests pin the boundaries and the reading-time extension, so the colour
+ * and the grade cannot drift apart.
  */
 class StudyDwellBandTest {
 
@@ -33,7 +34,8 @@ class StudyDwellBandTest {
 
         assertEquals(Study.FAST_SECONDS, ladder.easySeconds)
         assertEquals(Study.SLOW_SECONDS, ladder.hardSeconds)
-        assertEquals(Study.DwellBand.EASY, Study.dwellBand(0, ladder.easySeconds, ladder.hardSeconds))
+        assertEquals(Study.DwellBand.NEUTRAL, Study.dwellBand(0, ladder.easySeconds, ladder.hardSeconds))
+        assertEquals(Study.DwellBand.EASY, Study.dwellBand(1, ladder.easySeconds, ladder.hardSeconds))
         assertEquals(Study.DwellBand.EASY, Study.dwellBand(7, ladder.easySeconds, ladder.hardSeconds))
         assertEquals(Study.DwellBand.GOOD, Study.dwellBand(8, ladder.easySeconds, ladder.hardSeconds))
         assertEquals(Study.DwellBand.GOOD, Study.dwellBand(29, ladder.easySeconds, ladder.hardSeconds))
@@ -56,6 +58,67 @@ class StudyDwellBandTest {
         assertEquals(Study.DwellBand.GOOD, Study.dwellBand(easySeconds, easySeconds, hardSeconds))
         assertEquals(ReviewGrade.HARD, Study.inferGrade(true, hardSeconds))
         assertEquals(Study.DwellBand.HARD, Study.dwellBand(hardSeconds, easySeconds, hardSeconds))
+    }
+
+    /**
+     * The guarantee the calibration depends on: from the first banked second
+     * onward, the colour must name exactly the grade a Check at that instant
+     * would produce. Only 0 is deliberately neutral, where grade inference has
+     * no timing to read and calls the card Good.
+     */
+    @Test
+    fun `the clock names the same grade from the first second`() {
+        val ladders = listOf(
+            Study.dwellLadder(SchedulerConfig(), bareQuestion(), passage = null),
+            Study.dwellLadder(
+                SchedulerConfig(fastSeconds = 4L, slowSeconds = 45L),
+                bareQuestion(),
+                passage = null
+            ),
+            Study.dwellLadder(SchedulerConfig(fastSeconds = 5L, slowSeconds = 60L), bareQuestion(), null)
+        )
+        for (ladder in ladders) {
+            for (dwell in 1L..(ladder.hardSeconds + 5L)) {
+                val expected = Study.inferGrade(
+                    isCorrect = true,
+                    dwellSeconds = dwell,
+                    fastSeconds = ladder.easySeconds,
+                    slowSeconds = ladder.hardSeconds
+                )
+                assertEquals(
+                    "dwell ${dwell}s on ${ladder.easySeconds}/${ladder.hardSeconds}",
+                    expected,
+                    Study.dwellBand(dwell, ladder.easySeconds, ladder.hardSeconds).toGrade()
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the neutral first second is not a grade claim`() {
+        assertEquals(
+            Study.DwellBand.NEUTRAL,
+            Study.dwellBand(0, Study.FAST_SECONDS, Study.SLOW_SECONDS)
+        )
+        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 0))
+    }
+
+    @Test
+    fun `a graded dwell rounds half up once`() {
+        assertEquals(0L, Study.gradedDwellSeconds(0L))
+        assertEquals(0L, Study.gradedDwellSeconds(499L))
+        assertEquals(1L, Study.gradedDwellSeconds(500L))
+        assertEquals(1L, Study.gradedDwellSeconds(1_499L))
+        assertEquals(2L, Study.gradedDwellSeconds(1_500L))
+        assertEquals(8L, Study.gradedDwellSeconds(7_500L))
+        assertEquals(0L, Study.gradedDwellSeconds(-1L))
+    }
+
+    private fun Study.DwellBand.toGrade(): ReviewGrade = when (this) {
+        Study.DwellBand.NEUTRAL -> error("a banked dwell is never neutral")
+        Study.DwellBand.EASY -> ReviewGrade.EASY
+        Study.DwellBand.GOOD -> ReviewGrade.GOOD
+        Study.DwellBand.HARD -> ReviewGrade.HARD
     }
 
     @Test

@@ -818,12 +818,14 @@ Confirm (correct), Reject (wrong).
 
 **Two clocks:**
 - **Question clock:** starts when card visible; pauses on reveal/Check,
-  scroll-away, background, tap. Banked in `pauseQuestionClock()` per segment.
-  Its icon and time are tinted from the same dwell ladder the check grades
-  with: green below the card's Easy threshold (reading time included), amber
-  through Good, red at or above Hard. Tints are derived from the active theme
-  and contrast-checked against its surface (≥ 4.5:1), so every palette stays
-  legible in light and dark. Study only; the Test countdown is unchanged.
+  scroll-away, background, tap. Banked in milliseconds in
+  `pauseQuestionClock()`, displayed truncated, and rounded half-up once when
+  Check freezes the graded dwell. Its icon and time are tinted from the same
+  dwell ladder the check grades with: neutral for the first second (nothing
+  banked yet), green below the card's Easy threshold (reading time included),
+  amber through Good, red at or above Hard. Tints are derived from the active
+  theme and contrast-checked against its surface (≥ 4.5:1), so every palette
+  stays legible in light and dark. Study only; the Test countdown is unchanged.
 - **Session clock:** wall time, runs continuously (including answer/explanation).
 
 ### Session Summary

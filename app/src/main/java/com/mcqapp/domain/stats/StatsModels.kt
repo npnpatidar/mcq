@@ -619,7 +619,14 @@ data class RetentionData(
      * True when [groupRetention] lists papers (no paper selected); false when
      * a paper is selected and the rows are its categories.
      */
-    val groupIsPaper: Boolean = true
+    val groupIsPaper: Boolean = true,
+    /**
+     * Grade-level calibration (phase 2): the adjacent contrasts, the per-grade
+     * table and the readiness gate. Null only when the surface did not ask for
+     * it; empty reports are still rendered, because "not enough evidence" is
+     * the expected answer for months and must be visible.
+     */
+    val calibrationReport: Calibration.Report? = null
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

@@ -520,6 +520,8 @@
     <string name="spaced_repetition">Spaced repetition</string>
     <string name="simplified_anki">Simplified Anki</string>
     <string name="grade_study_cards_automatically_from_your_answers_instead_of_">Grade study cards automatically from your answers instead of picking Again, Hard, Good or Easy after each card.</string>
+    <string name="automatic_ladder_adaptation">Adapt the Easy cut automatically</string>
+    <string name="automatic_ladder_adaptation_help">At the end of a sitting, move the Easy cut by one step when the evidence is precise enough and outcomes have followed up. Off by default; the last change can be undone in Statistics.</string>
     <string name="study_day">Study day</string>
     <string name="storage">Storage</string>
     <string name="strict_exam_aids_hidden_until_submit">Strict exam — aids hidden until submit</string>
@@ -796,6 +798,7 @@
     <string name="stats_ladder_apply">Apply</string>
     <string name="stats_ladder_dismiss">Dismiss</string>
     <string name="stats_ladder_undo">Undo last change</string>
+    <string name="stats_ladder_last_change">Last change: Easy cut %1$ds → %2$ds.</string>
     <string name="stats_ladder_error">Could not update the Easy cut: %1$s</string>
     <string name="stats_ladder_hard_note">The Hard cut is shown but not tuned: %1$d pairs is not enough to judge it.</string>
     <string name="stats_calibration_excluded">%1$d candidate pairs excluded (overrides, guesses, skips, new cards, missing forecast or outcome)</string>

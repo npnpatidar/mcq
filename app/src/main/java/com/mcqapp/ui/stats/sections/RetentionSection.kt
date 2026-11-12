@@ -27,6 +27,7 @@ import com.mcqapp.R
 import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.GroupRetention
 import com.mcqapp.domain.stats.IntervalBand
+import com.mcqapp.domain.stats.LadderChange
 import com.mcqapp.domain.stats.LadderPolicy
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.ui.stats.charts.CalibrationChart
@@ -289,6 +290,7 @@ private fun CalibrationEvidence(
             report = report,
             evaluation = bundle.ladderEvaluation,
             canRollback = bundle.ladderCanRollback,
+            lastChange = bundle.ladderLastChange,
             onApply = onApplyLadderProposal,
             onDismiss = onDismissLadderProposal,
             onUndo = onUndoLadderChange,
@@ -308,6 +310,7 @@ private fun LadderDecision(
     report: Calibration.Report,
     evaluation: LadderPolicy.Evaluation?,
     canRollback: Boolean,
+    lastChange: LadderChange?,
     onApply: (LadderPolicy.Proposal) -> Unit,
     onDismiss: (LadderPolicy.Proposal) -> Unit,
     onUndo: () -> Unit,
@@ -399,6 +402,17 @@ private fun LadderDecision(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         null -> Unit
+    }
+    if (lastChange != null) {
+        Text(
+            stringResource(
+                R.string.stats_ladder_last_change,
+                lastChange.fromEasySeconds,
+                lastChange.toEasySeconds
+            ),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
     if (report.hardUnderpowered) {
         Text(

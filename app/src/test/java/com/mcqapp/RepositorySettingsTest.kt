@@ -44,6 +44,13 @@ class RepositorySettingsTest {
     private fun store(): SettingsStore =
         SettingsStore(ApplicationProvider.getApplicationContext<Context>())
 
+    @Test
+    fun automaticLadderAdaptationStartsOffAndRoundTrips() = runBlocking {
+        assertFalse(store().automaticLadderAdaptationNow())
+        store().setAutomaticLadderAdaptation(true)
+        assertTrue(store().automaticLadderAdaptationNow())
+    }
+
     /**
      * The DataStore is process-wide, and v26 gave the scheduler config two
      * generation fields (`ladderVersion`, `fsrsFitVersion`) that other test
@@ -70,6 +77,7 @@ class RepositorySettingsTest {
             store().resetSchedulerConfig()
             store().clearTestProgress()
             store().setHapticsEnabled(true)
+            store().setAutomaticLadderAdaptation(false)
             // Fitted weights ride a separate key that resetSchedulerConfig
             // deliberately leaves alone; clear it here or one test's fit would
             // leak into every later assertion in the run.

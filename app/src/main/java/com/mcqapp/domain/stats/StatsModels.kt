@@ -634,7 +634,16 @@ data class RetentionData(
      */
     val ladderEvaluation: LadderPolicy.Evaluation? = null,
     /** True when the current version has an earlier one to restore. */
-    val ladderCanRollback: Boolean = false
+    val ladderCanRollback: Boolean = false,
+    /** The latest cut move, so an automatic change is visible after the fact. */
+    val ladderLastChange: LadderChange? = null
+)
+
+data class LadderChange(
+    val fromEasySeconds: Long,
+    val toEasySeconds: Long,
+    val reason: String,
+    val at: Long
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

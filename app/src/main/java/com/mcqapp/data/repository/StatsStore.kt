@@ -125,6 +125,22 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val currentVersion = config.ladderVersion
             .takeIf { it > 0 }
             ?.let { db.ladderDao().version(it.toLong()) }
+        val previousVersion = currentVersion?.previousId
+            ?.let { db.ladderDao().version(it) }
+        val lastChange = if (
+            currentVersion != null &&
+            previousVersion != null &&
+            currentVersion.reason != "prior"
+        ) {
+            com.mcqapp.domain.stats.LadderChange(
+                fromEasySeconds = previousVersion.easySeconds,
+                toEasySeconds = currentVersion.easySeconds,
+                reason = currentVersion.reason,
+                at = currentVersion.effectiveFrom
+            )
+        } else {
+            null
+        }
         return data.copy(
             calibrationReport = report,
             ladderEvaluation = com.mcqapp.domain.stats.LadderPolicy.evaluate(
@@ -133,9 +149,21 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
                 decidedBlockStarts = decidedBlockStarts,
                 now = now
             ),
-            ladderCanRollback = currentVersion?.previousId != null
+            ladderCanRollback = currentVersion?.previousId != null,
+            ladderLastChange = lastChange
         )
     }
+
+    /**
+     * The calibration report alone, for the phase-5 controller. It shares the
+     * retention cache, so a session-end run and the next Stats visit do not
+     * pay for two full-log passes over unchanged data.
+     */
+    internal suspend fun loadCalibrationReport(
+        scopePaperId: String?,
+        now: Long,
+        config: SchedulerConfig
+    ): Calibration.Report = loadCalibration(scopePaperId, now, config)
 
     /**
      * Grade-level calibration (plan phase 2). A second, keyset-paged pass over

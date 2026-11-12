@@ -99,6 +99,25 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         context.dataStore.edit { it[simplifiedStudyKey] = enabled }
     }
 
+    private val automaticLadderAdaptationKey =
+        booleanPreferencesKey("automatic_ladder_adaptation")
+
+    /**
+     * Plan phase 5: apply the ladder policy by itself at the end of a sitting.
+     * Off by default. The policy only ever proposes when its readiness and
+     * follow-up gates pass, but a switch that changes grades without asking
+     * starts off regardless.
+     */
+    fun automaticLadderAdaptation(): Flow<Boolean> =
+        context.dataStore.data.map { it[automaticLadderAdaptationKey] ?: false }
+
+    suspend fun automaticLadderAdaptationNow(): Boolean =
+        context.dataStore.data.map { it[automaticLadderAdaptationKey] ?: false }.first()
+
+    suspend fun setAutomaticLadderAdaptation(enabled: Boolean) {
+        context.dataStore.edit { it[automaticLadderAdaptationKey] = enabled }
+    }
+
     fun shuffleOptions(): Flow<Boolean> =
         context.dataStore.data.map { it[shuffleOptionsKey] ?: false }
     suspend fun setShuffleOptions(enabled: Boolean) {

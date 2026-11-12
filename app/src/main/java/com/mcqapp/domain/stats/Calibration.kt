@@ -172,8 +172,21 @@ object Calibration {
         val easyPairs: Int,
         val goodPairs: Int,
         val hardPairs: Int,
-        val closed: Boolean
-    )
+        val closed: Boolean,
+        /**
+         * Easy-vs-Good δ for this window alone. Present only on the last two
+         * closed windows, which are all the phase-5 safety valve inspects, so
+         * the report does not pay for a bootstrap over every historical block.
+         */
+        val delta1: Double? = null,
+        val delta1Low: Double? = null,
+        val delta1High: Double? = null
+    ) {
+        /** The block's own minimum detectable effect: half its interval. */
+        val minimumDetectableEffect: Double?
+            get() = if (delta1Low == null || delta1High == null) null
+            else (delta1High - delta1Low) / 2.0
+    }
 
     /** Plan §4.1, stated as three numbers the UI can show even when short. */
     data class Readiness(
@@ -518,9 +531,23 @@ object Calibration {
         if (pairs.isEmpty()) return emptyList()
         val anchor = if (epochStart > 0L) epochStart else pairs.minOf { it.labelReviewedAt }
         val byBlock = pairs.groupBy { ((it.labelReviewedAt - anchor) / BLOCK_MS).toInt() }
+        val closed = byBlock.keys.sorted().filter { index ->
+            anchor + index * BLOCK_MS + BLOCK_MS + OUTCOME_HORIZON_DAYS * DAY_MS <= now
+        }
+        val safetyWindow = closed.takeLast(2).toSet()
         return byBlock.keys.sorted().map { index ->
             val start = anchor + index * BLOCK_MS
             val rows = byBlock[index].orEmpty()
+            val isClosed = index in closed
+            val contrast = if (index in safetyWindow) {
+                contrast(
+                    first = rows.filter { it.grade == LadderGrade.EASY },
+                    good = rows.filter { it.grade == LadderGrade.GOOD },
+                    seed = SEED + index
+                )
+            } else {
+                null
+            }
             Block(
                 index = index,
                 startAt = start,
@@ -529,7 +556,10 @@ object Calibration {
                 easyPairs = rows.count { it.grade == LadderGrade.EASY },
                 goodPairs = rows.count { it.grade == LadderGrade.GOOD },
                 hardPairs = rows.count { it.grade == LadderGrade.HARD },
-                closed = start + BLOCK_MS + OUTCOME_HORIZON_DAYS * DAY_MS <= now
+                closed = isClosed,
+                delta1 = contrast?.value,
+                delta1Low = contrast?.low,
+                delta1High = contrast?.high
             )
         }
     }

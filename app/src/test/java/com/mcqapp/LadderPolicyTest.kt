@@ -220,6 +220,70 @@ class LadderPolicyTest {
         )
     }
 
+    private fun block(
+        index: Int,
+        delta: Double?,
+        low: Double? = null,
+        high: Double? = null,
+        closed: Boolean = true
+    ) = Calibration.Block(
+        index = index,
+        startAt = 1_000L + index * 28L * 86_400_000L,
+        endAt = 1_000L + (index + 1) * 28L * 86_400_000L,
+        pairs = 400,
+        easyPairs = 100,
+        goodPairs = 100,
+        hardPairs = 40,
+        closed = closed,
+        delta1 = delta,
+        delta1Low = low,
+        delta1High = high
+    )
+
+    @Test
+    fun `the safety valve fires only after two blocks in the wrong direction`() {
+        val lower = listOf(
+            block(0, delta = -0.10, low = -0.15, high = -0.05),
+            block(1, delta = -0.09, low = -0.14, high = -0.04)
+        )
+        assertEquals(true, LadderPolicy.safetyValve(lower, previousEasySeconds = 8L, currentEasySeconds = 7L))
+
+        // One block is noise, not a reason to walk the change back.
+        assertEquals(
+            false,
+            LadderPolicy.safetyValve(lower.take(1), previousEasySeconds = 8L, currentEasySeconds = 7L)
+        )
+        // A block inside its own MDE is not "beyond" it.
+        assertEquals(
+            false,
+            LadderPolicy.safetyValve(
+                listOf(lower[0], block(1, delta = -0.03, low = -0.07, high = 0.01)),
+                previousEasySeconds = 8L,
+                currentEasySeconds = 7L
+            )
+        )
+    }
+
+    @Test
+    fun `the safety valve follows the direction of the change`() {
+        val raise = listOf(
+            block(0, delta = 0.12, low = 0.08, high = 0.16),
+            block(1, delta = 0.11, low = 0.07, high = 0.15)
+        )
+        assertEquals(true, LadderPolicy.safetyValve(raise, previousEasySeconds = 8L, currentEasySeconds = 9L))
+        assertEquals(false, LadderPolicy.safetyValve(raise, previousEasySeconds = 9L, currentEasySeconds = 8L))
+        assertEquals(false, LadderPolicy.safetyValve(raise, previousEasySeconds = 8L, currentEasySeconds = 8L))
+    }
+
+    @Test
+    fun `an open block does not count toward the safety valve`() {
+        val blocks = listOf(
+            block(0, delta = -0.10, low = -0.15, high = -0.05),
+            block(1, delta = -0.10, low = -0.15, high = -0.05, closed = false)
+        )
+        assertEquals(false, LadderPolicy.safetyValve(blocks, 8L, 7L))
+    }
+
     @Test
     fun `a proposal carries the version and the evidence for its block row`() {
         val evaluation = evaluate(

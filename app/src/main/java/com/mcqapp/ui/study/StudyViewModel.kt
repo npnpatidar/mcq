@@ -290,6 +290,9 @@ class StudyViewModel(
      *  session. Reset when a new session loads. */
     private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** The end-of-sitting controller run; a restart waits for it. */
+    private var ladderCheckJob: Job? = null
+
     init {
         load()
         startDwellTicker()
@@ -1241,6 +1244,10 @@ class StudyViewModel(
         stopped.set(false)
         viewModelScope.launch {
             try {
+                // Never start a new sitting while the previous one's automatic
+                // ladder check is still running: a cut change must not land
+                // under a session that already snapshotted the old config.
+                ladderCheckJob?.join()
                 // A drill restarts from the scheduler now, not from the list
                 // it loaded when the screen opened: "Study again" promises a
                 // fresh pass, and the world has moved on — cards graded
@@ -1331,12 +1338,20 @@ class StudyViewModel(
         val startedAt = sessionStartedAtWall
         val endedAt = System.currentTimeMillis()
         val activeSeconds = _sessionSeconds.value
-        sessionScope.launch {
+        ladderCheckJob = sessionScope.launch {
             try {
                 repository.recordStudySession(paperId, startedAt, endedAt, activeSeconds)
             } catch (e: Exception) {
                 // Best effort: a lost timing row must never disturb the summary.
                 Logger.e("STUDY", "recordStudySession($paperId) failed", e)
+            }
+            // Phase 5: automatic adaptation runs here, at the end of the
+            // sitting. A failed timing row must not also suppress it, and a
+            // controller failure must stay off the summary.
+            try {
+                repository.runLadderController()
+            } catch (e: Exception) {
+                Logger.e("STUDY", "runLadderController($paperId) failed", e)
             }
         }
     }

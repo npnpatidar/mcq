@@ -399,6 +399,63 @@ object Study {
         return config.fastSeconds + readingBonus
     }
 
+    /**
+     * The two dwell thresholds a card is graded against: Easy below the first,
+     * Hard at or above the second, Good between them. Reading time lifts both
+     * ends by the same amount, so Good stays reachable on a long question.
+     *
+     * The Simplified-mode check grades from this pair and the header clock
+     * colours itself from the same pair, so the two can never disagree about
+     * where a card sits on the ladder.
+     */
+    data class DwellLadder(val easySeconds: Long, val hardSeconds: Long)
+
+    fun dwellLadder(
+        config: SchedulerConfig,
+        question: Question,
+        passage: Passage?
+    ): DwellLadder {
+        val easy = easyThresholdSeconds(config, question, passage)
+        return DwellLadder(
+            easySeconds = easy,
+            hardSeconds = config.slowSeconds + (easy - config.fastSeconds)
+        )
+    }
+
+    /**
+     * The bands of the dwell ladder, for the study clock's colour. [NEUTRAL] is
+     * the first second only: no time is banked yet, so the clock makes no
+     * colour claim until it has something to claim.
+     */
+    enum class DwellBand { NEUTRAL, EASY, GOOD, HARD }
+
+    /**
+     * Where [dwellSeconds] sits on the ladder described by [easySeconds] and
+     * [hardSeconds]. From one second up, the boundaries match [inferGrade]
+     * exactly. At 0 the clock is neutral: grade inference treats 0 as untracked
+     * timing and calls it Good, while a live clock that has not banked its first
+     * second should not yet claim any band at all.
+     */
+    fun dwellBand(
+        dwellSeconds: Long,
+        easySeconds: Long,
+        hardSeconds: Long
+    ): DwellBand = when {
+        dwellSeconds <= 0 -> DwellBand.NEUTRAL
+        dwellSeconds < easySeconds -> DwellBand.EASY
+        dwellSeconds < hardSeconds -> DwellBand.GOOD
+        else -> DwellBand.HARD
+    }
+
+    /**
+     * The whole-second dwell a check freezes and stores: milliseconds are the
+     * source of truth, rounded half-up once, at the moment the grade is
+     * proposed. The clock display truncates instead, because a clock reading
+     * 3 s then 4 s is what a learner expects.
+     */
+    fun gradedDwellSeconds(elapsedMillis: Long): Long =
+        (elapsedMillis.coerceAtLeast(0L) + 500L) / 1000L
+
     /** Every card eligible right now, split into the pull order's pools. */
     data class CandidatePools(
         /** Learning/relearning steps due now: short-term repetition first. */

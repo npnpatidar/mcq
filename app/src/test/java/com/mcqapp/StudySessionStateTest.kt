@@ -36,9 +36,18 @@ class StudySessionStateTest {
     @Test
     fun aPausedQuestionClockOnlyAddsBankedTime() {
         val paused = StudyUiState(
-            questionElapsedSeconds = 4L,
+            questionElapsedMillis = 4_000L,
             clockRunning = false
         )
+        assertEquals(4L, paused.dwellSeconds)
+        assertEquals(4L, paused.questionElapsedSeconds)
+    }
+
+    @Test
+    fun theClockDisplayTruncatesFractionalSeconds() {
+        val paused = StudyUiState(questionElapsedMillis = 4_999L, clockRunning = false)
+
+        assertEquals(4L, paused.questionElapsedSeconds)
         assertEquals(4L, paused.dwellSeconds)
     }
 }

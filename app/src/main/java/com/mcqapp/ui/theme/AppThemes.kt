@@ -458,7 +458,7 @@ private fun contentColorFor(color: Color): Color =
  * higher contrast) that does. Keeps a palette's hue wherever the design allows
  * it and refuses to render text that cannot be read.
  */
-private fun readableOn(
+internal fun readableOn(
     foreground: Color,
     background: Color,
     minimum: Double = 4.5

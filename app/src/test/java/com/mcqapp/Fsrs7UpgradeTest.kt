@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import android.content.Context
+import androidx.datastore.preferences.core.edit
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
@@ -8,6 +9,7 @@ import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.SettingsStore
+import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
 import kotlinx.coroutines.runBlocking
@@ -51,6 +53,10 @@ class Fsrs7UpgradeTest {
     @Before
     fun setUp() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
+        // The DataStore is process-wide, and the rebuild is gated on a
+        // persisted "done" flag: without a reset, whichever case finishes a
+        // rebuild first would make every later one a silent no-op.
+        context.dataStore.edit { it.clear() }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -65,8 +71,11 @@ class Fsrs7UpgradeTest {
     }
 
     @After
-    fun tearDown() {
+    fun tearDown() = runBlocking {
         db.close()
+        // Leave the process-wide DataStore as it was found: its flags outlive
+        // this class.
+        ApplicationProvider.getApplicationContext<Context>().dataStore.edit { it.clear() }
     }
 
     // --- the two writes, and the one that must not happen -------------------

@@ -16,6 +16,7 @@ fold it into `README.md` before the release PR is merged.
 | D6 | Replace `ladder_versions` with `grading_versions`, copying ids. | Every pre-v27 row's `ladderVersion` must still resolve to the cut pair that graded it, so the log stays re-gradable offline. |
 | D7 | Bump the rule version (`grading_rules_version = 1`): a cut pair stored by an older build is ignored on read, and the first versioned read writes a fresh `prior` row for 6/60 so the calibration epoch starts at the rule change. | A stored 8/30 was tuned against the reading bonus; silently keeping it would grade the new rule with the old pair, and reusing its version id would pool pre-v27 reviews into the new epoch. |
 | D8 | Turn the report's direction into a **read-only** suggestion (`Suggested cuts: try 4 s / 60 s…`) instead of an applied change: one second per 5 pp outside the band, capped at 4 s, Easy cut only. | Removing the ladder removed the only thing that translated "too wide" into a number. The contrast tells direction and magnitude in pp, not an optimum, so the app names a bounded next step and the learner decides. Hard is never moved: δ2 is not acted on. |
+| D10 | Offer the first pair from **answer times** (`p10` / `p90` of correct, unguessed, timed answers from clock-neutral versions), before any Easy/Hard label exists. | The contrast needs Easy-vs-Good pairs, so turning correctness-only off starts a months-long wait rather than producing a number. Dwell is recorded in both rules, and a neutral clock keeps it unbiased, so the first pair can come from the pace the learner already has. |
 | D9 | Add a `Grade on correctness only` switch: correct → Good, wrong/guess/skip → Again, the clock never decides the grade or its colour. The switch hides both cut fields and the Stats calibration card, keeps recording the dwell, and starts a new grading version (`reason = rule`). | Some learners do not want time to grade them. Ignoring the clock is a rule change, not a cut value, so it needs its own epoch; the dwell is still the input any later re-tune would need, so it keeps being stored. |
 
 Expected distribution on the recorded 812 scorable reviews (replay, Again fixed):
@@ -187,6 +188,24 @@ Out of scope:
       switch is flipped back; store round-trip and reset; RULE version on switch, MANUAL with
       the flag on a cut edit; the v26→v27 copy defaults the column to 0.
 - [x] `README.md`: footer, clock tint, settings table, switch section, Tab 2.
+
+### 4.7d Answer-time suggestion (stage 1)
+
+- [x] `Calibration.Row.elapsedSeconds` and `correctnessOnly` (the rule that produced the
+      row, resolved through `grading_versions` in `StatsStore`).
+- [x] `Calibration.suggestCutsFromDwell`: p10/p90 over correct, unguessed, timed answers from
+      clock-neutral versions; gates 200 rows / 30 cards / 14 days; clamps 2 s, 60 s gap
+      floor 5 s, 120 s ceiling; integer percentile arithmetic (0.9 × 199 is not 179.1).
+- [x] `RetentionData.dwellSuggestion`; `StatsStore` returns it only under correctness-only, so
+      it never competes with the contrast suggestion.
+- [x] Retention section: `Suggested cuts` card replaces the calibration card under that rule,
+      says it measures time rather than retention, and names the pair to enter when timing is
+      switched on.
+- [x] Tests: percentile pair, exclusion of wrong/guess/skip/zero/null/tinted rows, all three
+      gates, both clamps, and the "agrees with the stored pair" case.
+- [x] `StatsRetentionStreamTest`: the streamed build's report and both suggestions are nulled
+      before comparing against the in-memory oracle.
+- [x] `README.md`: Tab 2 and the switch section describe the two-stage tuning.
 
 ### 4.8 Housekeeping
 

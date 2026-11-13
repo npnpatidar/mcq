@@ -513,6 +513,132 @@ class CalibrationTest {
         assertEquals(60L, ceiling.nextSlow)
     }
 
+    // --- the answer-time pair (correctness-only rule) ---
+
+    private fun timedRow(
+        questionId: String,
+        dwell: Long?,
+        at: Long,
+        correct: Boolean = true,
+        guess: Boolean = false,
+        skipped: Boolean = false,
+        correctnessOnly: Boolean = true
+    ) = row(
+        questionId = questionId,
+        rating = if (correct) 3 else 1,
+        reviewedAt = at,
+        wasCorrect = correct,
+        wasGuess = guess,
+        wasSkipped = skipped
+    ).copy(elapsedSeconds = dwell, correctnessOnly = correctnessOnly)
+
+    /** [counts] maps a dwell in seconds to how many answers took it. */
+    private fun timedRows(
+        counts: Map<Long, Int>,
+        cards: Int = 40,
+        spanDays: Int = 20
+    ): List<Calibration.Row> = buildList {
+        var i = 0
+        counts.forEach { (dwell, n) ->
+            repeat(n) {
+                add(timedRow("q${i % cards}", dwell, t0 + (i % spanDays) * day))
+                i++
+            }
+        }
+    }
+
+    @Test
+    fun `answer times place the cuts a tenth from each end`() {
+        // 20 answers at 3 s, 160 at 15 s, 20 at 60 s: p10 = 14 s, p90 = 20 s.
+        val rows = timedRows(linkedMapOf(3L to 20, 15L to 160, 60L to 20))
+        val suggestion = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+        assertEquals(14L, suggestion.nextFast)
+        assertEquals(20L, suggestion.nextSlow)
+        assertEquals(200, suggestion.evidence)
+        assertTrue(suggestion.changes)
+    }
+
+    @Test
+    fun `answer times ignore anything that is not a clean timed answer`() {
+        val clean = timedRows(linkedMapOf(3L to 20, 15L to 160, 60L to 20))
+        val noise = buildList {
+            repeat(30) { add(timedRow("wrong-$it", 4, t0 + day, correct = false)) }
+            repeat(20) { add(timedRow("guess-$it", 4, t0 + day, guess = true)) }
+            repeat(10) { add(timedRow("skip-$it", 4, t0 + day, skipped = true)) }
+            repeat(5) { add(timedRow("zero-$it", 0, t0 + day)) }
+            repeat(5) { add(timedRow("null-$it", null, t0 + day)) }
+            // Dwells recorded while the clock was tinted: the feedback could
+            // have shaped them, so they are not free evidence.
+            repeat(100) { add(timedRow("timed-$it", 4, t0 + day, correctnessOnly = false)) }
+        }
+        val suggestion = Calibration.suggestCutsFromDwell(
+            clean + noise, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+        assertEquals("noise must not enter the percentiles", 200, suggestion.evidence)
+        assertEquals(14L, suggestion.nextFast)
+    }
+
+    @Test
+    fun `answer times need rows, cards and a calendar span`() {
+        val short = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(15L to 199), cards = 40),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, short.status)
+        assertEquals(199, short.evidence)
+        assertEquals(6L, short.nextFast)
+
+        val fewCards = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(15L to 200), cards = 29),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, fewCards.status)
+
+        // 200 answers, but recorded inside a single week: the pace measured is
+        // one week's, not the learner's.
+        val fewDays = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(15L to 200), cards = 40, spanDays = 7),
+            now = t0 + 6 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, fewDays.status)
+    }
+
+    @Test
+    fun `answer times are clamped into a range worth naming`() {
+        // A slow tail must not push the Hard cut past the ceiling.
+        val slowTail = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(1L to 20, 5L to 100, 300L to 80)),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(120L, slowTail.nextSlow)
+        assertEquals(5L, slowTail.nextFast)
+
+        // An almost-instant pace must not put the two cuts a second apart.
+        val tight = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(1L to 200)),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(2L, tight.nextFast)
+        assertEquals(7L, tight.nextSlow)
+    }
+
+    @Test
+    fun `answer times that agree with the stored pair do not propose a move`() {
+        // 21 answers at each end keep both percentiles exact under linear
+        // interpolation.
+        val rows = timedRows(linkedMapOf(6L to 21, 30L to 158, 60L to 21))
+        val suggestion = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(6L, suggestion.nextFast)
+        assertEquals(60L, suggestion.nextSlow)
+        assertFalse(suggestion.changes)
+    }
+
     @Test
     fun `an open gate or a missing contrast asks for evidence`() {
         val notReady = Calibration.suggestCuts(

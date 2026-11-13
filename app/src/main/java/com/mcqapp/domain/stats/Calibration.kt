@@ -48,6 +48,23 @@ object Calibration {
     const val DESCRIPTIVE_CARDS = 20
     const val MAX_HALF_WIDTH = 0.05
 
+    /**
+     * Answer-time evidence is much cheaper than outcome evidence: it needs no
+     * matured pairs, only enough correct answers to place two percentiles.
+     */
+    const val MIN_DWELL_ROWS = 200
+    const val MIN_DWELL_CARDS = 30
+    const val MIN_DWELL_DAYS = 14
+
+    /** The share of correct answers each outer band should receive, in percent. */
+    const val DWELL_EASY_PERCENT = 10
+    const val DWELL_HARD_PERCENT = 90
+
+    /** The pair from answer times is clamped into a range worth naming. */
+    const val MIN_DWELL_FAST_SECONDS = 2L
+    const val MIN_DWELL_GAP_SECONDS = 5L
+    const val MAX_DWELL_SLOW_SECONDS = 120L
+
     const val RESAMPLES = 5_000
     const val SEED = 20261111L
 
@@ -77,7 +94,16 @@ object Calibration {
         val wasGuess: Boolean?,
         val wasCorrect: Boolean?,
         val wasSkipped: Boolean?,
-        val intervalDaysAfter: Int?
+        val intervalDaysAfter: Int?,
+        /** Whole-second dwell; null on rows written before timing existed. */
+        val elapsedSeconds: Long? = null,
+        /**
+         * Whether the grading version that produced this row ignored the clock.
+         * Answer-time evidence only trusts these rows: when the clock is tinted
+         * it feeds the cuts back to the learner, so the dwell distribution
+         * would partly measure the cuts rather than the person.
+         */
+        val correctnessOnly: Boolean = false
     )
 
     /** One usable label → outcome pair. */
@@ -163,7 +189,9 @@ object Calibration {
         val currentSlow: Long,
         val nextFast: Long,
         val nextSlow: Long,
-        val status: Status
+        val status: Status,
+        /** How many reviews the proposal is based on; 0 when not applicable. */
+        val evidence: Int = 0
     ) {
         enum class Status {
             /** The gates are not met, so no number would be honest. */
@@ -179,7 +207,13 @@ object Calibration {
             STEP_UP,
 
             /** The evidence points past the end of the allowed range. */
-            AT_LIMIT
+            AT_LIMIT,
+
+            /**
+             * Chosen from answer times alone, before the first timed review:
+             * a starting pair, not a retention finding.
+             */
+            FROM_TIMES
         }
 
         val changes: Boolean get() = nextFast != currentFast || nextSlow != currentSlow
@@ -228,6 +262,81 @@ object Calibration {
 
             Direction.NONE -> keep(CutSuggestion.Status.KEEP)
         }
+    }
+
+    /**
+     * The first pair a learner can be offered: the cuts that would put about a
+     * tenth of their correct, unguessed answers on each side, taken from the
+     * dwell history itself. No labels and no outcomes are needed, so it works
+     * while the learner grades on correctness only — which is exactly the state
+     * in which no Easy or Hard label exists to calibrate.
+     *
+     * Only rows graded with the clock ignored are used ([Row.correctnessOnly]):
+     * a tinted clock feeds the cuts back to the learner, so those dwells are
+     * not a free measurement of their pace. Outcomes are not consulted, so this
+     * says nothing about retention; it places the bands where the learner's own
+     * pace already separates fast from slow.
+     */
+    fun suggestCutsFromDwell(
+        reviews: List<Row>,
+        now: Long,
+        fastSeconds: Long,
+        slowSeconds: Long
+    ): CutSuggestion {
+        fun insufficient(evidence: Int) = CutSuggestion(
+            fastSeconds, slowSeconds, fastSeconds, slowSeconds,
+            CutSuggestion.Status.NEEDS_EVIDENCE,
+            evidence
+        )
+
+        val usable = reviews.filter {
+            it.correctnessOnly &&
+                it.elapsedSeconds != null && it.elapsedSeconds > 0L &&
+                it.wasCorrect == true &&
+                it.wasGuess != true &&
+                it.wasSkipped != true
+        }
+        val cards = usable.map { it.paperId to it.questionId }.toSet()
+        if (usable.size < MIN_DWELL_ROWS || cards.size < MIN_DWELL_CARDS) {
+            return insufficient(usable.size)
+        }
+        val first = usable.minOf { it.reviewedAt }
+        if (now - first < MIN_DWELL_DAYS * DAY_MS) return insufficient(usable.size)
+
+        val sorted = usable.map { it.elapsedSeconds!! }.sorted()
+        val fast = percentile(sorted, DWELL_EASY_PERCENT)
+            .coerceAtLeast(MIN_DWELL_FAST_SECONDS)
+        val slow = percentile(sorted, DWELL_HARD_PERCENT)
+            .coerceAtMost(MAX_DWELL_SLOW_SECONDS)
+        // A tight pace would otherwise name two cuts a second apart, where a
+        // one-second rounding error moves a third of the answers.
+        val wideSlow = slow.coerceAtLeast(fast + MIN_DWELL_GAP_SECONDS)
+            .coerceAtMost(MAX_DWELL_SLOW_SECONDS)
+        val wideFast = fast.coerceAtMost(wideSlow - MIN_DWELL_GAP_SECONDS)
+            .coerceAtLeast(MIN_DWELL_FAST_SECONDS)
+        return CutSuggestion(
+            currentFast = fastSeconds,
+            currentSlow = slowSeconds,
+            nextFast = wideFast,
+            nextSlow = wideSlow,
+            status = CutSuggestion.Status.FROM_TIMES,
+            evidence = usable.size
+        )
+    }
+
+    /**
+     * Linear-interpolated percentile over an ascending list, half-up rounded.
+     * Integer arithmetic on purpose: `0.9 * 199` is a hair under 179.1 in
+     * binary, which turns an exact 20 s into 19 s.
+     */
+    private fun percentile(sorted: List<Long>, percent: Int): Long {
+        if (sorted.isEmpty()) return 0L
+        val numerator = percent.toLong() * (sorted.size - 1)
+        val low = (numerator / 100).toInt()
+        val remainder = (numerator % 100).toInt()
+        if (remainder == 0) return sorted[low]
+        val high = (low + 1).coerceAtMost(sorted.lastIndex)
+        return (sorted[low] * (100 - remainder) + sorted[high] * remainder + 50) / 100
     }
 
     /** Follow-up coverage among labels whose outcome is due, per grade. */

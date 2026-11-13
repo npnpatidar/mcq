@@ -62,6 +62,10 @@ internal fun RetentionSection(
             item(contentType = "calibration") {
                 CalibrationCard(bundle = bundle)
             }
+        } else {
+            item(contentType = "dwell-cuts") {
+                DwellCutsCard(suggestion = bundle.dwellSuggestion)
+            }
         }
         if (bundle.groupRetention.isNotEmpty()) {
             item(contentType = "group-retention") { GroupRetentionCard(bundle) }
@@ -129,6 +133,52 @@ private fun LegendEntry(color: Color, @StringRes labelRes: Int) {
             stringResource(labelRes),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * The answer-time pair, shown while correctness-only grading is on. This is not
+ * calibration: nothing is compared against outcomes, and the card says so. It
+ * exists so that switching the rule off is not the first time a number
+ * appears — the pair is picked from the dwells the learner has already
+ * recorded.
+ */
+@Composable
+private fun DwellCutsCard(suggestion: Calibration.CutSuggestion?) {
+    ChartCard(
+        testTag = "stats-dwell-cuts",
+        title = { ChartTitle(R.string.stats_dwell_cuts) },
+        subtitle = { ChartSubtitle(R.string.stats_dwell_cuts_help) }
+    ) {
+        if (suggestion == null) return@ChartCard
+        val text = when {
+            suggestion.status != Calibration.CutSuggestion.Status.FROM_TIMES ->
+                stringResource(
+                    R.string.stats_cuts_from_times_not_yet,
+                    suggestion.evidence,
+                    Calibration.MIN_DWELL_ROWS
+                )
+
+            suggestion.changes -> stringResource(
+                R.string.stats_cuts_from_times,
+                suggestion.nextFast,
+                suggestion.nextSlow,
+                suggestion.evidence
+            )
+
+            else -> stringResource(
+                R.string.stats_cuts_from_times_same,
+                suggestion.nextFast,
+                suggestion.nextSlow,
+                suggestion.evidence
+            )
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (suggestion.changes) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -236,7 +286,10 @@ private fun CalibrationEvidence(
                         )
 
                     Calibration.CutSuggestion.Status.STEP_DOWN,
-                    Calibration.CutSuggestion.Status.STEP_UP ->
+                    Calibration.CutSuggestion.Status.STEP_UP,
+                    // Never produced by the contrast path, but the enum can
+                    // express it: fall back to the same "try X / Y" line.
+                    Calibration.CutSuggestion.Status.FROM_TIMES ->
                         stringResource(
                             R.string.stats_cuts_step,
                             suggestion.nextFast,

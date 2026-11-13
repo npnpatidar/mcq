@@ -39,6 +39,12 @@ import com.mcqapp.domain.stats.WorkloadData
  */
 internal class StatsStore(private val db: AppDatabase, private val settings: SettingsStore) {
 
+    /** The calibration report plus the answer-time pair that may stand alone. */
+    private data class CalibrationLoad(
+        val report: Calibration.Report,
+        val dwellSuggestion: Calibration.CutSuggestion?
+    )
+
     /**
      * Everything but the log. A library this size is a fraction of the review
      * log, and every list-based tab slices it in memory per range and scope.
@@ -119,15 +125,23 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             db.questionDao().getCategoryTitlesByIdsChunked(reviewedIds)
         }
         val data = accumulator.toData(tagsOfQuestion, categoriesForSlice)
-        val report = loadCalibration(scopePaperId, now, config)
+        val calibration = loadCalibration(scopePaperId, now, config)
         return data.copy(
-            calibrationReport = report,
+            calibrationReport = calibration.report,
             timeBasedGrading = !config.correctnessOnlyGrading,
-            cutSuggestion = Calibration.suggestCuts(
-                report = report,
-                fastSeconds = config.fastSeconds,
-                slowSeconds = config.slowSeconds
-            )
+            // The two suggestions answer different questions and never appear
+            // together: the contrast needs labels, the answer-time pair needs
+            // only dwells, and only one rule can be in force at a time.
+            cutSuggestion = if (config.correctnessOnlyGrading) {
+                null
+            } else {
+                Calibration.suggestCuts(
+                    report = calibration.report,
+                    fastSeconds = config.fastSeconds,
+                    slowSeconds = config.slowSeconds
+                )
+            },
+            dwellSuggestion = calibration.dwellSuggestion
         )
     }
 
@@ -144,7 +158,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         scopePaperId: String?,
         now: Long,
         config: SchedulerConfig
-    ): Calibration.Report {
+    ): CalibrationLoad {
         val version = config.gradingVersion
         val versionStart = if (version > 0) {
             db.gradingRulesDao().version(version.toLong())?.effectiveFrom ?: 0L
@@ -156,6 +170,12 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         // log changes the forecast yardstick for every paper's report.
         var fitStartedAt = Long.MAX_VALUE
         var staleFitSeen = false
+        // Which versions ignored the clock: answer-time evidence only trusts
+        // dwells measured while the clock made no colour claim.
+        val correctnessOnlyVersions = db.gradingRulesDao().allVersions()
+            .filter { it.correctnessOnly }
+            .map { it.id.toInt() }
+            .toSet()
         val rows = ArrayList<Calibration.Row>()
         var afterId = 0L
         while (true) {
@@ -171,7 +191,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
                     }
                 }
                 if (scopePaperId != null && row.paperId != scopePaperId) return@forEach
-                rows += row.toCalibrationRow()
+                rows += row.toCalibrationRow(correctnessOnlyVersions)
             }
             afterId = page.last().id
             if (page.size < PAGE_SIZE) break
@@ -197,14 +217,28 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             blockEnd = closedBlockEnd,
             maxReviewedAt = maxReviewedAt
         )
-        calibrationCache[key]?.let { return it }
+        // Answer times are cheap evidence and need no cache: the rows are
+        // already built by the pass above.
+        val dwellSuggestion = if (config.correctnessOnlyGrading) {
+            Calibration.suggestCutsFromDwell(
+                reviews = rows,
+                now = now,
+                fastSeconds = config.fastSeconds,
+                slowSeconds = config.slowSeconds
+            )
+        } else {
+            null
+        }
+        calibrationCache[key]?.let { return CalibrationLoad(it, dwellSuggestion) }
         val report = Calibration.report(rows, now, epochStart, refitInEpoch)
         calibrationCache.clear()
         calibrationCache[key] = report
-        return report
+        return CalibrationLoad(report, dwellSuggestion)
     }
 
-    private fun ReviewLogEntity.toCalibrationRow() = Calibration.Row(
+    private fun ReviewLogEntity.toCalibrationRow(
+        correctnessOnlyVersions: Set<Int>
+    ) = Calibration.Row(
         id = id,
         paperId = paperId,
         questionId = questionId,
@@ -219,7 +253,9 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         wasGuess = wasGuess,
         wasCorrect = wasCorrect,
         wasSkipped = wasSkipped,
-        intervalDaysAfter = intervalDaysAfter
+        intervalDaysAfter = intervalDaysAfter,
+        elapsedSeconds = elapsedSeconds,
+        correctnessOnly = gradingVersion in correctnessOnlyVersions
     )
 
     private data class CalibrationCacheKey(

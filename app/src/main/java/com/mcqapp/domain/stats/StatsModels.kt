@@ -637,6 +637,12 @@ data class RetentionData(
      */
     val cutSuggestion: Calibration.CutSuggestion? = null,
     /**
+     * The pair the learner's own answer times imply, shown while correctness-only
+     * grading is on. Null under timed grading, where the contrast suggestion
+     * above is the one that applies.
+     */
+    val dwellSuggestion: Calibration.CutSuggestion? = null,
+    /**
      * Whether the grade came from the answer clock (v27). False under
      * correctness-only grading: the calibration card measures the two cuts, so
      * it has nothing to show and is hidden instead of staying empty.

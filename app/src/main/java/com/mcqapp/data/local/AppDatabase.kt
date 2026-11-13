@@ -742,7 +742,8 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `grading_versions` (" +
                         "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, " +
-                        "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL)"
+                        "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, " +
+                        "`correctnessOnly` INTEGER NOT NULL DEFAULT 0)"
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` " +
@@ -750,8 +751,9 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "INSERT INTO `grading_versions` " +
-                        "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`) " +
-                        "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason` " +
+                        "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
+                        "`correctnessOnly`) " +
+                        "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, 0 " +
                         "FROM `ladder_versions`"
                 )
                 db.execSQL("DROP TABLE IF EXISTS `ladder_blocks`")

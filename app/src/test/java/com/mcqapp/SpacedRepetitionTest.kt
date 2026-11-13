@@ -433,6 +433,50 @@ class SpacedRepetitionTest {
     }
 
     @Test
+    fun `correctness-only grading ignores the clock entirely`() {
+        val config = SchedulerConfig(correctnessOnlyGrading = true)
+        // Every dwell a real session can produce, including the boundaries and
+        // values far past the Hard cut, lands on the same grade.
+        listOf(0L, 1L, 5L, 6L, 59L, 60L, 600L).forEach { dwell ->
+            assertEquals(
+                "correct answer at ${dwell}s must be Good",
+                ReviewGrade.GOOD,
+                Study.autoGrade(setOf("a"), setOf("a"), dwell, isGuess = false, config = config)
+            )
+        }
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), setOf("b"), 3, isGuess = false, config = config)
+        )
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), setOf("a"), 3, isGuess = true, config = config)
+        )
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), emptySet(), 3, isGuess = false, config = config)
+        )
+    }
+
+    @Test
+    fun `correctness-only grading leaves the cuts themselves untouched`() {
+        // The stored pair is the fallback rule, so switching back must grade
+        // exactly as before, without the switch having rewritten anything.
+        val on = SchedulerConfig(correctnessOnlyGrading = true)
+        val off = on.copy(correctnessOnlyGrading = false)
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(setOf("a"), setOf("a"), 3, isGuess = false, config = off)
+        )
+        assertEquals(
+            ReviewGrade.HARD,
+            Study.autoGrade(setOf("a"), setOf("a"), 90, isGuess = false, config = off)
+        )
+        assertEquals(6L, on.fastSeconds)
+        assertEquals(60L, on.slowSeconds)
+    }
+
+    @Test
     fun `a correct guess is Again at any dwell`() {
         listOf(0L, 1L, 7L, 15L, 120L).forEach { dwell ->
             assertEquals(

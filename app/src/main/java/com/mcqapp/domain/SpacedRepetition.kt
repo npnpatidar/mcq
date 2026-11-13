@@ -183,6 +183,17 @@ data class SchedulerConfig(
     /** Correct answer slower than this (seconds) infers Hard from history. */
     val slowSeconds: Long = 60L,
     /**
+     * Grade every correct answer Good and everything else Again, ignoring the
+     * clock entirely (v27). The cuts still exist because they are the fallback
+     * when the switch is off, but nothing reads them while this is on: no Easy
+     * and no Hard label is ever inferred, and the clock stops colouring itself.
+     *
+     * The setting is a rule change, not a tuning change: the writer starts a new
+     * grading version so rows graded under the cuts are never pooled with rows
+     * graded by correctness alone.
+     */
+    val correctnessOnlyGrading: Boolean = false,
+    /**
      * The 21 FSRS-6 weights scheduling runs on, in reference order. Defaults
      * to the official unoptimized set; "Optimize FSRS parameters" in Settings
      * replaces them with [FsrsOptimizer]'s fit to this learner's own review
@@ -316,6 +327,10 @@ object Study {
      * [config] so a user who retunes them also changes history reconstruction.
      * The cuts are absolute: nothing is added for reading the question, so the
      * same pair grades every card regardless of length.
+     *
+     * With [SchedulerConfig.correctnessOnlyGrading] the clock is not consulted
+     * at all: a correct answer is Good whatever the dwell, so Easy and Hard only
+     * ever appear as a learner's manual edit.
      */
     fun inferGrade(
         isCorrect: Boolean,
@@ -324,6 +339,7 @@ object Study {
         config: SchedulerConfig = SchedulerConfig()
     ): ReviewGrade {
         if (skipped || !isCorrect) return ReviewGrade.AGAIN
+        if (config.correctnessOnlyGrading) return ReviewGrade.GOOD
         if (dwellSeconds in 1 until config.fastSeconds) return ReviewGrade.EASY
         if (dwellSeconds >= config.slowSeconds) return ReviewGrade.HARD
         return ReviewGrade.GOOD

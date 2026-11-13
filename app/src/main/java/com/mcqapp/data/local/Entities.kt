@@ -356,8 +356,15 @@ data class GradingVersionEntity(
     val easySeconds: Long,
     val slowSeconds: Long,
     val effectiveFrom: Long,
-    /** prior or manual. */
-    val reason: String
+    /** prior, manual or rule. */
+    val reason: String,
+    /**
+     * Whether this version's reviews were graded by correctness alone, with the
+     * clock ignored (v27). False on every row copied from v26, which never had
+     * the mode, and on rows written while the switch is off.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val correctnessOnly: Boolean = false
 )
 
 /**

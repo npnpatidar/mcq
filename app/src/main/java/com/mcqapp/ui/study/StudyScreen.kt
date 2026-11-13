@@ -509,11 +509,15 @@ private fun StudyStickyHeader(
     // The question clock doubles as a dwell gauge: green while the card is in
     // the Easy window, amber through Good, red once it reaches Hard. Thresholds
     // are the absolute cuts from the same rule the check grades with, and the
-    // time itself stays the primary signal. The
-    // tints come from the active theme and are contrast-checked against its
+    // time itself stays the primary signal. Under correctness-only grading the
+    // dwell is still recorded for later analysis, but it does not decide the
+    // grade, so the clock keeps the neutral tint instead of implying a band.
+    // The tints come from the active theme and are contrast-checked against its
     // surface, so the clock stays legible in light, dark and every palette.
     val clockColors = clockBandColors()
-    val clockColor = when (
+    val clockColor = if (state.correctnessOnlyGrading) {
+        MaterialTheme.colorScheme.onSurface
+    } else when (
         Study.dwellBand(liveDwell, state.dwellEasySeconds, state.dwellHardSeconds)
     ) {
         // The first second has banked no time, so it makes no colour claim.

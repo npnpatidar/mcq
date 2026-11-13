@@ -16,6 +16,7 @@ fold it into `README.md` before the release PR is merged.
 | D6 | Replace `ladder_versions` with `grading_versions`, copying ids. | Every pre-v27 row's `ladderVersion` must still resolve to the cut pair that graded it, so the log stays re-gradable offline. |
 | D7 | Bump the rule version (`grading_rules_version = 1`): a cut pair stored by an older build is ignored on read, and the first versioned read writes a fresh `prior` row for 6/60 so the calibration epoch starts at the rule change. | A stored 8/30 was tuned against the reading bonus; silently keeping it would grade the new rule with the old pair, and reusing its version id would pool pre-v27 reviews into the new epoch. |
 | D8 | Turn the report's direction into a **read-only** suggestion (`Suggested cuts: try 4 s / 60 s…`) instead of an applied change: one second per 5 pp outside the band, capped at 4 s, Easy cut only. | Removing the ladder removed the only thing that translated "too wide" into a number. The contrast tells direction and magnitude in pp, not an optimum, so the app names a bounded next step and the learner decides. Hard is never moved: δ2 is not acted on. |
+| D9 | Add a `Grade on correctness only` switch: correct → Good, wrong/guess/skip → Again, the clock never decides the grade or its colour. The switch hides both cut fields and the Stats calibration card, keeps recording the dwell, and starts a new grading version (`reason = rule`). | Some learners do not want time to grade them. Ignoring the clock is a rule change, not a cut value, so it needs its own epoch; the dwell is still the input any later re-tune would need, so it keeps being stored. |
 
 Expected distribution on the recorded 812 scorable reviews (replay, Again fixed):
 
@@ -88,6 +89,10 @@ Out of scope:
       A reset drops the version key for the same reason.
 - [x] `StatsStore`: `versionStart` now comes from `grading_versions`; returns only the
       calibration report.
+- [x] `grading_versions.correctnessOnly` (v27, unreleased so the table was extended in
+      place): which rule graded the reviews under that version.
+- [x] `GradingRulesStore`: a rule switch writes `reason = rule` and the flag; a cut edit
+      under the switch writes `reason = manual` with the flag still set.
 
 ### 4.3 Delete the ladder
 
@@ -162,6 +167,26 @@ Out of scope:
 - [x] `CalibrationTest`: keep, one-step down, cap, inside-band no-move, step up, both range
       ends, and the three evidence gates.
 - [x] `README.md` Tab 2 calibration row describes the line and its policy.
+
+### 4.7c Correctness-only grading
+
+- [x] `SchedulerConfig.correctnessOnlyGrading`; `inferGrade` returns Good before reading the
+      cuts, so Easy/Hard are never inferred.
+- [x] `RepositorySettings`: `correctness_only` key, read/write/reset; `writeCuts` carries the
+      mode in the same edit as the pair.
+- [x] `GradingRulesStore`: a rule switch writes `reason = rule`; a cut edit under the switch
+      stays `manual` and keeps the flag. `GradingVersionEntity.correctnessOnly` records it.
+- [x] Backup: `GradingVersionRow.correctnessOnly` (default false, so old files import).
+- [x] Settings: switch (`setting-grade-correctness-only`); both cut rows and their footnote
+      disappear while it is on, and the stored pair survives as the fallback.
+- [x] Study: the clock keeps counting and the dwell is still stored, but the tint stays
+      neutral (`StudyUiState.correctnessOnlyGrading`).
+- [x] Stats: `RetentionData.timeBasedGrading` hides the calibration card (contrasts,
+      readiness, suggested cuts) — with no Easy/Hard labels it has nothing to measure.
+- [x] Tests: every dwell → Good, wrong/guess/skip → Again; the pair is untouched when the
+      switch is flipped back; store round-trip and reset; RULE version on switch, MANUAL with
+      the flag on a cut edit; the v26→v27 copy defaults the column to 0.
+- [x] `README.md`: footer, clock tint, settings table, switch section, Tab 2.
 
 ### 4.8 Housekeeping
 

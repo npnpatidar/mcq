@@ -12,7 +12,10 @@ enum class GradingReason(val stored: String) {
     PRIOR("prior"),
 
     /** A learner edited a cut in Settings. */
-    MANUAL("manual")
+    MANUAL("manual"),
+
+    /** A learner switched the rule between timed and correctness-only. */
+    RULE("rule")
 }
 
 /**
@@ -45,20 +48,33 @@ internal class GradingRulesStore(
     suspend fun currentVersion(): Int = mutex.withLock { ensureVersionLocked() }
 
     /**
-     * The whole-config write path: records a MANUAL version only when the cuts
-     * actually changed, so a Settings save of an unrelated knob does not
-     * manufacture a version.
+     * The whole-config write path: records a MANUAL version when a cut changed,
+     * and a RULE version when the timing rule itself changed (the correctness
+     * switch), so a Settings save of an unrelated knob does not manufacture a
+     * version and two rules never share one.
      */
     suspend fun recordConfigCuts(config: SchedulerConfig): Int = mutex.withLock {
         val stored = settings.schedulerConfigNow()
-        if (stored.fastSeconds == config.fastSeconds &&
-            stored.slowSeconds == config.slowSeconds
-        ) {
+        val cutsChanged = stored.fastSeconds != config.fastSeconds ||
+            stored.slowSeconds != config.slowSeconds
+        val ruleChanged = stored.correctnessOnlyGrading != config.correctnessOnlyGrading
+        if (!cutsChanged && !ruleChanged) {
             return@withLock ensureVersionLocked()
         }
         val id = nextVersionId()
-        settings.writeCuts(config.fastSeconds, config.slowSeconds, id)
-        insert(id, config.fastSeconds, config.slowSeconds, GradingReason.MANUAL)
+        settings.writeCuts(
+            config.fastSeconds,
+            config.slowSeconds,
+            id,
+            config.correctnessOnlyGrading
+        )
+        insert(
+            id,
+            config.fastSeconds,
+            config.slowSeconds,
+            if (ruleChanged && !cutsChanged) GradingReason.RULE else GradingReason.MANUAL,
+            config.correctnessOnlyGrading
+        )
         id
     }
 
@@ -71,19 +87,37 @@ internal class GradingRulesStore(
     suspend fun seedAfterRestore(): Int = mutex.withLock {
         val config = settings.schedulerConfigNow()
         val id = nextVersionId()
-        settings.writeCuts(config.fastSeconds, config.slowSeconds, id)
-        insert(id, config.fastSeconds, config.slowSeconds, GradingReason.PRIOR)
+        settings.writeCuts(
+            config.fastSeconds,
+            config.slowSeconds,
+            id,
+            config.correctnessOnlyGrading
+        )
+        insert(
+            id,
+            config.fastSeconds,
+            config.slowSeconds,
+            GradingReason.PRIOR,
+            config.correctnessOnlyGrading
+        )
         id
     }
 
-    private suspend fun insert(id: Int, easySeconds: Long, slowSeconds: Long, reason: GradingReason) {
+    private suspend fun insert(
+        id: Int,
+        easySeconds: Long,
+        slowSeconds: Long,
+        reason: GradingReason,
+        correctnessOnly: Boolean
+    ) {
         db.gradingRulesDao().insertVersion(
             GradingVersionEntity(
                 id = id.toLong(),
                 easySeconds = easySeconds,
                 slowSeconds = slowSeconds,
                 effectiveFrom = System.currentTimeMillis(),
-                reason = reason.stored
+                reason = reason.stored,
+                correctnessOnly = correctnessOnly
             )
         )
     }
@@ -103,8 +137,19 @@ internal class GradingRulesStore(
             // schedulerConfigNow() ignores the stale pair and returns 6/60.
             val config = settings.schedulerConfigNow()
             val id = nextVersionId()
-            settings.writeCuts(config.fastSeconds, config.slowSeconds, id)
-            insert(id, config.fastSeconds, config.slowSeconds, GradingReason.PRIOR)
+            settings.writeCuts(
+                config.fastSeconds,
+                config.slowSeconds,
+                id,
+                config.correctnessOnlyGrading
+            )
+            insert(
+                id,
+                config.fastSeconds,
+                config.slowSeconds,
+                GradingReason.PRIOR,
+                config.correctnessOnlyGrading
+            )
             return id
         }
         val stored = settings.gradingVersionOrNull()
@@ -117,7 +162,8 @@ internal class GradingRulesStore(
                         easySeconds = config.fastSeconds,
                         slowSeconds = config.slowSeconds,
                         effectiveFrom = System.currentTimeMillis(),
-                        reason = GradingReason.PRIOR.stored
+                        reason = GradingReason.PRIOR.stored,
+                        correctnessOnly = config.correctnessOnlyGrading
                     )
                 )
             }
@@ -125,8 +171,19 @@ internal class GradingRulesStore(
         }
         val config = settings.schedulerConfigNow()
         val id = nextVersionId()
-        settings.writeCuts(config.fastSeconds, config.slowSeconds, id)
-        insert(id, config.fastSeconds, config.slowSeconds, GradingReason.PRIOR)
+        settings.writeCuts(
+            config.fastSeconds,
+            config.slowSeconds,
+            id,
+            config.correctnessOnlyGrading
+        )
+        insert(
+            id,
+            config.fastSeconds,
+            config.slowSeconds,
+            GradingReason.PRIOR,
+            config.correctnessOnlyGrading
+        )
         return id
     }
 

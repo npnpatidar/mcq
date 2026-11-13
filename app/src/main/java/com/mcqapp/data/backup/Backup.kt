@@ -181,7 +181,9 @@ object McqBackupFormat {
         val easySeconds: Long,
         val slowSeconds: Long,
         val effectiveFrom: Long,
-        val reason: String
+        val reason: String,
+        /** v27: reviews under this version were graded by correctness alone. */
+        val correctnessOnly: Boolean = false
     )
 
     /** One `study_sessions` row: real study time for one sitting. */
@@ -859,7 +861,8 @@ class BackupSource(private val db: AppDatabase) {
                 easySeconds = it.easySeconds,
                 slowSeconds = it.slowSeconds,
                 effectiveFrom = it.effectiveFrom,
-                reason = it.reason
+                reason = it.reason,
+                correctnessOnly = it.correctnessOnly
             )
         }
 
@@ -1309,7 +1312,8 @@ class BackupRestorer(private val db: AppDatabase) {
         easySeconds = easySeconds,
         slowSeconds = slowSeconds,
         effectiveFrom = effectiveFrom,
-        reason = reason
+        reason = reason,
+        correctnessOnly = correctnessOnly
     )
 
     private fun McqBackupFormat.StudySessionRow.toEntity() = StudySessionEntity(

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 27,
-    "identityHash": "d9d0577b8b012b6a3380dfd93aeae4cd",
+    "identityHash": "c8196a592389f537cf16f3dca4c1c7e3",
     "entities": [
       {
         "tableName": "papers",
@@ -1686,7 +1686,7 @@
       },
       {
         "tableName": "grading_versions",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, `effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, `effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, `correctnessOnly` INTEGER NOT NULL DEFAULT 0)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1717,6 +1717,13 @@
             "columnName": "reason",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "correctnessOnly",
+            "columnName": "correctnessOnly",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           }
         ],
         "primaryKey": {
@@ -1807,7 +1814,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd9d0577b8b012b6a3380dfd93aeae4cd')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8196a592389f537cf16f3dca4c1c7e3')"
     ]
   }
 }

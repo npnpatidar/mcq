@@ -62,6 +62,22 @@ class RepositorySettingsTest {
         assertEquals(SchedulerConfig().slowSeconds, config.slowSeconds)
     }
 
+    @Test
+    fun `correctness-only grading round-trips and resets with the pair`() = runBlocking {
+        store().setSchedulerConfig(SchedulerConfig(correctnessOnlyGrading = true))
+        val stored = store().schedulerConfigNow()
+        assertTrue("the switch must survive the store", stored.correctnessOnlyGrading)
+        // The cuts stay put: they are the fallback rule for when it is off.
+        assertEquals(SchedulerConfig().fastSeconds, stored.fastSeconds)
+        assertEquals(SchedulerConfig().slowSeconds, stored.slowSeconds)
+
+        store().resetSchedulerConfig()
+        assertFalse(
+            "a reset returns to timed grading",
+            store().schedulerConfigNow().correctnessOnlyGrading
+        )
+    }
+
     /**
      * The DataStore is process-wide, and the scheduler config carries two
      * generation fields (`ladder_version`, `fsrs_fit_version`) that other test

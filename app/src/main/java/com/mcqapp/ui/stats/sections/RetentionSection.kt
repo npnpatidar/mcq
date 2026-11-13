@@ -55,8 +55,13 @@ internal fun RetentionSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item(contentType = "trend") { TrendCard(bundle) }
-        item(contentType = "calibration") {
-            CalibrationCard(bundle = bundle)
+        // Correctness-only grading produces no Easy and no Hard labels, so the
+        // contrast, the readiness gate and the suggested pair have nothing to
+        // measure. The card is hidden rather than shown as perpetually empty.
+        if (bundle.timeBasedGrading) {
+            item(contentType = "calibration") {
+                CalibrationCard(bundle = bundle)
+            }
         }
         if (bundle.groupRetention.isNotEmpty()) {
             item(contentType = "group-retention") { GroupRetentionCard(bundle) }

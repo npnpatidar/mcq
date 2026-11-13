@@ -16,6 +16,7 @@ import com.mcqapp.domain.SchedulerConfig
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -70,6 +71,7 @@ class GradingRulesStoreTest {
         assertEquals("prior", versions.single().reason)
         assertEquals(6L, versions.single().easySeconds)
         assertEquals(60L, versions.single().slowSeconds)
+        assertFalse("the shipped rule grades on the clock", versions.single().correctnessOnly)
 
         assertEquals(first, rules().currentVersion())
         assertEquals(1, db.gradingRulesDao().allVersions().size)
@@ -125,7 +127,7 @@ class GradingRulesStoreTest {
     @Test
     fun aMissingHistoryRowIsRepairedFromThePreferences() = runBlocking {
         val store = store()
-        store.writeCuts(9L, 31L, 4)
+        store.writeCuts(9L, 31L, 4, correctnessOnly = false)
         db.openHelper.writableDatabase.execSQL("DELETE FROM grading_versions")
 
         assertEquals(4, rules().currentVersion())
@@ -134,6 +136,50 @@ class GradingRulesStoreTest {
         assertEquals("prior", repaired!!.reason)
         assertEquals(9L, repaired.easySeconds)
         assertEquals(31L, repaired.slowSeconds)
+    }
+
+    /**
+     * Switching to correctness-only grading is a rule change, not a tuning
+     * change: it owns a version row so reviews graded with the clock are never
+     * pooled with reviews graded without it.
+     */
+    @Test
+    fun aRuleSwitchWritesItsOwnVersionAndSwitchingBackDoesToo() = runBlocking {
+        val repository = McqRepository(db, context)
+        val before = repository.gradingVersion()
+
+        repository.setSchedulerConfig(SchedulerConfig(correctnessOnlyGrading = true))
+        val on = repository.gradingVersion()
+        assertEquals(before + 1, on)
+        val onRow = db.gradingRulesDao().version(on.toLong())!!
+        assertEquals("rule", onRow.reason)
+        assertTrue(onRow.correctnessOnly)
+        // The cuts are recorded unchanged: they still describe the fallback.
+        assertEquals(6L, onRow.easySeconds)
+        assertEquals(60L, onRow.slowSeconds)
+        assertTrue(repository.schedulerConfigNow().correctnessOnlyGrading)
+
+        repository.setSchedulerConfig(SchedulerConfig(correctnessOnlyGrading = false))
+        val off = repository.gradingVersion()
+        assertEquals(on + 1, off)
+        val offRow = db.gradingRulesDao().version(off.toLong())!!
+        assertEquals("rule", offRow.reason)
+        assertFalse(offRow.correctnessOnly)
+        assertFalse(repository.schedulerConfigNow().correctnessOnlyGrading)
+    }
+
+    /** A cut edited while the switch is on is a manual version of that rule. */
+    @Test
+    fun aCutEditUnderCorrectnessOnlyKeepsTheModeOnItsRow() = runBlocking {
+        val repository = McqRepository(db, context)
+        repository.setSchedulerConfig(SchedulerConfig(correctnessOnlyGrading = true))
+        repository.setSchedulerConfig(
+            SchedulerConfig(correctnessOnlyGrading = true, fastSeconds = 9)
+        )
+        val row = db.gradingRulesDao().version(repository.gradingVersion().toLong())!!
+        assertEquals("manual", row.reason)
+        assertTrue(row.correctnessOnly)
+        assertEquals(9L, row.easySeconds)
     }
 
     @Test

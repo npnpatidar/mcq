@@ -244,6 +244,12 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     private val studyModeKey = stringPreferencesKey("study_mode")
     private val introduceNewCardsKey = booleanPreferencesKey("introduce_new_cards")
 
+    /**
+     * Grade on correctness alone, ignoring the clock (v27). Unprefixed like the
+     * other FSRS-era keys: it is this app's grading rule, not an Anki knob.
+     */
+    private val correctnessOnlyKey = booleanPreferencesKey("correctness_only")
+
     // CSV of the 21 weights rather than 21 numeric keys: the set is written
     // and read as one value, and a malformed list (wrong length, junk
     // tokens) falls back to the defaults in SchedulerConfig.sanitized.
@@ -284,6 +290,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                 } ?: d.studyMode,
                 introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
                 dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
+                correctnessOnlyGrading = prefs[correctnessOnlyKey] ?: d.correctnessOnlyGrading,
                 fastSeconds = if (cutsCurrent) {
                     (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong()
                 } else {
@@ -317,6 +324,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             prefs[studyModeKey] = c.studyMode.name
             prefs[introduceNewCardsKey] = c.introduceNewCards
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
+            prefs[correctnessOnlyKey] = c.correctnessOnlyGrading
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
             prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
@@ -365,13 +373,19 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     internal suspend fun writeCuts(
         easySeconds: Long,
         slowSeconds: Long,
-        gradingVersion: Int
+        gradingVersion: Int,
+        correctnessOnly: Boolean = false
     ) {
         context.dataStore.edit { prefs ->
             prefs[schedKey("fast_seconds")] = easySeconds.toDouble()
             prefs[schedKey("slow_seconds")] = slowSeconds.toDouble()
             prefs[ladderVersionKey] = gradingVersion
             prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
+            // The mode travels with the cuts: a version row that says
+            // "correctness only" must never coexist with preferences that
+            // still grade on the clock, even for the instant before the rest
+            // of the config lands.
+            prefs[correctnessOnlyKey] = correctnessOnly
         }
     }
 
@@ -404,6 +418,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                     prefs[desiredRetentionKey] = c.desiredRetention
                     prefs[studyModeKey] = c.studyMode.name
                     prefs[introduceNewCardsKey] = c.introduceNewCards
+                    prefs[correctnessOnlyKey] = c.correctnessOnlyGrading
                     prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
                 }
             // The reset pair needs its own version row: the old id still names

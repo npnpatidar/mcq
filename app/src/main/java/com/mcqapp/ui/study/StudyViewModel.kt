@@ -132,6 +132,12 @@ data class StudyUiState(
      */
     val dwellEasySeconds: Long = Study.FAST_SECONDS,
     val dwellHardSeconds: Long = Study.SLOW_SECONDS,
+    /**
+     * Grade on correctness alone (v27). The clock keeps counting and the dwell
+     * is still stored for later analysis, but it no longer colours itself or
+     * decides the grade: the cuts above are unused while this is true.
+     */
+    val correctnessOnlyGrading: Boolean = false,
     /** The grade Check proposed; Next persists it. Null until checked. */
     val pendingGrade: ReviewGrade? = null,
     /**
@@ -508,6 +514,7 @@ class StudyViewModel(
                     passage = passage,
                     dwellEasySeconds = schedulerConfig.fastSeconds,
                     dwellHardSeconds = schedulerConfig.slowSeconds,
+                    correctnessOnlyGrading = schedulerConfig.correctnessOnlyGrading,
                     selection = emptySet(),
                     revealed = false,
                     grading = false,

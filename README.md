@@ -810,7 +810,9 @@ then **Again / Hard / Good / Easy** (each shows delay preview: `10m`, `6h`,
   cuts: `dwell < fastSeconds` (default 6 s) → `Easy`;
   `dwell >= slowSeconds` (default 60 s) → `Hard`; else `Good`. The clock starts
   when the card appears, so reading time counts against the cut and a long
-  question buys no extra Easy time.
+  question buys no extra Easy time. With `Grade on correctness only` on, the
+  clock is not consulted: a correct answer is always `Good`, so `Easy` and
+  `Hard` only appear when the learner edits the grade.
 - Result card shows grade, dwell, `Change grade` (re-opens Again/Hard/Good/Easy
   with same dwell), `Next` (persists the grade, pulls next card).
 
@@ -827,7 +829,9 @@ Confirm (correct), Reject (wrong).
   banked yet), green below `fastSeconds`, amber through Good, red at or above
   `slowSeconds`. Tints are derived from the active
   theme and contrast-checked against its surface (≥ 4.5:1), so every palette
-  stays legible in light and dark. Study only; the Test countdown is unchanged.
+  stays legible in light and dark. Under `Grade on correctness only` the clock
+  keeps the neutral tint while still counting and storing the dwell. Study
+  only; the Test countdown is unchanged.
 - **Session clock:** wall time, runs continuously (including answer/explanation).
 
 ### Session Summary
@@ -886,8 +890,9 @@ this, never midnight.
 | `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 21 weights to your review log (Anki parity). Shows log-loss before/after. `Restore defaults` drops fitted weights. |
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
-| `Minimum easy answer threshold` | 6 s | 1–3600, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. |
-| `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast | Auto-graded Hard at or above this. |
+| `Grade on correctness only` | off | switch | On = correct → `Good`, wrong/guess/skip → `Again`, the clock never decides the grade or its colour. Hides both cut fields below and the Stats calibration card. Dwell is still recorded. |
+| `Minimum easy answer threshold` | 6 s | 1–3600, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. Hidden while correctness-only grading is on. |
+| `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast | Auto-graded Hard at or above this. Hidden while correctness-only grading is on. |
 | **Advanced** (collapsed) | | | |
 | `Next day starts at` | 4 h | 0–23 | Study-day boundary. |
 | `Maximum interval` | 36500 d | 1–36500 | Cap on any interval. |
@@ -993,7 +998,7 @@ shrink drastically until it is no longer a leech.
 | Card | Chart / Table | Key details |
 |------|---------------|-------------|
 | **Retention** | Multi-series line: actual (filled area) + rolling pooled (tertiary, 7 buckets daily / 4 weekly/monthly) + dashed desired retention. y fixed 0–100%. Granularity: ≤ 31 d daily, ≤ 150 d weekly, else monthly. Empty buckets = gaps. |
-| **Calibration** | Bubble scatter: x = mean predicted retention per 0.1 bin, y = observed pass rate. Diagonal = perfect. Bubble radius = `6dp × (1 + n/20)` max 16dp. Summary: `Predicted X% vs actual Y% over N reviews · Brier score Z (lower is better)`. Brier = mean `(p − outcome)²`. Guard: `Calibration needs reviews of cards that already had a memory state.` Grade evidence below it: per-grade pairs/cards/recall, `Easy vs Good` and `Hard vs Good` contrasts with their 90 % intervals, follow-up coverage and the readiness gate. Once those gates close, a read-only line names the pair to try next (`Suggested cuts: try 4 s / 60 s instead of 6 s / 60 s. Nothing is applied automatically`), one second per 5 pp outside the band, capped at 4 s, Easy cut only. |
+| **Calibration** | Bubble scatter: x = mean predicted retention per 0.1 bin, y = observed pass rate. Diagonal = perfect. Bubble radius = `6dp × (1 + n/20)` max 16dp. Summary: `Predicted X% vs actual Y% over N reviews · Brier score Z (lower is better)`. Brier = mean `(p − outcome)²`. Guard: `Calibration needs reviews of cards that already had a memory state.` Grade evidence below it: per-grade pairs/cards/recall, `Easy vs Good` and `Hard vs Good` contrasts with their 90 % intervals, follow-up coverage and the readiness gate. Once those gates close, a read-only line names the pair to try next (`Suggested cuts: try 4 s / 60 s instead of 6 s / 60 s. Nothing is applied automatically`), one second per 5 pp outside the band, capped at 4 s, Easy cut only. The whole card is hidden while `Grade on correctness only` is on: with no Easy/Hard labels there is nothing to calibrate. |
 | **Retention by paper / category** | Horizontal meter bars, weakest first, top 15. Unscoped = papers (deleted → `Unknown paper`); scoped = categories (unresolvable → `—`). |
 | **Retention by interval** | Meter bars, fixed 6 bands: `First`, `1–7 d` (includes 0-day relearning), `8–21 d`, `22–60 d`, `61–180 d`, `181+ d`. |
 | **Retention by tag** | Meter bars, weakest first, top 15. Multi-tag questions counted in each tag. |
@@ -2060,8 +2065,13 @@ Button `Optimize FSRS parameters`:
 
 Help: `Switch off for review-only sessions. Many new cards increase future review load.` Effect: `StudyStore.getNextStudyCard`/`getStudyQueue` read it per pull (off ⇒ no NEW pool). `StudyViewModel` snapshots into `state.introduceNewCards` for empty-state hint.
 
+#### Grade on Correctness Only (switch)
+**Key:** `correctness_only` | **Default:** off | **Control:** switch (tag `setting-grade-correctness-only`).
+
+On: `Study.inferGrade` returns `Good` for every correct, unguessed answer and `Again` for wrong/guess/skip; the cuts are not read. The question clock keeps running and `review_log.elapsedSeconds` is still written, so the dwell history stays analysable. The switch also starts a new grading version (`reason = rule`, `grading_versions.correctnessOnly = 1`), so rows graded with the clock are never pooled with rows graded without it. Both threshold fields below disappear while it is on; `Reset` turns it off.
+
 #### 3.6 Minimum Easy Answer Threshold
-**Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`.
+**Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`. Hidden while `Grade on correctness only` is on (the value is kept as the fallback rule).
 
 Absolute: a correct answer faster than this is `Easy` and nothing is added for reading the question. A cut pair stored by a pre-v27 build is ignored until a cut is saved under this rule (`grading_rules_version`).
 

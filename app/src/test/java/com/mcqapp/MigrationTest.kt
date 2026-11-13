@@ -17,6 +17,7 @@ import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -1384,6 +1385,8 @@ class MigrationTest {
                 assertEquals(8L, version.easySeconds)
                 assertEquals(30L, version.slowSeconds)
                 assertEquals("manual", version.reason)
+                // v26 never had the correctness-only mode.
+                assertFalse(version.correctnessOnly)
 
                 // The evidence blocks are gone, table and all.
                 val ladderTables = db.openHelper.readableDatabase.query(

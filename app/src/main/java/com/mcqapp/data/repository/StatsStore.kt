@@ -122,6 +122,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val report = loadCalibration(scopePaperId, now, config)
         return data.copy(
             calibrationReport = report,
+            timeBasedGrading = !config.correctnessOnlyGrading,
             cutSuggestion = Calibration.suggestCuts(
                 report = report,
                 fastSeconds = config.fastSeconds,

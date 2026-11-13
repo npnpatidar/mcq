@@ -635,7 +635,13 @@ data class RetentionData(
      * `NEEDS_EVIDENCE` while the gates are closed, because "not yet" is an
      * answer the learner should see.
      */
-    val cutSuggestion: Calibration.CutSuggestion? = null
+    val cutSuggestion: Calibration.CutSuggestion? = null,
+    /**
+     * Whether the grade came from the answer clock (v27). False under
+     * correctness-only grading: the calibration card measures the two cuts, so
+     * it has nothing to show and is hidden instead of staying empty.
+     */
+    val timeBasedGrading: Boolean = true
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

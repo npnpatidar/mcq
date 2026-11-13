@@ -335,40 +335,53 @@ private fun AnkiSchedulerBody(
         testTag = "setting-introduce-new-cards"
     )
     Spacer(Modifier.height(12.dp))
-
-    AnkiNumberRow(
-        label = stringResource(R.string.easy_answer_threshold),
-        help = stringResource(R.string.easy_answer_threshold_help),
-        value = config.fastSeconds,
-        step = 1.0,
-        // 1..3600: the domain clamps fastSeconds to 1..3600
-        // (SpacedRepetition.sanitized), and a restored 601-3600 value
-        // used to render as a permanent error with dead steppers
-        // (consolidated_bugs.md H3).
-        range = 1f..3600f,
-        suffix = "s",
-        onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
-    )
-    AnkiNumberRow(
-        label = stringResource(R.string.hard_answer_threshold),
-        help = stringResource(R.string.hard_answer_threshold_help),
-        value = config.slowSeconds,
-        step = 1.0,
-        range = 1f..3600f,
-        suffix = "s",
-        // The domain clamps slow up to fast; without this check a typed
-        // value below fast "succeeded" silently, left a phantom in the
-        // field and stored the old value (consolidated_bugs.md F16/H2).
-        validExtra = { it >= config.fastSeconds },
-        onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
-    )
-
-    Spacer(Modifier.height(8.dp))
-    Text(
-        stringResource(R.string.response_time_thresholds_help),
-        style = MaterialTheme.typography.bodySmall
+    SwitchSettingRow(
+        label = stringResource(R.string.grade_correctness_only),
+        help = stringResource(R.string.grade_correctness_only_help),
+        checked = config.correctnessOnlyGrading,
+        onChange = { onChange(config.copy(correctnessOnlyGrading = it)) },
+        testTag = "setting-grade-correctness-only"
     )
     Spacer(Modifier.height(12.dp))
+
+    // The two cuts are the fallback rule, so there is nothing to tune while
+    // the switch above is on. They stay stored and still grade if the switch
+    // is turned back off.
+    if (!config.correctnessOnlyGrading) {
+        AnkiNumberRow(
+            label = stringResource(R.string.easy_answer_threshold),
+            help = stringResource(R.string.easy_answer_threshold_help),
+            value = config.fastSeconds,
+            step = 1.0,
+            // 1..3600: the domain clamps fastSeconds to 1..3600
+            // (SpacedRepetition.sanitized), and a restored 601-3600 value
+            // used to render as a permanent error with dead steppers
+            // (consolidated_bugs.md H3).
+            range = 1f..3600f,
+            suffix = "s",
+            onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
+        )
+        AnkiNumberRow(
+            label = stringResource(R.string.hard_answer_threshold),
+            help = stringResource(R.string.hard_answer_threshold_help),
+            value = config.slowSeconds,
+            step = 1.0,
+            range = 1f..3600f,
+            suffix = "s",
+            // The domain clamps slow up to fast; without this check a typed
+            // value below fast "succeeded" silently, left a phantom in the
+            // field and stored the old value (consolidated_bugs.md F16/H2).
+            validExtra = { it >= config.fastSeconds },
+            onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
+        )
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            stringResource(R.string.response_time_thresholds_help),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()

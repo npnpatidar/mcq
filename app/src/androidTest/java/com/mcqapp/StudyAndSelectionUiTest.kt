@@ -511,12 +511,13 @@ class StudyAndSelectionUiTest {
                 "ui-chips", "ui-chips-learn", ReviewGrade.AGAIN,
                 now = now - 15 * minute
             )
-            // A card graduated from a fresh one 90 days ago: its interval was
-            // ~2 days, so its predicted recall is far into the floor — the
-            // most-at-risk review.
+            // A card graduated from a fresh one a year ago: FSRS-7's mixture
+            // curve is slow-dominated (three months is still ~75% recall), so
+            // a year puts it clearly into the low-recall floor — the
+            // most-at-risk review here.
             repository.recordStudyReview(
                 "ui-chips", "ui-chips-low", ReviewGrade.GOOD,
-                now = now - 90 * day
+                now = now - 365 * day
             )
         }
         compose.setContent { McqNavHost(repository = repository) }

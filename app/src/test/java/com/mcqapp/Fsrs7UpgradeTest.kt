@@ -55,6 +55,9 @@ class Fsrs7UpgradeTest {
             .allowMainThreadQueries()
             .build()
         repository = McqRepository(db, context)
+        // `card_state` and `review_log` carry a foreign key to the paper, so
+        // the seeded rows need their paper to exist first.
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         // The rebuild reads the *stored* weights, so the migration has to have
         // run first, exactly as it does at startup.
         repository.ensureFsrs7()

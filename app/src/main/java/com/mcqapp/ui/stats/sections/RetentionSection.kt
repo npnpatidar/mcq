@@ -208,6 +208,44 @@ private fun CalibrationEvidence(
             contrast = report.contrast2,
             insufficient = report.hardUnderpowered || report.contrast2.low == null
         )
+        bundle.cutSuggestion?.let { suggestion ->
+            // The actionable conclusion, never an action: the learner sets the
+            // two fields, so the line names the pair and says so.
+            Text(
+                text = when (suggestion.status) {
+                    Calibration.CutSuggestion.Status.NEEDS_EVIDENCE ->
+                        stringResource(R.string.stats_cuts_needs_evidence)
+
+                    Calibration.CutSuggestion.Status.KEEP ->
+                        stringResource(
+                            R.string.stats_cuts_keep,
+                            suggestion.nextFast,
+                            suggestion.nextSlow
+                        )
+
+                    Calibration.CutSuggestion.Status.AT_LIMIT ->
+                        stringResource(
+                            R.string.stats_cuts_limit,
+                            suggestion.nextFast,
+                            suggestion.nextSlow
+                        )
+
+                    Calibration.CutSuggestion.Status.STEP_DOWN,
+                    Calibration.CutSuggestion.Status.STEP_UP ->
+                        stringResource(
+                            R.string.stats_cuts_step,
+                            suggestion.nextFast,
+                            suggestion.nextSlow,
+                            suggestion.currentFast,
+                            suggestion.currentSlow
+                        )
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (suggestion.changes) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
         report.followUp.filter { it.grade != Calibration.GradeClass.HARD }.forEach { follow ->
             Text(
                 stringResource(

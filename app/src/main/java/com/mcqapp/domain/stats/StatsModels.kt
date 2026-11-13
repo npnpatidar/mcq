@@ -628,7 +628,14 @@ data class RetentionData(
      * it; empty reports are still rendered, because "not enough evidence" is
      * the expected answer for months and must be visible.
      */
-    val calibrationReport: Calibration.Report? = null
+    val calibrationReport: Calibration.Report? = null,
+    /**
+     * The read-only pair the calibration report's direction implies (v27).
+     * Null when the surface did not ask for a report; present but
+     * `NEEDS_EVIDENCE` while the gates are closed, because "not yet" is an
+     * answer the learner should see.
+     */
+    val cutSuggestion: Calibration.CutSuggestion? = null
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

@@ -4,6 +4,7 @@ import com.mcqapp.domain.CardStateKind
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.exp
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.random.Random
 
@@ -144,6 +145,90 @@ object Calibration {
     }
 
     enum class Direction { LOWER, RAISE, NONE }
+
+    /** One re-tune step never moves the Easy cut further than this. */
+    const val MAX_STEP_SECONDS = 4
+
+    /**
+     * A read-only cut proposal: the report's own direction turned into the pair
+     * to try next. Nothing applies it — the learner edits the two fields in the
+     * scheduler settings, and the next report judges the result.
+     *
+     * The step is bounded because a contrast says which way to move and roughly
+     * how far outside the 5 pp band the evidence sits, not where the optimum
+     * is: one report of a few hundred pairs cannot resolve seconds on its own.
+     */
+    data class CutSuggestion(
+        val currentFast: Long,
+        val currentSlow: Long,
+        val nextFast: Long,
+        val nextSlow: Long,
+        val status: Status
+    ) {
+        enum class Status {
+            /** The gates are not met, so no number would be honest. */
+            NEEDS_EVIDENCE,
+
+            /** Easy and Good are calibrated alike; leave the pair alone. */
+            KEEP,
+
+            /** The Easy cut moves down. */
+            STEP_DOWN,
+
+            /** The Easy cut moves up. */
+            STEP_UP,
+
+            /** The evidence points past the end of the allowed range. */
+            AT_LIMIT
+        }
+
+        val changes: Boolean get() = nextFast != currentFast || nextSlow != currentSlow
+    }
+
+    /**
+     * Converts the report into the pair to try next. The Hard cut is shown but
+     * never moved: δ2 is not acted on, so a suggestion that moved it would
+     * launder a number the evidence does not support.
+     */
+    fun suggestCuts(report: Report, fastSeconds: Long, slowSeconds: Long): CutSuggestion {
+        fun keep(status: CutSuggestion.Status) =
+            CutSuggestion(fastSeconds, slowSeconds, fastSeconds, slowSeconds, status)
+
+        if (!report.readiness.ready || !report.followUpGatePassed) {
+            return keep(CutSuggestion.Status.NEEDS_EVIDENCE)
+        }
+        val contrast = report.contrast1
+        val value = contrast.value ?: return keep(CutSuggestion.Status.NEEDS_EVIDENCE)
+        // One second per 5 pp outside the band, so a wider gap moves further,
+        // but never past [MAX_STEP_SECONDS].
+        val step = (abs(value) / DIRECTION_THRESHOLD)
+            .roundToInt()
+            .coerceIn(1, MAX_STEP_SECONDS)
+            .toLong()
+        return when (contrast.direction) {
+            Direction.LOWER -> {
+                val target = fastSeconds - step
+                if (target < 1L) keep(CutSuggestion.Status.AT_LIMIT)
+                else CutSuggestion(
+                    fastSeconds, slowSeconds, target, slowSeconds,
+                    CutSuggestion.Status.STEP_DOWN
+                )
+            }
+
+            Direction.RAISE -> {
+                val target = fastSeconds + step
+                // The cross-field rule requires fast < slow, so the Hard cut is
+                // the hard wall; a proposal equal to it is not a proposal.
+                if (target >= slowSeconds) keep(CutSuggestion.Status.AT_LIMIT)
+                else CutSuggestion(
+                    fastSeconds, slowSeconds, target, slowSeconds,
+                    CutSuggestion.Status.STEP_UP
+                )
+            }
+
+            Direction.NONE -> keep(CutSuggestion.Status.KEEP)
+        }
+    }
 
     /** Follow-up coverage among labels whose outcome is due, per grade. */
     data class FollowUp(

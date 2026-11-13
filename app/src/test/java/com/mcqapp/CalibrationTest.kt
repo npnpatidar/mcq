@@ -434,4 +434,105 @@ class CalibrationTest {
         assertFalse(ready.copy(calendarDays = 27).ready)
         assertFalse(ready.copy(refitInEpoch = true).ready)
     }
+
+    // --- the read-only cut suggestion ---
+
+    private fun closedReport(
+        value: Double?,
+        followUpGatePassed: Boolean = true,
+        readiness: Calibration.Readiness = Calibration.Readiness(
+            pairs = 320,
+            bindingCards = 60,
+            halfWidth = 0.04,
+            calendarDays = 30,
+            refitInEpoch = false
+        )
+    ): Calibration.Report = report(
+        card(questionId = "q1", grade = Calibration.GradeClass.EASY)
+    ).copy(
+        readiness = readiness,
+        followUpGatePassed = followUpGatePassed,
+        contrast1 = Calibration.Contrast(
+            value = value,
+            low = value?.minus(0.05),
+            high = value?.plus(0.05),
+            method = Calibration.IntervalMethod.T,
+            bindingCards = 60
+        )
+    )
+
+    @Test
+    fun `a closed report with no gap keeps the pair`() {
+        val suggestion = Calibration.suggestCuts(closedReport(0.01), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.KEEP, suggestion.status)
+        assertEquals(6L, suggestion.nextFast)
+        assertEquals(60L, suggestion.nextSlow)
+        assertFalse(suggestion.changes)
+    }
+
+    @Test
+    fun `an underperforming easy cut moves down by one second per five points`() {
+        val small = Calibration.suggestCuts(closedReport(-0.06), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_DOWN, small.status)
+        assertEquals(5L, small.nextFast)
+        assertEquals("the Hard cut is not moved", 60L, small.nextSlow)
+        assertTrue(small.changes)
+
+        val wider = Calibration.suggestCuts(closedReport(-0.20), 6, 60)
+        assertEquals(2L, wider.nextFast)
+        // A 40 pp gap would ask for eight seconds; the step is capped at four.
+        val capped = Calibration.suggestCuts(closedReport(-0.40), 10, 60)
+        assertEquals(6L, capped.nextFast)
+    }
+
+    @Test
+    fun `an out-of-band gap inside the threshold is not a move`() {
+        // 3 pp is outside zero but inside the 5 pp band the report acts on.
+        val suggestion = Calibration.suggestCuts(closedReport(-0.03), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.KEEP, suggestion.status)
+        assertEquals(6L, suggestion.nextFast)
+    }
+
+    @Test
+    fun `an overperforming easy cut moves up`() {
+        val suggestion = Calibration.suggestCuts(closedReport(0.12), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_UP, suggestion.status)
+        assertEquals(8L, suggestion.nextFast)
+    }
+
+    @Test
+    fun `a move past the end of the range keeps the pair`() {
+        val floor = Calibration.suggestCuts(closedReport(-0.30), 1, 60)
+        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, floor.status)
+        assertEquals(1L, floor.nextFast)
+
+        // fast must stay below slow, so the Hard cut is the wall.
+        val ceiling = Calibration.suggestCuts(closedReport(0.30), 59, 60)
+        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, ceiling.status)
+        assertEquals(59L, ceiling.nextFast)
+        assertEquals(60L, ceiling.nextSlow)
+    }
+
+    @Test
+    fun `an open gate or a missing contrast asks for evidence`() {
+        val notReady = Calibration.suggestCuts(
+            closedReport(-0.30, readiness = Calibration.Readiness(
+                pairs = 299,
+                bindingCards = 60,
+                halfWidth = 0.04,
+                calendarDays = 30,
+                refitInEpoch = false
+            )),
+            6, 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, notReady.status)
+        assertFalse(notReady.changes)
+
+        val followUp = Calibration.suggestCuts(closedReport(-0.30, followUpGatePassed = false), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, followUp.status)
+        assertEquals(6L, followUp.nextFast)
+
+        val noValue = Calibration.suggestCuts(closedReport(null), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, noValue.status)
+    }
 }

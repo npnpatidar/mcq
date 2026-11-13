@@ -15,6 +15,7 @@ fold it into `README.md` before the release PR is merged.
 | D5 | Keep `review_log.readingAllowanceSeconds` and `review_log.ladderVersion` (renamed `gradingVersion` in Kotlin only). New rows write `null` / a `grading_versions` id. | The log is append-only history. Old rows must not be rebuilt; the fields keep existing backups importable and old analyses reproducible. |
 | D6 | Replace `ladder_versions` with `grading_versions`, copying ids. | Every pre-v27 row's `ladderVersion` must still resolve to the cut pair that graded it, so the log stays re-gradable offline. |
 | D7 | Bump the rule version (`grading_rules_version = 1`): a cut pair stored by an older build is ignored on read, and the first versioned read writes a fresh `prior` row for 6/60 so the calibration epoch starts at the rule change. | A stored 8/30 was tuned against the reading bonus; silently keeping it would grade the new rule with the old pair, and reusing its version id would pool pre-v27 reviews into the new epoch. |
+| D8 | Turn the report's direction into a **read-only** suggestion (`Suggested cuts: try 4 s / 60 s…`) instead of an applied change: one second per 5 pp outside the band, capped at 4 s, Easy cut only. | Removing the ladder removed the only thing that translated "too wide" into a number. The contrast tells direction and magnitude in pp, not an optimum, so the app names a bounded next step and the learner decides. Hard is never moved: δ2 is not acted on. |
 
 Expected distribution on the recorded 812 scorable reviews (replay, Again fixed):
 
@@ -134,7 +135,7 @@ Out of scope:
 - [x] `StatsRetentionStreamTest`: ladder payload assertions removed.
 - [x] `StudyViewModelPullTest`: grading version instead of ladder version + allowance.
 - [x] Full pure-JVM suite green locally (163 classes).
-- [ ] CI green for the Robolectric/SQLite suites (authoritative on x86_64).
+- [x] CI green for the Robolectric/SQLite suites (run 43473648330, 2 108 tests, 7 skipped).
 
 ### 4.7 Docs
 
@@ -148,6 +149,19 @@ Out of scope:
       that new rows leave null.
 - [x] Move/remove the orphaned v26 KDoc above `MIGRATION_26_27` in `AppDatabase.kt`.
 - [x] Deleted the now-unused `stats_ladder_*` string resources.
+
+### 4.7b Suggested cuts (read-only)
+
+- [x] `Calibration.suggestCuts(report, fast, slow)`: `NEEDS_EVIDENCE` until the readiness
+      and follow-up gates close, then `KEEP` / `STEP_DOWN` / `STEP_UP` / `AT_LIMIT`. Step =
+      one second per 5 pp outside the band, capped at `MAX_STEP_SECONDS = 4`; Easy only.
+- [x] `RetentionData.cutSuggestion` filled by `StatsStore.loadRetention` from the config in
+      force, so the line always names the pair the report was measured against.
+- [x] Retention section renders the line under the two contrasts; it never applies anything
+      and says so when it names a different pair.
+- [x] `CalibrationTest`: keep, one-step down, cap, inside-band no-move, step up, both range
+      ends, and the three evidence gates.
+- [x] `README.md` Tab 2 calibration row describes the line and its policy.
 
 ### 4.8 Housekeeping
 

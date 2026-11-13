@@ -120,7 +120,14 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         }
         val data = accumulator.toData(tagsOfQuestion, categoriesForSlice)
         val report = loadCalibration(scopePaperId, now, config)
-        return data.copy(calibrationReport = report)
+        return data.copy(
+            calibrationReport = report,
+            cutSuggestion = Calibration.suggestCuts(
+                report = report,
+                fastSeconds = config.fastSeconds,
+                slowSeconds = config.slowSeconds
+            )
+        )
     }
 
     /**

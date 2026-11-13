@@ -813,6 +813,10 @@
     <string name="stats_calibration_follow_up_not_met">Follow-up gate: not met — too few outcomes are back yet</string>
     <string name="stats_calibration_readiness">Evidence: %1$d pairs · %2$d cards in the smaller class · precision %3$s · %4$d days</string>
     <string name="stats_calibration_excluded">%1$d candidate pairs excluded (overrides, guesses, skips, new cards, missing forecast or outcome)</string>
+    <string name="stats_cuts_keep">Suggested cuts: keep %1$ds / %2$ds.</string>
+    <string name="stats_cuts_step">Suggested cuts: try %1$ds / %2$ds instead of %3$ds / %4$ds. Nothing is applied automatically — set it in the scheduler settings.</string>
+    <string name="stats_cuts_limit">Suggested cuts: keep %1$ds / %2$ds — the Easy cut is already at the edge of its allowed range.</string>
+    <string name="stats_cuts_needs_evidence">Suggested cuts: not yet — the evidence lines above have to close first.</string>
     <string name="stats_by_group">Retention by paper</string>
     <string name="stats_by_group_help">Share of reviews answered correctly; weakest first.</string>
     <string name="stats_by_weekday">Retention by weekday</string>

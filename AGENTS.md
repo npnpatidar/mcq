@@ -82,6 +82,13 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
   FileProvider authority; the two can be installed at the same time and neither replaces
   the other. A release APK still only installs over a release with the same signing key,
   and the CI release is signed with a throwaway key.
+- **A PR with merge conflicts gets no `pull_request` run at all** — not a failing one, none:
+  GitHub cannot build the test-merge ref, so the workflow never starts and `gh run list`
+  stays empty for the branch. Rebase onto `main` first, then expect the run. (Pushes to the
+  branch made with the `gh` OAuth token do trigger normally; SSH keys are not set up here,
+  so push over `https://github.com/npnpatidar/mcq.git`.)
+- On this ARM64 host, Robolectric/SQLite tests cannot run, so a green local compile is not
+  a green CI: the first CI run is where the new Room-backed tests actually execute.
 
 ## Scheduling (FSRS-7)
 

@@ -71,11 +71,13 @@ class Fsrs7UpgradeTest {
     }
 
     @After
-    fun tearDown() = runBlocking {
+    fun tearDown() {
         db.close()
         // Leave the process-wide DataStore as it was found: its flags outlive
         // this class.
-        ApplicationProvider.getApplicationContext<Context>().dataStore.edit { it.clear() }
+        runBlocking {
+            ApplicationProvider.getApplicationContext<Context>().dataStore.edit { it.clear() }
+        }
     }
 
     // --- the two writes, and the one that must not happen -------------------
@@ -143,7 +145,14 @@ class Fsrs7UpgradeTest {
     /** A card with no memory at all must stay empty, not become a 0-day memory. */
     @Test
     fun aNewCardWithoutMemoryStaysEmpty() = runBlocking {
-        db.cardStateDao().upsert(card(stability = 0.0, difficulty = 0.0))
+        db.cardStateDao().upsert(
+            card(
+                stability = 0.0,
+                difficulty = 0.0,
+                reps = 0,
+                cardState = CardStateKind.NEW
+            )
+        )
 
         repository.rebuildFsrs7Memory()
 
@@ -151,6 +160,7 @@ class Fsrs7UpgradeTest {
         assertEquals(0.0, untouched.stability, 0.0)
         assertEquals(0.0, untouched.stabilityFast, 0.0)
         assertEquals(CardStateKind.NEW, untouched.cardState)
+        assertEquals(3, untouched.intervalDays)
     }
 
     // --- resumability and idempotence ---------------------------------------
@@ -289,7 +299,8 @@ class Fsrs7UpgradeTest {
         reps: Int = 2,
         lapses: Int = 0,
         leech: Boolean = false,
-        lastReviewedAt: Long = t0
+        lastReviewedAt: Long = t0,
+        cardState: CardStateKind = CardStateKind.REVIEW
     ) = CardStateEntity(
         paperId = "p1",
         questionId = "q1",
@@ -305,7 +316,7 @@ class Fsrs7UpgradeTest {
         stability = stability,
         // A pre-FSRS-7 row: the fast trace has not been derived yet.
         stabilityFast = 0.0,
-        cardState = CardStateKind.REVIEW,
+        cardState = cardState,
         reviewCount = reps
     )
 

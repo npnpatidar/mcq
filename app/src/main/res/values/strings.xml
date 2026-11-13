@@ -540,7 +540,7 @@
     <string name="ranking_mode_help">Memory first clears what is due before showing anything new. Explore surfaces a new card every few reviews.</string>
     <string name="introduce_new_cards_help">Switch off for review-only sessions. Many new cards increase future review load.</string>
     <string name="grade_correctness_only">Grade on correctness only</string>
-    <string name="grade_correctness_only_help">Correct answers are Good; wrong, guessed or skipped answers are Again. The clock keeps running and its time is still recorded for later analysis, but it never changes the grade or its colour. The Easy/Hard cuts and the calibration report are hidden while this is on; Statistics shows the cuts your answer times suggest once there are enough of them. A new install starts with this on: leave it on to collect those answer times, then turn it off and enter the pair Statistics suggests.</string>
+    <string name="grade_correctness_only_help">Correct answers are Good; wrong, guessed or skipped answers are Again. The clock keeps running and its time is still recorded for later analysis, but it never changes the grade or its colour. The Easy/Hard cuts and the calibration report are hidden while this is on; Statistics shows the cuts your answer times suggest once there are enough of them. A new install starts with this on: leave it on to collect those answer times, then turn it off and enter the pair Statistics suggests. Switching it on or off starts a fresh grading version, so the two rules are never mixed.</string>
     <string name="easy_answer_threshold">Minimum easy answer threshold</string>
     <string name="easy_answer_threshold_help">Auto-graded Easy when the answer comes faster than this. The clock starts when the card appears, so reading time counts against it.</string>
     <string name="hard_answer_threshold">Hard answer threshold</string>
@@ -821,7 +821,7 @@
     <string name="stats_cuts_needs_evidence">Suggested cuts: not yet — the evidence lines above have to close first.</string>
     <string name="stats_dwell_cuts">Suggested cuts</string>
     <string name="stats_dwell_cuts_help">Placed from your own answer times, not from retention. About a tenth of your correct answers would be Easy and a tenth Hard.</string>
-    <string name="stats_cuts_from_times">Try %1$ds / %2$ds, from %3$d correct answers. Turn timing on in Settings to use them.</string>
+    <string name="stats_cuts_from_times">Try %1$ds / %2$ds, from %3$d correct answers. Turn the correctness-only switch off in Settings, then set the two thresholds to these.</string>
     <string name="stats_cuts_from_times_same">Your %3$d correct answers agree with the current %1$ds / %2$ds.</string>
     <string name="stats_cuts_from_times_not_yet">Not yet: %1$d of %2$d correct answers recorded, over at least 14 days.</string>
     <string name="stats_by_group">Retention by paper</string>

@@ -47,10 +47,15 @@ class RepositorySettingsTest {
     @Test
     fun `a cut pair stored before the absolute rule is ignored`() = runBlocking {
         // A v26 build wrote 8/30; those cuts were measured against the reading
-        // allowance the rule no longer has, so they must not outlive it.
+        // allowance the rule no longer has, so they must not outlive it. The
+        // gate is cleared here on purpose: the DataStore is process-wide and
+        // another test's reset stamps the current rule, which would make this
+        // stale pair look current.
         ApplicationProvider.getApplicationContext<Context>().dataStore.edit { prefs ->
             prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
             prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
+            prefs.remove(intPreferencesKey("grading_rules_version"))
+            prefs.remove(intPreferencesKey("ladder_version"))
         }
         val config = store().schedulerConfigNow()
         assertEquals(SchedulerConfig().fastSeconds, config.fastSeconds)

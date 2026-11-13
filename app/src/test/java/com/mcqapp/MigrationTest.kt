@@ -1359,10 +1359,13 @@ class MigrationTest {
                     "(id,easySeconds,slowSeconds,effectiveFrom,reason,previousId,blockId,policyVersion) " +
                     "VALUES (7,8,30,4000,'manual',NULL,NULL,1)"
             )
+            // The v26 block table declares its counters NOT NULL, so the
+            // fixture has to carry a whole block, not just the keys.
             raw.execSQL(
                 "INSERT INTO ladder_blocks " +
-                    "(id,startAt,endAt,ladderVersion,outcome) " +
-                    "VALUES (1,1000,2000,7,'no-change')"
+                    "(id,startAt,endAt,ladderVersion,policyVersion,easyPairs," +
+                    "easyCards,goodPairs,goodCards,hardPairs,hardCards,outcome) " +
+                    "VALUES (1,1000,2000,7,1,10,5,12,6,8,4,'no-change')"
             )
             raw.version = 26
         }

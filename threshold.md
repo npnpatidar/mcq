@@ -178,9 +178,10 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
   `RepositorySettingsTest`, `StatsRetentionStreamTest` use Robolectric/SQLite and fail on
   aarch64 (`Robolectric native runtime is not supported on Linux (aarch64)`); CI is
   authoritative.
-- After CI: download `app-debug` and `app-release` artifacts to
-  `/home/naresh/Download`, install the debug build beside the release, and confirm a
-  6 s / 60 s session grades as expected.
+- CI run 43473648330 on `feature/absolute-dwell-thresholds` is green: 2 108 tests, 7
+  skipped, including the Robolectric/SQLite suites. Both APK artifacts are installed at
+  `/home/naresh/Download/app-debug.apk` and `app-release.apk`.
+- After installing: confirm a 6 s / 60 s session grades as expected.
 
 Post-ship checks from the real log:
 - every `gradeSource = AUTO` row has `dwell < 6` ⇒ `rating = 4`, `dwell >= 60` ⇒ `rating = 2`;

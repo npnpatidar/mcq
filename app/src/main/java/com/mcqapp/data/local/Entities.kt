@@ -316,79 +316,48 @@ data class ReviewLogEntity(
     val proposedRating: Int? = null,
     /** AUTO, EDITED or CHOSEN (v26). Null on rows written before v26. */
     val gradeSource: String? = null,
-    /** The ladder version in force; 0 means "written before versioning". */
-    @ColumnInfo(defaultValue = "0")
-    val ladderVersion: Int = 0,
+    /**
+     * The id of the [GradingVersionEntity] whose cut pair graded this row;
+     * 0 means "written before the cuts were versioned". The column keeps its
+     * original `ladderVersion` name so the append-only log is never rebuilt.
+     */
+    @ColumnInfo(name = "ladderVersion", defaultValue = "0")
+    val gradingVersion: Int = 0,
     /** FSRS retrievability computed immediately before this answer (v26). */
     val predictedRecall: Double? = null,
     /** Which weight set produced [predictedRecall]. 0 = shipped defaults. */
     val fsrsFitVersion: Int? = null,
-    /** The reading allowance that was subtracted, in seconds (v26). */
+    /**
+     * The reading allowance that was subtracted, in seconds (v26).
+     *
+     * Legacy only: the absolute 6/60 rule adds nothing for reading, so every
+     * row written from v27 on leaves this null. Rows written by a v26 build
+     * keep their recorded value, which is why the column is not rebuilt away.
+     */
     val readingAllowanceSeconds: Int? = null,
     /** The attempt was submitted with an empty selection, not answered (v26). */
     val wasSkipped: Boolean? = null
 )
 
 /**
- * One row per change of the grading ladder's cut points (v26).
+ * One row per change of the grade-inference cut points (v27).
  *
- * The cuts themselves still live in DataStore, where the scheduler reads
- * them; this table is the audit trail that lets a review row say which
- * version graded it. A version can exist with no evidence block (`prior`, a
- * manual edit, a restore) and a block can exist with no version (a closed
- * window that decided nothing), which is why they are separate tables.
+ * The cuts themselves live in DataStore, where the scheduler reads them; this
+ * table is the audit trail that lets a review row say which pair graded it.
+ * So every row in `review_log` can be re-graded offline later: join it to this
+ * table, read the pair, and the dwell alone reconstructs the label.
+ *
+ * Nothing adapts these cuts. A row is written when the learner edits a cut in
+ * Settings and when a restore seeds the pair it imported, and never otherwise.
  */
-@Entity(tableName = "ladder_versions", indices = [Index("effectiveFrom")])
-data class LadderVersionEntity(
+@Entity(tableName = "grading_versions", indices = [Index("effectiveFrom")])
+data class GradingVersionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val easySeconds: Long,
     val slowSeconds: Long,
     val effectiveFrom: Long,
-    /** prior, manual, proposal, automatic or rollback. */
-    val reason: String,
-    /** The version this one replaced; null for a seed. */
-    val previousId: Long? = null,
-    /** The evidence block that triggered the change; null for seeds and manual edits. */
-    val blockId: Long? = null,
-    /** Which build of the decision rule made the call. */
-    val policyVersion: Int = 0
-)
-
-/**
- * One closed evidence window of the grading ladder (v26), including windows
- * that decided nothing.
- *
- * Written even when the outcome is no-change or insufficient-evidence: at
- * this volume nearly every window declines to act, and a controller whose
- * null decisions are stored nowhere is indistinguishable from a stalled one.
- * The rollback rule needs two consecutive post-change blocks, neither of
- * which owns a version row, which is the second reason this is its own table.
- */
-@Entity(tableName = "ladder_blocks", indices = [Index("startAt")])
-data class LadderBlockEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val startAt: Long,
-    val endAt: Long,
-    val ladderVersion: Int,
-    val fsrsFitVersion: Int? = null,
-    val policyVersion: Int = 0,
-    val easyPairs: Int = 0,
-    val easyCards: Int = 0,
-    val goodPairs: Int = 0,
-    val goodCards: Int = 0,
-    val hardPairs: Int = 0,
-    val hardCards: Int = 0,
-    val delta1: Double? = null,
-    val delta1Low: Double? = null,
-    val delta1High: Double? = null,
-    val delta2: Double? = null,
-    val delta2Low: Double? = null,
-    val delta2High: Double? = null,
-    val followUpEasy: Double? = null,
-    val followUpGood: Double? = null,
-    /** no-change, raise-c1, lower-c1, insufficient-evidence or frozen-refit. */
-    val outcome: String,
-    val decidedAt: Long? = null
+    /** prior or manual. */
+    val reason: String
 )
 
 /**

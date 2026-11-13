@@ -54,8 +54,6 @@ fun StudySchedulerSection(
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
-    automaticLadderAdaptation: Boolean,
-    onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     onOptimizeFsrs: () -> Unit,
@@ -76,8 +74,6 @@ fun StudySchedulerSection(
             onReset = onReset,
             simplifiedStudy = simplifiedStudy,
             onSimplifiedChange = onSimplifiedChange,
-            automaticLadderAdaptation = automaticLadderAdaptation,
-            onAutomaticLadderChange = onAutomaticLadderChange,
             fsrsReviewCount = fsrsReviewCount,
             fsrsOptimizeState = fsrsOptimizeState,
             onOptimizeFsrs = onOptimizeFsrs,
@@ -104,8 +100,6 @@ private fun AnkiSchedulerBody(
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
-    automaticLadderAdaptation: Boolean,
-    onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     onOptimizeFsrs: () -> Unit,
@@ -161,14 +155,6 @@ private fun AnkiSchedulerBody(
         checked = simplifiedStudy,
         onChange = onSimplifiedChange,
         testTag = "setting-simplified-anki"
-    )
-    Spacer(Modifier.height(8.dp))
-    SwitchSettingRow(
-        label = stringResource(R.string.automatic_ladder_adaptation),
-        help = stringResource(R.string.automatic_ladder_adaptation_help),
-        checked = automaticLadderAdaptation,
-        onChange = onAutomaticLadderChange,
-        testTag = "setting-automatic-ladder"
     )
     Spacer(Modifier.height(12.dp))
 

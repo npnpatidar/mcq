@@ -51,7 +51,6 @@ fun SettingsScreen(
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
     val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
-    val automaticLadderAdaptation by viewModel.automaticLadderAdaptation.collectAsStateWithLifecycle()
     val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
     val hapticsEnabled by viewModel.hapticsEnabled.collectAsStateWithLifecycle()
@@ -238,8 +237,6 @@ fun SettingsScreen(
                 onReset = { viewModel.resetSchedulerConfig() },
                 simplifiedStudy = simplifiedStudy,
                 onSimplifiedChange = { viewModel.setSimplifiedStudy(it) },
-                automaticLadderAdaptation = automaticLadderAdaptation,
-                onAutomaticLadderChange = { viewModel.setAutomaticLadderAdaptation(it) },
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimize,
                 onOptimizeFsrs = { viewModel.optimizeFsrsParameters() },

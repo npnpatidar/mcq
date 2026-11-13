@@ -99,25 +99,6 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         context.dataStore.edit { it[simplifiedStudyKey] = enabled }
     }
 
-    private val automaticLadderAdaptationKey =
-        booleanPreferencesKey("automatic_ladder_adaptation")
-
-    /**
-     * Plan phase 5: apply the ladder policy by itself at the end of a sitting.
-     * Off by default. The policy only ever proposes when its readiness and
-     * follow-up gates pass, but a switch that changes grades without asking
-     * starts off regardless.
-     */
-    fun automaticLadderAdaptation(): Flow<Boolean> =
-        context.dataStore.data.map { it[automaticLadderAdaptationKey] ?: false }
-
-    suspend fun automaticLadderAdaptationNow(): Boolean =
-        context.dataStore.data.map { it[automaticLadderAdaptationKey] ?: false }.first()
-
-    suspend fun setAutomaticLadderAdaptation(enabled: Boolean) {
-        context.dataStore.edit { it[automaticLadderAdaptationKey] = enabled }
-    }
-
     fun shuffleOptions(): Flow<Boolean> =
         context.dataStore.data.map { it[shuffleOptionsKey] ?: false }
     suspend fun setShuffleOptions(enabled: Boolean) {
@@ -271,12 +252,28 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     /** Which weight set `fsrs_parameters` belongs to (v26). 0 = shipped defaults. */
     private val fsrsFitVersionKey = intPreferencesKey("fsrs_fit_version")
 
-    /** The ladder version the cut points belong to (v26). */
+    /**
+     * The grading version the cut points belong to (v26; key kept for upgrade
+     * compatibility). Points at a `grading_versions` row.
+     */
     private val ladderVersionKey = intPreferencesKey("ladder_version")
+
+    /**
+     * Which build of the cut rule the stored pair was calibrated for (v27).
+     * Bumped whenever the rule itself changes, so the pair does not outlive the
+     * model it was tuned against.
+     */
+    private val gradingRulesVersionKey = intPreferencesKey("grading_rules_version")
 
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
         context.dataStore.data.map { prefs ->
             val d = com.mcqapp.domain.SchedulerConfig()
+            // v27 fixed the cuts at absolute 6 s / 60 s and deleted the reading
+            // allowance, so a pair stored by an older build is measured against
+            // a rule that no longer exists: keep it is to grade every answer
+            // under a ladder the code no longer implements. Until the learner
+            // saves a cut under this rule, the shipped pair wins.
+            val cutsCurrent = (prefs[gradingRulesVersionKey] ?: 0) >= GRADING_RULES_VERSION
             com.mcqapp.domain.SchedulerConfig(
                 maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
                 relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
@@ -287,14 +284,22 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                 } ?: d.studyMode,
                 introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
                 dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
-                fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
-                slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong(),
+                fastSeconds = if (cutsCurrent) {
+                    (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong()
+                } else {
+                    d.fastSeconds
+                },
+                slowSeconds = if (cutsCurrent) {
+                    (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
+                } else {
+                    d.slowSeconds
+                },
                 fsrsParameters = prefs[fsrsParametersKey]?.let { stored ->
                     stored.split(',')
                         .mapNotNull { token -> token.toDoubleOrNull() }
                         .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
                 } ?: d.fsrsParameters,
-                ladderVersion = prefs[ladderVersionKey] ?: 0,
+                gradingVersion = if (cutsCurrent) prefs[ladderVersionKey] ?: 0 else 0,
                 fsrsFitVersion = prefs[fsrsFitVersionKey] ?: 0
             ).sanitized()
         }
@@ -314,6 +319,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
+            prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
         }
         // The weights are written by [writeWeights], the single place that can
         // also bump their fit version in the same edit. A no-op when the
@@ -351,7 +357,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     suspend fun setFsrsParameters(parameters: List<Double>) = writeWeights(parameters)
 
     /**
-     * The atomic cut-point write LadderStore owns: the two cuts and the
+     * The atomic cut-point write GradingRulesStore owns: the two cuts and the
      * version number land in one DataStore edit, so a crash cannot leave a
      * value without its version. The history row is written afterwards and
      * repaired from these preferences on the next read if it is missing.
@@ -359,18 +365,23 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     internal suspend fun writeCuts(
         easySeconds: Long,
         slowSeconds: Long,
-        ladderVersion: Int
+        gradingVersion: Int
     ) {
         context.dataStore.edit { prefs ->
             prefs[schedKey("fast_seconds")] = easySeconds.toDouble()
             prefs[schedKey("slow_seconds")] = slowSeconds.toDouble()
-            prefs[ladderVersionKey] = ladderVersion
+            prefs[ladderVersionKey] = gradingVersion
+            prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
         }
     }
 
-    /** The stored ladder version, or null when none has been written yet. */
-    internal suspend fun ladderVersionOrNull(): Int? =
+    /** The stored grading version, or null when none has been written yet. */
+    internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
+
+    /** Which build of the cut rule the stored pair was saved under (v27). */
+    internal suspend fun gradingRulesVersionNow(): Int =
+        context.dataStore.data.map { it[gradingRulesVersionKey] ?: 0 }.first()
 
     /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
@@ -393,8 +404,23 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                     prefs[desiredRetentionKey] = c.desiredRetention
                     prefs[studyModeKey] = c.studyMode.name
                     prefs[introduceNewCardsKey] = c.introduceNewCards
+                    prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
                 }
+            // The reset pair needs its own version row: the old id still names
+            // the cuts it replaced, and reusing it would make the log claim a
+            // pair that no longer graded anything. The next read seeds a
+            // `prior` row for the defaults.
+            prefs.remove(ladderVersionKey)
         }
+    }
+
+    companion object {
+        /**
+         * The build of the cut rule the stored pair belongs to. 1 = absolute
+         * 6 s / 60 s with no reading allowance; a stored pair from before it
+         * is ignored once (see [schedulerConfig]).
+         */
+        const val GRADING_RULES_VERSION = 1
     }
 
     private val progressKey = stringPreferencesKey("in_progress_test")

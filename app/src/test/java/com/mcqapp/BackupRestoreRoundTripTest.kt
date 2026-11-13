@@ -212,32 +212,15 @@ class BackupRestoreRoundTripTest {
                 PanelQuestionEntity(panelId, "q-1", 1)
             )
         )
-        // v26: the ladder's history, a closed block that decided nothing and a
-        // study sitting. All three travel in study.json and must round-trip.
-        db.ladderDao().insertVersion(
-            com.mcqapp.data.local.LadderVersionEntity(
+        // v27: the cut pair that graded a span of reviews, plus a study
+        // sitting. Both travel in study.json and must round-trip.
+        db.gradingRulesDao().insertVersion(
+            com.mcqapp.data.local.GradingVersionEntity(
                 id = 2,
-                easySeconds = 9,
-                slowSeconds = 31,
+                easySeconds = 6,
+                slowSeconds = 60,
                 effectiveFrom = 1_700_000_000_100,
-                reason = "manual",
-                previousId = 1,
-                policyVersion = 1
-            )
-        )
-        db.ladderDao().insertBlock(
-            com.mcqapp.data.local.LadderBlockEntity(
-                id = 5,
-                startAt = 1_700_000_000_000,
-                endAt = 1_700_000_100_000,
-                ladderVersion = 2,
-                fsrsFitVersion = 0,
-                policyVersion = 1,
-                easyPairs = 12,
-                easyCards = 9,
-                goodPairs = 4,
-                goodCards = 4,
-                outcome = "no-change"
+                reason = "manual"
             )
         )
         db.studySessionDao().insert(
@@ -299,8 +282,7 @@ class BackupRestoreRoundTripTest {
             .flatMap { panel -> db.panelDao().questionIds(panel.id).map { "${panel.id}:$it" } }
             .sorted(),
         "passages" to db.passageDao().getAll().map { it.toString() }.sorted(),
-        "ladder_versions" to db.ladderDao().allVersions().map { it.toString() }.sorted(),
-        "ladder_blocks" to db.ladderDao().allBlocks().map { it.toString() }.sorted(),
+        "grading_versions" to db.gradingRulesDao().allVersions().map { it.toString() }.sorted(),
         "study_sessions" to db.studySessionDao().getAll().map { it.toString() }.sorted()
     )
 

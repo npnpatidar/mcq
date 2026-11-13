@@ -806,9 +806,11 @@ then **Again / Hard / Good / Easy** (each shows delay preview: `10m`, `6h`,
 **Simplified footer** (default on, `Simplified Anki` switch in Settings):
 - `Guessing` switch (toggles per card; default off).
 - `Check` → grades automatically: exact match + not guessed → `Good`; exact +
-  guessed → `Again`; wrong → `Again`; empty → `Again`. Uses dwell thresholds:
-  ≤ `fastSeconds` (default 8 s) → `Easy`; ≥ `slowSeconds` (default 30 s) →
-  `Hard`; else `Good`. Reading-time bonus: `ceil(chars/20 + 3 s per image)`.
+  guessed → `Again`; wrong → `Again`; empty → `Again`. Uses the absolute dwell
+  cuts: `dwell < fastSeconds` (default 6 s) → `Easy`;
+  `dwell >= slowSeconds` (default 60 s) → `Hard`; else `Good`. The clock starts
+  when the card appears, so reading time counts against the cut and a long
+  question buys no extra Easy time.
 - Result card shows grade, dwell, `Change grade` (re-opens Again/Hard/Good/Easy
   with same dwell), `Next` (persists the grade, pulls next card).
 
@@ -821,9 +823,9 @@ Confirm (correct), Reject (wrong).
   scroll-away, background, tap. Banked in milliseconds in
   `pauseQuestionClock()`, displayed truncated, and rounded half-up once when
   Check freezes the graded dwell. Its icon and time are tinted from the same
-  dwell ladder the check grades with: neutral for the first second (nothing
-  banked yet), green below the card's Easy threshold (reading time included),
-  amber through Good, red at or above Hard. Tints are derived from the active
+  absolute cuts the check grades with: neutral for the first second (nothing
+  banked yet), green below `fastSeconds`, amber through Good, red at or above
+  `slowSeconds`. Tints are derived from the active
   theme and contrast-checked against its surface (≥ 4.5:1), so every palette
   stays legible in light and dark. Study only; the Test countdown is unchanged.
 - **Session clock:** wall time, runs continuously (including answer/explanation).
@@ -884,8 +886,8 @@ this, never midnight.
 | `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 21 weights to your review log (Anki parity). Shows log-loss before/after. `Restore defaults` drops fitted weights. |
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
-| `Minimum easy answer threshold` | 8 s | 1–3600, step 1 | Auto-graded Easy below this + reading bonus. |
-| `Hard answer threshold` | 30 s | 1–3600, step 1, ≥ fast | Auto-graded Hard above this. |
+| `Minimum easy answer threshold` | 6 s | 1–3600, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. |
+| `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast | Auto-graded Hard at or above this. |
 | **Advanced** (collapsed) | | | |
 | `Next day starts at` | 4 h | 0–23 | Study-day boundary. |
 | `Maximum interval` | 36500 d | 1–36500 | Cap on any interval. |
@@ -2030,7 +2032,7 @@ Footnote: `Review always shows the order you were given. Scoring is unaffected: 
 | Label | `Simplified Anki` |
 | Help | `Grade study cards automatically from your answers instead of picking Again, Hard, Good or Easy after each card.` |
 
-**Effect:** `StudyViewModel.load()` snapshots into `state.simplified` per session. When on, `check()` calls `Study.autoGrade(...)` (exact match + not guessed → `Good`; exact + guessed → `Again`; wrong → `Again`; empty → `Again`). Uses dwell thresholds: ≤ `fastSeconds` → `Easy`; ≥ `slowSeconds` → `Hard`; else `Good`. Reading bonus: `ceil(chars/20 + 3 s per image)`. Scheduler underneath unchanged.
+**Effect:** `StudyViewModel.load()` snapshots into `state.simplified` per session. When on, `check()` calls `Study.autoGrade(...)` (exact match + not guessed → `Good`; exact + guessed → `Again`; wrong → `Again`; empty → `Again`). Uses the absolute dwell cuts: `dwell < fastSeconds` → `Easy`; `dwell >= slowSeconds` → `Hard`; else `Good`. Nothing is added for reading time. Scheduler underneath unchanged.
 
 #### 3.2 Target Retention
 **Key:** `fsrs_desired_retention` | **Default:** `0.9` | **Slider:** 0.75–0.97, 21 steps (0.01 apart). **Commit:** one write on drag end (`onValueChangeFinished`). The percentage is shown above the slider and follows the thumb while dragging. Help: `How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.` Read per pull/grade ⇒ next review onward; already-scheduled dates untouched.
@@ -2059,12 +2061,12 @@ Button `Optimize FSRS parameters`:
 Help: `Switch off for review-only sessions. Many new cards increase future review load.` Effect: `StudyStore.getNextStudyCard`/`getStudyQueue` read it per pull (off ⇒ no NEW pool). `StudyViewModel` snapshots into `state.introduceNewCards` for empty-state hint.
 
 #### 3.6 Minimum Easy Answer Threshold
-**Key:** `anki_fast_seconds` | **Default:** `8` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`.
+**Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`.
 
-Reading bonus: `Study.easyThresholdSeconds()` = `fastSeconds` + `ceil(chars/20 + 3 s per image)` over stem + all options + passage; same bonus added to Hard end.
+Absolute: a correct answer faster than this is `Easy` and nothing is added for reading the question. A cut pair stored by a pre-v27 build is ignored until a cut is saved under this rule (`grading_rules_version`).
 
 #### 3.7 Hard Answer Threshold
-**Key:** `anki_slow_seconds` | **Default:** `30` s | Same stepper/field. **Cross-field rule:** `value >= fastSeconds`. Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
+**Key:** `anki_slow_seconds` | **Default:** `60` s | Same stepper/field. **Cross-field rule:** `value >= fastSeconds`. Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
 
 **Footnote (always shown):**
 `The response-time thresholds drive Simplified study's automatic grading. With Simplified study off you grade every card yourself.`

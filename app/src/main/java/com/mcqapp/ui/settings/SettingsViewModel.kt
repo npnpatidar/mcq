@@ -182,10 +182,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _simplifiedStudy = MutableStateFlow(true)
     val simplifiedStudy: StateFlow<Boolean> = _simplifiedStudy.asStateFlow()
 
-    private val _automaticLadderAdaptation = MutableStateFlow(false)
-    val automaticLadderAdaptation: StateFlow<Boolean> =
-        _automaticLadderAdaptation.asStateFlow()
-
     private val _shuffleOptions = MutableStateFlow(false)
     val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
 
@@ -198,10 +194,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.simplifiedStudy().collect { _simplifiedStudy.value = it }
-        }
-        viewModelScope.launch {
-            repository.automaticLadderAdaptation()
-                .collect { _automaticLadderAdaptation.value = it }
         }
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
@@ -228,10 +220,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setSimplifiedStudy(enabled: Boolean) {
         viewModelScope.launch { repository.setSimplifiedStudy(enabled) }
-    }
-
-    fun setAutomaticLadderAdaptation(enabled: Boolean) {
-        viewModelScope.launch { repository.setAutomaticLadderAdaptation(enabled) }
     }
 
     fun setShuffleOptions(enabled: Boolean) {
@@ -551,8 +539,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                     inProgressTest = inProgressTest,
                                     panels = source.panels(),
                                     blueprints = source.backupBlueprints(),
-                                    ladderVersions = source.ladderVersions(),
-                                    ladderBlocks = source.ladderBlocks(),
+                                    gradingVersions = source.gradingVersions(),
                                     studySessions = source.studySessions()
                                 )
                             },
@@ -643,7 +630,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                 paperCreated = paperCreated,
                                 inProgressTest = inProgressTest,
                                 panels = source.panels(),
-                                blueprints = source.backupBlueprints()
+                                blueprints = source.backupBlueprints(),
+                                gradingVersions = source.gradingVersions(),
+                                studySessions = source.studySessions()
                             )
                         },
                         settings = settings

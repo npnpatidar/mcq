@@ -121,17 +121,17 @@ class StudyViewModelPullTest {
     }
 
     /**
-     * Phase 1 provenance: an untouched Check is AUTO, the session's ladder
-     * version and allowance are stored, and a real review carries the forecast
-     * computed before the answer.
+     * Phase 1 provenance: an untouched Check is AUTO, the session's grading
+     * version is stored, and a real review carries the forecast computed
+     * before the answer.
      */
     @Test
     fun anAcceptedProposalRecordsAutoProvenanceAndItsForecast() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
         assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
-        val ladderVersion = runBlocking { repository.ladderVersion() }
-        assertTrue("the session must stamp a real ladder version", ladderVersion > 0)
+        val gradingVersion = runBlocking { repository.gradingVersion() }
+        assertTrue("the session must stamp a real grading version", gradingVersion > 0)
 
         viewModel.toggleOption("q1-a")
         viewModel.check()
@@ -144,10 +144,8 @@ class StudyViewModelPullTest {
             val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
             assertEquals(com.mcqapp.domain.GradeSource.AUTO.stored, row.gradeSource)
             assertEquals(proposed.ordinal + 1, row.proposedRating)
-            assertEquals(ladderVersion, row.ladderVersion)
+            assertEquals(gradingVersion, row.gradingVersion)
             assertTrue("a real review must store a forecast", row.predictedRecall != null)
-            assertTrue("the allowance that was subtracted must be stored",
-                (row.readingAllowanceSeconds ?: 0) > 0)
             assertEquals(false, row.wasSkipped)
         }
     }

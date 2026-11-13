@@ -2059,40 +2059,26 @@ interface ReviewLogDao {
 }
 
 /**
- * The grading ladder's audit trail (v26): its versions and its closed evidence
- * blocks. Written by [com.mcqapp.data.repository.LadderStore], read by the
- * calibration report its own tables keep honest.
+ * The cut points' audit trail (v27). Written by
+ * [com.mcqapp.data.repository.GradingRulesStore], read by the calibration
+ * report so an epoch can start where the cuts last moved.
  */
 @Dao
-interface LadderDao {
+interface GradingRulesDao {
     @Insert
-    suspend fun insertVersion(version: LadderVersionEntity): Long
+    suspend fun insertVersion(version: GradingVersionEntity): Long
 
     /** Backup restore: rows carry their original ids. */
     @Insert
-    suspend fun insertVersions(versions: List<LadderVersionEntity>)
+    suspend fun insertVersions(versions: List<GradingVersionEntity>)
 
-    @Insert
-    suspend fun insertBlock(block: LadderBlockEntity): Long
+    @Query("SELECT * FROM grading_versions ORDER BY id ASC")
+    suspend fun allVersions(): List<GradingVersionEntity>
 
-    /** Backup restore: rows carry their original ids. */
-    @Insert
-    suspend fun insertBlocks(blocks: List<LadderBlockEntity>)
+    @Query("SELECT * FROM grading_versions WHERE id = :id")
+    suspend fun version(id: Long): GradingVersionEntity?
 
-    @Query("SELECT * FROM ladder_versions ORDER BY id ASC")
-    suspend fun allVersions(): List<LadderVersionEntity>
-
-    @Query("SELECT * FROM ladder_blocks ORDER BY id ASC")
-    suspend fun allBlocks(): List<LadderBlockEntity>
-
-    /** The decision already recorded for one fixed window, if any. */
-    @Query("SELECT * FROM ladder_blocks WHERE startAt = :startAt LIMIT 1")
-    suspend fun blockAtStart(startAt: Long): LadderBlockEntity?
-
-    @Query("SELECT * FROM ladder_versions WHERE id = :id")
-    suspend fun version(id: Long): LadderVersionEntity?
-
-    @Query("SELECT MAX(id) FROM ladder_versions")
+    @Query("SELECT MAX(id) FROM grading_versions")
     suspend fun maxVersionId(): Long?
 }
 

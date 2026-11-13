@@ -45,15 +45,21 @@ class RepositorySettingsTest {
         SettingsStore(ApplicationProvider.getApplicationContext<Context>())
 
     @Test
-    fun automaticLadderAdaptationStartsOffAndRoundTrips() = runBlocking {
-        assertFalse(store().automaticLadderAdaptationNow())
-        store().setAutomaticLadderAdaptation(true)
-        assertTrue(store().automaticLadderAdaptationNow())
+    fun `a cut pair stored before the absolute rule is ignored`() = runBlocking {
+        // A v26 build wrote 8/30; those cuts were measured against the reading
+        // allowance the rule no longer has, so they must not outlive it.
+        ApplicationProvider.getApplicationContext<Context>().dataStore.edit { prefs ->
+            prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
+            prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
+        }
+        val config = store().schedulerConfigNow()
+        assertEquals(SchedulerConfig().fastSeconds, config.fastSeconds)
+        assertEquals(SchedulerConfig().slowSeconds, config.slowSeconds)
     }
 
     /**
-     * The DataStore is process-wide, and v26 gave the scheduler config two
-     * generation fields (`ladderVersion`, `fsrsFitVersion`) that other test
+     * The DataStore is process-wide, and the scheduler config carries two
+     * generation fields (`ladder_version`, `fsrs_fit_version`) that other test
      * classes write. Clear them before a whole-config comparison, not only
      * after this class, or a neighbour's version leaks in.
      */
@@ -77,13 +83,12 @@ class RepositorySettingsTest {
             store().resetSchedulerConfig()
             store().clearTestProgress()
             store().setHapticsEnabled(true)
-            store().setAutomaticLadderAdaptation(false)
             // Fitted weights ride a separate key that resetSchedulerConfig
             // deliberately leaves alone; clear it here or one test's fit would
             // leak into every later assertion in the run.
             ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
                 it.remove(stringPreferencesKey("fsrs_parameters"))
-                // The generation fields move with the weights/ladder; they
+                // The generation fields move with the weights/cuts; they
                 // are not pacing knobs and would otherwise leak a bump into
                 // the next test's whole-config comparison.
                 it.remove(intPreferencesKey("fsrs_fit_version"))
@@ -178,7 +183,7 @@ class RepositorySettingsTest {
         // caller writes; writing a new parameter list bumps it.
         assertEquals(
             written.sanitized().copy(
-                ladderVersion = read.ladderVersion,
+                gradingVersion = read.gradingVersion,
                 fsrsFitVersion = read.fsrsFitVersion
             ),
             read
@@ -259,7 +264,7 @@ class RepositorySettingsTest {
         // therefore their generation — alone.
         assertEquals(
             SchedulerConfig().sanitized().copy(
-                ladderVersion = config.ladderVersion,
+                gradingVersion = config.gradingVersion,
                 fsrsFitVersion = config.fsrsFitVersion
             ),
             config

@@ -153,23 +153,17 @@ class StatsRetentionStreamTest {
         cases.forEach { (scope, range) ->
             val streamed = repository.statsRetention(scope, range, now)
             val loaded = inMemory(scope, range)
-            // The streamed build additionally carries the phase-2 report and
-            // the phase-4 decision; the in-memory oracle builds only the v1
-            // payload.
+            // The streamed build additionally carries the phase-2 report; the
+            // in-memory oracle builds only the v1 payload.
             assertEquals(
                 "scope=$scope range=$range",
                 loaded,
-                streamed.copy(
-                    calibrationReport = null,
-                    ladderEvaluation = null,
-                    ladderCanRollback = false,
-                    ladderLastChange = null
-                )
+                streamed.copy(calibrationReport = null)
             )
-            assertTrue("the retention load must carry the calibration report",
-                streamed.calibrationReport != null)
-            assertTrue("the retention load must carry the ladder decision",
-                streamed.ladderEvaluation != null)
+            assertTrue(
+                "the retention load must carry the calibration report",
+                streamed.calibrationReport != null
+            )
             // Guard against both sides agreeing on an empty payload.
             assertTrue(streamed.retentionTrend.points.any { it.count > 0 })
             assertTrue(streamed.weekdayRetention.any { it.reviews > 0 })

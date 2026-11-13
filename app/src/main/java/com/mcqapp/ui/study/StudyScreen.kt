@@ -508,8 +508,8 @@ private fun StudyStickyHeader(
         state.question?.id?.let { it in state.bookmarked } == true
     // The question clock doubles as a dwell gauge: green while the card is in
     // the Easy window, amber through Good, red once it reaches Hard. Thresholds
-    // are the card's own ladder (reading time included) from the same rule the
-    // check grades with, and the time itself stays the primary signal. The
+    // are the absolute cuts from the same rule the check grades with, and the
+    // time itself stays the primary signal. The
     // tints come from the active theme and are contrast-checked against its
     // surface, so the clock stays legible in light, dark and every palette.
     val clockColors = clockBandColors()

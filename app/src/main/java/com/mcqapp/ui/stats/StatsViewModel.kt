@@ -8,7 +8,6 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.stats.CardsData
 import com.mcqapp.domain.stats.GuessingData
-import com.mcqapp.domain.stats.LadderPolicy
 import com.mcqapp.domain.stats.MemoryData
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.ProgressData
@@ -58,11 +57,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         val range: StatsAggregator.Range = StatsAggregator.Range.D30,
         /** Null means every paper, Anki's Collection view. */
         val scopePaperId: String? = null,
-        val papers: List<Paper> = emptyList(),
-        /** An apply/dismiss/undo is in flight; ladder buttons are disabled. */
-        val ladderBusy: Boolean = false,
-        /** The last ladder action's failure, shown on the calibration card. */
-        val ladderError: String? = null
+        val papers: List<Paper> = emptyList()
     ) {
         /** True once the visible tab's slice has been built for this selection. */
         val visibleSliceLoaded: Boolean
@@ -174,48 +169,12 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         loadVisible()
     }
 
-    /** Re-reads the database and reloads the visible tab. */
-    /** Applies an accepted Easy-cut proposal; a stale one is rejected. */
-    fun applyLadderProposal(proposal: LadderPolicy.Proposal) = runLadderAction {
-        repository.applyLadderProposal(proposal)
-    }
-
-    /** Dismisses a proposal, recording the block as `no-change`. */
-    fun dismissLadderProposal(proposal: LadderPolicy.Proposal) = runLadderAction {
-        repository.dismissLadderProposal(proposal)
-    }
-
-    /** Restores the previous ladder version, one step back along the chain. */
-    fun undoLadderChange() = runLadderAction {
-        repository.rollbackLadder()
-    }
-
-    private fun runLadderAction(action: suspend () -> Unit) {
-        if (_state.value.ladderBusy) return
-        _state.update { it.copy(ladderBusy = true, ladderError = null) }
-        viewModelScope.launch {
-            try {
-                action()
-                _state.update { it.copy(ladderBusy = false) }
-                refresh()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Logger.e("STATS", "Ladder action failed", e)
-                _state.update {
-                    it.copy(ladderBusy = false, ladderError = e.message ?: "error")
-                }
-            }
-        }
-    }
-
     fun refresh() {
         viewModelScope.launch {
             try {
                 // The reads are redone on demand: rows logged since the last
                 // visit must be picked up, and a tab that needs neither must
                 // not pay for them.
-                _state.update { it.copy(ladderError = null) }
                 dropSections()
                 loadVisible()
             } catch (e: kotlinx.coroutines.CancellationException) {

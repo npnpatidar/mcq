@@ -233,6 +233,8 @@ data class CardScheduleDto(
      */
     val difficulty: Double = 0.0,
     val stability: Double = 0.0,
+    /** FSRS-7's fast trace; absent in files written before v27. */
+    val stabilityFast: Double = 0.0,
     val cardState: String = com.mcqapp.domain.CardStateKind.NEW.name,
     val reviewCount: Int = 0
 )

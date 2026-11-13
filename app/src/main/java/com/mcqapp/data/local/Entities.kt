@@ -247,13 +247,18 @@ data class CardStateEntity(
     val lastReviewedAt: Long,
     val contentHash: String,
     /**
-     * FSRS memory state (v10). [difficulty] is the 1..10 estimate of how hard
-     * the material is for this learner and [stability] the days until recall
-     * probability falls to the benchmark retention; both zero for a card that
-     * has never been studied under FSRS.
+     * FSRS memory state (v10, extended in v27). [difficulty] is the 1..10
+     * estimate of how hard the material is for this learner; [stability] and
+     * [stabilityFast] are the slow and fast forgetting traces. All three are
+     * zero for a card that has never been studied under FSRS, and
+     * [stabilityFast] stays zero until the FSRS-7 rebuild has replayed the
+     * card's history — the scheduler reads that as "fast trace unknown" and
+     * falls back to [stability].
      */
     val difficulty: Double = 0.0,
     val stability: Double = 0.0,
+    @ColumnInfo(defaultValue = "0.0")
+    val stabilityFast: Double = 0.0,
     val cardState: CardStateKind = CardStateKind.NEW,
     /** Total FSRS reviews ever applied. Mirrored into [reps]. */
     val reviewCount: Int = 0
@@ -298,6 +303,12 @@ data class ReviewLogEntity(
     val stateBefore: String? = null,
     val stabilityAfter: Double? = null,
     val difficultyAfter: Double? = null,
+    /**
+     * The fast stability trace after this review (v27). Null on rows written
+     * before FSRS-7; replay then treats the fast trace as equal to
+     * [stabilityAfter].
+     */
+    val stabilityFastAfter: Double? = null,
     val intervalDaysAfter: Int? = null,
     /**
      * Whether the learner declared the attempt a guess before answering.

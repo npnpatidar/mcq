@@ -41,7 +41,13 @@ object FsrsReplay {
         /** Declared guess; null for rows that predate v19. */
         val wasGuess: Boolean? = null,
         /** Chosen options matched the key; null for rows that predate v19. */
-        val wasCorrect: Boolean? = null
+        val wasCorrect: Boolean? = null,
+        /**
+         * The fast stability trace after this review (v27). Null on rows
+         * written before FSRS-7; [seedState] then collapses it onto
+         * [stabilityAfter], the same rule the scheduler applies.
+         */
+        val stabilityFastAfter: Double? = null
     )
 
     /**
@@ -123,7 +129,8 @@ object FsrsReplay {
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
                 wouldBeGoodIntervalDays =
-                    counterfactual[Triple(row.paperId, row.questionId, row.id)]
+                    counterfactual[Triple(row.paperId, row.questionId, row.id)],
+                stabilityFastAfter = row.stabilityFastAfter
             )
         }
     }
@@ -200,7 +207,8 @@ object FsrsReplay {
                 intervalBeforeDays = intervalBefore,
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
-                wouldBeGoodIntervalDays = wouldBeGood
+                wouldBeGoodIntervalDays = wouldBeGood,
+                stabilityFastAfter = row.stabilityFastAfter
             )
         }
     }
@@ -231,15 +239,21 @@ object FsrsReplay {
             row.difficultyAfter != null
 
     /** The memory state the seeded first row records as its result. */
-    private fun seedState(row: RawReview): CardState = CardState(
-        questionId = row.questionId,
-        stability = row.stabilityAfter ?: 0.0,
-        difficulty = row.difficultyAfter ?: 0.0,
-        intervalDays = row.intervalDaysAfter ?: 0,
-        lastReviewedAt = row.reviewedAt,
-        state = CardStateKind.REVIEW,
-        reviewCount = 1
-    )
+    private fun seedState(row: RawReview): CardState {
+        val stability = row.stabilityAfter ?: 0.0
+        return CardState(
+            questionId = row.questionId,
+            stability = stability,
+            // A pre-v27 row has no fast trace; read it as the slow one, exactly
+            // as [FsrsScheduler] does for an unknown fast trace.
+            stabilityFast = row.stabilityFastAfter ?: stability,
+            difficulty = row.difficultyAfter ?: 0.0,
+            intervalDays = row.intervalDaysAfter ?: 0,
+            lastReviewedAt = row.reviewedAt,
+            state = CardStateKind.REVIEW,
+            reviewCount = 1
+        )
+    }
 
     // An out-of-range rating (corrupt or hand-edited rows only) folds into
     // GOOD rather than dropping the row: the log stays total

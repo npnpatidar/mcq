@@ -639,6 +639,7 @@ internal class StreamingImportSession(
                             lastReviewedAt = schedule.lastReviewedAt,
                             difficulty = schedule.difficulty,
                             stability = schedule.stability,
+                            stabilityFast = schedule.stabilityFast,
                             cardState = runCatching {
                                 CardStateKind.valueOf(schedule.cardState)
                             }.getOrDefault(CardStateKind.NEW),
@@ -908,6 +909,7 @@ internal class StreamingImportSession(
                     lastReviewedAt = schedule.lastReviewedAt,
                     difficulty = schedule.difficulty,
                     stability = schedule.stability,
+                    stabilityFast = schedule.stabilityFast,
                     cardState = runCatching {
                         CardStateKind.valueOf(schedule.cardState)
                     }.getOrDefault(CardStateKind.NEW),

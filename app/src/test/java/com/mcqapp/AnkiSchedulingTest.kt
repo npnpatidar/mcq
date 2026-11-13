@@ -44,10 +44,30 @@ class AnkiSchedulingTest {
         assertEquals(7, state.reps)
         assertEquals(1, state.lapses)
         assertEquals(2.5, state.ease, 0.0001)
-        // FSRS conversion: the kind follows Anki's type, the interval doubles
-        // as the stability, and the ease mirrors onto the difficulty scale.
+        // FSRS-7 conversion: the kind follows Anki's type, the ease mirrors
+        // onto the difficulty scale, and the stability is solved *backwards*
+        // from Anki's one stored number — under the mixture curve the interval
+        // at the benchmark retention is not the stability, so the inverse is
+        // what makes the card due when Anki says it is. The fast trace is
+        // unknown for an import, so it mirrors the slow one.
         assertEquals(CardStateKind.REVIEW, state.cardStateKind())
-        assertEquals(5.0, state.stability, 0.0001)
+        assertEquals(
+            5.0,
+            com.mcqapp.domain.FsrsScheduler().intervalForRetention(
+                com.mcqapp.domain.CardState(
+                    questionId = "q",
+                    stability = state.stability,
+                    stabilityFast = state.stabilityFast,
+                    difficulty = state.difficulty,
+                    intervalDays = state.intervalDays,
+                    lastReviewedAt = state.lastReviewedAt,
+                    state = CardStateKind.REVIEW
+                ),
+                com.mcqapp.domain.FsrsScheduler.BENCHMARK_RETENTION
+            ),
+            0.02
+        )
+        assertEquals(state.stability, state.stabilityFast, 0.0)
         assertEquals(7, state.reviewCount)
         assertEquals(
             1.0 + (3.0 - 2.5) / (3.0 - 1.3) * 9.0,

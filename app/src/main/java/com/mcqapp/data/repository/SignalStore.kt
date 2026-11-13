@@ -69,6 +69,7 @@ class SignalStore(private val db: AppDatabase) {
                     lastReviewedAt = it.lastReviewedAt,
                     difficulty = it.difficulty,
                     stability = it.stability,
+                    stabilityFast = it.stabilityFast,
                     state = it.cardState,
                     reviewCount = it.reviewCount
                 )

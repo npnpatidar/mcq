@@ -20,6 +20,7 @@ internal fun CardStateEntity.toCardScheduleDto(): CardScheduleDto = CardSchedule
     lastReviewedAt = lastReviewedAt,
     difficulty = difficulty,
     stability = stability,
+    stabilityFast = stabilityFast,
     cardState = cardState.name,
     reviewCount = reviewCount
 )

@@ -379,6 +379,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _fsrsOptimize = MutableStateFlow<FsrsOptimizeState>(FsrsOptimizeState.Idle)
     val fsrsOptimize: StateFlow<FsrsOptimizeState> = _fsrsOptimize.asStateFlow()
 
+    /** The one-shot FSRS-7 migration notice, until the learner dismisses it. */
+    private val _fsrs7Notice = MutableStateFlow(false)
+    val fsrs7Notice: StateFlow<Boolean> = _fsrs7Notice.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.fsrs7Notice().collect { _fsrs7Notice.value = it }
+        }
+    }
+
+    fun dismissFsrs7Notice() {
+        viewModelScope.launch { repository.dismissFsrs7Notice() }
+    }
+
     init {
         viewModelScope.launch {
             repository.fsrsReviewCount().collect { _fsrsReviewCount.value = it }

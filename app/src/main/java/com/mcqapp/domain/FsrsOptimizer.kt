@@ -29,13 +29,15 @@ data class FsrsTrainingReview(
  *  - **Complete** ([seedStability] null): the first entry is the card's first
  *    exposure, replayed from a new card exactly as [FsrsScheduler.next] would.
  *  - **Seeded**: the history before the first logged review is unknown (an
- *    Anki import carrying memory), so [seedStability]/[seedDifficulty] hold the
- *    state recorded after an earlier review and [reviews] starts at the next
- *    one. The seed row itself contributes no prediction.
+ *    Anki import carrying memory), so [seedStability]/[seedStabilityFast]/
+ *    [seedDifficulty] hold the state recorded after an earlier review and
+ *    [reviews] starts at the next one. The seed row itself contributes no
+ *    prediction, but its recorded state still feeds every later one.
  */
 data class FsrsTrainingCard(
     val reviews: List<FsrsTrainingReview>,
     val seedStability: Double? = null,
+    val seedStabilityFast: Double? = null,
     val seedDifficulty: Double? = null,
     val seedReviewedAt: Long = 0L
 )
@@ -43,17 +45,16 @@ data class FsrsTrainingCard(
 /**
  * The outcome of one [FsrsOptimizer.fit] run.
  *
- * @param parameters the fitted 21 weights, already clipped to the official
- *   FSRS-6 bounds and ready to persist.
- * @param predictions how many inter-day review prefixes the loss was measured
- *   and trained on (every surviving prefix that ends at a ≥ 1 day review and
- *   fits the sequence cap).
- * @param items every surviving inter-day prefix before the sequence cap, the
- *   count the official training-size guards apply to.
+ * @param parameters the fitted 34 weights, already clipped to the official
+ *   FSRS-7 bounds (including the cross-parameter constraints) and ready to
+ *   persist.
+ * @param predictions how many review prefixes the loss was measured and trained
+ *   on (every surviving prefix that fits the sequence cap).
+ * @param items every surviving prefix before the sequence cap, the count the
+ *   official training-size guards apply to.
  * @param lossBefore mean log loss of [currentParameters] on [predictions].
  * @param lossAfter mean log loss of [parameters] on the same predictions.
- * @param steps Adam steps executed; 0 when the data was too thin to train on
- *   and only the closed-form initial stabilities were fitted.
+ * @param steps Adam steps executed; 0 when the data was too thin to train on.
  */
 data class FsrsFitResult(
     val parameters: List<Double>,
@@ -69,43 +70,43 @@ data class FsrsFitResult(
 class FsrsFitInsufficientData(message: String) : IllegalStateException(message)
 
 /**
- * Fits the 21 FSRS-6 weights to a learner's own review history — the app-side
+ * Fits the 34 FSRS-7 weights to a learner's own review history — the app-side
  * counterpart of Anki's "Optimize" button.
  *
  * The training recipe follows the official reference trainer
- * (open-spaced-repetition/fsrs-rs, BSD-3-Clause), whose tests pin the pieces
- * this file ports:
+ * (open-spaced-repetition/fsrs-rs `training.rs` / `training_v7.rs`,
+ * BSD-3-Clause), whose tests pin the pieces this file ports:
  *
- *  - **Data**: following the reference's Anki converter, only prefixes ending
- *    at an inter-day review (Δt ≥ 1 whole day) are prediction targets;
- *    same-day reviews exist in the replay history but are never predicted on.
- *    `delta_t` is rounded to whole days, labels are `rating > 1`, and items
- *    whose first inter-day gap belongs to an outlier bucket are dropped.
- *  - **Initial stabilities** (w0..w3): a closed-form fit of the forgetting
- *    curve to first-exposure cards (ternary search per first rating, Laplace
- *    smoothing, then [smoothAndFill] to repair missing or inverted ratings).
- *    w4..w20 start from the official defaults.
+ *  - **Data**: unlike FSRS-6, FSRS-7 predicts on **every review after the
+ *    first**, same-day reviews included, and `delta_t` stays fractional — the
+ *    whole point of the dual-trace model is the sub-day interval. Labels are
+ *    `rating > 1` and the sequence cap is 1024.
+ *  - **No preparation pass.** FSRS-7 trains `w0..w3` like any other weight, so
+ *    there is no closed-form initial-stability fit and no outlier filter: the
+ *    fit starts from the official defaults and the history as recorded.
  *  - **Loss**: recency-weighted binary cross entropy of the predicted recall
  *    probability, p clamped to [1e-4, 1-1e-4], replayed through the app's own
- *    [FsrsScheduler] so training and scheduling can never disagree.
+ *    [FsrsScheduler] so training and scheduling can never disagree. Recency is
+ *    the reference's `0.0667 + 0.9333·(i/n)^11.25`.
  *  - **Optimizer**: Adam (β 0.70/0.98, ε 1e-8) on a cosine-annealed learning
- *    rate of 4e-2 over 5 epochs of 512-item batches, L2 toward the initial
- *    weights, weights clipped to the official bounds after every step.
+ *    rate of 0.0118 over 9 epochs of card-windowed ~512-item batches, L2
+ *    (0.3333, per-weight σ) toward the defaults, weights clipped to the
+ *    official FSRS-7 bounds after every step.
+ *  - **Post-fit**: the reference's `smooth_initial_stabilities_fsrs7` — clamp
+ *    and enforce a non-decreasing `w0 ≤ w1 ≤ w2 ≤ w3`.
  *
  * Deliberate deviations, all documented at the code that makes them:
- *  - Gradients are central differences over the batch loss (42 evaluations a
- *    step) instead of the reference's hand-derived analytic gradients; all
- *    arithmetic is f64 where the reference trains in f32, and the batch
+ *  - Gradients are central differences over the batch loss (68 evaluations a
+ *    step) instead of the reference's forward-mode automatic differentiation;
+ *    all arithmetic is f64 where the reference trains in f32, and the batch
  *    shuffle uses Kotlin's PRNG rather than the reference's StdRng, so fitted
  *    weights are close to the reference's but not bit-identical.
  *  - Imported cards replay from their stored post-review memory (a seed)
- *    instead of an unknown earlier history; the reference has no seeds. One
- *    consequence: the outlier filter is fitted on first-exposure cards only,
- *    but its bucket decisions also drop a seeded card whose first logged gap
- *    shares a removed bucket — a bucket its data never contributed to.
- *  - With no first-exposure cards at all (a purely imported library) w0..w3
- *    keep the defaults instead of failing, since seeded replays cannot train
- *    them anyway.
+ *    instead of an unknown earlier history; the reference has no seeds.
+ *  - The reference's optional schedule penalty (`enable_sched_penalties`,
+ *    which Anki enables) is not implemented: it needs a differentiable
+ *    interval simulation this app does not have, and it is not part of the
+ *    default FSRS-7 recipe.
  */
 object FsrsOptimizer {
 
@@ -116,53 +117,67 @@ object FsrsOptimizer {
      */
     const val MIN_REVIEWS = 1000
 
-    internal const val LEARNING_RATE = 4e-2
-    internal const val EPOCHS = 5
+    internal const val LEARNING_RATE = 0.0118
+    internal const val EPOCHS = 9
     internal const val BATCH_SIZE = 512
     internal const val RANDOM_SEED = 2023L
     internal const val ADAM_BETA_1 = 0.70
     internal const val ADAM_BETA_2 = 0.98
     internal const val ADAM_EPSILON = 1e-8
-    internal const val L2_WEIGHT = 0.5
-    internal const val MAX_SEQ_LEN = 256
+    internal const val L2_WEIGHT = 0.3333
+    internal const val MAX_SEQ_LEN = 1024
     internal const val MIN_ITEMS_FOR_DEFAULTS = 8
     internal const val MIN_ITEMS_FOR_TRAINING = 64
 
     private const val PROBABILITY_FLOOR = 0.0001
     private const val PROBABILITY_CEILING = 0.9999
-    private const val INIT_S_MIN = 0.0001
-    private const val INIT_S_MAX = 100.0
     private const val FD_STEP = 1e-5
-    private const val SYNTHETIC_EPOCH = 1_600_000_000_000L
 
-    /** Per-weight σ the reference L2 penalty normalizes by (fsrs-rs training_v6). */
+    /** Per-weight σ the reference L2 penalty normalizes by (fsrs-rs training_v7). */
     private val PARAMS_STDDEV = doubleArrayOf(
-        6.43, 9.66, 17.58, 27.85, 0.57, 0.28, 0.6, 0.12, 0.39, 0.18, 0.33,
-        0.3, 0.09, 0.16, 0.57, 0.25, 1.03, 0.31, 0.32, 0.14, 0.27
+        9999.0, 9999.0, 9999.0, 9999.0, 0.523, 0.2528, 0.4329, 0.2966, 0.2139,
+        0.2889, 0.1862, 0.175, 0.3812, 0.3013, 0.9104, 0.3234, 0.2448, 0.3273,
+        0.1842, 0.1735, 0.4608, 0.311, 0.864, 0.0418, 0.2596, 0.0798, 0.0682,
+        0.1282, 0.1397, 0.1407, 0.1489, 0.2, 0.15, 0.15
     )
 
-    /** Official FSRS-6 parameter bounds (fsrs-rs parameter_clipper_v6). */
+    /** Official FSRS-7 parameter bounds (fsrs-rs parameter_clipper_v7). */
     internal val LOWER_BOUNDS = doubleArrayOf(
-        0.0001, 0.0001, 0.0001, 0.0001, 1.0, 0.001, 0.001, 0.001, 0.0, 0.0, 0.001,
-        0.001, 0.001, 0.001, 0.0, 0.0, 1.0, 0.0, 0.0, 0.01, 0.1
+        0.0001, 0.0001, 0.0001, 0.0001,
+        1.0, 0.001, 0.1,
+        0.0, 0.0, 0.3, 0.01, 0.1, 0.0, 0.0, 1.0,
+        0.0, 0.0, 0.5, 0.001, 0.001, 0.0, 0.0, 1.0,
+        0.01, 0.01, 0.2, 0.5, 0.01, 0.1, 0.0, 0.1, 0.0, 0.0, 0.0
     )
     internal val UPPER_BOUNDS = doubleArrayOf(
-        100.0, 100.0, 100.0, 100.0, 10.0, 4.0, 4.0, 0.75, 4.5, 0.8, 3.5,
-        5.0, 0.25, 0.9, 4.0, 1.0, 6.0, 2.0, 2.0, 0.8, 0.8
+        50.0, 100.0, 100.0, 100.0,
+        10.0, 4.0, 4.0,
+        4.0, 1.2, 3.0, 1.5, 1.0, 3.5, 1.0, 7.0,
+        4.0, 2.0, 6.0, 1.5, 1.0, 5.0, 1.0, 7.0,
+        0.25, 0.95, 0.85, 0.99, 1.0, 1.0, 0.9, 1.1, 1.0, 0.6, 0.6
     )
 
-    /** Clamps [parameters] into the official bounds, preserving order. */
+    /**
+     * Clamps [parameters] into the official bounds, preserving order.
+     *
+     * A box clamp alone cannot express FSRS-7's two cross-parameter rules — the
+     * initial stabilities must not invert (`w0 ≤ w1 ≤ w2 ≤ w3`) and the slow
+     * anchor must sit above the fast one (`w26 ≥ max(w25, 0.5)`) — so those are
+     * applied after it. `FsrsScheduler` relies on both.
+     */
     fun clip(parameters: List<Double>): List<Double> {
         require(parameters.size == FsrsScheduler.PARAMETER_COUNT) {
-            "FSRS-6 needs ${FsrsScheduler.PARAMETER_COUNT} parameters, got ${parameters.size}"
+            "FSRS-7 needs ${FsrsScheduler.PARAMETER_COUNT} parameters, got ${parameters.size}"
         }
-        return List(parameters.size) { i -> parameters[i].coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i]) }
+        val weights = parameters.toDoubleArray()
+        clipInPlace(weights)
+        return weights.toList()
     }
 
     /**
      * Fits [cards] to their own history and returns the result; nothing is
      * persisted here. [currentParameters] is only measured for
-     * [FsrsFitResult.lossBefore] — training starts from the official recipe,
+     * [FsrsFitResult.lossBefore] — training starts from the official defaults,
      * not from the weights the user happens to have.
      *
      * Runs on [Dispatchers.Default] internally; [onProgress] first reports
@@ -171,7 +186,7 @@ object FsrsOptimizer {
      * fan-out.
      *
      * @throws FsrsFitInsufficientData when fewer than
-     *   [MIN_ITEMS_FOR_DEFAULTS] inter-day prefixes exist.
+     *   [MIN_ITEMS_FOR_DEFAULTS] review prefixes exist.
      */
     suspend fun fit(
         cards: List<FsrsTrainingCard>,
@@ -180,12 +195,12 @@ object FsrsOptimizer {
     ): FsrsFitResult {
         require(cards.isNotEmpty()) { "no review histories to fit" }
         require(currentParameters.size == FsrsScheduler.PARAMETER_COUNT) {
-            "FSRS-6 needs ${FsrsScheduler.PARAMETER_COUNT} parameters, got ${currentParameters.size}"
+            "FSRS-7 needs ${FsrsScheduler.PARAMETER_COUNT} parameters, got ${currentParameters.size}"
         }
-        // The whole recipe — grouping the log, both full-log loss replays,
-        // and every Adam step — runs on Dispatchers.Default so a heavy
-        // library's fit cannot jank the settings UI. [onProgress] writes a
-        // StateFlow, which is safe from any thread.
+        // The whole recipe — every full-log loss replay and every Adam step —
+        // runs on Dispatchers.Default so a heavy library's fit cannot jank the
+        // settings UI. [onProgress] writes a StateFlow, which is safe from any
+        // thread.
         return withContext(Dispatchers.Default) {
             doFit(cards, currentParameters, onProgress)
         }
@@ -198,57 +213,24 @@ object FsrsOptimizer {
     ): FsrsFitResult {
         val prepared = cards.map { prepare(it) }
 
-        // Surviving inter-day prefixes, keyed like the reference's trainset:
-        // the outlier filter drops whole cards' inter-day prefixes when their
-        // first inter-day gap lands in a removed bucket (same-day-only
-        // prefixes would always survive in the reference, but this app's
-        // histories never make them prediction targets, so none exist here).
-        val removed = computeRemovedPairs(
-            prepared.filterNot { it.seeded }
-                .filter { it.firstInterday >= 0 }
-                // The reference's recipe trains the outlier buckets on cards
-                // with EXACTLY one inter-day review; the code accepted every
-                // card with at least one, which silently changed the buckets,
-                // the smoothAndFill counts and the fitted w0..w3
-                // (consolidated_bugs.md I1).
-                .filter { it.deltas.count { d -> d >= 1 } == 1 }
-                .map { InitSample(it.ratings[0], it.deltas[it.firstInterday], it.ratings[it.firstInterday] > 1) }
-        )
+        // Every review after the first is a prediction target — same-day ones
+        // included. A complete history's first row has no prior state to
+        // predict from; a seeded one starts at its first logged review, whose
+        // pre-state is the recorded seed.
         val trainItems = ArrayList<ItemRef>()
         prepared.forEachIndexed { cardIndex, card ->
-            // Seeded cards are filtered on buckets their own data never
-            // populated (the reference has no seeds) — documented in the
-            // class deviations list above.
-            val cardRemoved = card.firstInterday >= 0 &&
-                card.deltas[card.firstInterday] in removed[card.ratings[0]]
-            if (!cardRemoved) {
-                for (pos in 0 until card.size) {
-                    if (card.deltas[pos] >= 1) trainItems += ItemRef(cardIndex, pos)
-                }
-            }
+            val first = if (card.seeded) 0 else 1
+            for (pos in first until card.size) trainItems += ItemRef(cardIndex, pos)
         }
         if (trainItems.size < MIN_ITEMS_FOR_DEFAULTS) {
             throw FsrsFitInsufficientData(
-                "Only ${trainItems.size} inter-day review prefixes found; " +
+                "Only ${trainItems.size} review prefixes found; " +
                     "at least $MIN_ITEMS_FOR_DEFAULTS needed"
             )
         }
 
-        // The official initialization dataset: one first-inter-day prefix per
-        // complete (non-seeded) card, past the outlier filter. Seeded cards
-        // are excluded — their first logged review is not a first exposure.
-        val initKept = prepared.filterNot { it.seeded }
-            .filter { it.firstInterday >= 0 }
-            // Same exactly-one restriction as the buckets above (I1).
-            .filter { it.deltas.count { d -> d >= 1 } == 1 }
-            .filter { it.deltas[it.firstInterday] !in removed[it.ratings[0]] }
-            .map { InitSample(it.ratings[0], it.deltas[it.firstInterday], it.ratings[it.firstInterday] > 1) }
-
-        val averageRecall = trainItems.count { prepared[it.card].ratings[it.pos] > 1 } /
-            trainItems.size.toDouble()
-
         // Recency weights over trainset items ordered by the review they
-        // predict, the reference's 0.25 + 0.75·(i/(n−1))³, assigned before
+        // predict, the reference's 0.0667 + 0.9333·(i/n)^11.25, assigned before
         // the sequence cap is applied.
         val weightByCard = Array(prepared.size) { card ->
             DoubleArray(prepared[card].size) { -1.0 }
@@ -256,66 +238,45 @@ object FsrsOptimizer {
         val byTime = trainItems.sortedWith(
             compareBy({ prepared[it.card].times[it.pos] }, { it.card }, { it.pos })
         )
-        val weightDenominator = max(byTime.size - 1, 1)
+        val weightDenominator = max(byTime.size, 1)
         byTime.forEachIndexed { index, item ->
-            weightByCard[item.card][item.pos] =
-                0.25 + 0.75 * (index.toDouble() / weightDenominator).pow(3)
+            weightByCard[item.card][item.pos] = recencyWeight(index, weightDenominator)
         }
 
-        val ratingCount = initKept.groupingBy { it.rating }.eachCount()
-        val initialized = if (initKept.isEmpty()) {
-            // Deviation: the reference fails here. An imported library has no
-            // first exposures, and seeded replays cannot train w0..w3 either,
-            // so the defaults are the honest answer rather than an error.
-            FsrsScheduler.DEFAULT_FSRS_PARAMETERS.take(4)
-        } else {
-            smoothAndFill(searchInitialStabilities(initKept, averageRecall), ratingCount)
-                ?.toList()
-                ?: FsrsScheduler.DEFAULT_FSRS_PARAMETERS.take(4)
-        }
-        val initialParameters = initialized + FsrsScheduler.DEFAULT_FSRS_PARAMETERS.drop(4)
+        val initialParameters = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toDoubleArray()
 
         // Loss terms: every trainset item within the reference's sequence cap.
         val lossTerms = trainItems.filter { it.pos + 1 <= MAX_SEQ_LEN }
         val totalSize = lossTerms.size
         val groupedTerms = groupTerms(lossTerms, prepared, weightByCard)
 
-        // Batch membership mirrors the reference's FSRS-6 builder exactly:
-        // items sorted by the length of the sequence they end, then chunked
-        // (fsrs-rs `build_fsrs6_batches` sorts by review count and chunks
-        // when no card ids exist — FSRS-6 never has them). Nothing in the
-        // membership is random; only batch *order* is reshuffled each epoch,
-        // from the seeded PRNG, the way the reference reshuffles its order
-        // with StdRng.
-        val batches = lossTerms
-            .sortedBy { it.pos + 1 }
-            .chunked(BATCH_SIZE)
-            .map { chunk -> groupTerms(chunk, prepared, weightByCard) }
+        // Card-windowed batches: whole cards in time order, closed when the
+        // window reaches BATCH_SIZE items, so one card's sequence never spans
+        // two gradients. This replaces FSRS-6's sort-by-length chunking.
+        val batches = windowedBatches(lossTerms, prepared, weightByCard)
         val totalSteps = batches.size * EPOCHS
-        // The reference's FSRS-6 schedule length: (total/batch + 1) * epochs.
-        // That is a floor+1 estimate, so it overshoots the real step count
-        // whenever the trainset divides evenly into batches and the cosine
-        // never quite reaches 0. FSRS-7 in the reference anneals over the
-        // actual batch count instead; FSRS-6 deliberately keeps the estimate,
-        // and so do we.
-        val iterations = (totalSize / BATCH_SIZE + 1) * EPOCHS
+        // FSRS-7 anneals over the actual batch count (FSRS-6 kept the
+        // floor+1 estimate, which is why this number differs from the old one).
+        val iterations = totalSteps
 
-        // Publish the schedule size before the first (whole-log) replay so
-        // the button shows 0/total immediately instead of 0/0 while the
-        // baseline loss is measured.
+        // Publish the schedule size before the first (whole-log) replay so the
+        // button shows 0/total immediately instead of 0/0 while the baseline
+        // loss is measured.
         onProgress(0, totalSteps)
 
-        val lossBefore = evaluateAll(currentParameters.toDoubleArray(), prepared, groupedTerms)
+        val lossBefore = evaluateBatch(currentParameters.toDoubleArray(), prepared, groupedTerms)
 
-        // The reference returns the initialized weights untouched when the
-        // trainset is thin or holds nothing beyond first reviews.
+        // The reference returns the initialized (default) weights untouched
+        // when the trainset is thin, or when nothing in it has more than one
+        // long-term review — there is no long-term memory to describe.
+        val hasLongTermDepth = prepared.any { card -> card.deltas.count { it >= 1.0 } >= 2 }
         val enoughToTrain = trainItems.size >= MIN_ITEMS_FOR_TRAINING &&
-            trainItems.size != initKept.size &&
+            hasLongTermDepth &&
             groupedTerms.isNotEmpty()
         if (!enoughToTrain) {
-            val lossAfter = evaluateAll(initialParameters.toDoubleArray(), prepared, groupedTerms)
+            val lossAfter = evaluateBatch(initialParameters, prepared, groupedTerms)
             return FsrsFitResult(
-                parameters = initialParameters,
+                parameters = initialParameters.toList(),
                 predictions = lossTerms.size,
                 items = trainItems.size,
                 cards = prepared.size,
@@ -325,8 +286,8 @@ object FsrsOptimizer {
             )
         }
 
-        val weights = initialParameters.toDoubleArray()
-        val target = weights.clone()
+        val weights = initialParameters.copyOf()
+        val target = initialParameters.copyOf()
         val adam = Adam(weights.size)
         val rng = kotlin.random.Random(RANDOM_SEED)
         val order = batches.indices.toMutableList()
@@ -344,12 +305,11 @@ object FsrsOptimizer {
             }
         }
 
-        val smoothed = smoothAndFill(
-            (0 until 4).associate { index -> (index + 1) to weights[index] }.toMutableMap(),
-            ratingCount
-        ) ?: weights.copyOfRange(0, 4)
-        val clipped = clip(smoothed.toList() + weights.drop(4).toList()).toDoubleArray()
-        val lossAfter = evaluateAll(clipped, prepared, groupedTerms)
+        val smoothed = smoothInitialStabilitiesFsrs7(weights.copyOfRange(0, 4))
+        val clipped = weights.copyOf()
+        for (i in 0 until 4) clipped[i] = smoothed[i]
+        clipInPlace(clipped)
+        val lossAfter = evaluateBatch(clipped, prepared, groupedTerms)
         return FsrsFitResult(
             parameters = clipped.toList(),
             predictions = lossTerms.size,
@@ -363,8 +323,6 @@ object FsrsOptimizer {
 
     // --- data preparation -------------------------------------------------
 
-    internal class InitSample(val rating: Int, val firstDelta: Int, val label: Boolean)
-
     private class ItemRef(val card: Int, val pos: Int)
 
     private class CardTerms(
@@ -376,33 +334,31 @@ object FsrsOptimizer {
 
     private class PreparedCard(
         val ratings: IntArray,
-        val deltas: IntArray,
+        /** Elapsed fractional days before each review; position 0 is the seed gap or 0. */
+        val deltas: DoubleArray,
         val times: LongArray,
         val seedStability: Double?,
+        val seedStabilityFast: Double?,
         val seedDifficulty: Double?
     ) {
         val size: Int = ratings.size
         val seeded: Boolean = seedStability != null
-        val firstInterday: Int
-        val ts: LongArray = LongArray(size)
-
-        init {
-            firstInterday = (0 until size).firstOrNull { deltas[it] >= 1 } ?: -1
-            val base = SYNTHETIC_EPOCH + (if (seeded) deltas[0] * DayBoundary.DAY_MS else 0L)
-            ts[0] = base
-            for (i in 1 until size) ts[i] = ts[i - 1] + deltas[i] * DayBoundary.DAY_MS
-        }
 
         fun initialState(): CardState =
             if (seeded) {
+                val stability = seedStability!!.coerceAtLeast(FsrsScheduler.STABILITY_MIN)
                 CardState(
                     questionId = "fsrs-fit",
-                    stability = seedStability!!.coerceAtLeast(FsrsScheduler.STABILITY_MIN),
+                    stability = stability,
+                    // A seed written before v27 has no fast trace; collapsing it
+                    // onto the slow one is the same rule the scheduler applies.
+                    stabilityFast = (seedStabilityFast ?: stability)
+                        .coerceAtLeast(FsrsScheduler.STABILITY_MIN),
                     difficulty = seedDifficulty!!.coerceIn(
                         FsrsScheduler.MIN_DIFFICULTY,
                         FsrsScheduler.MAX_DIFFICULTY
                     ),
-                    lastReviewedAt = SYNTHETIC_EPOCH,
+                    lastReviewedAt = 0L,
                     state = CardStateKind.REVIEW
                 )
             } else {
@@ -422,19 +378,31 @@ object FsrsOptimizer {
             require(rating in 1..4) { "rating must be 1..4, got $rating" }
             rating
         }
-        val deltas = IntArray(size)
+        val deltas = DoubleArray(size)
         if (seeded) {
-            deltas[0] = roundDays(card.reviews[0].reviewedAt - card.seedReviewedAt)
+            deltas[0] = daysBetween(card.seedReviewedAt, card.reviews[0].reviewedAt)
         }
         for (i in 1 until size) {
-            deltas[i] = roundDays(card.reviews[i].reviewedAt - card.reviews[i - 1].reviewedAt)
+            deltas[i] = daysBetween(card.reviews[i - 1].reviewedAt, card.reviews[i].reviewedAt)
         }
         val times = LongArray(size) { card.reviews[it].reviewedAt }
-        return PreparedCard(ratings, deltas, times, card.seedStability, card.seedDifficulty)
+        return PreparedCard(
+            ratings = ratings,
+            deltas = deltas,
+            times = times,
+            seedStability = card.seedStability,
+            seedStabilityFast = card.seedStabilityFast,
+            seedDifficulty = card.seedDifficulty
+        )
     }
 
-    private fun roundDays(millis: Long): Int =
-        Math.round(millis.coerceAtLeast(0L) / DayBoundary.DAY_MS.toDouble()).toInt()
+    /**
+     * Fractional days between two instants, clamped at 0. FSRS-7 trains on the
+     * real gap: rounding to whole days would erase the sub-day reviews the fast
+     * trace exists to describe.
+     */
+    private fun daysBetween(from: Long, to: Long): Double =
+        (to - from).coerceAtLeast(0L) / DayBoundary.DAY_MS.toDouble()
 
     private fun groupTerms(
         refs: List<ItemRef>,
@@ -451,181 +419,58 @@ object FsrsOptimizer {
         )
     }
 
-    // --- outlier filter (fsrs-rs dataset.rs) ------------------------------
-
-    /**
-     * Drops the tail of first-exposure groups: walking each first rating's
-     * buckets from the smallest, everything up to a 5% (min 20) quota goes,
-     * and past the quota only groups of at least six with a first re-review
-     * within 100 days (365 for Easy) survive.
-     */
-    internal fun computeRemovedPairs(samples: List<InitSample>): Array<HashSet<Int>> {
-        val removed = Array(5) { HashSet<Int>() }
-        for ((rating, group) in samples.groupBy { it.rating }) {
-            val subGroups = group.groupingBy { it.firstDelta }.eachCount()
-                .toList()
-                .sortedWith(
-                    compareByDescending<Pair<Int, Int>> { it.second }.thenByDescending { it.first }
-                )
-            val total = subGroups.sumOf { it.second }
-            var hasRemoved = 0
-            for ((delta, size) in subGroups.asReversed()) {
-                if (hasRemoved + size >= max(20, total / 20)) {
-                    if (size < 6 || delta > (if (rating == 4) 365 else 100)) {
-                        removed[rating].add(delta)
-                    }
-                } else {
-                    hasRemoved += size
-                    removed[rating].add(delta)
-                }
+    /** Whole cards in time order, ~[BATCH_SIZE] items per window. */
+    private fun windowedBatches(
+        items: List<ItemRef>,
+        prepared: List<PreparedCard>,
+        weightByCard: Array<DoubleArray>
+    ): List<List<CardTerms>> {
+        if (items.isEmpty()) return emptyList()
+        val byCard = items.groupBy { it.card }.toList()
+            .sortedWith(compareBy({ (card, _) -> prepared[card].times.last() }, { it.first }))
+        val batches = ArrayList<List<CardTerms>>()
+        var current = ArrayList<ItemRef>()
+        for ((_, refs) in byCard) {
+            current.addAll(refs)
+            if (current.size >= BATCH_SIZE) {
+                batches += groupTerms(current, prepared, weightByCard)
+                current = ArrayList()
             }
         }
-        return removed
+        if (current.isNotEmpty()) batches += groupTerms(current, prepared, weightByCard)
+        return batches
     }
 
-    // --- initial stabilities (fsrs-rs parameter_initialization) -----------
+    // --- initial stabilities (fsrs-rs parameter_initialization_fsrs7) ------
 
     /**
-     * Fits w0..w3 by searching each first rating's initial stability against
-     * the observed recall of its first re-reviews: ternary search over
-     * [0.0001, 100] of the count-weighted log loss plus an L1 pull of |s−default|/16.
+     * Repairs fitted initial stabilities: clamps into the official range and
+     * forces the rating order monotonic (`w0 ≤ w1 ≤ w2 ≤ w3`).
+     *
+     * The reference's log-space anchor interpolation (`-8.09, -3.83, -2.5,
+     * -1.0`) only fires when a rating has no value at all, which cannot happen
+     * here: FSRS-7 trains all four weights, so only the clamp and the running
+     * max are reachable.
      */
-    internal fun searchInitialStabilities(
-        samples: List<InitSample>,
-        averageRecall: Double
-    ): MutableMap<Int, Double> {
-        val result = HashMap<Int, Double>()
-        for ((rating, group) in samples.groupBy { it.rating }) {
-            val byDelta = group.groupingBy { it.firstDelta }
-                .fold(0 to 0) { acc, sample ->
-                    (acc.first + if (sample.label) 1 else 0) to (acc.second + 1)
-                }
-                .toList()
-                .sortedBy { it.first }
-            val default = FsrsScheduler.DEFAULT_FSRS_PARAMETERS[rating - 1].toDouble()
-            var low = INIT_S_MIN
-            var high = INIT_S_MAX
-            var optimal = default
-            var iterations = 0
-            // The reference terminates on f64::EPSILON; 1e-12 absolute is far
-            // tighter than the 1e-4 the reference's own tests assert.
-            while (high - low > 1e-12 && iterations < 1000) {
-                iterations += 1
-                val mid1 = low + (high - low) / 3.0
-                val mid2 = high - (high - low) / 3.0
-                val loss1 = initialStabilityLoss(byDelta, averageRecall, mid1, default)
-                val loss2 = initialStabilityLoss(byDelta, averageRecall, mid2, default)
-                if (loss1 < loss2) high = mid2 else low = mid1
-                optimal = (high + low) / 2.0
-            }
-            result[rating] = optimal
+    internal fun smoothInitialStabilitiesFsrs7(initial: DoubleArray): DoubleArray {
+        require(initial.size == 4) { "expected 4 initial stabilities, got ${initial.size}" }
+        val out = DoubleArray(4)
+        var previous = FsrsScheduler.STABILITY_MIN
+        for (i in 0 until 4) {
+            val value = initial[i].coerceIn(FsrsScheduler.STABILITY_MIN, FsrsScheduler.INIT_S_MAX)
+            out[i] = max(value, previous)
+            previous = out[i]
         }
-        return result
-    }
-
-    private fun initialStabilityLoss(
-        data: List<Pair<Int, Pair<Int, Int>>>,
-        averageRecall: Double,
-        initialStability: Double,
-        default: Double
-    ): Double {
-        val decay = -FsrsScheduler.DEFAULT_FSRS_PARAMETERS[20]
-        val factor = 0.9.pow(1.0 / decay) - 1.0
-        var sum = 0.0
-        for ((delta, counts) in data) {
-            val (positives, count) = counts
-            val recall = (positives + averageRecall) / (count + 1.0)
-            val predicted = (1.0 + factor * delta / initialStability).pow(decay)
-            sum += -(recall * ln(predicted) + (1.0 - recall) * ln(1.0 - predicted)) * count
-        }
-        return sum + abs(initialStability - default) / 16.0
-    }
-
-    /**
-     * Repairs fitted initial stabilities: forces the rating order monotonic
-     * (the better-observed rating keeps its value), geometrically fills
-     * ratings that were never observed, and clamps into the official range.
-     * Returns null when nothing was observed at all.
-     */
-    internal fun smoothAndFill(
-        stability: MutableMap<Int, Double>,
-        counts: Map<Int, Int>
-    ): DoubleArray? {
-        stability.keys.retainAll(counts.keys)
-        for ((small, big) in listOf(1 to 2, 2 to 3, 3 to 4, 1 to 3, 2 to 4, 1 to 4)) {
-            val smallValue = stability[small]
-            val bigValue = stability[big]
-            if (smallValue != null && bigValue != null && smallValue > bigValue) {
-                if (counts.getValue(small) > counts.getValue(big)) {
-                    stability[big] = smallValue
-                } else {
-                    stability[small] = bigValue
-                }
-            }
-        }
-        val w1 = 0.41
-        val w2 = 0.54
-        val defaults = FsrsScheduler.DEFAULT_FSRS_PARAMETERS
-        when (stability.size) {
-            0 -> return null
-            1 -> {
-                val rating = stability.keys.first()
-                val factor = stability.getValue(rating) / defaults[rating - 1]
-                return (1..4).map { defaults[it - 1] * factor }
-                    .sorted()
-                    .toDoubleArray()
-            }
-            else -> {}
-        }
-        var r1 = stability[1]
-        var r2 = stability[2]
-        var r3 = stability[3]
-        var r4 = stability[4]
-        when {
-            r1 == null && r2 == null && r3 != null && r4 != null -> {
-                r2 = r3.pow(1.0 / (1.0 - w2)) * r4.pow(1.0 - 1.0 / (1.0 - w2))
-                r1 = r2.pow(1.0 / w1) * r3.pow(1.0 - 1.0 / w1)
-            }
-            r1 == null && r2 != null && r3 == null && r4 != null -> {
-                r3 = r2.pow(1.0 - w2) * r4.pow(w2)
-                r1 = r2.pow(1.0 / w1) * r3.pow(1.0 - 1.0 / w1)
-            }
-            r1 == null && r2 != null && r3 != null && r4 == null -> {
-                r4 = r2.pow(1.0 - 1.0 / (1.0 - w2)) * r3.pow(1.0 / (1.0 - w2))
-                r1 = r2.pow(1.0 / w1) * r3.pow(1.0 - 1.0 / w1)
-            }
-            r1 != null && r2 == null && r3 == null && r4 != null -> {
-                val exponent = w1 / (w1 + w2 - w1 * w2)
-                r2 = r1.pow(exponent) * r4.pow(1.0 - exponent)
-                r3 = r1.pow(1.0 - w2 / (w1 + w2 - w1 * w2)) * r4.pow(w2 / (w1 + w2 - w1 * w2))
-            }
-            r1 != null && r2 == null && r3 != null && r4 == null -> {
-                r2 = r1.pow(w1) * r3.pow(1.0 - w1)
-                r4 = r2.pow(1.0 - 1.0 / (1.0 - w2)) * r3.pow(1.0 / (1.0 - w2))
-            }
-            r1 != null && r2 != null && r3 == null && r4 == null -> {
-                r3 = r1.pow(1.0 - 1.0 / (1.0 - w1)) * r2.pow(1.0 / (1.0 - w1))
-                r4 = r2.pow(1.0 - 1.0 / (1.0 - w2)) * r3.pow(1.0 / (1.0 - w2))
-            }
-            r1 == null && r2 != null && r3 != null && r4 != null -> {
-                r1 = r2.pow(1.0 / w1) * r3.pow(1.0 - 1.0 / w1)
-            }
-            r1 != null && r2 == null && r3 != null && r4 != null -> {
-                r2 = r1.pow(w1) * r3.pow(1.0 - w1)
-            }
-            r1 != null && r2 != null && r3 == null && r4 != null -> {
-                r3 = r2.pow(1.0 - w2) * r4.pow(w2)
-            }
-            r1 != null && r2 != null && r3 != null && r4 == null -> {
-                r4 = r2.pow(1.0 - 1.0 / (1.0 - w2)) * r3.pow(1.0 / (1.0 - w2))
-            }
-        }
-        val filled = listOfNotNull(r1, r2, r3, r4)
-        if (filled.size != 4) return null
-        return filled.map { it.coerceIn(INIT_S_MIN, INIT_S_MAX) }.toDoubleArray()
+        return out
     }
 
     // --- training ----------------------------------------------------------
+
+    /** The reference's recency weight for a 0-based item index. */
+    internal fun recencyWeight(index: Int, count: Int): Double {
+        val ratio = index.toDouble() / max(count, 1)
+        return 0.0667 + 0.9333 * ratio.pow(11.25)
+    }
 
     /** The reference's cosine schedule at 0-based step over [iterations]. */
     internal fun lrAt(step: Int, iterations: Int): Double =
@@ -653,7 +498,7 @@ object FsrsOptimizer {
     }
 
     /**
-     * Central-difference gradient of the batch loss plus the L2 term. The 42
+     * Central-difference gradient of the batch loss plus the L2 term. The 68
      * evaluations are independent, so they fan out across the default
      * dispatcher. Each evaluation checks for cancellation so a cancelled fit
      * stops inside this fan-out instead of after several more replays.
@@ -707,34 +552,36 @@ object FsrsOptimizer {
         }
     }
 
+    /**
+     * Box clamp plus FSRS-7's cross-parameter constraints, applied after every
+     * Adam step and by [clip].
+     */
     private fun clipInPlace(weights: DoubleArray) {
         for (i in weights.indices) {
             weights[i] = weights[i].coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i])
         }
+        // Initial stabilities must not invert: the better the grade, the longer
+        // the first interval. A raw Adam step can cross them.
+        weights[1] = max(weights[1], weights[0])
+        weights[2] = max(weights[2], weights[1])
+        weights[3] = max(weights[3], weights[2])
+        // The slow curve's anchor retention must sit above the fast one's.
+        weights[26] = max(weights[26], max(weights[25], 0.5))
     }
 
     // --- loss --------------------------------------------------------------
 
-    private fun evaluateAll(
-        parameters: DoubleArray,
-        prepared: List<PreparedCard>,
-        terms: List<CardTerms>
-    ): Double {
-        if (terms.isEmpty()) return 0.0
-        return evaluateBatch(parameters, prepared, terms)
-    }
-
     /**
      * Mean recency-weighted log loss over [terms]: replays each card through
-     * [FsrsScheduler] on a synthetic integer-day timeline (so elapsed days are
-     * exactly the rounded deltas the reference trains on) and scores the
-     * predicted recall before every predicted review.
+     * [FsrsScheduler] at its own fractional gaps and scores the predicted
+     * recall before every predicted review.
      */
     private fun evaluateBatch(
         parameters: DoubleArray,
         prepared: List<PreparedCard>,
         terms: List<CardTerms>
     ): Double {
+        if (terms.isEmpty()) return 0.0
         val scheduler = FsrsScheduler(
             parameters = parameters.toList(),
             desiredRetention = FsrsScheduler.DEFAULT_DESIRED_RETENTION,
@@ -750,7 +597,7 @@ object FsrsOptimizer {
             var pos = 0
             while (term < cardTerms.positions.size) {
                 if (pos == cardTerms.positions[term]) {
-                    val predicted = scheduler.retention(state, card.ts[pos])
+                    val predicted = scheduler.recallAt(state, card.deltas[pos])
                         .coerceIn(PROBABILITY_FLOOR, PROBABILITY_CEILING)
                     val label = cardTerms.labels[term]
                     val weight = cardTerms.weights[term]
@@ -759,12 +606,10 @@ object FsrsOptimizer {
                     term += 1
                     if (term == cardTerms.positions.size) break
                 }
-                state = scheduler.next(state, gradeOf(card.ratings[pos]), card.ts[pos])
+                state = scheduler.advanceMemory(state, card.ratings[pos], card.deltas[pos])
                 pos += 1
             }
         }
         return if (denominator == 0.0) 0.0 else -numerator / denominator
     }
-
-    private fun gradeOf(rating: Int): ReviewGrade = ReviewGrade.entries[rating - 1]
 }

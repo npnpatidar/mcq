@@ -35,7 +35,7 @@ import com.mcqapp.domain.searchableText
         LadderBlockEntity::class,
         StudySessionEntity::class
     ],
-    version = 26,
+    version = 27,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -799,6 +799,29 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * FSRS-7's second stability trace (v27): a defaulted fast trace on
+         * every card row, and the post-review fast trace on new log rows.
+         *
+         * Both are additive and backwards compatible. Existing cards get
+         * `stabilityFast = 0.0`, which the scheduler reads as "unknown" and
+         * collapses onto the slow trace; the resumable history rebuild
+         * ([com.mcqapp.data.repository.Fsrs7Upgrade]) later fills in the real
+         * value. Existing review rows keep a null fast trace for the same
+         * reason.
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `card_state` ADD COLUMN `stabilityFast` " +
+                        "REAL NOT NULL DEFAULT 0.0"
+                )
+                db.execSQL(
+                    "ALTER TABLE `review_log` ADD COLUMN `stabilityFastAfter` REAL"
+                )
+            }
+        }
+
+        /**
          * Keys `question_tags` off the stored CSV in the same normalisation as
          * the runtime writers. Keyset-paged by rowid, one compiled insert per
          * batch — the backfill touches every tagged question, so peak memory
@@ -1002,7 +1025,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                     MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                    MIGRATION_25_26
+                    MIGRATION_25_26, MIGRATION_26_27
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

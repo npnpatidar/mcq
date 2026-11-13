@@ -603,7 +603,8 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         difficultyAfter = difficultyAfter,
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
-        wasCorrect = wasCorrect
+        wasCorrect = wasCorrect,
+        stabilityFastAfter = stabilityFastAfter
     )
 
     private fun ReviewLogEntity.toHistoryEntry() = ReviewHistoryEntry(
@@ -613,7 +614,8 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         stateBefore = stateBefore.toCardStateKind(),
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
-        intervalDaysAfter = intervalDaysAfter
+        intervalDaysAfter = intervalDaysAfter,
+        stabilityFastAfter = stabilityFastAfter
     )
 
     /** The stored enum name; an unknown name (old build's value) reads as null. */
@@ -631,6 +633,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         lastReviewedAt = lastReviewedAt,
         difficulty = difficulty,
         stability = stability,
+        stabilityFast = stabilityFast,
         state = cardState,
         reviewCount = reviewCount
     )

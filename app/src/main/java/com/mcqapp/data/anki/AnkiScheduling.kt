@@ -120,16 +120,31 @@ object AnkiScheduling {
                 max(0L, dueAt - intervalDays * DAY_MS)
             ).coerceAtMost(nowMillis)
         }
-        // FSRS conversion (spec §6): the card kind follows Anki's own type, the
-        // interval doubles as the stability (at the benchmark retention a
-        // card's interval equals its stability), and the ease mirrors back onto
-        // the 1..10 difficulty scale — an estimate, not a claim.
+        // FSRS-7 conversion: the card kind follows Anki's own type, and the
+        // ease mirrors back onto the 1..10 difficulty scale — an estimate, not
+        // a claim. The interval is the one number Anki actually stores, so the
+        // stability is solved *backwards* from it: under FSRS-7 the interval at
+        // the benchmark retention is not the stability, and inverting the
+        // mixed curve in closed form is impossible. The fast trace is unknown
+        // for an imported card, so it is set equal to the slow one, which is
+        // exactly how the scheduler reads a missing trace.
         val kind = when {
             type == TYPE_REVIEW || queue == QUEUE_REVIEW -> com.mcqapp.domain.CardStateKind.REVIEW
             type == TYPE_RELEARN -> com.mcqapp.domain.CardStateKind.RELEARNING
             else -> com.mcqapp.domain.CardStateKind.LEARNING
         }
         val ease = (factor / 1000.0).coerceIn(MIN_EASE, MAX_EASE)
+        val difficulty = if (intervalDays > 0) {
+            (com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY +
+                (MAX_EASE - ease) / (MAX_EASE - MIN_EASE) * 9.0)
+                .coerceIn(
+                    com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY,
+                    com.mcqapp.domain.FsrsScheduler.MAX_DIFFICULTY
+                )
+        } else {
+            0.0
+        }
+        val stability = stabilityForInterval(intervalDays, difficulty)
         return CardScheduleDto(
             ease = ease,
             intervalDays = intervalDays,
@@ -138,20 +153,47 @@ object AnkiScheduling {
             lapses = max(0, lapses),
             leech = lapses >= LEECH_THRESHOLD,
             lastReviewedAt = inferred,
-            difficulty = if (intervalDays > 0) {
-                (com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY +
-                    (MAX_EASE - ease) / (MAX_EASE - MIN_EASE) * 9.0)
-                    .coerceIn(
-                        com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY,
-                        com.mcqapp.domain.FsrsScheduler.MAX_DIFFICULTY
-                    )
-            } else {
-                0.0
-            },
-            stability = intervalDays.toDouble(),
+            difficulty = difficulty,
+            stability = stability,
+            stabilityFast = stability,
             cardState = kind.name,
             reviewCount = max(0, reps)
         )
+    }
+
+    /**
+     * The slow stability whose mixed curve reaches the benchmark retention at
+     * exactly [intervalDays], with the fast trace collapsed onto it.
+     *
+     * Rather than calling `intervalForRetention` per candidate — which itself
+     * solves for a time — this evaluates the recall at the one time that
+     * matters, which is a single curve evaluation per bisection step. Recall
+     * rises with stability, so a log-space bisection always closes; 60 steps
+     * resolve the 1e-4..36500 range to far below a day.
+     */
+    private fun stabilityForInterval(intervalDays: Int, difficulty: Double): Double {
+        if (intervalDays <= 0 || difficulty <= 0.0) return 0.0
+        val scheduler = com.mcqapp.domain.FsrsScheduler()
+        val target = com.mcqapp.domain.FsrsScheduler.BENCHMARK_RETENTION
+        fun recallAt(stability: Double): Double = scheduler.retention(
+            com.mcqapp.domain.CardState(
+                questionId = "",
+                intervalDays = intervalDays,
+                lastReviewedAt = 0L,
+                difficulty = difficulty,
+                stability = stability,
+                stabilityFast = stability,
+                state = com.mcqapp.domain.CardStateKind.REVIEW
+            ),
+            0L
+        )
+        var low = kotlin.math.ln(com.mcqapp.domain.FsrsScheduler.STABILITY_MIN)
+        var high = kotlin.math.ln(com.mcqapp.domain.FsrsScheduler.MAX_STABILITY)
+        repeat(60) {
+            val mid = (low + high) / 2.0
+            if (recallAt(kotlin.math.exp(mid)) > target) high = mid else low = mid
+        }
+        return kotlin.math.exp((low + high) / 2.0)
     }
 
     /**

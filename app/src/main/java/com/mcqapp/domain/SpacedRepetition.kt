@@ -46,12 +46,18 @@ data class CardState(
     val leech: Boolean = false,
     val lastReviewedAt: Long = 0L,
     /**
-     * FSRS memory state. [difficulty] is the 1..10 ease-of-recall estimate and
-     * [stability] the days until recall probability drops to the benchmark
-     * retention; both are zero for a card never studied.
+     * FSRS memory state (v27). [difficulty] is the 1..10 ease-of-recall
+     * estimate; [stability] and [stabilityFast] are the slow and fast
+     * forgetting traces, in days of model time — neither is the card's
+     * interval, which has to be solved from the mixed curve. All three are
+     * zero for a card never studied, and [stabilityFast] is also zero when it
+     * is simply unknown (an imported card, or one written before the FSRS-7
+     * rebuild finished); the scheduler then treats the fast trace as equal to
+     * the slow one.
      */
     val difficulty: Double = 0.0,
     val stability: Double = 0.0,
+    val stabilityFast: Double = 0.0,
     val state: CardStateKind = CardStateKind.NEW,
     /** Total grades ever applied, including failures. Mirrored into [reps]. */
     val reviewCount: Int = 0
@@ -147,7 +153,7 @@ interface Scheduler {
 /**
  * Every tunable number the FSRS scheduler uses, in one place.
  *
- * The memory model itself is fixed (the FSRS-6 formulas with the official
+ * The memory model itself is fixed (the FSRS-7 formulas with the official
  * unoptimized weights); what remains configurable is the pacing around it —
  * how hard intervals target recall, when the study day rolls over, how fast a
  * failed card returns, and where the grade-inference thresholds sit. They are
@@ -184,7 +190,7 @@ data class SchedulerConfig(
     /** Correct answer slower than this (seconds) infers Hard from history. */
     val slowSeconds: Long = 30L,
     /**
-     * The 21 FSRS-6 weights scheduling runs on, in reference order. Defaults
+     * The 34 FSRS-7 weights scheduling runs on, in reference order. Defaults
      * to the official unoptimized set; "Optimize FSRS parameters" in Settings
      * replaces them with [FsrsOptimizer]'s fit to this learner's own review
      * history. A malformed list (wrong length, non-finite values) falls back

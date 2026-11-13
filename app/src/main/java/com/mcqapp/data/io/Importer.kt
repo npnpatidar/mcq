@@ -601,6 +601,7 @@ class Importer(
                                     lastReviewedAt = schedule.lastReviewedAt,
                                     difficulty = schedule.difficulty,
                                     stability = schedule.stability,
+                                    stabilityFast = schedule.stabilityFast,
                                     cardState = runCatching {
                                         com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
                                     }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),

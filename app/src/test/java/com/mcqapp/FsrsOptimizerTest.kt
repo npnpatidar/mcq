@@ -16,14 +16,17 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * The FSRS parameter optimizer against the official reference trainer's own
- * pinned vectors (open-spaced-repetition/fsrs-rs, BSD-3-Clause) and the
- * behavioural guarantees the settings button leans on: a fit lowers the loss
- * on the learner's own history, stays inside the official bounds, is
- * deterministic, and refuses to run on data too thin to mean anything.
+ * The FSRS-7 parameter optimizer against the official reference trainer's
+ * pinned pieces (open-spaced-repetition/fsrs-rs `training_v7.rs`, BSD-3-Clause)
+ * and the behavioural guarantees the settings button leans on: a fit lowers the
+ * loss on the learner's own history, stays inside the official bounds, is
+ * deterministic, and refuses to train on data too thin to mean anything.
  *
- * The pure pieces (initial-stability search, smoothing, cosine schedule, L2)
- * are pinned to the reference's test vectors exactly; the end-to-end fit uses
+ * FSRS-7 deleted the FSRS-6 preparation pass this test used to pin — the
+ * ternary-search initial-stability fit, `smoothAndFill` and the outlier filter
+ * are all gone, because `w0..w3` are now trained like every other weight. What
+ * remains reference-pinned here is the schedule, the L2 term, the recency
+ * weight and the post-fit monotonicity repair; the end-to-end fit uses
  * synthetic histories, where only the loss decrease, the bounds and the
  * determinism can be asserted (the reference's analytic gradients and f32
  * arithmetic make bit-identical weights impossible by design).
@@ -32,81 +35,34 @@ class FsrsOptimizerTest {
 
     private val dayMs = 86_400_000L
 
-    // ---- reference vectors: initial stabilities ----
+    // ---- reference pieces: cosine schedule, L2, recency ----
 
-    /**
-     * fsrs-rs `test_search_parameters`: the rating-1 slice of the anki21
-     * sample's initialization dataset (delta_t / recall / count), fitted by
-     * ternary search to the initial stability the reference reports.
-     */
-    @Test
-    fun initialStabilitySearchMatchesTheReferenceVector() {
-        val samples = buildList {
-            fun add(delta: Int, positives: Int, negatives: Int) {
-                repeat(positives) { add(FsrsOptimizer.InitSample(1, delta, true)) }
-                repeat(negatives) { add(FsrsOptimizer.InitSample(1, delta, false)) }
-            }
-            add(1, 377, 58) // 435 items, recall 0.86666667
-            add(2, 88, 9) //   97 items, recall 0.90721649
-            add(3, 46, 17) //  63 items, recall 0.73015873
-            add(4, 29, 9) //   38 items, recall 0.76315789
-            add(5, 19, 9) //   28 items, recall 0.67857143
-        }
-        val fitted = FsrsOptimizer.searchInitialStabilities(samples, averageRecall = 0.94302857)
-        // The reference asserts 0.7355089 in f32; the f64 port lands within
-        // the same 1e-4 envelope its assert_approx_eq uses.
-        assertEquals(0.7355089, fitted.getValue(1), 1e-4)
-    }
-
-    /** fsrs-rs `test_smooth_and_fill`, both published vectors. */
-    @Test
-    fun smoothAndFillMatchesTheReferenceVectors() {
-        val counts = mapOf(1 to 1, 2 to 1, 3 to 1, 4 to 1)
-
-        val filledFromThree = FsrsOptimizer.smoothAndFill(
-            mutableMapOf(1 to 0.4, 3 to 2.3, 4 to 10.9), counts
-        )!!
-        assertEquals(0.4, filledFromThree[0], 1e-9)
-        assertEquals(1.1227008, filledFromThree[1], 1e-5)
-        assertEquals(2.3, filledFromThree[2], 1e-9)
-        assertEquals(10.9, filledFromThree[3], 1e-9)
-
-        val filledFromOne = FsrsOptimizer.smoothAndFill(mutableMapOf(2 to 0.35), counts)!!
-        assertEquals(0.05738148, filledFromOne[0], 1e-5)
-        assertEquals(0.35, filledFromOne[1], 1e-9)
-        assertEquals(0.6242943, filledFromOne[2], 1e-5)
-        assertEquals(2.2453482, filledFromOne[3], 1e-5)
-    }
-
-    /** The {2,3}-only shape fills BOTH missing ratings, as the reference does. */
-    @Test
-    fun smoothAndFillRepairsAnInvertedPairWithoutLosingARating() {
-        val filled = FsrsOptimizer.smoothAndFill(
-            mutableMapOf(2 to 3.0, 3 to 2.0),
-            mapOf(2 to 5, 3 to 5)
-        )!!
-        // Equal counts settle the inversion on the pair's shared value, and
-        // the missing ratings are filled geometrically around it — so all
-        // four land on that shared stability.
-        assertEquals(4, filled.size)
-        filled.forEach { assertEquals(2.0, it, 1e-9) }
-    }
-
-    // ---- reference vectors: cosine schedule and L2 ----
-
-    /** fsrs-rs `test_lr_scheduler`: the T=5 series the FSRS-6 trainer uses. */
+    /** `lrAt` is the reference's 0.0118 cosine annealing over the step count. */
     @Test
     fun cosineScheduleMatchesTheReferenceSeries() {
         val expected = listOf(
-            0.04, 0.03618033988749895, 0.026180339887498946,
-            0.013819660112501051, 0.0038196601125010526, 0.0
+            0.0118,
+            0.011511233446141406,
+            0.01067320026681219,
+            0.009367932988525592,
+            0.00772320026681219,
+            0.0059,
+            0.004076799733187811,
+            0.002432067011474409,
+            0.0011267997331878108,
+            0.00028876655385859417,
+            0.0
         )
         expected.forEachIndexed { step, value ->
-            assertEquals(value, FsrsOptimizer.lrAt(step, iterations = 5), 1e-9)
+            assertEquals(value, FsrsOptimizer.lrAt(step, iterations = 10), 1e-12)
         }
     }
 
-    /** fsrs-rs `test_fsrs6_l2_penalty_applies_to_changed_params`. */
+    /**
+     * `training_v7.rs`'s L2 term: 0.3333 total weight, per-parameter σ, applied
+     * scaled by the batch's share of the trainset. Only w4 moves, so every
+     * other gradient component must be exactly zero.
+     */
     @Test
     fun l2PenaltyMatchesTheReferenceValueAndGradient() {
         val initial = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toDoubleArray()
@@ -117,49 +73,73 @@ class FsrsOptimizerTest {
             batchSize = 512,
             totalSize = 1000
         )
-        assertEquals(0.256, value, 1e-6)
-        assertEquals(0.8982456, gradient[4], 1e-6)
+        assertEquals(0.20269900098344226, value, 1e-12)
+        assertEquals(0.7112245648541834, gradient[4], 1e-12)
         gradient.forEachIndexed { index, grad ->
             if (index != 4) assertEquals(0.0, grad, 1e-12)
         }
     }
 
-    // ---- bounds ----
+    /** `0.0667 + 0.9333·(i/n)^11.25`, pinned at the ends and the middle. */
+    @Test
+    fun recencyWeightMatchesTheReferenceFormula() {
+        assertEquals(0.0667, FsrsOptimizer.recencyWeight(0, 100), 0.0)
+        assertEquals(0.9002222647735063, FsrsOptimizer.recencyWeight(99, 100), 1e-12)
+        assertEquals(0.06708320733611146, FsrsOptimizer.recencyWeight(50, 100), 1e-12)
+    }
+
+    // ---- bounds and post-fit repair ----
 
     @Test
     fun clipEnforcesTheOfficialBounds() {
-        val clipped = FsrsOptimizer.clip(List(21) { 1_000_000.0 })
+        val clipped = FsrsOptimizer.clip(List(34) { 1_000_000.0 })
         clipped.forEachIndexed { index, value ->
             assertEquals(FsrsOptimizer.UPPER_BOUNDS[index], value, 1e-12)
         }
-        val floored = FsrsOptimizer.clip(List(21) { -5.0 })
+        val floored = FsrsOptimizer.clip(List(34) { -5.0 })
         floored.forEachIndexed { index, value ->
             assertEquals(FsrsOptimizer.LOWER_BOUNDS[index], value, 1e-12)
         }
     }
 
-    // ---- outlier filter ----
-
-    /**
-     * The tail rule from fsrs-rs `compute_outlier_bucket_decisions`: a tiny
-     * far-away group dies even deep into the tail; a large near group lives.
-     */
     @Test
-    fun outlierFilterDropsTheSmallFarTail() {
-        val samples = buildList {
-            repeat(3) { add(FsrsOptimizer.InitSample(1, 200, false)) }
-            repeat(30) { add(FsrsOptimizer.InitSample(1, 2, true)) }
+    fun clipEnforcesTheCrossParameterConstraints() {
+        // A box clamp cannot express either rule, so clip has to apply them
+        // afterwards: a legal set must satisfy both.
+        val inverted = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList().also {
+            it[0] = 10.0
+            it[1] = 1.0
+            it[2] = 0.5
+            it[3] = 20.0
+            it[25] = 0.9
+            it[26] = 0.5
         }
-        val removed = FsrsOptimizer.computeRemovedPairs(samples)
-        assertEquals(setOf(200), removed[1])
+        val clipped = FsrsOptimizer.clip(inverted)
+        assertTrue(clipped[1] >= clipped[0])
+        assertTrue(clipped[2] >= clipped[1])
+        assertTrue(clipped[3] >= clipped[2])
+        assertTrue(clipped[26] >= maxOf(clipped[25], 0.5))
+        // w25's own upper bound is 0.85, so the anchor lands there, not on the
+        // 0.9 the input asked for.
+        assertEquals(0.85, clipped[26], 1e-12)
     }
 
-    /** Under the 5% (min 20) quota every group is dropped without a glance. */
+    /** `smooth_initial_stabilities_fsrs7`: clamp to 1e-4..100, then run a max. */
     @Test
-    fun outlierFilterClearsEverythingBelowTheQuota() {
-        val samples = (1..10).map { FsrsOptimizer.InitSample(1, it, true) }
-        val removed = FsrsOptimizer.computeRemovedPairs(samples)
-        assertEquals((1..10).toSet(), removed[1])
+    fun smoothInitialStabilitiesClampsAndKeepsTheRatingOrder() {
+        val smoothed = FsrsOptimizer.smoothInitialStabilitiesFsrs7(
+            doubleArrayOf(5.0, 1.0, 8.0, -2.0)
+        )
+        assertEquals(5.0, smoothed[0], 0.0)
+        assertEquals(5.0, smoothed[1], 0.0)
+        assertEquals(8.0, smoothed[2], 0.0)
+        assertEquals(8.0, smoothed[3], 0.0)
+
+        val clamped = FsrsOptimizer.smoothInitialStabilitiesFsrs7(
+            doubleArrayOf(-1.0, 500.0, 500.0, 500.0)
+        )
+        assertEquals(FsrsScheduler.STABILITY_MIN, clamped[0], 0.0)
+        assertEquals(FsrsScheduler.INIT_S_MAX, clamped[3], 0.0)
     }
 
     // ---- end-to-end fit on synthetic histories ----
@@ -178,13 +158,13 @@ class FsrsOptimizerTest {
             progress += step to total
         }
 
-        assertEquals(21, result.parameters.size)
+        assertEquals(34, result.parameters.size)
         assertTrue(
             "loss should fall: ${result.lossBefore} -> ${result.lossAfter}",
             result.lossAfter < result.lossBefore
         )
         assertTrue("training should have run steps, got ${result.steps}", result.steps > 0)
-        // Synthetic sequences are far shorter than the 256-position cap.
+        // Synthetic sequences are far shorter than the 1024-position cap.
         assertEquals(result.items, result.predictions)
         result.parameters.forEachIndexed { index, value ->
             assertTrue(
@@ -236,8 +216,8 @@ class FsrsOptimizerTest {
     /** The reference returns defaults below 8 trainset items; we say so. */
     @Test
     fun fitRefusesHistoryTooThinToMeanAnything() = runBlocking {
-        // Two cards, one inter-day review each, alone in their buckets — the
-        // outlier filter empties the trainset, and an empty one is thin.
+        // Two complete cards, one predicted review each: two prefixes, well
+        // under the eight the reference needs before a fit means anything.
         val thin = listOf(
             FsrsTrainingCard(
                 reviews = listOf(
@@ -256,15 +236,14 @@ class FsrsOptimizerTest {
             FsrsOptimizer.fit(thin, FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
             fail("expected FsrsFitInsufficientData")
         } catch (expected: FsrsFitInsufficientData) {
-            assertTrue(expected.message!!.contains("0"))
+            assertTrue(expected.message!!.contains("2"))
             assertTrue(expected.message!!.contains("8"))
         }
     }
 
     /**
-     * 8..63 surviving items: closed-form initial stabilities only, no Adam
-     * steps. Thirty cards sharing one large first-gap bucket survive the
-     * outlier filter; two inter-day reviews each keep the trainset at 60.
+     * 8..63 review prefixes: the reference counts them but does not take an
+     * Adam step, so the defaults come back untouched.
      */
     @Test
     fun fitReturnsInitializedWeightsBelowTheTrainingFloor() = runBlocking {
@@ -280,7 +259,7 @@ class FsrsOptimizerTest {
         }
         val result = FsrsOptimizer.fit(cards, FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
         assertEquals(0, result.steps)
-        assertEquals(21, result.parameters.size)
+        assertEquals(34, result.parameters.size)
         assertEquals(60, result.items)
         assertEquals(30, result.cards)
         result.parameters.forEachIndexed { index, value ->
@@ -291,11 +270,11 @@ class FsrsOptimizerTest {
 
     /**
      * A purely imported library: every history starts from stored memory, so
-     * there are no first exposures and w0..w3 cannot be trained — the
-     * defaults are the honest answer, and the reference itself fails here.
+     * there are no first exposures. FSRS-7 no longer treats that as a reason to
+     * keep w0..w3 fixed; thin data is the only reason the defaults come back.
      */
     @Test
-    fun seededOnlyLibraryKeepsTheDefaultInitialStabilities() = runBlocking {
+    fun seededOnlyLibraryKeepsTheDefaultsWhenTheDataIsThin() = runBlocking {
         val cards = (0 until 12).map { card ->
             FsrsTrainingCard(
                 reviews = listOf(
@@ -309,10 +288,7 @@ class FsrsOptimizerTest {
         }
         val result = FsrsOptimizer.fit(cards, FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
         assertEquals(0, result.steps)
-        assertEquals(
-            FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
-            result.parameters.map { it }
-        )
+        assertEquals(FsrsScheduler.DEFAULT_FSRS_PARAMETERS, result.parameters)
     }
 
     // ---- log -> training-card mapping (FsrsTuner) ----
@@ -362,28 +338,22 @@ class FsrsOptimizerTest {
     // ---- helpers ----
 
     /**
-     * Inter-day review histories in the shape the study loop produces: a
-     * first exposure, then reviews 1..30 days apart with grades drawn from a
-     * fixed seed. First gaps cycle through three values so every first-rating
-     * bucket is large enough to survive the reference's outlier filter (tiny
-     * far buckets are dropped by design), and every gap is at least a day, so
-     * every prefix after the first is a prediction target.
+     * Review histories in the shape the study loop produces: a first exposure,
+     * then reviews 1..30 days apart with grades drawn from a fixed seed. Every
+     * gap is at least a day, so a few cards also carry a second long-term gap —
+     * the condition the reference's "is there long-term memory at all?" guard
+     * looks for before it will train.
      */
     private fun syntheticCards(count: Int, seed: Long = 7): List<FsrsTrainingCard> {
         val rng = kotlin.random.Random(seed)
         val base = 1_600_000_000_000L
-        val firstGaps = intArrayOf(3, 7, 14)
         return (0 until count).map { card ->
             var at = base + rng.nextLong(0, 30 * dayMs)
             val reviews = ArrayList<FsrsTrainingReview>()
-            var first = true
             repeat(3 + rng.nextInt(3)) {
-                // The first review's grade anchors the card's outlier bucket;
-                // later grades are free to vary.
-                val rating = if (first) 3 else 1 + rng.nextInt(4)
+                val rating = if (reviews.isEmpty()) 3 else 1 + rng.nextInt(4)
                 reviews += FsrsTrainingReview(rating, at)
-                at += (if (first) firstGaps[card % firstGaps.size] else 1 + rng.nextInt(30)) * dayMs
-                first = false
+                at += (1 + rng.nextInt(30)) * dayMs
             }
             FsrsTrainingCard(reviews)
         }

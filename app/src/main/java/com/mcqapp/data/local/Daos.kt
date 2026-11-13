@@ -202,6 +202,28 @@ data class QuestionPageRow(
     val rowid: Long
 )
 
+/**
+ * One card's key and the first review-log rowid at or after the rebuild
+ * cursor. The FSRS-7 rebuild pages *cards* rather than rows, so a card's whole
+ * history is always replayed in one pass even when its rows straddle pages.
+ */
+data class ReviewCardPageRow(
+    val paperId: String,
+    val questionId: String,
+    val firstRowId: Long
+)
+
+/**
+ * The compare-and-set stamp of one card row: [lastReviewedAt] as it stood
+ * *before* the FSRS-7 replay started. A review that lands mid-rebuild advances
+ * it, so the rebuild's update misses and the live review wins.
+ */
+data class CardMemoryStamp(
+    val paperId: String,
+    val questionId: String,
+    val lastReviewedAt: Long
+)
+
 @Dao
 interface PassageDao {
     @Query("SELECT * FROM passages WHERE id = :id")
@@ -1596,7 +1618,7 @@ interface CardStateDao {
      * hash to invalidate a stale memory estimate.
      */
     @Query(
-        "SELECT questionId, difficulty, stability, reviewCount, lapses, leech, " +
+        "SELECT questionId, difficulty, stability, stabilityFast, reviewCount, lapses, leech, " +
             "dueAt, lastReviewedAt, contentHash, cardState " +
             "FROM card_state WHERE questionId IN (:ids)"
     )
@@ -1607,6 +1629,55 @@ interface CardStateDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(states: List<CardStateEntity>)
+
+    /**
+     * The FSRS-7 rebuild's only write. Compare-and-set on `lastReviewedAt`:
+     * [lastReviewedAt] is the stamp observed *before* the replay, so a review
+     * that landed in between advanced that timestamp and the predicate misses
+     * — the live review wins. Nothing but the three memory numbers is touched:
+     * due dates, intervals and counters keep the schedule the learner already
+     * sees.
+     *
+     * @return 1 when the row was rebuilt, 0 when a newer review owns it.
+     */
+    @Query(
+        "UPDATE card_state SET stability = :stability, stabilityFast = :stabilityFast, " +
+            "difficulty = :difficulty " +
+            "WHERE paperId = :paperId AND questionId = :questionId " +
+            "AND lastReviewedAt = :lastReviewedAt"
+    )
+    suspend fun rebuildMemoryIfUnchanged(
+        paperId: String,
+        questionId: String,
+        lastReviewedAt: Long,
+        stability: Double,
+        stabilityFast: Double,
+        difficulty: Double
+    ): Int
+
+    /**
+     * The CAS stamps of the given questions, read before their histories are
+     * replayed. Keyed by (paperId, questionId) by the caller, because a
+     * question id alone can appear in more than one paper.
+     */
+    @Query(
+        "SELECT paperId, questionId, lastReviewedAt FROM card_state " +
+            "WHERE questionId IN (:questionIds)"
+    )
+    suspend fun memoryStampsFor(questionIds: Collection<String>): List<CardMemoryStamp>
+
+    /**
+     * Cards with memory but no fast trace get `Sf = S` once the log replay has
+     * finished. This is the only place the fallback is written down, and it is
+     * the same rule the scheduler applies at read time.
+     *
+     * @return how many rows were filled.
+     */
+    @Query(
+        "UPDATE card_state SET stabilityFast = stability " +
+            "WHERE stability > 0 AND stabilityFast = 0"
+    )
+    suspend fun fillMissingFastStability(): Int
 
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
@@ -1979,6 +2050,24 @@ interface ReviewLogDao {
     suspend fun pageAfterId(afterId: Long, limit: Int): List<ReviewLogEntity>
 
     /**
+     * Cards with at least one review-log row after [afterRowId], one page of
+     * keys in first-row order. `id` is the autoincrement primary key and so is
+     * the rowid alias; the cursor is the last returned [ReviewCardPageRow.firstRowId].
+     *
+     * The FSRS-7 rebuild pages cards, not rows: a card's history can straddle a
+     * row page, and replaying half of it would write a wrong memory state.
+     */
+    @Query(
+        "SELECT paperId, questionId, MIN(id) AS firstRowId FROM review_log " +
+            "WHERE id > :afterRowId GROUP BY paperId, questionId " +
+            "ORDER BY firstRowId LIMIT :limit"
+    )
+    suspend fun pageCardKeysAfterRowId(
+        afterRowId: Long,
+        limit: Int
+    ): List<ReviewCardPageRow>
+
+    /**
      * One keyset page of the log's distinct question ids, in id order. The
      * optimizer builds one training card per question and a card needs all of
      * its rows: paging *questions* first lets the rows arrive one question at a
@@ -2033,6 +2122,10 @@ interface ReviewLogDao {
     /** The one-shot form of [observeCount]: the backup manifest's review count. */
     @Query("SELECT COUNT(*) FROM review_log")
     suspend fun countAll(): Int
+
+    /** How many distinct cards (paper, question) the log describes. */
+    @Query("SELECT COUNT(*) FROM (SELECT 1 FROM review_log GROUP BY paperId, questionId)")
+    suspend fun countCards(): Int
 
     /**
      * Removes one question's logged reviews. The log is immutable per review,
@@ -3250,6 +3343,7 @@ data class CardSignalRow(
     val questionId: String,
     val difficulty: Double,
     val stability: Double,
+    val stabilityFast: Double,
     val reviewCount: Int,
     val lapses: Int,
     val leech: Boolean,

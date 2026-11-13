@@ -28,7 +28,7 @@ internal class FsrsTuner(
     fun observeReviewCount() = db.reviewLogDao().observeCount()
 
     /**
-     * Fits the 21 weights to the full review log and stores them. The log is
+     * Fits the 34 weights to the full review log and stores them. The log is
      * paged into per-card histories ([buildTrainingCards]), so a million rows
      * are never held as entities. The fit itself runs on Dispatchers.Default
      * (inside [FsrsOptimizer.fit]); [onProgress] fires after each Adam step and
@@ -43,6 +43,9 @@ internal class FsrsTuner(
      *   thin to fit anything.
      */
     suspend fun optimize(onProgress: (Int, Int) -> Unit = { _, _ -> }): FsrsFitResult {
+        // A fit must never race the one-time model migration: the weights it
+        // reads and writes have to be FSRS-7's, not a legacy 21-value set.
+        settings.ensureFsrs7()
         val cards = buildTrainingCards(db.reviewLogDao())
         val current = settings.schedulerConfigNow().fsrsParameters
         val result = FsrsOptimizer.fit(cards, current, onProgress)
@@ -155,6 +158,7 @@ internal class FsrsTuner(
                 FsrsTrainingCard(
                     reviews = reviews.map { FsrsTrainingReview(it.rating, it.reviewedAt) },
                     seedStability = first.stabilityAfter,
+                    seedStabilityFast = first.stabilityFastAfter,
                     seedDifficulty = first.difficultyAfter,
                     seedReviewedAt = first.reviewedAt
                 )

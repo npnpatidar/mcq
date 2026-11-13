@@ -93,6 +93,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val statsStore = StatsStore(db, settings)
     private val ladderController = LadderController(db, settings, ladderStore, statsStore)
     private val testProgress = TestProgressStore(db, settings)
+    private val fsrs7Upgrade = Fsrs7Upgrade(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -223,6 +224,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Drops fitted weights; scheduling returns to the official defaults. */
     suspend fun restoreFsrsDefaults() = fsrsTuner.restoreDefaults()
+
+    /**
+     * The FSRS-7 model migration: retires an FSRS-6 weight set that cannot be
+     * converted, resets its fit provenance, and raises the one-shot notice when
+     * there was a fit to lose. Idempotent.
+     */
+    suspend fun ensureFsrs7() = settings.ensureFsrs7()
+
+    /** The one-shot "your FSRS-6 fit was retired" notice, until dismissed. */
+    fun fsrs7Notice(): Flow<Boolean> = settings.fsrs7Notice()
+
+    suspend fun dismissFsrs7Notice() = settings.dismissFsrs7Notice()
+
+    /**
+     * Rebuilds every card's dual-trace memory from its review log. Runs from
+     * [com.mcqapp.McqApplication]; a completed run returns immediately.
+     */
+    internal suspend fun rebuildFsrs7Memory(
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ) = fsrs7Upgrade.runIfNeeded(onProgress)
 
     // --- statistics ---
 

@@ -83,6 +83,32 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
   the other. A release APK still only installs over a release with the same signing key,
   and the CI release is signed with a throwaway key.
 
+## Scheduling (FSRS-7)
+
+- The engine is FSRS-7: **34 weights**, two stability traces (`stability` slow,
+  `stabilityFast` fast) and a difficulty-modulated *mixture* forgetting curve.
+  The defaults and the parity vector are pinned in `FsrsSchedulerTest`.
+- **`stabilityFast == 0` means "unknown", not "zero".** Imported cards and rows
+  the rebuild has not reached carry it; `FsrsScheduler.fastStabilityOf` collapses
+  those onto `stability`. Never write a fabricated `Sf` (the reference's 0.8×
+  ratio is legitimate only for a first exposure or an `Again`).
+- **Stability is not an interval.** `R(t = S)` is not the target retention, so
+  every due date comes from `intervalForRetention`'s numerical solve. Do not
+  render `S` with a `d` suffix, and do not set `S = interval` on import (the
+  Anki path bisects the mixed curve instead).
+- **No short-term branch.** Elapsed time stays fractional on purpose; rounding it
+  to whole days changes the model. Only the resulting interval is whole days.
+- **21 FSRS-6 weights cannot be converted** to 34 FSRS-7 weights. An upgraded
+  install falls back to the defaults with `fsrs_fit_version = 0` and a one-shot
+  Settings notice (`SettingsStore.ensureFsrs7`).
+- **The card-state rebuild writes only `(stability, stabilityFast, difficulty)`.**
+  `dueAt`, `intervalDays`, `reps`, `lapses`, `leech`, `lastReviewedAt` and
+  `contentHash` must keep the values the learner already sees; the write is a
+  compare-and-set on `lastReviewedAt` so a concurrent review wins.
+- `src/test` is split: pure-JVM tests (`FsrsSchedulerTest`, `FsrsOptimizerTest`,
+  the parsers, statistics) run on the ARM64 host; anything touching Room or
+  SQLite is Robolectric and only CI (x86_64) can run it.
+
 ## Anki interoperability
 
 - Export writes a legacy schema-11 `.apkg` with no `meta`, which Anki upgrades on import.

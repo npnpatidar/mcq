@@ -72,6 +72,7 @@ internal class StudyStore(
         lastReviewedAt = lastReviewedAt,
         difficulty = difficulty,
         stability = stability,
+        stabilityFast = stabilityFast,
         state = cardState,
         reviewCount = reviewCount
     )
@@ -597,6 +598,7 @@ internal class StudyStore(
                     stateBefore = existing?.state?.name ?: CardStateKind.NEW.name,
                     stabilityAfter = next.stability,
                     difficultyAfter = next.difficulty,
+                    stabilityFastAfter = next.stabilityFast,
                     intervalDaysAfter = next.intervalDays,
                     wasGuess = wasGuess,
                     wasCorrect = wasCorrect,

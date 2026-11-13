@@ -641,6 +641,7 @@ internal class HistoryStore(
                     lastReviewedAt = card.lastReviewedAt,
                     difficulty = card.difficulty,
                     stability = card.stability,
+                    stabilityFast = card.stabilityFast,
                     state = card.cardState,
                     reviewCount = card.reviewCount
                 )

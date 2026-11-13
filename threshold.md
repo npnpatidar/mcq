@@ -18,6 +18,7 @@ fold it into `README.md` before the release PR is merged.
 | D8 | Turn the report's direction into a **read-only** suggestion (`Suggested cuts: try 4 s / 60 s…`) instead of an applied change: one second per 5 pp outside the band, capped at 4 s, Easy cut only. | Removing the ladder removed the only thing that translated "too wide" into a number. The contrast tells direction and magnitude in pp, not an optimum, so the app names a bounded next step and the learner decides. Hard is never moved: δ2 is not acted on. |
 | D10 | Offer the first pair from **answer times** (`p10` / `p90` of correct, unguessed, timed answers from clock-neutral versions), before any Easy/Hard label exists. | The contrast needs Easy-vs-Good pairs, so turning correctness-only off starts a months-long wait rather than producing a number. Dwell is recorded in both rules, and a neutral clock keeps it unbiased, so the first pair can come from the pace the learner already has. |
 | D9 | Add a `Grade on correctness only` switch: correct → Good, wrong/guess/skip → Again, the clock never decides the grade or its colour. The switch hides both cut fields and the Stats calibration card, keeps recording the dwell, and starts a new grading version (`reason = rule`). | Some learners do not want time to grade them. Ignoring the clock is a rule change, not a cut value, so it needs its own epoch; the dwell is still the input any later re-tune would need, so it keeps being stored. |
+| D11 | A **new install starts with correctness-only on**; an upgrade keeps the rule it had, and a restored install keeps the rule in its backup. | The rule is the measurement condition for the answer-time cuts: the dwell of a tinted clock is not free evidence, so a learner who starts on timing cannot produce that suggestion later without first spending weeks on correctness-only. Seeding it makes the unbiased sample the default path; scoping it to fresh installs keeps an upgrade from silently changing how it grades. |
 
 Expected distribution on the recorded 812 scorable reviews (replay, Again fixed):
 
@@ -206,6 +207,21 @@ Out of scope:
 - [x] `StatsRetentionStreamTest`: the streamed build's report and both suggestions are nulled
       before comparing against the in-memory oracle.
 - [x] `README.md`: Tab 2 and the switch section describe the two-stage tuning.
+
+### 4.7e Fresh-install default
+
+- [x] `SettingsStore(context, freshInstall)`: the scheduler-config flow seeds
+      `correctness_only = true` before its first emission, and only when the install is fresh and
+      no preference is stored — an upgrade and a restored install are left alone.
+- [x] `McqApplication.onCreate` captures `freshInstall` from the absence of the database file
+      before Room opens it; `McqRepository` passes it on; `AppDatabase.NAME` names the file.
+- [x] The first version row of a fresh install carries `correctnessOnly = 1`, so the answer-time
+      evidence is never read from tinted dwells.
+- [x] Tests: a fresh install starts on correctness-only and stores it; an upgrade keeps the timed
+      rule; a restored install and an explicit choice are never overwritten; the fresh version row
+      records the rule.
+- [x] `README.md` and the switch help state the default and the order (collect first, then turn
+      timing on with the suggested pair).
 
 ### 4.8 Housekeeping
 

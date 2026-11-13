@@ -10,12 +10,21 @@ import com.mcqapp.util.Logger
 
 class McqApplication : Application() {
 
+    /**
+     * Whether this install starts without a database. Captured before Room
+     * opens it: a database file that is already there means the app was
+     * installed before, so this is an upgrade and the learner keeps the rule
+     * they had. A new install starts on correctness-only grading.
+     */
+    private var freshInstall = false
+
     val repository: McqRepository by lazy {
-        McqRepository(AppDatabase.get(this), this)
+        McqRepository(AppDatabase.get(this), this, freshInstall)
     }
 
     override fun onCreate() {
         super.onCreate()
+        freshInstall = !getDatabasePath(AppDatabase.NAME).exists()
         Logger.init(this)
         AnkiTempFiles.cleanup(this)
         Logger.i("APP", "Application onCreate (pid=${Process.myPid()})")

@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -139,6 +140,57 @@ class RepositorySettingsTest {
      * one, which is what this asserts by round-tripping only the FSRS-era
      * settings and confirming none of the removed fields reappear.
      */
+    /**
+     * A new install starts on correctness-only grading. The rule is the
+     * measurement condition for the answer-time cuts: the dwell of a tinted
+     * clock is not free evidence, so a learner who starts on timing cannot
+     * produce that suggestion later without first spending weeks on
+     * correctness-only. Starting here makes the unbiased sample the default
+     * path.
+     */
+    @Test
+    fun aFreshInstallStartsOnCorrectnessOnlyGrading() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        val config = SettingsStore(context, freshInstall = true).schedulerConfigNow()
+        assertTrue("a new install starts on the unbiased rule", config.correctnessOnlyGrading)
+        // The seed is stored, not merely inferred: the rule survives a later
+        // read from a store that knows nothing about this install.
+        assertTrue(store().schedulerConfigNow().correctnessOnlyGrading)
+    }
+
+    /** An upgrade keeps the rule the learner had: the default stays timed. */
+    @Test
+    fun anUpgradeKeepsTheTimedRule() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        val config = SettingsStore(context, freshInstall = false).schedulerConfigNow()
+        assertFalse(config.correctnessOnlyGrading)
+    }
+
+    /**
+     * A restored install is not untouched: the restore wrote the backup's
+     * preferences, and the rule in that backup is the learner's own.
+     */
+    @Test
+    fun aRestoredInstallKeepsTheRuleInItsBackup() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        context.dataStore.edit { it[stringPreferencesKey("theme_mode")] = "dark" }
+        val config = SettingsStore(context, freshInstall = true).schedulerConfigNow()
+        assertFalse("the fresh-install seed must not overwrite a restore", config.correctnessOnlyGrading)
+    }
+
+    /** An explicit choice is never overwritten by the seed. */
+    @Test
+    fun anExplicitChoiceIsNeverOverwritten() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        context.dataStore.edit { it[booleanPreferencesKey("correctness_only")] = false }
+        val config = SettingsStore(context, freshInstall = true).schedulerConfigNow()
+        assertFalse(config.correctnessOnlyGrading)
+    }
+
     @Test
     fun hapticsAreOnByDefaultAndSurviveARoundTrip() = runBlocking {
         assertTrue("a fresh install starts with haptics on", store().hapticsEnabled().first())

@@ -60,6 +60,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun studySessionDao(): StudySessionDao
 
     companion object {
+        /** The database file name; the app checks it to spot a fresh install. */
+        const val NAME = "mcq.db"
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -1028,7 +1031,7 @@ abstract class AppDatabase : RoomDatabase() {
          */
         internal fun builder(
             context: Context,
-            name: String = "mcq.db"
+            name: String = NAME
         ): RoomDatabase.Builder<AppDatabase> =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
                 .addMigrations(

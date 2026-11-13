@@ -890,7 +890,7 @@ this, never midnight.
 | `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 21 weights to your review log (Anki parity). Shows log-loss before/after. `Restore defaults` drops fitted weights. |
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
-| `Grade on correctness only` | off | switch | On = correct → `Good`, wrong/guess/skip → `Again`, the clock never decides the grade or its colour. Hides both cut fields below and the Stats calibration card. Dwell is still recorded. |
+| `Grade on correctness only` | on for a new install (off for an upgrade) | switch | On = correct → `Good`, wrong/guess/skip → `Again`, the clock never decides the grade or its colour. Hides both cut fields below and the Stats calibration card; Statistics shows the cuts your own answer times suggest instead. Dwell is still recorded. |
 | `Minimum easy answer threshold` | 6 s | 1–3600, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. Hidden while correctness-only grading is on. |
 | `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast | Auto-graded Hard at or above this. Hidden while correctness-only grading is on. |
 | **Advanced** (collapsed) | | | |
@@ -2066,9 +2066,11 @@ Button `Optimize FSRS parameters`:
 Help: `Switch off for review-only sessions. Many new cards increase future review load.` Effect: `StudyStore.getNextStudyCard`/`getStudyQueue` read it per pull (off ⇒ no NEW pool). `StudyViewModel` snapshots into `state.introduceNewCards` for empty-state hint.
 
 #### Grade on Correctness Only (switch)
-**Key:** `correctness_only` | **Default:** off | **Control:** switch (tag `setting-grade-correctness-only`).
+**Key:** `correctness_only` | **Default:** on for a new install, off for an upgrade | **Control:** switch (tag `setting-grade-correctness-only`).
 
 On: `Study.inferGrade` returns `Good` for every correct, unguessed answer and `Again` for wrong/guess/skip; the cuts are not read. The question clock keeps running and `review_log.elapsedSeconds` is still written, so the dwell history stays analysable. The switch also starts a new grading version (`reason = rule`, `grading_versions.correctnessOnly = 1`), so rows graded with the clock are never pooled with rows graded without it. Both threshold fields below disappear while it is on; `Reset` turns it off. Statistics → Retention replaces the calibration card with the answer-time suggestion once 200 correct answers over 30 cards span at least 14 days; that pair is the one to enter when timing is switched back on.
+
+**Default:** a new install starts with the switch on, because the rule is the measurement condition for the answer-time cuts: the dwell of a tinted clock is not free evidence, so a learner who starts on timing cannot produce that suggestion later without first spending weeks on correctness-only. The seed is written once, on the first read of the scheduler config, and only into an untouched install — an upgrade keeps the rule the learner had, and a restored install keeps the rule in its backup (the seed refuses to run once any preference is stored).
 
 #### 3.6 Minimum Easy Answer Threshold
 **Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`. Hidden while `Grade on correctness only` is on (the value is kept as the fallback rule).

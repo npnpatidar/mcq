@@ -78,9 +78,18 @@ import kotlinx.coroutines.flow.Flow
  * (cross-paper search, the storage report), so this file stays a table of
  * contents rather than a second implementation.
  */
-class McqRepository(private val db: AppDatabase, private val context: Context) {
+/**
+ * @param freshInstall whether this install has no database yet. A new
+ *   installation starts on correctness-only grading (see [SettingsStore]);
+ *   an upgrade keeps the rule the learner already had.
+ */
+class McqRepository(
+    private val db: AppDatabase,
+    private val context: Context,
+    freshInstall: Boolean = false
+) {
 
-    private val settings = SettingsStore(context)
+    private val settings = SettingsStore(context, freshInstall)
     private val gradingRules = GradingRulesStore(db, settings)
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
@@ -492,7 +501,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // writes live in mcq.db-wal until a checkpoint, and counting only the
         // main file understates the database after a session.
         val dbBytes = try {
-            val main = context.getDatabasePath("mcq.db")
+            val main = context.getDatabasePath(AppDatabase.NAME)
             listOf(main, java.io.File("${main.path}-wal"), java.io.File("${main.path}-shm"))
                 .filter { it.exists() }
                 .sumOf { it.length() }

@@ -14,7 +14,9 @@ import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -34,7 +36,16 @@ internal val Context.dataStore by preferencesDataStore(name = "settings")
  * data and this file about user preferences — the two never interleave except
  * in [discardProgressFor], which paper deletion calls by hand.
  */
-internal class SettingsStore(private val context: Context) : TestProgressSlot {
+/**
+ * @param freshInstall whether this install has no database yet — a new
+ *   installation rather than an upgrade. It decides the one default that is
+ *   not a preference: a new learner starts on correctness-only grading, so
+ *   the dwell they record is unbiased evidence for the answer-time cuts.
+ */
+internal class SettingsStore(
+    private val context: Context,
+    private val freshInstall: Boolean = false
+) : TestProgressSlot {
 
     private val themeKey = stringPreferencesKey("theme_mode")
 
@@ -271,45 +282,79 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
      */
     private val gradingRulesVersionKey = intPreferencesKey("grading_rules_version")
 
-    fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
-        context.dataStore.data.map { prefs ->
-            val d = com.mcqapp.domain.SchedulerConfig()
-            // v27 fixed the cuts at absolute 6 s / 60 s and deleted the reading
-            // allowance, so a pair stored by an older build is measured against
-            // a rule that no longer exists: keep it is to grade every answer
-            // under a ladder the code no longer implements. Until the learner
-            // saves a cut under this rule, the shipped pair wins.
-            val cutsCurrent = (prefs[gradingRulesVersionKey] ?: 0) >= GRADING_RULES_VERSION
-            com.mcqapp.domain.SchedulerConfig(
-                maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
-                relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
-                leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
-                desiredRetention = prefs[desiredRetentionKey] ?: d.desiredRetention,
-                studyMode = prefs[studyModeKey]?.let { stored ->
-                    runCatching { com.mcqapp.domain.StudyMode.valueOf(stored) }.getOrNull()
-                } ?: d.studyMode,
-                introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
-                dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
-                correctnessOnlyGrading = prefs[correctnessOnlyKey] ?: d.correctnessOnlyGrading,
-                fastSeconds = if (cutsCurrent) {
-                    (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong()
-                } else {
-                    d.fastSeconds
-                },
-                slowSeconds = if (cutsCurrent) {
-                    (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
-                } else {
-                    d.slowSeconds
-                },
-                fsrsParameters = prefs[fsrsParametersKey]?.let { stored ->
-                    stored.split(',')
-                        .mapNotNull { token -> token.toDoubleOrNull() }
-                        .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
-                } ?: d.fsrsParameters,
-                gradingVersion = if (cutsCurrent) prefs[ladderVersionKey] ?: 0 else 0,
-                fsrsFitVersion = prefs[fsrsFitVersionKey] ?: 0
-            ).sanitized()
-        }
+    /**
+     * The scheduler config, with the fresh-install rule seeded before the
+     * first emission.
+     *
+     * The seed is a write, so it happens outside the preferences collection:
+     * editing the DataStore while collecting it would deadlock.
+     */
+    fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> = flow {
+        seedFreshInstallRule()
+        emitAll(
+            context.dataStore.data.map { prefs ->
+                val d = com.mcqapp.domain.SchedulerConfig()
+                // v27 fixed the cuts at absolute 6 s / 60 s and deleted the reading
+                // allowance, so a pair stored by an older build is measured against
+                // a rule that no longer exists: keep it is to grade every answer
+                // under a ladder the code no longer implements. Until the learner
+                // saves a cut under this rule, the shipped pair wins.
+                val cutsCurrent = (prefs[gradingRulesVersionKey] ?: 0) >= GRADING_RULES_VERSION
+                com.mcqapp.domain.SchedulerConfig(
+                    maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
+                    relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
+                    leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
+                    desiredRetention = prefs[desiredRetentionKey] ?: d.desiredRetention,
+                    studyMode = prefs[studyModeKey]?.let { stored ->
+                        runCatching { com.mcqapp.domain.StudyMode.valueOf(stored) }.getOrNull()
+                    } ?: d.studyMode,
+                    introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
+                    dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
+                    correctnessOnlyGrading = prefs[correctnessOnlyKey] ?: d.correctnessOnlyGrading,
+                    fastSeconds = if (cutsCurrent) {
+                        (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong()
+                    } else {
+                        d.fastSeconds
+                    },
+                    slowSeconds = if (cutsCurrent) {
+                        (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
+                    } else {
+                        d.slowSeconds
+                    },
+                    fsrsParameters = prefs[fsrsParametersKey]?.let { stored ->
+                        stored.split(',')
+                            .mapNotNull { token -> token.toDoubleOrNull() }
+                            .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
+                    } ?: d.fsrsParameters,
+                    gradingVersion = if (cutsCurrent) prefs[ladderVersionKey] ?: 0 else 0,
+                    fsrsFitVersion = prefs[fsrsFitVersionKey] ?: 0
+                ).sanitized()
+            }
+        )
+    }
+
+    /**
+     * A new install starts on correctness-only grading.
+     *
+     * The rule is the measurement condition for the answer-time suggestion:
+     * the dwell of a tinted clock is not free evidence, so a learner who
+     * starts with timing on cannot produce that suggestion later without
+     * first spending two weeks on correctness-only. Starting here makes the
+     * unbiased sample the default path, and the learner turns the rule off
+     * once Statistics offers a pair.
+     *
+     * Only an untouched install is seeded. An upgrade keeps whatever the
+     * learner had, and a restored install keeps the rule in its backup: the
+     * test is the absence of every stored preference, since the first
+     * preference written is the learner's own and a restore writes many.
+     */
+    private suspend fun seedFreshInstallRule() {
+        if (!freshInstall) return
+        val snapshot = context.dataStore.data.first()
+        if (snapshot[correctnessOnlyKey] != null) return
+        if (snapshot.asMap().isNotEmpty()) return
+        context.dataStore.edit { it[correctnessOnlyKey] = true }
+    }
 
     suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig =
         schedulerConfig().first()

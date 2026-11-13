@@ -80,6 +80,20 @@ class GradingRulesStoreTest {
         assertEquals(first, store().schedulerConfigNow().gradingVersion)
     }
 
+    /**
+     * A new install starts on correctness-only grading, and the version row
+     * that covers its first reviews must say so: a row that claimed the clock
+     * graded them would feed the answer-time suggestion with tinted dwells.
+     */
+    @Test
+    fun aFreshInstallGradesOnCorrectnessAndItsVersionRowSaysSo() = runBlocking {
+        val freshStore = SettingsStore(context, freshInstall = true)
+        val version = GradingRulesStore(db, freshStore).currentVersion()
+        val row = db.gradingRulesDao().version(version.toLong())!!
+        assertTrue("the first version must record the rule in force", row.correctnessOnly)
+        assertTrue(freshStore.schedulerConfigNow().correctnessOnlyGrading)
+    }
+
     /** A Settings cut edit must write a version row, not just a preference. */
     @Test
     fun aManualCutEditWritesAVersionRow() = runBlocking {

@@ -3,6 +3,8 @@ package com.mcqapp
 import android.content.Context
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.StudyMode
 import com.mcqapp.ui.settings.SettingsViewModel
@@ -17,6 +19,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -41,17 +44,19 @@ import org.robolectric.junit.rules.TimeoutRule
 @Config(sdk = [34], application = TestMcqApplication::class)
 class SettingsViewModelResetTest {
 
-    @get:Rule
-    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+    private val watchdog = HangWatchdogRule(seconds = 120)
+    private val timeout = TimeoutRule.seconds(180)
+    private val settingsReset = SettingsResetRule()
+    private val testName = TestName()
 
     @get:Rule
-    val testName = TestName()
+    val rules: RuleChain = RuleChain.outerRule(watchdog)
+        .around(timeout)
+        .around(settingsReset)
+        .around(testName)
 
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication
     private val repository get() = app.repository
-
-    @get:Rule
-    val settingsReset = SettingsResetRule()
 
     @After
     fun cleanup() {
@@ -60,20 +65,30 @@ class SettingsViewModelResetTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    /** Database work must not block Robolectric's paused main thread. */
-    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
-        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    /**
+     * Runs [block] off the main thread while this test thread pumps the paused
+     * main looper, so a Main-dispatched continuation (for example the reset
+     * ViewModel coroutine) can progress while database/DataStore work completes.
+     */
+    private fun <T> dbBlocking(block: suspend () -> T): T = runOffMainWhilePumping(
+        condition = "dbBlocking in SettingsViewModelResetTest.${testName.methodName}"
+    ) {
+        withContext(Dispatchers.IO) { block() }
     }
 
-    /** Idles the main looper until [condition] holds, or gives up. */
-    private fun awaitCondition(condition: () -> Boolean): Boolean {
-        repeat(400) {
+    /** Idles the main looper until [condition] holds, or fails with a bounded diagnostic. */
+    private fun awaitCondition(description: String, condition: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + 30_000
+        while (System.currentTimeMillis() < deadline) {
             shadowOf(Looper.getMainLooper()).idle()
             if (condition()) return true
             Thread.sleep(5)
         }
-        val ok = condition()
-        check(ok) { "timed out waiting for condition in ${testName.methodName}" }
+        shadowOf(Looper.getMainLooper()).idle()
+        check(condition()) {
+            "timed out after 30000ms waiting for $description in " +
+                "SettingsViewModelResetTest.${testName.methodName}"
+        }
         return true
     }
 
@@ -96,23 +111,30 @@ class SettingsViewModelResetTest {
     /**
      * Regression for the former first-DAO-before-open hang: a fresh, unopened
      * database must complete its first production repository operation without
-     * a test-only warm-up and without depending on progress from a blocked main
-     * looper. Bounded so a regression fails instead of hanging the run.
+     * a test-only warm-up. The call deliberately starts on Robolectric's test
+     * thread: only the production warm-up may move the physical open to IO.
+     * Removing that warm-up makes the first Room DAO access run on the test
+     * thread and fail, so this test cannot pass through a test dispatcher.
+     *
+     * The timeout bounds a cooperative failure; the class watchdog covers an
+     * uninterruptible native wait.
      */
     @Test
     fun firstDatabaseOpenAndSeedPathCompletes() {
         val context = app
-        val originalDb = com.mcqapp.data.local.AppDatabase.get(context)
-        com.mcqapp.data.local.AppDatabase.resetInstanceForTests()
-        val freshDb = com.mcqapp.data.local.AppDatabase.get(context)
+        val originalDb = AppDatabase.get(context)
+        AppDatabase.resetInstanceForTests()
+        val freshDb = AppDatabase.get(context)
         try {
-            val freshRepository = com.mcqapp.data.repository.McqRepository(freshDb, context)
-            val config = dbBlocking { freshRepository.schedulerConfigNow() }
+            val freshRepository = McqRepository(freshDb, context)
+            val config = runBlocking {
+                withTimeout(30_000) { freshRepository.schedulerConfigNow() }
+            }
             assertNotNull("seeding the first config must complete", config)
             assertTrue(config.gradingVersion > 0)
         } finally {
             freshDb.close()
-            com.mcqapp.data.local.AppDatabase.restoreInstanceForTests(originalDb)
+            AppDatabase.restoreInstanceForTests(originalDb)
         }
     }
 
@@ -129,7 +151,7 @@ class SettingsViewModelResetTest {
         }
         val beforeVersion = dbBlocking { repository.gradingVersion() }
         val viewModel = SettingsViewModel(app)
-        awaitCondition {
+        awaitCondition("the Settings UI to load the saved rule") {
             val config = viewModel.schedulerConfig.value
             config != null &&
                 config.correctnessOnlyGrading &&
@@ -141,7 +163,7 @@ class SettingsViewModelResetTest {
         // an unchanged pair would keep `beforeVersion`. Awaiting only the
         // knobs let the init collector's re-emit hide a ViewModel that had
         // published `SchedulerConfig()` in the meantime.
-        awaitCondition {
+        awaitCondition("the Settings UI to publish the reset config and new version") {
             val config = viewModel.schedulerConfig.value
             config != null &&
                 config.correctnessOnlyGrading &&
@@ -172,7 +194,7 @@ class SettingsViewModelResetTest {
         viewModel.updateSchedulerConfig(
             ui!!.copy(studyMode = StudyMode.EXPLORE_NEW)
         )
-        awaitCondition {
+        awaitCondition("the Settings UI to publish the post-reset edit") {
             viewModel.schedulerConfig.value?.studyMode == StudyMode.EXPLORE_NEW
         }
         dbBlocking {
@@ -207,7 +229,9 @@ class SettingsViewModelResetTest {
             )
         }
         val viewModel = SettingsViewModel(app)
-        awaitCondition { viewModel.schedulerConfig.value != null }
+        awaitCondition("the Settings UI to load the stored config") {
+            viewModel.schedulerConfig.value != null
+        }
 
         // Exactly the defaults a screen composed before the fixture's save
         // would still be holding.
@@ -219,7 +243,7 @@ class SettingsViewModelResetTest {
                 desiredRetention = 0.85
             )
         )
-        awaitCondition {
+        awaitCondition("the Settings UI to publish the unrelated edit") {
             viewModel.schedulerConfig.value?.desiredRetention == 0.85
         }
         dbBlocking {

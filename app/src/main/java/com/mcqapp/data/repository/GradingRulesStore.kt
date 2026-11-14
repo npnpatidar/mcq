@@ -49,10 +49,7 @@ internal open class GradingRulesStore(
      * statistics read refuses to build a version-0 report.
      */
     open suspend fun currentVersion(): Int {
-        // First grading-version access can be the first Room DAO path; warm the
-        // underlying SQLite open on IO so it does not race connection-pool setup
-        // against a caller blocking the main looper (the CI hang shape).
-        db.ensureOpen()
+        warmDatabase()
         return mutex.withLock { ensureVersionLocked() }
     }
 
@@ -62,29 +59,32 @@ internal open class GradingRulesStore(
      * switch), so a Settings save of an unrelated knob does not manufacture a
      * version and two rules never share one.
      */
-    suspend fun recordConfigCuts(config: SchedulerConfig): Int = mutex.withLock {
-        val stored = settings.schedulerConfigNow()
-        val cutsChanged = stored.fastSeconds != config.fastSeconds ||
-            stored.slowSeconds != config.slowSeconds
-        val ruleChanged = stored.correctnessOnlyGrading != config.correctnessOnlyGrading
-        if (!cutsChanged && !ruleChanged) {
-            return@withLock ensureVersionLocked()
+    suspend fun recordConfigCuts(config: SchedulerConfig): Int {
+        warmDatabase()
+        return mutex.withLock {
+            val stored = settings.schedulerConfigNow()
+            val cutsChanged = stored.fastSeconds != config.fastSeconds ||
+                stored.slowSeconds != config.slowSeconds
+            val ruleChanged = stored.correctnessOnlyGrading != config.correctnessOnlyGrading
+            if (!cutsChanged && !ruleChanged) {
+                return@withLock ensureVersionLocked()
+            }
+            val id = nextVersionId()
+            settings.writeCuts(
+                config.fastSeconds,
+                config.slowSeconds,
+                id,
+                config.correctnessOnlyGrading
+            )
+            insert(
+                id,
+                config.fastSeconds,
+                config.slowSeconds,
+                if (ruleChanged && !cutsChanged) GradingReason.RULE else GradingReason.MANUAL,
+                config.correctnessOnlyGrading
+            )
+            id
         }
-        val id = nextVersionId()
-        settings.writeCuts(
-            config.fastSeconds,
-            config.slowSeconds,
-            id,
-            config.correctnessOnlyGrading
-        )
-        insert(
-            id,
-            config.fastSeconds,
-            config.slowSeconds,
-            if (ruleChanged && !cutsChanged) GradingReason.RULE else GradingReason.MANUAL,
-            config.correctnessOnlyGrading
-        )
-        id
     }
 
     /**
@@ -97,22 +97,25 @@ internal open class GradingRulesStore(
      * calibration epoch. The row captures [config]'s rule, so a
      * correctness-only install never files the reset under a tinted clock.
      */
-    suspend fun recordResetCuts(config: SchedulerConfig): Int = mutex.withLock {
-        val id = nextVersionId()
-        settings.writeCuts(
-            config.fastSeconds,
-            config.slowSeconds,
-            id,
-            config.correctnessOnlyGrading
-        )
-        insert(
-            id,
-            config.fastSeconds,
-            config.slowSeconds,
-            GradingReason.MANUAL,
-            config.correctnessOnlyGrading
-        )
-        id
+    suspend fun recordResetCuts(config: SchedulerConfig): Int {
+        warmDatabase()
+        return mutex.withLock {
+            val id = nextVersionId()
+            settings.writeCuts(
+                config.fastSeconds,
+                config.slowSeconds,
+                id,
+                config.correctnessOnlyGrading
+            )
+            insert(
+                id,
+                config.fastSeconds,
+                config.slowSeconds,
+                GradingReason.MANUAL,
+                config.correctnessOnlyGrading
+            )
+            id
+        }
     }
 
     /**
@@ -121,23 +124,39 @@ internal open class GradingRulesStore(
      * `prior` row continuing from the highest restored id keeps the review log
      * resolvable: every row's version still points at a pair.
      */
-    suspend fun seedAfterRestore(): Int = mutex.withLock {
-        val config = settings.schedulerConfigNow()
-        val id = nextVersionId()
-        settings.writeCuts(
-            config.fastSeconds,
-            config.slowSeconds,
-            id,
-            config.correctnessOnlyGrading
-        )
-        insert(
-            id,
-            config.fastSeconds,
-            config.slowSeconds,
-            GradingReason.PRIOR,
-            config.correctnessOnlyGrading
-        )
-        id
+    suspend fun seedAfterRestore(): Int {
+        warmDatabase()
+        return mutex.withLock {
+            val config = settings.schedulerConfigNow()
+            val id = nextVersionId()
+            settings.writeCuts(
+                config.fastSeconds,
+                config.slowSeconds,
+                id,
+                config.correctnessOnlyGrading
+            )
+            insert(
+                id,
+                config.fastSeconds,
+                config.slowSeconds,
+                GradingReason.PRIOR,
+                config.correctnessOnlyGrading
+            )
+            id
+        }
+    }
+
+    /**
+     * Warms the first SQLite open on the IO dispatcher before any DAO access in
+     * this store. All public entry points go through here so a first-use writer
+     * cannot race the connection pool open against a caller holding the main
+     * thread. [AppDatabase.ensureOpen] is one-shot per instance, so later
+     * version reads keep this call but pay neither a dispatcher hop nor a
+     * second physical open. Called outside [mutex] to keep locking simple and
+     * deterministic.
+     */
+    private suspend fun warmDatabase() {
+        db.ensureOpen()
     }
 
     private suspend fun insert(

@@ -11,9 +11,7 @@ import com.mcqapp.data.repository.StatsStore
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -21,6 +19,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -43,19 +42,24 @@ import org.robolectric.junit.rules.TimeoutRule
 @Config(sdk = [34], application = TestMcqApplication::class)
 class StatsSeedFailureTest {
 
+    private val watchdog = HangWatchdogRule(seconds = 120)
+    private val timeout = TimeoutRule.seconds(180)
+    private val settingsReset = SettingsResetRule()
+
     @get:Rule
-    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+    val rules: RuleChain = RuleChain.outerRule(watchdog)
+        .around(timeout)
+        .around(settingsReset)
 
     private lateinit var context: Context
     private lateinit var db: AppDatabase
     private lateinit var settings: SettingsStore
 
-    @get:Rule
-    val settingsReset = SettingsResetRule()
-
     /** Database/DataStore work must not block Robolectric's paused main thread. */
-    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
-        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    private fun <T> dbBlocking(block: suspend () -> T): T = runOffMainWhilePumping(
+        condition = "dbBlocking in StatsSeedFailureTest"
+    ) {
+        withContext(Dispatchers.IO) { block() }
     }
 
     @Before

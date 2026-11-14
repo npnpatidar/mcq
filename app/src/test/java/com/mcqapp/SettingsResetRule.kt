@@ -7,7 +7,6 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.repository.dataStore
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.rules.ExternalResource
@@ -66,7 +65,9 @@ class SettingsResetRule : ExternalResource() {
         fun clearGradingKeys(
             context: Context = ApplicationProvider.getApplicationContext()
         ) {
-            runBlocking {
+            runOffMainWhilePumping(
+                condition = "SettingsResetRule.clearGradingKeys"
+            ) {
                 clearGradingKeysSuspend(context)
             }
         }

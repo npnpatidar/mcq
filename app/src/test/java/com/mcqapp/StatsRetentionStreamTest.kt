@@ -24,7 +24,6 @@ import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -34,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -50,14 +50,17 @@ import org.robolectric.junit.rules.TimeoutRule
 @Config(sdk = [34])
 class StatsRetentionStreamTest {
 
+    private val watchdog = HangWatchdogRule(seconds = 120)
+    private val timeout = TimeoutRule.seconds(180)
+    private val settingsReset = SettingsResetRule()
+
     @get:Rule
-    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+    val rules: RuleChain = RuleChain.outerRule(watchdog)
+        .around(timeout)
+        .around(settingsReset)
 
     private lateinit var db: AppDatabase
     private lateinit var repository: McqRepository
-
-    @get:Rule
-    val settingsReset = SettingsResetRule()
 
     private val day = DayBoundary.DAY_MS
     private val hour = 3_600_000L
@@ -65,8 +68,10 @@ class StatsRetentionStreamTest {
     private val todayStart = DayBoundary.startOfDay(now)
 
     /** Database/DataStore work must not block Robolectric's paused main thread. */
-    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
-        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    private fun <T> dbBlocking(block: suspend () -> T): T = runOffMainWhilePumping(
+        condition = "dbBlocking in StatsRetentionStreamTest"
+    ) {
+        withContext(Dispatchers.IO) { block() }
     }
 
     @Before
@@ -74,7 +79,9 @@ class StatsRetentionStreamTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         // The DataStore is process-wide: start every test from a blank slate so
         // a grading pair or rule written by a neighbour cannot steer this one.
-        runBlocking {
+        runOffMainWhilePumping(
+            condition = "StatsRetentionStreamTest.setUp DataStore clear"
+        ) {
             withContext(Dispatchers.IO) { withTimeout(30_000) { context.dataStore.edit { it.clear() } } }
         }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
@@ -88,7 +95,9 @@ class StatsRetentionStreamTest {
         db.close()
         // This class writes real preference keys (the v26 upgrade fixture), so
         // it must restore the process-wide store like GradingRulesStoreTest.
-        runBlocking {
+        runOffMainWhilePumping(
+            condition = "StatsRetentionStreamTest.tearDown DataStore clear"
+        ) {
             withContext(Dispatchers.IO) {
                 withTimeout(30_000) {
                     ApplicationProvider.getApplicationContext<Context>()

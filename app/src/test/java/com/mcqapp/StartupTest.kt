@@ -11,7 +11,6 @@ import com.mcqapp.data.repository.InstallFreshness
 import com.mcqapp.data.repository.dataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -21,6 +20,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
 import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -51,11 +51,14 @@ import org.robolectric.junit.rules.TimeoutRule
 @Config(sdk = [34], application = FreshStartupApplication::class)
 class StartupTest {
 
-    @get:Rule
-    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+    private val watchdog = HangWatchdogRule(seconds = 120)
+    private val timeout = TimeoutRule.seconds(180)
+    private val testName = TestName()
 
     @get:Rule
-    val testName = TestName()
+    val rules: RuleChain = RuleChain.outerRule(watchdog)
+        .around(timeout)
+        .around(testName)
 
     @After
     fun clearInstallState() {
@@ -109,7 +112,10 @@ class StartupTest {
         )
         // The marker is written by the seed decision itself, so the seed has
         // already run: an upgrade must not have written the rule either.
-        val stored = runBlocking {
+        val stored = runOffMainWhilePumping(
+            timeoutMs = 10_000,
+            condition = "DataStore read of ${CORRECTNESS_ONLY.name} in StartupTest.${testName.methodName}"
+        ) {
             withContext(Dispatchers.IO) { withTimeout(10_000) { context.dataStore.data.first()[CORRECTNESS_ONLY] } }
         }
         assertTrue(
@@ -137,8 +143,9 @@ class StartupTest {
     /**
      * Idles the main looper and polls the process-wide store until [key] has
      * [expected], or the timeout passes. Bounded rather than fixed-sleep: the
-     * startup job's latency is not the test's subject. DataStore reads run on
-     * IO so a background probe can progress while this test thread idles.
+     * startup job's latency is not the test's subject. Each DataStore read runs
+     * off the main thread while this thread pumps the paused main looper so a
+     * Main-dispatched continuation can still progress.
      */
     private fun awaitStored(
         context: Context,
@@ -146,21 +153,24 @@ class StartupTest {
         expected: Boolean,
         timeoutMs: Long = 10_000
     ): Boolean {
+        fun readValue(): Boolean? = runOffMainWhilePumping(
+            timeoutMs = 2_000,
+            condition = "DataStore read of ${key.name} in StartupTest.${testName.methodName}"
+        ) {
+            withContext(Dispatchers.IO) { withTimeout(2_000) { context.dataStore.data.first()[key] } }
+        }
+
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             shadowOf(Looper.getMainLooper()).idle()
-            val value = runBlocking {
-                withContext(Dispatchers.IO) { withTimeout(2_000) { context.dataStore.data.first()[key] } }
-            }
-            if (value == expected) return true
+            if (readValue() == expected) return true
             Thread.sleep(10)
         }
         shadowOf(Looper.getMainLooper()).idle()
-        val value = runBlocking {
-            withContext(Dispatchers.IO) { withTimeout(2_000) { context.dataStore.data.first()[key] } }
-        }
+        val value = readValue()
         check(value == expected) {
-            "timed out waiting for ${key.name}==$expected in ${testName.methodName} (got $value)"
+            "timed out after ${timeoutMs}ms waiting for ${key.name}==$expected in " +
+                "StartupTest.${testName.methodName} (got $value)"
         }
         return true
     }
@@ -181,14 +191,29 @@ class StartupTest {
  */
 class FreshStartupApplication : McqApplication() {
     override fun onCreate() {
-        runBlocking {
-            withContext(Dispatchers.IO) {
-                withTimeout(30_000) {
-                    SettingsResetRule.clearGradingKeysSuspend(this@FreshStartupApplication)
+        // Robolectric can create the custom Application before a method rule is
+        // effective. Guard the whole setup here so its DataStore/SQLite work
+        // cannot bypass the hard watchdog.
+        HangWatchdogRule.guarded(
+            seconds = 120,
+            description = "FreshStartupApplication.onCreate"
+        ) {
+            runOffMainWhilePumping(
+                condition = "FreshStartupApplication.onCreate key clear and DB reset before super.onCreate()"
+            ) {
+                withContext(Dispatchers.IO) {
+                    withTimeout(30_000) {
+                        SettingsResetRule.clearGradingKeysSuspend(this@FreshStartupApplication)
+                    }
                 }
             }
+            // Must complete before super.onCreate() launches the production freshness probe.
+            AppDatabase.resetInstanceForTests()
+            callSuperOnCreate()
         }
-        AppDatabase.resetInstanceForTests()
+    }
+
+    private fun callSuperOnCreate() {
         super.onCreate()
     }
 }
@@ -199,18 +224,32 @@ class FreshStartupApplication : McqApplication() {
  */
 class UpgradeStartupApplication : McqApplication() {
     override fun onCreate() {
-        runBlocking {
-            withContext(Dispatchers.IO) {
-                withTimeout(30_000) {
-                    SettingsResetRule.clearGradingKeysSuspend(this@UpgradeStartupApplication)
-                    AppDatabase.resetInstanceForTests()
-                    AppDatabase.get(this@UpgradeStartupApplication).ensureOpen()
-                    AppDatabase.get(this@UpgradeStartupApplication)
-                        .paperDao()
-                        .insertIgnore(PaperEntity(id = "existing", title = "Already here"))
+        // See FreshStartupApplication: this setup can run before the method
+        // rule, so it owns an explicit hard watchdog as well.
+        HangWatchdogRule.guarded(
+            seconds = 120,
+            description = "UpgradeStartupApplication.onCreate"
+        ) {
+            runOffMainWhilePumping(
+                condition = "UpgradeStartupApplication.onCreate setup before super.onCreate()"
+            ) {
+                withContext(Dispatchers.IO) {
+                    withTimeout(30_000) {
+                        SettingsResetRule.clearGradingKeysSuspend(this@UpgradeStartupApplication)
+                        // Reset and seed the paper on IO; must complete before super.onCreate().
+                        AppDatabase.resetInstanceForTests()
+                        AppDatabase.get(this@UpgradeStartupApplication).ensureOpen()
+                        AppDatabase.get(this@UpgradeStartupApplication)
+                            .paperDao()
+                            .insertIgnore(PaperEntity(id = "existing", title = "Already here"))
+                    }
                 }
             }
+            callSuperOnCreate()
         }
+    }
+
+    private fun callSuperOnCreate() {
         super.onCreate()
     }
 }

@@ -44,6 +44,23 @@ import kotlinx.coroutines.withContext
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
+
+    /**
+     * Serialises the physical SQLite open for this instance. Grading-rule
+     * reads can arrive concurrently on the main dispatcher and an IO worker;
+     * only one of them may own Room's initial helper open.
+     */
+    private val openLock = Any()
+
+    /**
+     * Whether this instance has completed its first open. The volatile fast
+     * path lets later reads avoid both the lock and a dispatcher hop. It is
+     * only an optimisation hint: [isOpen] remains the authority, so a closed
+     * database is reopened rather than trusted from stale state.
+     */
+    @Volatile
+    private var opened = false
+
     abstract fun paperDao(): PaperDao
     abstract fun categoryDao(): CategoryDao
     abstract fun questionDao(): QuestionDao
@@ -63,17 +80,44 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun studySessionDao(): StudySessionDao
 
     /**
-     * Forces the underlying SQLite database open on [Dispatchers.IO]. The CI
-     * hang around a first Room/DAO access happened while Android's
-     * `SQLiteConnectionPool` was opening its first connection and another path
-     * waited for that connection; forcing the open on IO serializes that
-     * first-open work away from a caller that may be blocking Robolectric's
-     * main looper. This is a best-effort warm-up: Room's own connection
-     * management may still contend, but it keeps the initial framework open on
-     * a background dispatcher.
+     * Forces the underlying SQLite database open on [Dispatchers.IO] exactly
+     * once per live instance.
+     *
+     * The CI hang around a first Room/DAO access happened while Android's
+     * `SQLiteConnectionPool` was opening its first connection and another
+     * path waited for that connection. The physical open therefore happens
+     * on IO, away from a caller that may be blocking Robolectric's main
+     * looper. [openLock] makes concurrent warm-ups idempotent: the first
+     * caller opens, later callers observe the completed open and return
+     * without a second physical open.
+     *
+     * Failure semantics are deliberately retryable. An exception or
+     * cancellation leaves [opened] false, so the next call tries the open
+     * again; the error is not cached as a permanent failure. If Room later
+     * reports the instance closed, the stale success hint is ignored and the
+     * database is reopened. A successful open is therefore both one-shot on
+     * the hot path and safe after an ordinary close.
      */
-    internal suspend fun ensureOpen() = withContext(Dispatchers.IO) {
-        openHelper.writableDatabase
+    internal suspend fun ensureOpen() {
+        if (opened && isOpen) return
+        withContext(Dispatchers.IO) {
+            openDatabase()
+        }
+    }
+
+    /**
+     * Opens Room's helper and records the result. The lock makes concurrent
+     * first-use paths idempotent; the helper's own open is idempotent too.
+     */
+    private fun openDatabase() {
+        synchronized(openLock) {
+            if (opened && isOpen) return
+            opened = false
+            if (!isOpen) {
+                openHelper.writableDatabase
+            }
+            opened = isOpen
+        }
     }
 
     /**
@@ -95,11 +139,11 @@ abstract class AppDatabase : RoomDatabase() {
         // probe that was made synchronous would arrive here on the main
         // thread, which StartupTest fails on. `withContext` would hide that.
         freshnessProbeThread = Thread.currentThread().name
+        // Warm and probe in one IO block, using the same writable open path as
+        // ensureOpen() so first-open handling is consistent and stays off the
+        // main thread. The read-only probe still runs as a query after the open.
         return withContext(Dispatchers.IO) {
-            // Warm the framework SQLite open on IO before the probe query, so a
-            // concurrent first DAO path is less likely to contend with a caller
-            // blocking Robolectric's main thread during initial open.
-            openHelper.writableDatabase
+            openDatabase()
             openHelper.readableDatabase.query(
                 "SELECT NOT EXISTS(SELECT 1 FROM papers) " +
                     "AND NOT EXISTS(SELECT 1 FROM review_log)"
@@ -138,7 +182,9 @@ abstract class AppDatabase : RoomDatabase() {
 
         @VisibleForTesting
         internal fun restoreInstanceForTests(db: AppDatabase?) {
-            INSTANCE = db
+            // Never retain a closed instance: a later get() must be able to
+            // obtain a usable database. Restoring null is always safe.
+            INSTANCE = db?.takeIf { it.isOpen }
         }
 
         val MIGRATION_3_4 = object : Migration(3, 4) {

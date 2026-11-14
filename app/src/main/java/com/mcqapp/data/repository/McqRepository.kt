@@ -88,11 +88,12 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val paperStore = PaperStore(db, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
-    private val signalStore = SignalStore(db)
+    private val signalStore = SignalStore(db, settings)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings)
     private val ladderController = LadderController(db, settings, ladderStore, statsStore)
     private val testProgress = TestProgressStore(db, settings)
+    private val fsrs7Upgrade = Fsrs7Upgrade(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -213,9 +214,9 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun fsrsReviewCount(): Flow<Int> = fsrsTuner.observeReviewCount()
 
     /**
-     * Fits the 21 weights to the whole review log and stores them; nothing
-     * else is touched. @throws com.mcqapp.domain.FsrsFitInsufficientData
-     * when the log is too thin to fit.
+     * Fits the 34 weights to the whole review log and stores them when the fit
+     * is strictly better than the current set; nothing else is touched. A log
+     * too thin to train returns the official defaults with `steps = 0`.
      */
     suspend fun optimizeFsrsParameters(
         onProgress: (Int, Int) -> Unit = { _, _ -> }
@@ -223,6 +224,26 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /** Drops fitted weights; scheduling returns to the official defaults. */
     suspend fun restoreFsrsDefaults() = fsrsTuner.restoreDefaults()
+
+    /**
+     * The FSRS-7 model migration: retires an FSRS-6 weight set that cannot be
+     * converted, resets its fit provenance, and raises the one-shot notice when
+     * there was a fit to lose. Idempotent.
+     */
+    suspend fun ensureFsrs7() = settings.ensureFsrs7()
+
+    /** The one-shot "your FSRS-6 fit was retired" notice, until dismissed. */
+    fun fsrs7Notice(): Flow<Boolean> = settings.fsrs7Notice()
+
+    suspend fun dismissFsrs7Notice() = settings.dismissFsrs7Notice()
+
+    /**
+     * Rebuilds every card's dual-trace memory from its review log. Runs from
+     * [com.mcqapp.McqApplication]; a completed run returns immediately.
+     */
+    internal suspend fun rebuildFsrs7Memory(
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ) = fsrs7Upgrade.runIfNeeded(onProgress)
 
     // --- statistics ---
 
@@ -384,6 +405,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
         settings.restore(snapshot)
         ladderStore.seedAfterRestore()
+        // A restored install can carry pre-FSRS-7 card rows — a v26 backup, or
+        // one taken before the rebuild finished — and the restore itself
+        // clears the done flag. Rebuild here instead of leaving `Sf = 0` (read
+        // as `Sf = S`) until the next process start. `runIfNeeded` is
+        // idempotent, so a backup that already carries FSRS-7 rows returns
+        // after the one-shot fast-trace repair.
+        rebuildFsrs7Memory()
     }
 
     // --- search & storage (no collaborator: they span everything) ---

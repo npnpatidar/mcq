@@ -68,7 +68,19 @@ internal fun CardInfoSheet(detail: StatsViewModel.CardDetail, onDismiss: () -> U
                 StatLine(R.string.stats_due_label, dueLabel)
                 StatLine(
                     R.string.stats_stability_label,
-                    state.stability.takeIf { it > 0.0 }?.let { "%.1f d".format(Locale.ENGLISH, it) } ?: "—"
+                    // FSRS-7: stability is the model's memory strength, not a
+                    // delay. Printing it as "Xd" would claim a due date the
+                    // interval column already carries.
+                    state.stability.takeIf { it > 0.0 }
+                        ?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
+                )
+                StatLine(
+                    R.string.stats_stability_fast_label,
+                    // The second trace, the one FSRS-7 added. Unknown (and so
+                    // read by the scheduler as equal to the slow one) shows as
+                    // a dash rather than as a fabricated number.
+                    state.stabilityFast.takeIf { it > 0.0 }
+                        ?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
                 )
                 StatLine(
                     R.string.stats_difficulty_label,

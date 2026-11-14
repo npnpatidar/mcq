@@ -3,9 +3,9 @@
 An offline-first Android app for practicing multiple-choice questions: build papers with
 recursive categories, import question banks from **Word (.docx)** or **JSON**, take timed
 tests with negative marking and per-question weights, study in practice/strict/mistakes
-modes, review explanations, track mastery over time, keep questions fresh with FSRS-6
-spaced repetition, and export papers as JSON, ZIP, HTML, PDF, Word (.docx), or Anki
-(.apkg).
+modes, review explanations, track mastery over time, keep questions fresh with
+FSRS-7 spaced repetition, and export papers as JSON, ZIP, HTML, PDF, Word (.docx),
+or Anki (.apkg).
 
 - **Stack:** Kotlin, Jetpack Compose (Material 3), Room, Navigation-Compose, DataStore,
   Coil, kotlinx.serialization
@@ -853,22 +853,48 @@ On stop (Back / Done for now / pull runs dry):
   write after stopped-early copy → flips reason back to tally.
 - Classic mode: each grade button persists immediately; no pending grade.
 
-### Scheduler (FSRS-6)
+### Scheduler (FSRS-7)
 
-The app uses the **FSRS-6** algorithm (21 weights, Anki-compatible). Two numbers
-per card:
+The app uses the **FSRS-7** algorithm (34 weights, the parameterisation fsrs-rs
+7.0 and ts-fsrs v6 ship). Three numbers per card, two of them stability traces:
 
 | Parameter | Meaning | Range |
 |-----------|---------|-------|
-| **Stability (S)** | Days until recall probability falls to the target retention (default 90%). Bigger = longer intervals. |
-| **Difficulty (D)** | How hard the card is for you, 1 (easy) → 10 (hard). Moves with grades, pulled slowly toward middle. |
+| **Stability (S)** | The slow forgetting trace — the model's memory-strength estimate, in days. Not the card's interval. | 0.0001 … 36500 |
+| **Fast stability (Sf)** | The fast trace, recording short-term strength. An unknown Sf (an imported card, or a row the FSRS-7 rebuild has not reached) is read as `Sf = S`, never as a separate within-day component. | 0.0001 … 36500 |
+| **Difficulty (D)** | How hard the card is for you, 1 (easy) → 10 (hard). Moves with grades, reverting to the mean by a fixed 1% per review. | 1 … 10 |
 
-**Retrievability (R)** = predicted recall chance right now:
-`R = (1 + FACTOR × t/S)^DECAY`, clamped 0..1. `t` = days since last review.
+**Retrievability (R)** is a difficulty-modulated *mixture* of a fast and a slow
+power-law curve, not a single one:
 
-**State machine:** NEW → (Good/Easy) → LEARNING steps (10 m, 6 h, 1 d, 7 d by
-default) → REVIEW (intervals grow with S). Again on REVIEW → RELEARNING (delay
-default 10 m) → REVIEW with reduced S. **Leech** flag when `lapses ≥
+```
+R_fast = (1 + f_f · t / Sf)^d_f          d_f = -w23 · Sf^(w33 - 0.3)
+R_slow = (1 + f_s · t / S )^d_s          d_s = -w24
+R      = (ω_f · R_fast + ω_s · R_slow) / (ω_f + ω_s)
+```
+
+with `ω_f = w27 · Sf^(-w29)` and `ω_s = w28 · S^w30 · e^((D-5)(w31-0.5))`, and
+`t` = days since the last review (fractional — see below).
+
+Two consequences matter and are easy to get wrong:
+
+- **`R(t = S)` is not 0.9.** Each trace is calibrated so that its *own* reading
+  at its own stability is a weight, not the target: the slow trace reads
+  `w26 = 0.9464` at `t = S` and the fast trace `w25 = 0.2421` at `t = Sf`
+  (defaults). FSRS-6's "interval = stability at 90%" identity is gone.
+- **Stability is not an interval.** The next interval is *solved* for
+  numerically — up to seven bounded Newton steps in log-time, then a bisection
+  fallback — so nothing in the app may render S as a delay.
+
+**No short-term branch.** FSRS-7 has no same-day/short-term formula: a review
+ten minutes after the last one runs the same two update formulas at a
+*fractional* elapsed time. `elapsedDays` therefore stays fractional and is
+load-bearing; only the resulting interval is rounded to whole days.
+
+**State machine:** NEW → (any grade) → REVIEW; Again on REVIEW → RELEARNING
+(a 10 m default delay) → REVIEW with both traces reduced. There is no
+learning-step ladder — a deliberate deviation from Anki, so the study loop has
+one notion of "short interval" instead of two. **Leech** flag when `lapses ≥
 leechThreshold` (default 8, configurable 1..100).
 
 **Study-day boundary:** 04:00 (configurable `anki_day_start_hour` 0–23). A
@@ -881,7 +907,7 @@ this, never midnight.
 |---------|---------|--------------|-----------------|
 | `Simplified Anki` | **on** | switch | Auto-grades from answers instead of Again/Hard/Good/Easy. |
 | `Target retention` | 0.90 | slider 0.75–0.97 (21 steps, 0.01) | Higher → shorter intervals, more reviews. The percentage is shown above the slider and follows the thumb. |
-| `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 21 weights to your review log (Anki parity). Shows log-loss before/after. `Restore defaults` drops fitted weights. |
+| `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 34 weights to your review log. Shows log-loss before/after. `Restore defaults` drops fitted weights. |
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
 | `Minimum easy answer threshold` | 8 s | 1–3600, step 1 | Auto-graded Easy below this + reading bonus. |
@@ -893,58 +919,84 @@ this, never midnight.
 | `Leech threshold` | 8 | 1–100 | Lapses before flagging tricky. |
 | `Reset` | — | button (confirm dialog) | Resets every study setting — schedule knobs, target retention, ranking mode and new-card handling (not fitted weights). |
 
-**FSRS Parameters (21 weights, official defaults):**
-`w = [0.40, 0.60, 2.40, 5.80, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94,
-2.18, 0.05, 0.34, 1.26, 0.29, 2.61, 0.00, 0.00, 0.00, 0.00]`
+**FSRS-7 Parameters (34 weights, official defaults):**
 
-**Curve:** `R = (1 + t / (S * w[9]))^w[10]` (simplified; full uses all weights).
+```
+w = [0.1104, 2.2395, 3.9221, 11.7841, 6.1686, 0.6457, 3.6807, 1.9795,
+     0.0000, 1.3826, 0.7024, 0.5999, 0.8146, 0.6398, 1.0000, 1.3207,
+     0.6707, 3.8668, 0.4416, 0.0934, 1.8631, 0.6162, 1.0869, 0.1567,
+     0.0801, 0.2421, 0.9464, 0.1433, 0.7145, 0.0000, 0.5667, 0.3734,
+     0.5333, 0.3048]
+```
 
-**Grade → Interval Examples (new card, default weights, retention 0.9):**
+`w0..w3` initial stability per grade; `w4..w5` initial difficulty; `w6`
+difficulty step; `w7..w14` the slow trace's update block; `w15..w22` the fast
+trace's; `w23..w33` the forgetting curve above.
 
-| Grade | Next interval |
-|-------|---------------|
-| Again | 10 minutes (same sitting) |
-| Hard | 6 hours (or 5 h 40 m → snaps to 04:00 boundary) |
-| Good | 1 day |
-| Easy | 7 days |
+**Grade → interval for a brand-new card (default weights, retention 0.9):**
 
-**Graduated card (S=20, D=5, interval 14 d):**
-- Again → 10 m (relearning)
-- Hard → ~5 d
-- Good → ~32 d
-- Easy → ~51 d
+| Grade | State after | Next interval |
+|-------|-------------|---------------|
+| Again | S=0.11, Sf=0.09, D=6.17 | 10 minutes (relearning, same sitting) |
+| Hard | S=2.24, Sf=1.79, D=5.26 | 1 day |
+| Good | S=3.92, Sf=3.14, D=3.53 | 5 days |
+| Easy | S=11.78, Sf=9.43, D=1.00 | 54 days |
 
-**Retention vs Interval (default weights, D=5):**
-| Retention | Interval for R=retention |
-|-----------|--------------------------|
-| 0.75 | 2.0 d |
-| 0.80 | 4.3 d |
-| 0.85 | 8.5 d |
-| 0.90 | 16.1 d |
-| 0.95 | 38.7 d |
+**Graduated card answered on time (S=20, Sf=S, D=5, 14 days late):**
 
-**Retrievability decay (S=10 d):**
+| Grade | S | Sf | D | Next interval |
+|-------|---|---|---|---------------|
+| Again | 3.86 | 0.58 | 9.14 | 10 minutes (relearning) |
+| Hard | 31.88 | 158.77 | 6.98 | 36 days |
+| Good | 38.57 | 245.20 | 4.95 | 80 days |
+| Easy | 38.57 | 264.77 | 2.93 | 136 days |
+
+**Repeated Good (the app's own ladder — graduate, one same-day review, then one
+interval apart), pinned in `FsrsSchedulerTest`:**
+`5 d → 7 d → 33 d → 114 d → 358 d → 1078 d`
+
+**Retention vs Interval (S=20, Sf=20, D=5):**
+
+| Retention | Interval for R = retention |
+|-----------|----------------------------|
+| 0.75 | 490 d |
+| 0.80 | 209 d |
+| 0.85 | 88 d |
+| 0.90 | 33 d |
+| 0.95 | 7.7 d |
+
+**Retrievability decay (S=10, Sf=10, D=5):**
+
 | Days since review | R |
 |-------------------|---|
 | 0 | 1.00 |
-| 5 | 0.95 |
-| 10 | 0.90 |
-| 20 | 0.76 |
-| 30 | 0.65 |
-| 60 | 0.43 |
+| 5 | 0.93 |
+| 10 | 0.91 |
+| 20 | 0.88 |
+| 30 | 0.86 |
+| 60 | 0.82 |
 
-**Leech collapse:** A leech (lapses ≥ 8) gets its stability crushed → intervals
-shrink drastically until it is no longer a leech.
+The flat tail is the slow trace doing the work: with the default weights the
+mixture is slow-dominated, which is why a card with S=10 is not due at 10 days.
+
+**Leech:** a leech (lapses ≥ 8) is flagged, and its lapse formula crushes both
+traces, so intervals shrink sharply until it is no longer a leech.
 
 **Worked life of q42:**
-1. NEW → Good → LEARNING (10 m)
-2. Good → 6 h
-3. Good → 1 d
-4. Good → 7 d (graduated to REVIEW, S≈10)
-5. Again (lapse 1) → RELEARNING 10 m
-6. Good → 1 d
-7. Again (lapse 2) → RELEARNING 10 m
-8. … after 8 lapses → `leech = true`, S crushed, intervals ~1 d until re-learned.
+1. NEW → Good → REVIEW, S≈3.9, next review in 5 days (no learning-step ladder)
+2. Good (same day, 1 minute later) → S≈4.6, next in 7 days
+3. Good (on time, 7 days later) → S≈13, next in 33 days
+4. Again (lapse 1) → RELEARNING 10 m, S≈3.9, Sf≈0.6
+5. Good → S grows again from the reduced base
+6. … after 8 lapses → `leech = true`, both traces crushed, intervals ~1 d
+
+**Upgrading from FSRS-6:** the 21 FSRS-6 weights cannot be converted — the
+parameterisation changed, not just the count — so an upgraded install runs on
+the FSRS-7 defaults with `fsrs_fit_version` reset to 0, and Settings says so
+once. Card memory is rebuilt by replaying each card's review log through the
+new model; **only** `(stability, stabilityFast, difficulty)` move, so every due
+date, interval, `reps`, `lapses` and leech flag the learner already sees is
+untouched.
 
 ### Study Screen Numbers (Plain Language)
 
@@ -1015,7 +1067,7 @@ shrink drastically until it is no longer a leech.
 
 | Card | Chart / Table | Key details |
 |------|---------------|-------------|
-| **Stability** | Histogram (edges 1/3/7/14/21/45/90/180/365 d, labels `<1d`…`>1y`), cards with S > 0. Mean/median line. |
+| **Stability** | Histogram (edges 1/3/7/14/21/45/90/180/365 d, labels `<1d`…`>1y`), cards with S > 0. Mean/median line. FSRS-7: these edges are model strengths, not intervals. |
 | **Difficulty** | Histogram 10 bins (1…10, `floor(d)−1`, 10.0 → bin 10). Mean/median. |
 | **Retrievability** | Histogram 10 bands `0–10%`…`90–100%` of `R(card, now)` for S > 0. Mean/median + `Estimated knowledge: N cards you are likely to remember right now`. |
 | **Memory by paper** | Text table (unscoped only): `Title · N cards · S X.X · D X.X · R YY%`. S/D one decimal, R percentage. |
@@ -1079,7 +1131,7 @@ No range chips. Sections in order:
 
 Modal bottom sheet (Anki's Card Info):
 1. Question text (or id).
-2. If no schedule: `This card has never been scheduled.` Else: State (New/Learning/Review/Relearning), Interval (`N d`), Due (`d MMM yy, HH:mm` or `Never`), Stability (`X.X d` or `—`), Difficulty (`X.X` or `—`), Predicted recall (`XX%` or `—`), Lapses, Reviews.
+2. If no schedule: `This card has never been scheduled.` Else: State (New/Learning/Review/Relearning), Interval (`N d`), Due (`d MMM yy, HH:mm` or `Never`), Stability (`X.X` or `—`, no unit: it is a memory-strength estimate, not a delay), Fast stability (`X.X` or `—`, FSRS-7's second trace), Difficulty (`X.X` or `—`), Predicted recall (`XX%` or `—`), Lapses, Reviews.
 3. History summary: Again rate, Mean answer time (timed).
 4. Full log newest first: `d MMM yy, HH:mm`, grade word (Again/Hard/Good/Easy, tinted), detail `6s · S 4.2 · D 5.0 · I 10d` (elapsed · stability after · difficulty after · interval after — omitted when not recorded).
 5. Empty: `This card has no logged reviews yet.`
@@ -1377,7 +1429,7 @@ Wire format: `{"type": "...", "content": ...}`
 
 ### Card Schedule Schema (`CardScheduleDto`)
 
-`ease`, `intervalDays`, `dueAt` (epoch ms), `reps`, `lapses`, `leech`, `lastReviewedAt`, `difficulty`, `stability`, `cardState` (`NEW`\|`LEARNING`\|`RELEARNING`\|`REVIEW`), `reviewCount`. Only written for studied cards (`reps > 0 || dueAt > 0`).
+`ease`, `intervalDays`, `dueAt` (epoch ms), `reps`, `lapses`, `leech`, `lastReviewedAt`, `difficulty`, `stability`, `stabilityFast`, `cardState` (`NEW`\|`LEARNING`\|`RELEARNING`\|`REVIEW`), `reviewCount`. Only written for studied cards (`reps > 0 || dueAt > 0`). `stabilityFast` is FSRS-7's second trace; a file written before v27 omits it and imports as `0.0`, which the scheduler reads as "unknown" and treats as equal to `stability`.
 
 ### Rich content
 
@@ -1519,6 +1571,7 @@ dropped without warning.
       "lastReviewedAt": 1750000000000,
       "difficulty": 5.5,
       "stability": 21.0,
+      "stabilityFast": 8.4,
       "cardState": "REVIEW",
       "reviewCount": 7
     }
@@ -1814,10 +1867,10 @@ or saving is one tap after picking the format.
 ```json
 {
   "cardState": [
-    {"paperId":"...","questionId":"...","ease":2.5,"intervalDays":10,"dueAt":1800000000000,"reps":5,"lapses":0,"leech":false,"lastReviewedAt":1750000000000,"contentHash":"abc123...","difficulty":5.2,"stability":18.7,"cardState":"REVIEW","reviewCount":5}
+    {"paperId":"...","questionId":"...","ease":2.5,"intervalDays":10,"dueAt":1800000000000,"reps":5,"lapses":0,"leech":false,"lastReviewedAt":1750000000000,"contentHash":"abc123...","difficulty":5.2,"stability":18.7,"stabilityFast":7.5,"cardState":"REVIEW","reviewCount":5}
   ],
   "reviewLog": [
-    {"id":1750000000123,"paperId":"...","questionId":"...","rating":3,"reviewedAt":1750000000123,"elapsedSeconds":12,"stateBefore":"REVIEW","stabilityAfter":18.7,"difficultyAfter":5.2,"intervalDaysAfter":10,"wasGuess":false,"wasCorrect":true}
+    {"id":1750000000123,"paperId":"...","questionId":"...","rating":3,"reviewedAt":1750000000123,"elapsedSeconds":12,"stateBefore":"REVIEW","stabilityAfter":18.7,"difficultyAfter":5.2,"stabilityFastAfter":7.5,"intervalDaysAfter":10,"wasGuess":false,"wasCorrect":true}
   ],
   "paperCreated": [
     {"id":"paper-1","createdAt":1690000000000,"sortOrder":-1}
@@ -2020,7 +2073,9 @@ Footnote: `Review always shows the order you were given. Scoring is unaffected: 
 
 ### 3. Study / Spaced Repetition
 
-**Body order:** Heading `Spaced repetition` + `Reset` (right) → Description paragraph → `Simplified Anki` switch → `Study` label → `Target retention` slider → `Optimize FSRS parameters` block → `Ranking mode` chips → `Introduce new cards` switch → `Minimum easy answer threshold` / `Hard answer threshold` number rows → Response-time footnote → `Advanced Anki settings` (collapsible, collapsed by default) → `Study day` group (2 rows) + `Lapses` group (2 rows).
+**Body order:** Heading `Spaced repetition` + `Reset` (right) → Description paragraph → `Simplified Anki` switch → `Study` label → `Target retention` slider → `Optimize FSRS parameters` block (which opens with the one-shot FSRS-7 notice, when pending) → `Ranking mode` chips → `Introduce new cards` switch → `Minimum easy answer threshold` / `Hard answer threshold` number rows → Response-time footnote → `Advanced Anki settings` (collapsible, collapsed by default) → `Study day` group (2 rows) + `Lapses` group (2 rows).
+
+**FSRS-6 → FSRS-7 notice.** An upgraded install whose stored weights were *fitted* (not the shipped FSRS-6 defaults) shows, above the Optimize block, `Fitted FSRS-6 weights could not be converted to FSRS-7: the model changed, not just the number of weights. Scheduling is on the official defaults; press Optimize to refit.` with an `OK` that calls `repository.dismissFsrs7Notice()`. It is raised once by `SettingsStore.ensureFsrs7()` and never resurrects: the flag is cleared, not recomputed.
 
 #### 3.1 Simplified Anki
 **Key:** `simplified_study` | **Default:** **on** (only setting in section defaulting on) | **Tag:** `setting-simplified-anki`
@@ -2042,13 +2097,13 @@ Button `Optimize FSRS parameters`:
 - Disabled when `fsrsReviewCount < 1000` or fit running.
 - Running: label `Optimizing…` → `Optimizing… X/Y` + circular progress.
 - Under threshold: `Reviews logged: X of 1000 needed.`
-- Success: `Fitted on X review points from Y cards. Log loss vs your current weights: A → B.` (loss `%.4f`, `Locale.US`) + `Restore defaults` / `OK`.
-  - `Restore defaults` → confirmation dialog, then `repository.restoreFsrsDefaults()` (drops fitted 21 weights for official set), clears state.
+- Success: `Fitted on X review points from Y cards. Log loss vs your current weights: A → B.` (loss `%.4f`, `Locale.US`) + `Restore defaults` / `OK`. When B is not below A the current weights are kept and the line says so instead.
+  - `Restore defaults` → confirmation dialog, then `repository.restoreFsrsDefaults()` (drops fitted 34 weights for the official set), clears state.
   - `OK` → dismiss message.
 - Failure: error-coloured `Optimization failed: <msg>` + `OK` (clears state; nothing persisted).
 - Cancelling/leaving Settings cancels silently.
-- Weights persisted even when re-fit loss is worse (Anki parity); message makes regression visible.
-- Key: `fsrs_parameters` (CSV of 21 doubles) via `FsrsTuner`.
+- The result is stored only when its loss is **strictly better** than the current weights; an equal or worse fit keeps the current set and the message says no improvement was found (current Anki/rslib policy).
+- Key: `fsrs_parameters` (CSV of 34 doubles) via `FsrsTuner`. A legacy 21-value FSRS-6 set is retired rather than converted: a restore that carries one falls back to the FSRS-7 defaults with fit version 0 and the one-shot retirement notice.
 
 #### 3.4 Ranking Mode
 **Key:** `study_mode` | **Default:** `MEMORY_FIRST` | Chips: `Memory first` / `Explore new cards`. Help: `Memory first clears what is due before showing anything new. Explore surfaces a new card every few reviews.` (`Study.EXPLORE_NEW_EVERY = 3`). Read per pull ⇒ next review onward.

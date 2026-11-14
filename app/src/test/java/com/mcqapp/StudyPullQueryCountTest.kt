@@ -12,6 +12,7 @@ import com.mcqapp.domain.QuestionOption
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -178,11 +179,13 @@ class StudyPullQueryCountTest {
     }
 
     @Test
-    fun theDuePullReadsOneRowPerPool() = runBlocking {
-        // With due schedules the pull used to select every one of them and rank
-        // them in memory. Each pool's head is now a `LIMIT 1` read whose ORDER
-        // BY carries the same risk comparator, so the row count cannot grow
-        // with the backlog.
+    fun theDuePullReadsTheLearningHeadAndTheReviewCandidates() = runBlocking {
+        // The learning head is still authored-order, so it stays a `LIMIT 1`
+        // read. The review head cannot be ranked in SQL any more: FSRS-7
+        // retention is the difficulty-modulated mixture of two traces, not a
+        // monotone function of `elapsed / stability`. The pull therefore reads
+        // the due review rows and ranks them with `Study.bestReview`, the same
+        // comparator as the pool — one read per pool either way.
         val dueSelects = mutableListOf<String>()
         val db = Room.inMemoryDatabaseBuilder(appContext, AppDatabase::class.java)
             .setQueryCallback(
@@ -209,13 +212,27 @@ class StudyPullQueryCountTest {
             val card = repository.getNextStudyCard("p1", reviewsSinceNew = 0, now = now)
             assertNotNull("a long-overdue card is served", card)
             assertEquals(
-                "one bounded read per due pool, not one row per due card: $dueSelects",
+                "one read per due pool: $dueSelects",
                 2,
                 dueSelects.size
             )
+            val learning = dueSelects.first {
+                it.contains("cardState IN ('LEARNING','RELEARNING')")
+            }
             assertTrue(
-                "a due pool was read without LIMIT 1: $dueSelects",
-                dueSelects.all { it.contains("LIMIT 1") }
+                "the learning head must stay a LIMIT 1 read: $learning",
+                learning.contains("LIMIT 1")
+            )
+            val reviews = dueSelects.first {
+                it.contains("cardState NOT IN ('LEARNING','RELEARNING')")
+            }
+            assertFalse(
+                "the review read must not claim the FSRS-6 ratio ranking: $reviews",
+                reviews.contains("ORDER BY CASE")
+            )
+            assertTrue(
+                "the review candidate read stays in authored order: $reviews",
+                reviews.contains("ORDER BY c.sortOrder")
             )
         } finally {
             db.close()

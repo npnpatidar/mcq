@@ -69,10 +69,16 @@ class FsrsImportGuardTest {
         val imported = importedMemoryCardWithoutLastReview(scheduler)
 
         // Its retrievability is the card's own claim: it is due precisely at
-        // its interval, so predicted recall lands on the retention target —
+        // its interval, so predicted recall sits near the benchmark —
         // nowhere near the LOW_RECALL_RISK band of a truly forgotten card.
+        // FSRS-7's two-trace mixture does not pass through the benchmark at
+        // t = S (that was FSRS-6's single power law), so the band is what
+        // carries the meaning, not an exact 0.9.
         val retention = scheduler.retention(imported, t0)
-        assertEquals(FsrsScheduler.BENCHMARK_RETENTION, retention, 1e-9)
+        assertTrue(
+            "retention at the card's own interval was $retention",
+            retention in 0.85..0.97
+        )
         assertTrue(retention > Study.LOW_RECALL_RISK_RETENTION)
     }
 
@@ -86,8 +92,8 @@ class FsrsImportGuardTest {
         // initial-state formulas.
         assertEquals(0.0, scheduler.retention(fresh, t0), 0.0)
         val graded = scheduler.next(fresh, ReviewGrade.GOOD, t0)
-        // S₀(Good) = w2 = 2.3065 days.
-        assertEquals(2.3065, graded.stability, 1e-9)
+        // S₀(Good) = w2 = 3.9221 days.
+        assertEquals(3.9221, graded.stability, 1e-9)
     }
 
     @Test

@@ -44,16 +44,33 @@ class AnkiSchedulingTest {
         assertEquals(7, state.reps)
         assertEquals(1, state.lapses)
         assertEquals(2.5, state.ease, 0.0001)
-        // FSRS conversion: the kind follows Anki's type, the interval doubles
-        // as the stability, and the ease mirrors onto the difficulty scale.
+        // FSRS-7 conversion follows upstream's `memory_state_from_sm2`:
+        // the kind follows Anki's type; difficulty is fixed at 5 because
+        // FSRS-7 has no scalar difficulty bridge; the fast trace is 0.8× the
+        // slow one; and the stability is solved *backwards* from Anki's one
+        // stored number, so the card's mixed curve reaches the benchmark
+        // retention at exactly the interval Anki records.
         assertEquals(CardStateKind.REVIEW, state.cardStateKind())
-        assertEquals(5.0, state.stability, 0.0001)
-        assertEquals(7, state.reviewCount)
         assertEquals(
-            1.0 + (3.0 - 2.5) / (3.0 - 1.3) * 9.0,
-            state.difficulty,
-            0.0001
+            5.0,
+            com.mcqapp.domain.FsrsScheduler().intervalForRetention(
+                com.mcqapp.domain.CardState(
+                    questionId = "q",
+                    stability = state.stability,
+                    stabilityFast = state.stabilityFast,
+                    difficulty = state.difficulty,
+                    intervalDays = state.intervalDays,
+                    lastReviewedAt = state.lastReviewedAt,
+                    state = CardStateKind.REVIEW
+                ),
+                com.mcqapp.domain.FsrsScheduler.BENCHMARK_RETENTION
+            ),
+            0.02
         )
+        assertEquals(0.8 * state.stability, state.stabilityFast, 1e-9)
+        assertEquals(7, state.reviewCount)
+        // FSRS-7 ignores Anki's ease factor for the memory state.
+        assertEquals(5.0, state.difficulty, 0.0)
         assertTrue(state.dueAt > crt * 1000L)
         // Five days out, within a day of slack for Anki's 04:00 rollover.
         assertTrue(

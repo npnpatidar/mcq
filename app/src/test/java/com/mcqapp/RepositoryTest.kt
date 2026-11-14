@@ -230,7 +230,10 @@ class RepositoryTest {
         assertEquals("q2", fresh?.questionId)
         assertEquals(com.mcqapp.domain.StudyReason.NEW, fresh?.reason)
         // Once q1 is overdue it wins, and its risk is visible in the reason.
-        val overdue = repository.getNextStudyCard("p1", now = 90L * 86_400_000L)
+        // A year, not ninety days: FSRS-7's mixture is slow-dominated, so a
+        // first-Good card sits at R ≈ 0.75 after three months — right on the
+        // low-recall boundary — and only clearly below it later.
+        val overdue = repository.getNextStudyCard("p1", now = 365L * 86_400_000L)
         assertEquals("q1", overdue?.questionId)
         assertEquals(com.mcqapp.domain.StudyReason.LOW_RECALL_RISK, overdue?.reason)
     }
@@ -305,6 +308,33 @@ class RepositoryTest {
         assertEquals(2, asIfOn.fresh)
         // The badge keeps honoring the toggle: no phantom "new" to click.
         assertEquals(0, repository.getStudyCounts("p1", now = drained).fresh)
+    }
+
+    /**
+     * FSRS-7 keeps two traces, and both have to survive the entity mapper.
+     * The fast trace used to be dropped on save, so the next graded review
+     * silently ran on `Sf = S` after a reload.
+     */
+    @Test
+    fun aGradePersistsItsFastTraceAndTheNextGradeBuildsOnIt() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val day = 86_400_000L
+        val first = repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L
+        )
+        assertTrue("the first grade must produce a fast trace", first.stabilityFast > 0)
+        val stored = repository.cardState("p1", "q1")!!
+        assertEquals(first.stabilityFast, stored.stabilityFast, 0.0)
+
+        val second = repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L + 5 * day
+        )
+        assertEquals(
+            second.stabilityFast,
+            repository.cardState("p1", "q1")!!.stabilityFast,
+            0.0
+        )
     }
 
     @Test
@@ -386,9 +416,11 @@ class RepositoryTest {
             "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, dwellSeconds = 5L, now = 1000L
         )
         assertEquals(1, next.reps)
-        // FSRS S₀(Good) = 2.31 days at the default 0.9 retention → 2 days.
-        assertEquals(2, next.intervalDays)
-        assertEquals(com.mcqapp.domain.DayBoundary.dueAfter(1000L, 2, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(1000L)), next.dueAt)
+        // FSRS-7 S₀(Good) = 3.92 days, and the interval is solved against the
+        // mixture curve rather than read off the stability: 5 days at the
+        // default 0.9 retention.
+        assertEquals(5, next.intervalDays)
+        assertEquals(com.mcqapp.domain.DayBoundary.dueAfter(1000L, 5, zoneOffsetMillis = com.mcqapp.domain.DayBoundary.zoneOffset(1000L)), next.dueAt)
         val stored = db.cardStateDao().get("p1", "q1")
         assertEquals(1, stored!!.reps)
         assertEquals(1, stored.reviewCount)
@@ -414,7 +446,7 @@ class RepositoryTest {
         assertEquals(3, first.rating)
         assertEquals(1000L, first.reviewedAt)
         assertEquals(5L, first.elapsedSeconds!!)
-        assertEquals(2, first.intervalDaysAfter!!)
+        assertEquals(5, first.intervalDaysAfter!!)
         assertEquals("a first review leaves a New card", "NEW", first.stateBefore)
         assertEquals("REVIEW", logs[1].stateBefore)
     }
@@ -521,9 +553,11 @@ class RepositoryTest {
                 "p1", "q$index", com.mcqapp.domain.ReviewGrade.GOOD, now = 1_000_000L
             )
         }
-        val later = 90L * 86_400_000L
+        val later = 365L * 86_400_000L
         val queue = repository.getStudyQueue("p1", now = later)
-        // Ninety days overdue, every one of them is a likely-to-be-forgotten pull.
+        // A year overdue, every one of them is a likely-to-be-forgotten pull.
+        // (Ninety days is not enough under FSRS-7: the mixture curve puts a
+        // first-Good card at R ≈ 0.75 exactly then, on the boundary.)
         assertEquals(6, queue.count { it.reason == com.mcqapp.domain.StudyReason.LOW_RECALL_RISK })
         assertEquals(1, queue.count { it.reason == com.mcqapp.domain.StudyReason.NEW })
         assertEquals(7, queue.size)

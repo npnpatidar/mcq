@@ -85,11 +85,12 @@ class BackupSchedulingTest {
         studyOnce()
         val json = exportAllJson()
         val file = LegacyParser.parse(json)
+        val key = com.mcqapp.data.io.cardScheduleKey("p1", "q1")
         assertTrue(
             "the backup should carry q1's schedule",
-            file.scheduling.containsKey("q1")
+            file.scheduling.containsKey(key)
         )
-        val schedule = file.scheduling.getValue("q1")
+        val schedule = file.scheduling.getValue(key)
         assertTrue("reps should have been exported", schedule.reps > 0)
     }
 
@@ -156,6 +157,49 @@ class BackupSchedulingTest {
         assertEquals(before.reviewCount, after.reviewCount)
     }
 
+    /**
+     * The JSON schedule map is keyed by `(paperId, questionId)`. Two card rows
+     * can share a question id across papers (a question moved between papers
+     * leaves the old paper's schedule behind), and a bare question-id key used
+     * to collapse them into one entry — silently dropping the other schedule.
+     * Both entries must be written, each under its own paper.
+     *
+     * (The rows are seeded directly: `questions.id` is a global primary key, so
+     * two live question rows cannot share an id and the schedule map is the
+     * only place the collision exists.)
+     */
+    @Test
+    fun theSameQuestionInTwoPapersKeepsBothSchedulesInTheExport() = runBlocking {
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
+        studyOnce()
+        db.cardStateDao().upsert(
+            CardStateEntity(
+                paperId = "p2",
+                questionId = "q1",
+                ease = 2.5,
+                intervalDays = 9,
+                dueAt = 1_700_100_000_000L,
+                reps = 2,
+                lapses = 0,
+                leech = false,
+                lastReviewedAt = 1_700_100_000_000L,
+                contentHash = "hash2",
+                difficulty = 5.5,
+                stability = 12.5,
+                stabilityFast = 4.5,
+                cardState = com.mcqapp.domain.CardStateKind.REVIEW,
+                reviewCount = 2
+            )
+        )
+        val file = LegacyParser.parse(exportAllJson())
+        val first = file.scheduling[com.mcqapp.data.io.cardScheduleKey("p1", "q1")]
+        val second = file.scheduling[com.mcqapp.data.io.cardScheduleKey("p2", "q1")]
+        assertTrue("the first paper's schedule must be exported", first != null)
+        assertTrue("the second paper's schedule must be exported", second != null)
+        assertTrue(first!!.lastReviewedAt != second!!.lastReviewedAt)
+        assertEquals(12.5, second.stability, 0.0)
+    }
+
     @Test
     fun anUntouchedQuestionIsNotGivenASchedule() = runBlocking {
         repository.saveQuestion(
@@ -169,7 +213,10 @@ class BackupSchedulingTest {
         )
         studyOnce()
         val file = LegacyParser.parse(exportAllJson())
-        assertEquals(setOf("q1"), file.scheduling.keys)
+        assertEquals(
+            setOf(com.mcqapp.data.io.cardScheduleKey("p1", "q1")),
+            file.scheduling.keys
+        )
     }
 
     @Test

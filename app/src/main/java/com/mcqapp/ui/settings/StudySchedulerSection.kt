@@ -58,6 +58,8 @@ fun StudySchedulerSection(
     onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
+    fsrs7Notice: Boolean,
+    onDismissFsrs7Notice: () -> Unit,
     onOptimizeFsrs: () -> Unit,
     onDismissFsrsOptimize: () -> Unit,
     onRestoreFsrsDefaults: () -> Unit,
@@ -80,6 +82,8 @@ fun StudySchedulerSection(
             onAutomaticLadderChange = onAutomaticLadderChange,
             fsrsReviewCount = fsrsReviewCount,
             fsrsOptimizeState = fsrsOptimizeState,
+            fsrs7Notice = fsrs7Notice,
+            onDismissFsrs7Notice = onDismissFsrs7Notice,
             onOptimizeFsrs = onOptimizeFsrs,
             onDismissFsrsOptimize = onDismissFsrsOptimize,
             onRestoreFsrsDefaults = onRestoreFsrsDefaults
@@ -108,6 +112,8 @@ private fun AnkiSchedulerBody(
     onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
+    fsrs7Notice: Boolean,
+    onDismissFsrs7Notice: () -> Unit,
     onOptimizeFsrs: () -> Unit,
     onDismissFsrsOptimize: () -> Unit,
     onRestoreFsrsDefaults: () -> Unit
@@ -209,6 +215,18 @@ private fun AnkiSchedulerBody(
 
     // --- optimizer: Anki's "Optimize FSRS parameters" button ---
 
+    if (fsrs7Notice) {
+        Text(
+            stringResource(R.string.fsrs7_upgrade_notice),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.tertiary
+        )
+        TextButton(onClick = onDismissFsrs7Notice) {
+            Text(stringResource(R.string.ok))
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
     Text(
         stringResource(R.string.optimize_fsrs_parameters),
         style = MaterialTheme.typography.bodyMedium
@@ -268,9 +286,12 @@ private fun AnkiSchedulerBody(
     }
     when (val state = fsrsOptimizeState) {
         is FsrsOptimizeState.Done -> {
+            // The tuner stores the fit only when it is strictly better; an
+            // equal or worse result keeps the current weights and says so.
+            val improved = state.result.lossAfter < state.result.lossBefore
             Text(
                 stringResource(
-                    R.string.optimize_fsrs_done,
+                    if (improved) R.string.optimize_fsrs_done else R.string.optimize_fsrs_done_kept,
                     state.result.predictions,
                     state.result.cards,
                     String.format(Locale.US, "%.4f", state.result.lossBefore),

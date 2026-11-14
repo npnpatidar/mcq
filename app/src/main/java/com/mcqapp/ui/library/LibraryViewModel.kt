@@ -705,7 +705,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 Logger.i("LIBVM", "Reading Anki package '$title'")
                 val report = AnkiApkgImporter(
                     repository.db(),
-                    repository.updateAnswersOnDuplicate().first()
+                    repository.updateAnswersOnDuplicate().first(),
+                    schedulerConfig = repository.schedulerConfigNow()
                 ).import({
                     source() ?: throw AnkiPackageException("Could not open $title.")
                 })

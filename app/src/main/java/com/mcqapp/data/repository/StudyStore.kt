@@ -3,11 +3,11 @@ package com.mcqapp.data.repository
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
-import com.mcqapp.data.local.chunks
 import com.mcqapp.data.local.countForCategoriesChunked
 import com.mcqapp.data.local.countsForCategoriesChunked
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.dueForCategoriesChunked
+import com.mcqapp.data.local.dueReviewsForCategoriesChunked
 import com.mcqapp.data.local.firstDueLearningForCategoriesChunked
 import com.mcqapp.data.local.firstNewQuestionForCategoriesChunked
 import com.mcqapp.data.local.newQuestionsForCategoriesChunked
@@ -72,6 +72,7 @@ internal class StudyStore(
         lastReviewedAt = lastReviewedAt,
         difficulty = difficulty,
         stability = stability,
+        stabilityFast = stabilityFast,
         state = cardState,
         reviewCount = reviewCount
     )
@@ -90,6 +91,10 @@ internal class StudyStore(
             contentHash = hash,
             difficulty = difficulty,
             stability = stability,
+            // FSRS-7 maintains two traces. Omitting this wrote the entity
+            // default 0.0 and every reloaded card silently lost its fast
+            // trace (the scheduler then reads Sf = S).
+            stabilityFast = stabilityFast,
             cardState = state,
             reviewCount = reviewCount
         )
@@ -161,13 +166,13 @@ internal class StudyStore(
         resetEdited(paperId)
         val scheduler = fsrs(config)
         val scope = scopeIds(categoryIds)
-        // The pull only ever reads the head of each pool, so each is selected by
-        // SQL (`LIMIT 1`) instead of built from every due row. The risk ranking
-        // is `Study.pools`' comparator expressed in SQL, so the served card is
-        // the one the whole-paper model would have served — without reading the
-        // backlog on the calling (main) thread. A scoped pull dispatches to the
-        // category-filtered forms; the review head is picked globally across
-        // chunks by `Study.bestReview`, the same comparator as the pool.
+        // The learning head is still read with `LIMIT 1` (authored order is
+        // the whole ranking). The review head cannot be: FSRS-7 retention is
+        // the difficulty-modulated mixture of two traces, not a monotone
+        // function of `elapsed / stability`, so SQL cannot rank it. The due
+        // review rows are read and `Study.bestReview` — the same comparator
+        // the pool uses — picks the winner, which is what makes the pull
+        // agree with `Study.pools`.
         val learning = firstDueLearning(paperId, now, scope)?.toDomain()
         val review = bestDueReview(paperId, scope, now, scheduler)?.toDomain()
         return com.mcqapp.domain.Study.pickNext(
@@ -256,56 +261,33 @@ internal class StudyStore(
         }
 
     /**
-     * The review head: the paper-wide SQL pick, or, for a scope, one winner per
-     * chunk and then [com.mcqapp.domain.Study.bestReview] over those winners.
-     * [scheduler] is the pull's one config snapshot, so both branches rank with
-     * the same scheduler the rest of the pull uses.
+     * The review head: the due review rows, ranked by [com.mcqapp.domain.Study.bestReview]
+     * — the pool's own comparator, so the pull and the pool cannot disagree.
+     * [scheduler] is the pull's one config snapshot.
+     *
+     * SQL only selects the candidate set (due, not learning, still matching
+     * its content hash) in authored order; it deliberately does not rank.
+     * FSRS-7 retention depends on both traces, difficulty and elapsed time,
+     * so the FSRS-6 `elapsed / stability` proxy cannot stand in for it.
      */
     private suspend fun bestDueReview(
         paperId: String,
         categoryIds: List<String>,
         now: Long,
         scheduler: com.mcqapp.domain.FsrsScheduler
-    ): CardStateEntity? =
-        if (categoryIds.isEmpty()) {
-            db.cardStateDao().bestDueReviewForPaper(
-                paperId,
-                now,
-                com.mcqapp.domain.FsrsScheduler.DAY_MS.toDouble()
-            )
-        } else {
-            bestDueReviewForCategoriesChunked(paperId, categoryIds, now, scheduler)
-        }
-
-    /**
-     * The global review winner across chunks. The SQL retention ranking runs
-     * per chunk; the global winner is necessarily the winner inside its own
-     * chunk, so the per-chunk winners are the candidates and the shared pools
-     * comparator picks between them. The entity is mapped back by id because
-     * [com.mcqapp.domain.Study.bestReview] returns a domain card.
-     *
-     * A cross-chunk exact tie on (retention, dueAt) keeps the winner list's
-     * order, whereas the paper-wide SQL would fall through to
-     * `(sortOrder, title, q.sortOrder, rowid)`. That differs only on an exact
-     * tie at a chunk boundary; this is not claimed as parity.
-     */
-    private suspend fun bestDueReviewForCategoriesChunked(
-        paperId: String,
-        categoryIds: List<String>,
-        now: Long,
-        scheduler: com.mcqapp.domain.FsrsScheduler
     ): CardStateEntity? {
-        val dayMs = com.mcqapp.domain.FsrsScheduler.DAY_MS.toDouble()
-        val winners = categoryIds.chunks().mapNotNull { chunk ->
-            db.cardStateDao().bestDueReviewForCategories(paperId, chunk, now, dayMs)
+        val due = if (categoryIds.isEmpty()) {
+            db.cardStateDao().dueReviewsForPaper(paperId, now)
+        } else {
+            db.cardStateDao().dueReviewsForCategoriesChunked(paperId, categoryIds, now)
         }
-        if (winners.isEmpty()) return null
-        val cards = winners.map { row ->
+        if (due.isEmpty()) return null
+        val cards = due.map { row ->
             val state = row.toDomain()
             com.mcqapp.domain.StudyCard(row.questionId, reviewReason(scheduler, state, now), state)
         }
         val best = com.mcqapp.domain.Study.bestReview(scheduler, cards, now) ?: return null
-        return winners.first { it.questionId == best.questionId }
+        return due.first { it.questionId == best.questionId }
     }
 
     /**
@@ -597,6 +579,7 @@ internal class StudyStore(
                     stateBefore = existing?.state?.name ?: CardStateKind.NEW.name,
                     stabilityAfter = next.stability,
                     difficultyAfter = next.difficulty,
+                    stabilityFastAfter = next.stabilityFast,
                     intervalDaysAfter = next.intervalDays,
                     wasGuess = wasGuess,
                     wasCorrect = wasCorrect,

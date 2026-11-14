@@ -81,6 +81,62 @@ class FsrsReplayTest {
         assertTrue(FsrsReplay.replay(emptyList(), scheduler).isEmpty())
     }
 
+    /**
+     * An out-of-range rating only exists on a corrupt or hand-edited row. It
+     * folds into Good for the graded replay — the same rule the FSRS-7 rebuild
+     * applies — so one bad row cannot abort a whole history, while the enriched
+     * row still reports the stored rating for the screens that display it.
+     */
+    @Test
+    fun anOutOfRangeRatingReplaysAsGood() {
+        val t0 = 1_750_000_000_000L
+        val corrupt = FsrsReplay.replay(
+            listOf(row(1, rating = 0, reviewedAt = t0), row(2, rating = 9, reviewedAt = t0 + 3 * day)),
+            scheduler
+        )
+        val good = FsrsReplay.replay(
+            listOf(
+                row(1, rating = ReviewGrade.GOOD.ordinal + 1, reviewedAt = t0),
+                row(2, rating = ReviewGrade.GOOD.ordinal + 1, reviewedAt = t0 + 3 * day)
+            ),
+            scheduler
+        )
+        assertEquals(good.size, corrupt.size)
+        corrupt.zip(good).forEach { (actual, expected) ->
+            assertEquals(expected.predictedRetention, actual.predictedRetention)
+            assertEquals(expected.intervalBeforeDays, actual.intervalBeforeDays)
+            assertEquals(expected.wouldBeGoodIntervalDays, actual.wouldBeGoodIntervalDays)
+        }
+        assertEquals(listOf(0, 9), corrupt.map { it.rating })
+    }
+
+    /**
+     * Two rows written in the same millisecond — a double tap, or an import that
+     * kept second-resolution timestamps. The log's autoincrement `id` decides
+     * the order, so the second row predicts from the first row's post-state at
+     * zero elapsed rather than the two replaying in caller order.
+     */
+    @Test
+    fun rowsWithTheSameTimestampReplayInIdOrder() {
+        val t0 = 1_750_000_000_000L
+        // Fed the wrong way round on purpose.
+        val replayed = FsrsReplay.replay(
+            listOf(row(2, rating = 1, reviewedAt = t0), row(1, rating = 3, reviewedAt = t0)),
+            scheduler
+        )
+        val afterGood = scheduler.next(scheduler.initial("q1"), ReviewGrade.GOOD, t0)
+        val second = replayed.single { it.rating == ReviewGrade.AGAIN.ordinal + 1 }
+        assertEquals(
+            scheduler.retention(afterGood, t0),
+            second.predictedRetention!!,
+            1e-12
+        )
+        assertEquals(afterGood.intervalDays, second.intervalBeforeDays)
+        // Row 1 is the first exposure: nothing to predict from.
+        val first = replayed.single { it.rating == ReviewGrade.GOOD.ordinal + 1 }
+        assertNull(first.predictedRetention)
+    }
+
     @Test
     fun firstReviewHasNoPredictionAndSecondPredictsFromAdvancedState() {
         val t0 = 1_750_000_000_000L

@@ -351,6 +351,43 @@ class Fsrs7UpgradeTest {
         assertEquals(0.0, db.cardStateDao().get("p1", "q2")!!.stabilityFast, 0.0)
     }
 
+    /**
+     * The audit's literal FSRS-001 case: grade a card, **close and reopen** the
+     * database (a new Room instance over the same file, i.e. what the next
+     * process does), and read the row back. If the entity mapper drops the fast
+     * trace, this is where it shows up — the in-memory reads of the tests above
+     * would still see the value only because nothing re-read it from disk.
+     */
+    @Test
+    fun theFastTraceSurvivesClosingAndReopeningTheDatabase() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "fsrs7-persist-test.db"
+        context.deleteDatabase(name)
+        fun open() = Room.databaseBuilder(context, AppDatabase::class.java, name)
+            .allowMainThreadQueries()
+            .build()
+
+        val first = open()
+        val writer = McqRepository(first, context)
+        writer.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        writer.saveQuestion(question("q1"))
+        val graded = writer.recordStudyReview(
+            paperId = "p1", questionId = "q1", grade = ReviewGrade.GOOD, now = t0 + day
+        )
+        first.close()
+
+        val reopened = open()
+        val stored = reopened.cardStateDao().get("p1", "q1")!!
+        reopened.close()
+        context.deleteDatabase(name)
+
+        assertTrue("the first grade must produce a fast trace", graded.stabilityFast > 0.0)
+        assertEquals(graded.stabilityFast, stored.stabilityFast, 0.0)
+        assertEquals(graded.stability, stored.stability, 0.0)
+        assertEquals(graded.difficulty, stored.difficulty, 0.0)
+        assertEquals(graded.intervalDays, stored.intervalDays)
+    }
+
     // --- the race the CAS exists for ---------------------------------------
 
     /**

@@ -49,7 +49,11 @@ class AnkiSchedulingTest {
         // from Anki's one stored number — under the mixture curve the interval
         // at the benchmark retention is not the stability, so the inverse is
         // what makes the card due when Anki says it is. The fast trace is
-        // unknown for an import, so it mirrors the slow one.
+        // unknown for an import, so it mirrors the slow one. That is a
+        // deliberate deviation, pinned here: upstream's `memory_state_from_sm2`
+        // seeds a newly imported memory at `Sf = 0.8·S`, while this app treats
+        // an unobserved trace as unknown (`Sf = S`) and never fabricates the
+        // initialization ratio for history it did not see.
         assertEquals(CardStateKind.REVIEW, state.cardStateKind())
         assertEquals(
             5.0,

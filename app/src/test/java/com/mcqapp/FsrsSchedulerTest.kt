@@ -295,6 +295,34 @@ class FsrsSchedulerTest {
         assertEquals(CardStateKind.RELEARNING, again.state)
     }
 
+    /**
+     * The audit's "fractional, zero, and negative elapsed time" vector, negative
+     * end: a device clock that jumps backwards (or a review timestamp recorded
+     * in the future) must read as *zero* elapsed, never as a negative t. A
+     * negative t would make the mixed curve increase with time and hand the
+     * optimizer a meaningless gradient, so the clamp is part of the rule.
+     */
+    @Test
+    fun aClockThatRunsBackwardsReadsAsZeroElapsed() {
+        val scheduler = exactScheduler()
+        val graduated = scheduler.next(scheduler.initial("q"), ReviewGrade.GOOD, t0)
+        val skewed = t0 - 30 * dayMs
+
+        assertEquals(
+            "a backwards clock cannot predict more than a same-instant review",
+            scheduler.retention(graduated, t0),
+            scheduler.retention(graduated, skewed),
+            0.0
+        )
+        val atSkew = scheduler.next(graduated, ReviewGrade.GOOD, skewed)
+        val atSameInstant = scheduler.next(graduated, ReviewGrade.GOOD, t0)
+        assertEquals(atSameInstant.stability, atSkew.stability, 0.0)
+        assertEquals(atSameInstant.stabilityFast, atSkew.stabilityFast, 0.0)
+        assertEquals(atSameInstant.difficulty, atSkew.difficulty, 0.0)
+        assertEquals(atSameInstant.intervalDays, atSkew.intervalDays)
+        assertTrue(atSkew.stability > 0.0)
+    }
+
     @Test
     fun sameDayHardNeverDecreasesStability() {
         // A successful review can never shrink a trace: the growth term floors

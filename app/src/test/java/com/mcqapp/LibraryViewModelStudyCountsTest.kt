@@ -28,7 +28,7 @@ import org.robolectric.annotation.Config
  * error level from the badge collectors.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class LibraryViewModelStudyCountsTest {
 
     @Before

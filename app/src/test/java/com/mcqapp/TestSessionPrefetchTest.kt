@@ -31,7 +31,7 @@ import org.robolectric.annotation.Config
  * the card is resolved before it is asked for, so showing it needs no pump.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class TestSessionPrefetchTest {
 
     private lateinit var app: McqApplication

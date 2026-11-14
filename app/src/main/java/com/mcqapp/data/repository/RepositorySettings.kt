@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -14,8 +15,12 @@ import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -33,8 +38,26 @@ internal val Context.dataStore by preferencesDataStore(name = "settings")
  * Split out of [McqRepository] so the repository's Room half can stay about
  * data and this file about user preferences — the two never interleave except
  * in [discardProgressFor], which paper deletion calls by hand.
+ *
+ * [installFreshness] decides the one default that is not a preference: a new
+ * install starts on correctness-only grading, so the dwell it records is
+ * unbiased evidence for the answer-time cuts. Whether an install is new is
+ * decided once at first start from database content (see [InstallFreshness]),
+ * not here; this store only writes the default when that answer is yes.
  */
-internal class SettingsStore(private val context: Context) : TestProgressSlot {
+internal class SettingsStore(
+    private val context: Context,
+    private val installFreshness: InstallFreshness
+) : TestProgressSlot {
+
+    /**
+     * A store with no database behind it, for tests that pin the seed's write
+     * behaviour. Production always gets an [InstallFreshness] backed by the
+     * database; `freshInstall` stands in for its answer.
+     */
+    @VisibleForTesting
+    internal constructor(context: Context, freshInstall: Boolean) :
+        this(context, InstallFreshness.fixed(context, freshInstall))
 
     private val themeKey = stringPreferencesKey("theme_mode")
 
@@ -97,25 +120,6 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
 
     suspend fun setSimplifiedStudy(enabled: Boolean) {
         context.dataStore.edit { it[simplifiedStudyKey] = enabled }
-    }
-
-    private val automaticLadderAdaptationKey =
-        booleanPreferencesKey("automatic_ladder_adaptation")
-
-    /**
-     * Plan phase 5: apply the ladder policy by itself at the end of a sitting.
-     * Off by default. The policy only ever proposes when its readiness and
-     * follow-up gates pass, but a switch that changes grades without asking
-     * starts off regardless.
-     */
-    fun automaticLadderAdaptation(): Flow<Boolean> =
-        context.dataStore.data.map { it[automaticLadderAdaptationKey] ?: false }
-
-    suspend fun automaticLadderAdaptationNow(): Boolean =
-        context.dataStore.data.map { it[automaticLadderAdaptationKey] ?: false }.first()
-
-    suspend fun setAutomaticLadderAdaptation(enabled: Boolean) {
-        context.dataStore.edit { it[automaticLadderAdaptationKey] = enabled }
     }
 
     fun shuffleOptions(): Flow<Boolean> =
@@ -263,6 +267,12 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     private val studyModeKey = stringPreferencesKey("study_mode")
     private val introduceNewCardsKey = booleanPreferencesKey("introduce_new_cards")
 
+    /**
+     * Grade on correctness alone, ignoring the clock (v27). Unprefixed like the
+     * other FSRS-era keys: it is this app's grading rule, not an Anki knob.
+     */
+    private val correctnessOnlyKey = booleanPreferencesKey("correctness_only")
+
     // CSV of the 21 weights rather than 21 numeric keys: the set is written
     // and read as one value, and a malformed list (wrong length, junk
     // tokens) falls back to the defaults in SchedulerConfig.sanitized.
@@ -271,36 +281,119 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     /** Which weight set `fsrs_parameters` belongs to (v26). 0 = shipped defaults. */
     private val fsrsFitVersionKey = intPreferencesKey("fsrs_fit_version")
 
-    /** The ladder version the cut points belong to (v26). */
+    /**
+     * The grading version the cut points belong to (v26; key kept for upgrade
+     * compatibility). Points at a `grading_versions` row.
+     */
     private val ladderVersionKey = intPreferencesKey("ladder_version")
 
-    fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> =
-        context.dataStore.data.map { prefs ->
-            val d = com.mcqapp.domain.SchedulerConfig()
-            com.mcqapp.domain.SchedulerConfig(
-                maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
-                relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
-                leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
-                desiredRetention = prefs[desiredRetentionKey] ?: d.desiredRetention,
-                studyMode = prefs[studyModeKey]?.let { stored ->
-                    runCatching { com.mcqapp.domain.StudyMode.valueOf(stored) }.getOrNull()
-                } ?: d.studyMode,
-                introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
-                dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
-                fastSeconds = (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong(),
-                slowSeconds = (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong(),
-                fsrsParameters = prefs[fsrsParametersKey]?.let { stored ->
-                    stored.split(',')
-                        .mapNotNull { token -> token.toDoubleOrNull() }
-                        .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
-                } ?: d.fsrsParameters,
-                ladderVersion = prefs[ladderVersionKey] ?: 0,
-                fsrsFitVersion = prefs[fsrsFitVersionKey] ?: 0
-            ).sanitized()
-        }
+    /**
+     * Which build of the cut rule the stored pair was calibrated for (v27).
+     * Bumped whenever the rule itself changes, so the pair does not outlive the
+     * model it was tuned against.
+     */
+    private val gradingRulesVersionKey = intPreferencesKey("grading_rules_version")
 
-    suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig =
-        schedulerConfig().first()
+    /**
+     * The scheduler config, as stored. This flow deliberately does not seed:
+     * the fresh-install rule is a write, and a UI collector must never trigger
+     * the database probe behind it. Seeding happens in [schedulerConfigNow]
+     * (every non-UI read) and in the startup job; the first emission here is
+     * therefore the stored value, seeded by whichever of those ran first.
+     */
+    fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> = flow {
+        emitAll(
+            context.dataStore.data.map { prefs ->
+                val d = com.mcqapp.domain.SchedulerConfig()
+                // v27 fixed the cuts at absolute 6 s / 60 s and deleted the reading
+                // allowance, so a pair stored by an older build is measured against
+                // a rule that no longer exists: keep it is to grade every answer
+                // under a ladder the code no longer implements. Until the learner
+                // saves a cut under this rule, the shipped pair wins.
+                val cutsCurrent = (prefs[gradingRulesVersionKey] ?: 0) >= GRADING_RULES_VERSION
+                com.mcqapp.domain.SchedulerConfig(
+                    maxIntervalDays = (prefs[schedKey("max_interval")] ?: d.maxIntervalDays.toDouble()).toInt(),
+                    relearnMs = (prefs[schedKey("relearn_ms")] ?: d.relearnMs.toDouble()).toLong(),
+                    leechThreshold = (prefs[schedKey("leech_threshold")] ?: d.leechThreshold.toDouble()).toInt(),
+                    desiredRetention = prefs[desiredRetentionKey] ?: d.desiredRetention,
+                    studyMode = prefs[studyModeKey]?.let { stored ->
+                        runCatching { com.mcqapp.domain.StudyMode.valueOf(stored) }.getOrNull()
+                    } ?: d.studyMode,
+                    introduceNewCards = prefs[introduceNewCardsKey] ?: d.introduceNewCards,
+                    dayStartHour = (prefs[schedKey("day_start_hour")] ?: d.dayStartHour.toDouble()).toInt(),
+                    correctnessOnlyGrading = prefs[correctnessOnlyKey] ?: d.correctnessOnlyGrading,
+                    fastSeconds = if (cutsCurrent) {
+                        (prefs[schedKey("fast_seconds")] ?: d.fastSeconds.toDouble()).toLong()
+                    } else {
+                        d.fastSeconds
+                    },
+                    slowSeconds = if (cutsCurrent) {
+                        (prefs[schedKey("slow_seconds")] ?: d.slowSeconds.toDouble()).toLong()
+                    } else {
+                        d.slowSeconds
+                    },
+                    fsrsParameters = prefs[fsrsParametersKey]?.let { stored ->
+                        stored.split(',')
+                            .mapNotNull { token -> token.toDoubleOrNull() }
+                            .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
+                    } ?: d.fsrsParameters,
+                    gradingVersion = if (cutsCurrent) prefs[ladderVersionKey] ?: 0 else 0,
+                    fsrsFitVersion = prefs[fsrsFitVersionKey] ?: 0
+                ).sanitized()
+            }
+        )
+    }
+
+    /** Serializes the seed so two first reads cannot both probe the database. */
+    private val seedMutex = Mutex()
+
+    /**
+     * A new install starts on correctness-only grading.
+     *
+     * The rule is the measurement condition for the answer-time suggestion:
+     * the dwell of a tinted clock is not free evidence, so a learner who
+     * starts with timing on cannot produce that suggestion later without
+     * first spending two weeks on correctness-only. Starting here makes the
+     * unbiased sample the default path, and the learner turns the rule off
+     * once Statistics offers a pair.
+     *
+     * Freshness is decided once, at first start, from database content by
+     * [InstallFreshness]: an install whose database was empty when the app
+     * started is new even if the learner then imports a paper in that same
+     * run; an install that already held a paper or a review is an upgrade or a
+     * restore and keeps its rule. A stored choice always wins, including an
+     * explicit `false`: the seed is a default, never an override.
+     *
+     * Because it writes `correctness_only`, the presence check short-circuits
+     * every later read. The edit re-checks the key inside the lambda as well,
+     * so a Settings save that lands between the snapshot and the write wins
+     * instead of being overwritten by the seed.
+     */
+    private suspend fun seedFreshInstallRule() = seedMutex.withLock {
+        val snapshot = context.dataStore.data.first()
+        if (snapshot[correctnessOnlyKey] != null) return@withLock
+        if (!installFreshness.isNewInstall()) return@withLock
+        context.dataStore.edit { prefs ->
+            if (prefs[correctnessOnlyKey] == null) prefs[correctnessOnlyKey] = true
+        }
+    }
+
+    /** The startup job's one-shot seed; every config read repeats it cheaply. */
+    internal suspend fun ensureInstallSeed() = seedFreshInstallRule()
+
+    /**
+     * The stored config, with the first-start rule seeded before the first
+     * read.
+     *
+     * This is the non-UI read path: a study pull, a stats load, a Settings
+     * one-shot all land here before anything renders. [schedulerConfig] is the
+     * collection path and stays pure, so a composable collector can never open
+     * the database.
+     */
+    suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig {
+        seedFreshInstallRule()
+        return schedulerConfig().first()
+    }
 
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
         val c = config.sanitized()
@@ -312,8 +405,10 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             prefs[studyModeKey] = c.studyMode.name
             prefs[introduceNewCardsKey] = c.introduceNewCards
             prefs[schedKey("day_start_hour")] = c.dayStartHour.toDouble()
+            prefs[correctnessOnlyKey] = c.correctnessOnlyGrading
             prefs[schedKey("fast_seconds")] = c.fastSeconds.toDouble()
             prefs[schedKey("slow_seconds")] = c.slowSeconds.toDouble()
+            prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
         }
         // The weights are written by [writeWeights], the single place that can
         // also bump their fit version in the same edit. A no-op when the
@@ -351,7 +446,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     suspend fun setFsrsParameters(parameters: List<Double>) = writeWeights(parameters)
 
     /**
-     * The atomic cut-point write LadderStore owns: the two cuts and the
+     * The atomic cut-point write GradingRulesStore owns: the two cuts and the
      * version number land in one DataStore edit, so a crash cannot leave a
      * value without its version. The history row is written afterwards and
      * repaired from these preferences on the next read if it is missing.
@@ -359,42 +454,113 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     internal suspend fun writeCuts(
         easySeconds: Long,
         slowSeconds: Long,
-        ladderVersion: Int
+        gradingVersion: Int,
+        correctnessOnly: Boolean = false
     ) {
         context.dataStore.edit { prefs ->
             prefs[schedKey("fast_seconds")] = easySeconds.toDouble()
             prefs[schedKey("slow_seconds")] = slowSeconds.toDouble()
-            prefs[ladderVersionKey] = ladderVersion
+            prefs[ladderVersionKey] = gradingVersion
+            prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
+            // The mode travels with the cuts: a version row that says
+            // "correctness only" must never coexist with preferences that
+            // still grade on the clock, even for the instant before the rest
+            // of the config lands.
+            prefs[correctnessOnlyKey] = correctnessOnly
         }
     }
 
-    /** The stored ladder version, or null when none has been written yet. */
-    internal suspend fun ladderVersionOrNull(): Int? =
+    /** The stored grading version, or null when none has been written yet. */
+    internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
+
+    /** Which build of the cut rule the stored pair was saved under (v27). */
+    internal suspend fun gradingRulesVersionNow(): Int =
+        context.dataStore.data.map { it[gradingRulesVersionKey] ?: 0 }.first()
 
     /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
      * left alone: they are the learner's own history, and Settings offers a
      * separate "Restore defaults" for dropping them.
+     *
+     * The grading rule is left alone for the same reason: it is not a pacing
+     * knob, and the confirm dialog names only "schedule knobs, target
+     * retention, ranking mode and new-card handling". Flipping the rule here
+     * would silently switch a correctness-only learner back to a tinted clock,
+     * start a new grading epoch and mix the two kinds of dwell in the
+     * evidence.
+     *
+     * @return whether the effective cut pair changed. An unchanged *current*
+     *   pair returns `false`: no row is written, the version id stays, and the
+     *   calibration epoch does not move — moving a pacing knob cannot end the
+     *   sample.
+     *
+     *   The first reset of a *retired* pre-v27 pair is the exception. That pair
+     *   was never in force ([schedulerConfig] had already replaced it with the
+     *   shipped 6/60), so it also returns `false` and writes no `manual` row,
+     *   but its stale version id is dropped. The next version read therefore
+     *   mints a fresh `prior` row at "now", and the epoch **does** move: the
+     *   old row's `effectiveFrom` names a pair that no longer grades anything,
+     *   so the earliest honest start for the new rule is this moment.
      */
-    suspend fun resetSchedulerConfig() {
+    suspend fun resetSchedulerConfig(): Boolean {
+        var pairChanged = false
         context.dataStore.edit { prefs ->
-            com.mcqapp.domain.SchedulerConfig()
-                .sanitized()
-                .let { c ->
-                    listOf(
-                        "max_interval" to c.maxIntervalDays.toDouble(),
-                        "relearn_ms" to c.relearnMs.toDouble(),
-                        "leech_threshold" to c.leechThreshold.toDouble(),
-                        "day_start_hour" to c.dayStartHour.toDouble(),
-                        "fast_seconds" to c.fastSeconds.toDouble(),
-                        "slow_seconds" to c.slowSeconds.toDouble()
-                    ).forEach { (name, value) -> prefs[schedKey(name)] = value }
-                    prefs[desiredRetentionKey] = c.desiredRetention
-                    prefs[studyModeKey] = c.studyMode.name
-                    prefs[introduceNewCardsKey] = c.introduceNewCards
-                }
+            val c = com.mcqapp.domain.SchedulerConfig().sanitized()
+            val cutsCurrent =
+                (prefs[gradingRulesVersionKey] ?: 0) >= GRADING_RULES_VERSION
+            // The effective pair before the reset, read the same way
+            // [schedulerConfig] reads it: a pair saved under the retired
+            // reading-allowance rule was never in force, so the shipped 6/60
+            // is what the learner was actually grading under.
+            val wasFast = if (cutsCurrent) {
+                (prefs[schedKey("fast_seconds")] ?: c.fastSeconds.toDouble()).toLong()
+            } else {
+                c.fastSeconds
+            }
+            val wasSlow = if (cutsCurrent) {
+                (prefs[schedKey("slow_seconds")] ?: c.slowSeconds.toDouble()).toLong()
+            } else {
+                c.slowSeconds
+            }
+            // Decided inside this one edit, from the same snapshot that is
+            // about to be overwritten: a concurrent save cannot make two
+            // separate reads disagree about whether the pair moved.
+            pairChanged = cutsCurrent &&
+                (wasFast != c.fastSeconds || wasSlow != c.slowSeconds)
+            listOf(
+                "max_interval" to c.maxIntervalDays.toDouble(),
+                "relearn_ms" to c.relearnMs.toDouble(),
+                "leech_threshold" to c.leechThreshold.toDouble(),
+                "day_start_hour" to c.dayStartHour.toDouble(),
+                "fast_seconds" to c.fastSeconds.toDouble(),
+                "slow_seconds" to c.slowSeconds.toDouble()
+            ).forEach { (name, value) -> prefs[schedKey(name)] = value }
+            prefs[desiredRetentionKey] = c.desiredRetention
+            prefs[studyModeKey] = c.studyMode.name
+            prefs[introduceNewCardsKey] = c.introduceNewCards
+            // `correctness_only` is deliberately not written here.
+            prefs[gradingRulesVersionKey] = GRADING_RULES_VERSION
+            if (!cutsCurrent || pairChanged) {
+                // Either the reset changed the pair (the old id names cuts
+                // that no longer grade, and the repository records the
+                // defaults under a fresh `manual` version) or the id names a
+                // retired pre-v27 pair. In both cases the next version read
+                // must not resurrect it; an unchanged current pair keeps its
+                // id, and with it the epoch.
+                prefs.remove(ladderVersionKey)
+            }
         }
+        return pairChanged
+    }
+
+    companion object {
+        /**
+         * The build of the cut rule the stored pair belongs to. 1 = absolute
+         * 6 s / 60 s with no reading allowance; a stored pair from before it
+         * is ignored once (see [schedulerConfig]).
+         */
+        const val GRADING_RULES_VERSION = 1
     }
 
     private val progressKey = stringPreferencesKey("in_progress_test")
@@ -437,7 +603,13 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             // The resume slot is session state, not a setting. Exporting it
             // would let a settings restore overwrite a newer live snapshot
             // with whatever was in progress when the backup was taken.
-            if (key.name == progressKey.name) continue
+            // The install marker describes this installation, not the learner,
+            // so it must not travel to another one either.
+            if (key.name == progressKey.name ||
+                key.name == InstallFreshness.MARKER_KEY.name
+            ) {
+                continue
+            }
             val entry = when (value) {
                 is Boolean -> McqBackupFormat.PreferenceEntry("boolean", JsonPrimitive(value))
                 is Double -> McqBackupFormat.PreferenceEntry("double", JsonPrimitive(value))
@@ -457,11 +629,20 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
      * full replace, so a setting changed since the backup does not survive
      * it. Values that fail to decode keep their current (about to be
      * cleared) state out — a malformed entry is skipped, never fatal.
+     *
+     * The first-start answer is invalidated before the clearing edit, not
+     * after it: the database for a full backup has already been replaced by
+     * the caller, so a config read in the window between `clear()` and the
+     * restored keys must re-ask the restored database, not reuse the
+     * pre-restore decision and seed correctness-only over restored history.
+     * A throw later in the restore leaves the answer invalidated too, which
+     * is the safe direction (the next read re-probes).
      */
     suspend fun restore(settings: McqBackupFormat.SettingsFile) {
         // The weights ride a separate edit through [writeWeights], because the
         // fit version has to move with them; every other preference is a
         // straight replace.
+        installFreshness.invalidate()
         var restoredWeights: List<Double>? = null
         var restoredFitVersion: Int? = null
         context.dataStore.edit { prefs ->
@@ -472,7 +653,11 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             prefs.clear()
             if (progress != null) prefs[progressKey] = progress
             for ((name, entry) in settings.preferences) {
-                if (name == progressKey.name) continue
+                if (name == progressKey.name ||
+                    name == InstallFreshness.MARKER_KEY.name
+                ) {
+                    continue
+                }
                 val value = entry.value
                 if (name == fsrsParametersKey.name) {
                     val text = (value as? JsonPrimitive)?.content ?: continue
@@ -513,5 +698,10 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             restoredWeights ?: com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
             forceVersion = restoredFitVersion ?: 0
         )
+        // The restore replaced both the preferences and (for a full backup)
+        // the database. [installFreshness] was invalidated before the clear
+        // above; [McqRepository.settingsRestore] invalidates it again in a
+        // `finally` so a throw after this point cannot leave the pre-restore
+        // answer cached either.
     }
 }

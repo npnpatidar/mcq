@@ -2,13 +2,9 @@ package com.mcqapp
 
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
-import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.domain.FsrsScheduler
-import com.mcqapp.domain.Passage
-import com.mcqapp.domain.Question
-import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.Study
@@ -381,8 +377,8 @@ class SpacedRepetitionTest {
     // --- automatic grading ---
     //
     // Simplified mode grades from the answer instead of asking. Correctness is
-    // exact match on the key; the dwell ladder supplies the difficulty axis;
-    // a declared guess bypasses the ladder because deliberation time on a
+    // exact match on the key; the absolute dwell cuts supply the difficulty
+    // axis; a declared guess bypasses the cuts because deliberation time on a
     // random pick carries no information.
 
     private val autoConfig = SchedulerConfig()
@@ -397,18 +393,18 @@ class SpacedRepetitionTest {
 
     @Test
     fun `the fast boundary is inclusive below and exclusive at`() {
-        // fastSeconds = 8: dwell in 1 until 8 reads as effortless.
+        // fastSeconds = 6: dwell in 1 until 6 reads as effortless.
         assertEquals(
             ReviewGrade.EASY,
             Study.autoGrade(setOf("a"), setOf("a"), 1, isGuess = false, config = autoConfig)
         )
         assertEquals(
             ReviewGrade.EASY,
-            Study.autoGrade(setOf("a"), setOf("a"), 7, isGuess = false, config = autoConfig)
+            Study.autoGrade(setOf("a"), setOf("a"), 5, isGuess = false, config = autoConfig)
         )
         assertEquals(
             ReviewGrade.GOOD,
-            Study.autoGrade(setOf("a"), setOf("a"), 8, isGuess = false, config = autoConfig)
+            Study.autoGrade(setOf("a"), setOf("a"), 6, isGuess = false, config = autoConfig)
         )
     }
 
@@ -420,7 +416,7 @@ class SpacedRepetitionTest {
         )
         assertEquals(
             ReviewGrade.GOOD,
-            Study.autoGrade(setOf("a"), setOf("a"), 29, isGuess = false, config = autoConfig)
+            Study.autoGrade(setOf("a"), setOf("a"), 59, isGuess = false, config = autoConfig)
         )
     }
 
@@ -428,7 +424,7 @@ class SpacedRepetitionTest {
     fun `a slow correct answer is Hard`() {
         assertEquals(
             ReviewGrade.HARD,
-            Study.autoGrade(setOf("a"), setOf("a"), 30, isGuess = false, config = autoConfig)
+            Study.autoGrade(setOf("a"), setOf("a"), 60, isGuess = false, config = autoConfig)
         )
         assertEquals(
             ReviewGrade.HARD,
@@ -437,10 +433,54 @@ class SpacedRepetitionTest {
     }
 
     @Test
+    fun `correctness-only grading ignores the clock entirely`() {
+        val config = SchedulerConfig(correctnessOnlyGrading = true)
+        // Every dwell a real session can produce, including the boundaries and
+        // values far past the Hard cut, lands on the same grade.
+        listOf(0L, 1L, 5L, 6L, 59L, 60L, 600L).forEach { dwell ->
+            assertEquals(
+                "correct answer at ${dwell}s must be Good",
+                ReviewGrade.GOOD,
+                Study.autoGrade(setOf("a"), setOf("a"), dwell, isGuess = false, config = config)
+            )
+        }
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), setOf("b"), 3, isGuess = false, config = config)
+        )
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), setOf("a"), 3, isGuess = true, config = config)
+        )
+        assertEquals(
+            ReviewGrade.AGAIN,
+            Study.autoGrade(setOf("a"), emptySet(), 3, isGuess = false, config = config)
+        )
+    }
+
+    @Test
+    fun `correctness-only grading leaves the cuts themselves untouched`() {
+        // The stored pair is the fallback rule, so switching back must grade
+        // exactly as before, without the switch having rewritten anything.
+        val on = SchedulerConfig(correctnessOnlyGrading = true)
+        val off = on.copy(correctnessOnlyGrading = false)
+        assertEquals(
+            ReviewGrade.EASY,
+            Study.autoGrade(setOf("a"), setOf("a"), 3, isGuess = false, config = off)
+        )
+        assertEquals(
+            ReviewGrade.HARD,
+            Study.autoGrade(setOf("a"), setOf("a"), 90, isGuess = false, config = off)
+        )
+        assertEquals(6L, on.fastSeconds)
+        assertEquals(60L, on.slowSeconds)
+    }
+
+    @Test
     fun `a correct guess is Again at any dwell`() {
         listOf(0L, 1L, 7L, 15L, 120L).forEach { dwell ->
             assertEquals(
-                "a guessed answer must not ride the dwell ladder (dwell=$dwell)",
+                "a guessed answer must not ride the dwell cuts (dwell=$dwell)",
                 ReviewGrade.AGAIN,
                 Study.autoGrade(setOf("a"), setOf("a"), dwell, isGuess = true, config = autoConfig)
             )
@@ -496,98 +536,6 @@ class SpacedRepetitionTest {
             ReviewGrade.AGAIN,
             Study.autoGrade(
                 setOf("a", "c"), setOf("a", "c"), 2, isGuess = true, config = autoConfig
-            )
-        )
-    }
-
-    @Test
-    fun `easyThresholdCountsQuestionOptionsAndPassage`() {
-        val question = Question(
-            id = "q1",
-            categoryId = "c1",
-            elements = listOf(ContentElement.TextElement("x".repeat(100))),
-            options = listOf(QuestionOption("a", "y".repeat(100))),
-            correctOptionIds = setOf("a")
-        )
-        val passage = Passage(
-            id = "p1",
-            categoryId = "c1",
-            title = "t".repeat(50),
-            elements = listOf(ContentElement.TextElement("z".repeat(50)))
-        )
-
-        assertEquals(23L, Study.easyThresholdSeconds(autoConfig, question, passage))
-    }
-
-    @Test
-    fun `easyThresholdAddsSecondsForImages`() {
-        val question = Question(
-            id = "q1",
-            categoryId = "c1",
-            text = "x".repeat(40),
-            image = "question.png",
-            options = listOf(
-                QuestionOption("a", "Alpha", image = "option.png")
-            ),
-            correctOptionIds = setOf("a")
-        )
-        val passage = Passage(
-            id = "p1",
-            categoryId = "c1",
-            title = "Passage",
-            elements = emptyList(),
-            image = "passage.png"
-        )
-
-        assertEquals(20L, Study.easyThresholdSeconds(autoConfig, question, passage))
-    }
-
-    @Test
-    fun `autoGradeUsesTheLengthAdjustedEasyThreshold`() {
-        val threshold = 20L
-        assertEquals(
-            ReviewGrade.EASY,
-            Study.autoGrade(
-                setOf("a"), setOf("a"), 19L, isGuess = false,
-                config = autoConfig, fastSeconds = threshold
-            )
-        )
-        assertEquals(
-            ReviewGrade.GOOD,
-            Study.autoGrade(
-                setOf("a"), setOf("a"), 20L, isGuess = false,
-                config = autoConfig, fastSeconds = threshold
-            )
-        )
-    }
-
-    @Test
-    fun `reading time lifts the Hard boundary too so Good stays reachable`() {
-        // A long question pushes the Easy threshold past the configured Hard
-        // boundary (8 + 32s of reading = 40 > 30). Unless Hard lifts by the
-        // same bonus, Good is unreachable: every correct answer grades Easy
-        // or Hard, and 45s of honest deliberation grades Easy.
-        val easyAt = 40L
-        val hardAt = autoConfig.slowSeconds + (easyAt - autoConfig.fastSeconds)  // 62
-        assertEquals(
-            ReviewGrade.EASY,
-            Study.autoGrade(
-                setOf("a"), setOf("a"), 39L, isGuess = false,
-                config = autoConfig, fastSeconds = easyAt, slowSeconds = hardAt
-            )
-        )
-        assertEquals(
-            ReviewGrade.GOOD,
-            Study.autoGrade(
-                setOf("a"), setOf("a"), 50L, isGuess = false,
-                config = autoConfig, fastSeconds = easyAt, slowSeconds = hardAt
-            )
-        )
-        assertEquals(
-            ReviewGrade.HARD,
-            Study.autoGrade(
-                setOf("a"), setOf("a"), 62L, isGuess = false,
-                config = autoConfig, fastSeconds = easyAt, slowSeconds = hardAt
             )
         )
     }
@@ -754,7 +702,8 @@ class SpacedRepetitionTest {
         val slow = SchedulerConfig(fastSeconds = 1, slowSeconds = 60)
         assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 30, config = slow))
         val default = SchedulerConfig()
-        assertEquals(ReviewGrade.HARD, Study.inferGrade(true, 30, config = default))
+        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 30, config = default))
+        assertEquals(ReviewGrade.HARD, Study.inferGrade(true, 60, config = default))
     }
 
     // --- sanitization ---

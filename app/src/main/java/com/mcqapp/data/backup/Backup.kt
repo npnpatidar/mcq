@@ -8,8 +8,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.BlueprintEntity
 import com.mcqapp.data.local.BlueprintSectionEntity
 import com.mcqapp.data.local.CardStateEntity
-import com.mcqapp.data.local.LadderBlockEntity
-import com.mcqapp.data.local.LadderVersionEntity
+import com.mcqapp.data.local.GradingVersionEntity
 import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
@@ -20,6 +19,7 @@ import com.mcqapp.util.Logger
 import com.mcqapp.util.readBounded
 import androidx.room.withTransaction
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -161,8 +161,10 @@ object McqBackupFormat {
         // null means the row predates guess tracking.
         val wasGuess: Boolean? = null,
         val wasCorrect: Boolean? = null,
-        // Added with the v26 columns. A v1 backup decodes these as null/0;
-        // `ladderVersion` is non-null because 0 is its meaningful default.
+        // Added with the v26 columns. A v1 backup decodes these as null/0.
+        // [ladderVersion] is the grading version id and keeps its v26 wire
+        // name, so a backup written before the ladder was removed still
+        // imports each row's provenance.
         val proposedRating: Int? = null,
         val gradeSource: String? = null,
         val ladderVersion: Int = 0,
@@ -172,44 +174,16 @@ object McqBackupFormat {
         val wasSkipped: Boolean? = null
     )
 
-    /** One `ladder_versions` row; small, so it travels as a plain list. */
+    /** One `grading_versions` row: the cut pair that graded a span of reviews. */
     @Serializable
-    data class LadderVersionRow(
+    data class GradingVersionRow(
         val id: Long,
         val easySeconds: Long,
         val slowSeconds: Long,
         val effectiveFrom: Long,
         val reason: String,
-        val previousId: Long? = null,
-        val blockId: Long? = null,
-        val policyVersion: Int = 0
-    )
-
-    /** One `ladder_blocks` row, including blocks that decided nothing. */
-    @Serializable
-    data class LadderBlockRow(
-        val id: Long,
-        val startAt: Long,
-        val endAt: Long,
-        val ladderVersion: Int,
-        val fsrsFitVersion: Int? = null,
-        val policyVersion: Int = 0,
-        val easyPairs: Int = 0,
-        val easyCards: Int = 0,
-        val goodPairs: Int = 0,
-        val goodCards: Int = 0,
-        val hardPairs: Int = 0,
-        val hardCards: Int = 0,
-        val delta1: Double? = null,
-        val delta1Low: Double? = null,
-        val delta1High: Double? = null,
-        val delta2: Double? = null,
-        val delta2Low: Double? = null,
-        val delta2High: Double? = null,
-        val followUpEasy: Double? = null,
-        val followUpGood: Double? = null,
-        val outcome: String,
-        val decidedAt: Long? = null
+        /** v27: reviews under this version were graded by correctness alone. */
+        val correctnessOnly: Boolean = false
     )
 
     /** One `study_sessions` row: real study time for one sitting. */
@@ -257,9 +231,13 @@ object McqBackupFormat {
          * because an attempt's `variant` refers to the blueprint by id.
          */
         val blueprints: List<BlueprintRow> = emptyList(),
-        /** The ladder's audit trail (v26). Small: a handful of rows a year. */
-        val ladderVersions: List<LadderVersionRow> = emptyList(),
-        val ladderBlocks: List<LadderBlockRow> = emptyList(),
+        /**
+         * The cut points' audit trail. The wire key keeps its v26 name so a
+         * backup written before the ladder was removed still imports its
+         * versions, and every restored review row keeps a pair behind it.
+         */
+        @SerialName("ladderVersions")
+        val gradingVersions: List<GradingVersionRow> = emptyList(),
         /** Study sittings (v26); real time, not summed dwell. */
         val studySessions: List<StudySessionRow> = emptyList(),
         val inProgressTest: String? = null
@@ -321,8 +299,7 @@ object McqBackupFormat {
         suspend fun paperCreated(row: PaperCreated) {}
         suspend fun panel(row: PanelRow) {}
         suspend fun blueprint(row: BlueprintRow) {}
-        suspend fun ladderVersion(row: LadderVersionRow) {}
-        suspend fun ladderBlock(row: LadderBlockRow) {}
+        suspend fun gradingVersion(row: GradingVersionRow) {}
         suspend fun studySession(row: StudySessionRow) {}
         suspend fun inProgressTest(json: String?) {}
         suspend fun settings(settings: SettingsFile) {}
@@ -466,11 +443,11 @@ object McqBackupFormat {
                     sink.blueprint(row(BlueprintRow.serializer(), it))
                 }
                 "ladderVersions" -> stream.readArray {
-                    sink.ladderVersion(row(LadderVersionRow.serializer(), it))
+                    sink.gradingVersion(row(GradingVersionRow.serializer(), it))
                 }
-                "ladderBlocks" -> stream.readArray {
-                    sink.ladderBlock(row(LadderBlockRow.serializer(), it))
-                }
+                // A pre-v27 backup's evidence blocks have no table any more;
+                // skipping them keeps the rest of the archive importable.
+                "ladderBlocks" -> stream.readArray { }
                 "studySessions" -> stream.readArray {
                     sink.studySession(row(StudySessionRow.serializer(), it))
                 }
@@ -597,7 +574,7 @@ object McqBackupFormat {
         wasCorrect = entity.wasCorrect,
         proposedRating = entity.proposedRating,
         gradeSource = entity.gradeSource,
-        ladderVersion = entity.ladderVersion,
+        ladderVersion = entity.gradingVersion,
         predictedRecall = entity.predictedRecall,
         fsrsFitVersion = entity.fsrsFitVersion,
         readingAllowanceSeconds = entity.readingAllowanceSeconds,
@@ -618,8 +595,7 @@ object McqBackupFormat {
         inProgressTest: String?,
         panels: List<PanelRow> = emptyList(),
         blueprints: List<BlueprintRow> = emptyList(),
-        ladderVersions: List<LadderVersionRow> = emptyList(),
-        ladderBlocks: List<LadderBlockRow> = emptyList(),
+        gradingVersions: List<GradingVersionRow> = emptyList(),
         studySessions: List<StudySessionRow> = emptyList()
     ) {
         w.write("{\"cardState\":[")
@@ -651,15 +627,11 @@ object McqBackupFormat {
             if (i > 0) w.write(",")
             w.write(json.encodeToString(BlueprintRow.serializer(), row))
         }
+        // The wire key keeps its v26 name; see [StudyFile.gradingVersions].
         w.write("],\"ladderVersions\":[")
-        ladderVersions.forEachIndexed { i, row ->
+        gradingVersions.forEachIndexed { i, row ->
             if (i > 0) w.write(",")
-            w.write(json.encodeToString(LadderVersionRow.serializer(), row))
-        }
-        w.write("],\"ladderBlocks\":[")
-        ladderBlocks.forEachIndexed { i, row ->
-            if (i > 0) w.write(",")
-            w.write(json.encodeToString(LadderBlockRow.serializer(), row))
+            w.write(json.encodeToString(GradingVersionRow.serializer(), row))
         }
         w.write("],\"studySessions\":[")
         studySessions.forEachIndexed { i, row ->
@@ -805,8 +777,7 @@ class BackupSource(private val db: AppDatabase) {
                 },
                 panels = panels(),
                 blueprints = backupBlueprints(),
-                ladderVersions = ladderVersions(),
-                ladderBlocks = ladderBlocks(),
+                gradingVersions = gradingVersions(),
                 studySessions = db.studySessionDao().getAll().map { it.toRow() },
                 inProgressTest = inProgressTest
             )
@@ -882,47 +853,16 @@ class BackupSource(private val db: AppDatabase) {
     /** Alias for [backupBlueprints] mirroring [panels]. */
     suspend fun blueprints(): List<McqBackupFormat.BlueprintRow> = backupBlueprints()
 
-    /** The ladder's versions, small enough to carry as a list. */
-    suspend fun ladderVersions(): List<McqBackupFormat.LadderVersionRow> =
-        db.ladderDao().allVersions().map {
-            McqBackupFormat.LadderVersionRow(
+    /** The grading versions, small enough to carry as a list. */
+    suspend fun gradingVersions(): List<McqBackupFormat.GradingVersionRow> =
+        db.gradingRulesDao().allVersions().map {
+            McqBackupFormat.GradingVersionRow(
                 id = it.id,
                 easySeconds = it.easySeconds,
                 slowSeconds = it.slowSeconds,
                 effectiveFrom = it.effectiveFrom,
                 reason = it.reason,
-                previousId = it.previousId,
-                blockId = it.blockId,
-                policyVersion = it.policyVersion
-            )
-        }
-
-    /** The ladder's closed evidence blocks, decided or not. */
-    suspend fun ladderBlocks(): List<McqBackupFormat.LadderBlockRow> =
-        db.ladderDao().allBlocks().map {
-            McqBackupFormat.LadderBlockRow(
-                id = it.id,
-                startAt = it.startAt,
-                endAt = it.endAt,
-                ladderVersion = it.ladderVersion,
-                fsrsFitVersion = it.fsrsFitVersion,
-                policyVersion = it.policyVersion,
-                easyPairs = it.easyPairs,
-                easyCards = it.easyCards,
-                goodPairs = it.goodPairs,
-                goodCards = it.goodCards,
-                hardPairs = it.hardPairs,
-                hardCards = it.hardCards,
-                delta1 = it.delta1,
-                delta1Low = it.delta1Low,
-                delta1High = it.delta1High,
-                delta2 = it.delta2,
-                delta2Low = it.delta2Low,
-                delta2High = it.delta2High,
-                followUpEasy = it.followUpEasy,
-                followUpGood = it.followUpGood,
-                outcome = it.outcome,
-                decidedAt = it.decidedAt
+                correctnessOnly = it.correctnessOnly
             )
         }
 
@@ -990,7 +930,7 @@ class BackupSource(private val db: AppDatabase) {
         wasCorrect = wasCorrect,
         proposedRating = proposedRating,
         gradeSource = gradeSource,
-        ladderVersion = ladderVersion,
+        ladderVersion = gradingVersion,
         predictedRecall = predictedRecall,
         fsrsFitVersion = fsrsFitVersion,
         readingAllowanceSeconds = readingAllowanceSeconds,
@@ -1122,7 +1062,7 @@ class BackupRestorer(private val db: AppDatabase) {
             }
             for (panel in backup.study.panels) restorePanel(panel)
             for (bp in backup.study.blueprints) restoreBlueprint(bp)
-            restoreLadder(backup.study)
+            restoreGradingTrail(backup.study)
         }
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read
@@ -1249,12 +1189,8 @@ class BackupRestorer(private val db: AppDatabase) {
                         restoreBlueprint(row)
                     }
 
-                    override suspend fun ladderVersion(row: McqBackupFormat.LadderVersionRow) {
-                        db.ladderDao().insertVersion(row.toEntity())
-                    }
-
-                    override suspend fun ladderBlock(row: McqBackupFormat.LadderBlockRow) {
-                        db.ladderDao().insertBlock(row.toEntity())
+                    override suspend fun gradingVersion(row: McqBackupFormat.GradingVersionRow) {
+                        db.gradingRulesDao().insertVersion(row.toEntity())
                     }
 
                     override suspend fun studySession(row: McqBackupFormat.StudySessionRow) {
@@ -1361,53 +1297,23 @@ class BackupRestorer(private val db: AppDatabase) {
         reviewCount = reviewCount
     )
 
-    /** Restores the ladder's audit trail with its original ids. */
-    private suspend fun restoreLadder(study: McqBackupFormat.StudyFile) {
-        if (study.ladderVersions.isNotEmpty()) {
-            db.ladderDao().insertVersions(study.ladderVersions.map { it.toEntity() })
-        }
-        if (study.ladderBlocks.isNotEmpty()) {
-            db.ladderDao().insertBlocks(study.ladderBlocks.map { it.toEntity() })
+    /** Restores the grading versions with their original ids, then sittings. */
+    private suspend fun restoreGradingTrail(study: McqBackupFormat.StudyFile) {
+        if (study.gradingVersions.isNotEmpty()) {
+            db.gradingRulesDao().insertVersions(study.gradingVersions.map { it.toEntity() })
         }
         if (study.studySessions.isNotEmpty()) {
             db.studySessionDao().insertAll(study.studySessions.map { it.toEntity() })
         }
     }
 
-    private fun McqBackupFormat.LadderVersionRow.toEntity() = LadderVersionEntity(
+    private fun McqBackupFormat.GradingVersionRow.toEntity() = GradingVersionEntity(
         id = id,
         easySeconds = easySeconds,
         slowSeconds = slowSeconds,
         effectiveFrom = effectiveFrom,
         reason = reason,
-        previousId = previousId,
-        blockId = blockId,
-        policyVersion = policyVersion
-    )
-
-    private fun McqBackupFormat.LadderBlockRow.toEntity() = LadderBlockEntity(
-        id = id,
-        startAt = startAt,
-        endAt = endAt,
-        ladderVersion = ladderVersion,
-        fsrsFitVersion = fsrsFitVersion,
-        policyVersion = policyVersion,
-        easyPairs = easyPairs,
-        easyCards = easyCards,
-        goodPairs = goodPairs,
-        goodCards = goodCards,
-        hardPairs = hardPairs,
-        hardCards = hardCards,
-        delta1 = delta1,
-        delta1Low = delta1Low,
-        delta1High = delta1High,
-        delta2 = delta2,
-        delta2Low = delta2Low,
-        delta2High = delta2High,
-        followUpEasy = followUpEasy,
-        followUpGood = followUpGood,
-        outcome = outcome,
-        decidedAt = decidedAt
+        correctnessOnly = correctnessOnly
     )
 
     private fun McqBackupFormat.StudySessionRow.toEntity() = StudySessionEntity(
@@ -1433,7 +1339,7 @@ class BackupRestorer(private val db: AppDatabase) {
         wasCorrect = wasCorrect,
         proposedRating = proposedRating,
         gradeSource = gradeSource,
-        ladderVersion = ladderVersion,
+        gradingVersion = ladderVersion,
         predictedRecall = predictedRecall,
         fsrsFitVersion = fsrsFitVersion,
         readingAllowanceSeconds = readingAllowanceSeconds,

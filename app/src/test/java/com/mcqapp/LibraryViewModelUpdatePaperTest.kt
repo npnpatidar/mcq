@@ -24,7 +24,7 @@ import kotlinx.coroutines.runBlocking
  * already gone.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class LibraryViewModelUpdatePaperTest {
 
     private lateinit var app: McqApplication

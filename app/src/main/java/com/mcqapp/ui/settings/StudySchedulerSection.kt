@@ -49,13 +49,14 @@ import kotlin.math.roundToInt
 /** The Study / Spaced repetition group: the whole scheduler card, collapsible. */
 @Composable
 fun StudySchedulerSection(
-    config: com.mcqapp.domain.SchedulerConfig,
+    config: com.mcqapp.domain.SchedulerConfig?,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onFastChange: (Long) -> Unit,
+    onSlowChange: (Long) -> Unit,
+    onRuleChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
-    automaticLadderAdaptation: Boolean,
-    onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     onOptimizeFsrs: () -> Unit,
@@ -70,20 +71,41 @@ fun StudySchedulerSection(
         onExpandedChange = onExpandedChange,
         testTag = "settings-section-study"
     ) {
-        AnkiSchedulerBody(
-            config = config,
-            onChange = onChange,
-            onReset = onReset,
-            simplifiedStudy = simplifiedStudy,
-            onSimplifiedChange = onSimplifiedChange,
-            automaticLadderAdaptation = automaticLadderAdaptation,
-            onAutomaticLadderChange = onAutomaticLadderChange,
-            fsrsReviewCount = fsrsReviewCount,
-            fsrsOptimizeState = fsrsOptimizeState,
-            onOptimizeFsrs = onOptimizeFsrs,
-            onDismissFsrsOptimize = onDismissFsrsOptimize,
-            onRestoreFsrsDefaults = onRestoreFsrsDefaults
-        )
+        if (config == null) {
+            // The first stored config has not arrived yet (the fresh-install
+            // seed and the version seed both run behind it). Nothing here is
+            // editable: writing the defaults in this window would overwrite
+            // whichever of those landed first.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    stringResource(R.string.loading),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        } else {
+            AnkiSchedulerBody(
+                config = config,
+                onChange = onChange,
+                onFastChange = onFastChange,
+                onSlowChange = onSlowChange,
+                onRuleChange = onRuleChange,
+                onReset = onReset,
+                simplifiedStudy = simplifiedStudy,
+                onSimplifiedChange = onSimplifiedChange,
+                fsrsReviewCount = fsrsReviewCount,
+                fsrsOptimizeState = fsrsOptimizeState,
+                onOptimizeFsrs = onOptimizeFsrs,
+                onDismissFsrsOptimize = onDismissFsrsOptimize,
+                onRestoreFsrsDefaults = onRestoreFsrsDefaults
+            )
+        }
     }
 }
 
@@ -101,11 +123,12 @@ fun StudySchedulerSection(
 private fun AnkiSchedulerBody(
     config: com.mcqapp.domain.SchedulerConfig,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onFastChange: (Long) -> Unit,
+    onSlowChange: (Long) -> Unit,
+    onRuleChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
-    automaticLadderAdaptation: Boolean,
-    onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     onOptimizeFsrs: () -> Unit,
@@ -161,14 +184,6 @@ private fun AnkiSchedulerBody(
         checked = simplifiedStudy,
         onChange = onSimplifiedChange,
         testTag = "setting-simplified-anki"
-    )
-    Spacer(Modifier.height(8.dp))
-    SwitchSettingRow(
-        label = stringResource(R.string.automatic_ladder_adaptation),
-        help = stringResource(R.string.automatic_ladder_adaptation_help),
-        checked = automaticLadderAdaptation,
-        onChange = onAutomaticLadderChange,
-        testTag = "setting-automatic-ladder"
     )
     Spacer(Modifier.height(12.dp))
 
@@ -349,40 +364,53 @@ private fun AnkiSchedulerBody(
         testTag = "setting-introduce-new-cards"
     )
     Spacer(Modifier.height(12.dp))
-
-    AnkiNumberRow(
-        label = stringResource(R.string.easy_answer_threshold),
-        help = stringResource(R.string.easy_answer_threshold_help),
-        value = config.fastSeconds,
-        step = 1.0,
-        // 1..3600: the domain clamps fastSeconds to 1..3600
-        // (SpacedRepetition.sanitized), and a restored 601-3600 value
-        // used to render as a permanent error with dead steppers
-        // (consolidated_bugs.md H3).
-        range = 1f..3600f,
-        suffix = "s",
-        onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
-    )
-    AnkiNumberRow(
-        label = stringResource(R.string.hard_answer_threshold),
-        help = stringResource(R.string.hard_answer_threshold_help),
-        value = config.slowSeconds,
-        step = 1.0,
-        range = 1f..3600f,
-        suffix = "s",
-        // The domain clamps slow up to fast; without this check a typed
-        // value below fast "succeeded" silently, left a phantom in the
-        // field and stored the old value (consolidated_bugs.md F16/H2).
-        validExtra = { it >= config.fastSeconds },
-        onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
-    )
-
-    Spacer(Modifier.height(8.dp))
-    Text(
-        stringResource(R.string.response_time_thresholds_help),
-        style = MaterialTheme.typography.bodySmall
+    SwitchSettingRow(
+        label = stringResource(R.string.grade_correctness_only),
+        help = stringResource(R.string.grade_correctness_only_help),
+        checked = config.correctnessOnlyGrading,
+        onChange = onRuleChange,
+        testTag = "setting-grade-correctness-only"
     )
     Spacer(Modifier.height(12.dp))
+
+    // The two cuts are the fallback rule, so there is nothing to tune while
+    // the switch above is on. They stay stored and still grade if the switch
+    // is turned back off.
+    if (!config.correctnessOnlyGrading) {
+        AnkiNumberRow(
+            label = stringResource(R.string.easy_answer_threshold),
+            help = stringResource(R.string.easy_answer_threshold_help),
+            value = config.fastSeconds,
+            step = 1.0,
+            // 1..3600: the domain clamps fastSeconds to 1..3600
+            // (SpacedRepetition.sanitized), and a restored 601-3600 value
+            // used to render as a permanent error with dead steppers
+            // (consolidated_bugs.md H3).
+            range = 1f..3600f,
+            suffix = "s",
+            onChange = { onFastChange(it.toLong()) }
+        )
+        AnkiNumberRow(
+            label = stringResource(R.string.hard_answer_threshold),
+            help = stringResource(R.string.hard_answer_threshold_help),
+            value = config.slowSeconds,
+            step = 1.0,
+            range = 1f..3600f,
+            suffix = "s",
+            // The domain clamps slow up to fast; without this check a typed
+            // value below fast "succeeded" silently, left a phantom in the
+            // field and stored the old value (consolidated_bugs.md F16/H2).
+            validExtra = { it >= config.fastSeconds },
+            onChange = { onSlowChange(it.toLong()) }
+        )
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            stringResource(R.string.response_time_thresholds_help),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()

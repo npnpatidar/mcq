@@ -40,7 +40,7 @@ class CalibrationTest {
         reviewedAt = reviewedAt,
         gradeSource = gradeSource,
         proposedRating = null,
-        ladderVersion = 1,
+        gradingVersion = 1,
         fsrsFitVersion = 0,
         predictedRecall = predictedRecall,
         stateBefore = stateBefore,
@@ -54,7 +54,7 @@ class CalibrationTest {
     private fun card(
         paperId: String = "p1",
         questionId: String = "q1",
-        grade: Calibration.LadderGrade = Calibration.LadderGrade.EASY,
+        grade: Calibration.GradeClass = Calibration.GradeClass.EASY,
         outcome: Boolean = true,
         predicted: Double = 0.8,
         labelAt: Long = t0,
@@ -93,18 +93,18 @@ class CalibrationTest {
 
     @Test
     fun `labels before the epoch are not pooled`() {
-        // The old label belongs to the previous ladder version; its outcome
+        // The old label belongs to the previous grading version; its outcome
         // arrives inside the epoch, which must not make it evidence.
         val old = card(
             questionId = "old",
-            grade = Calibration.LadderGrade.EASY,
+            grade = Calibration.GradeClass.EASY,
             outcome = false,
             labelAt = t0 - 60 * day,
             outcomeAt = t0 + day
         )
         val current = card(
             questionId = "new",
-            grade = Calibration.LadderGrade.EASY,
+            grade = Calibration.GradeClass.EASY,
             outcome = true,
             labelAt = t0 + 2 * day
         )
@@ -122,17 +122,17 @@ class CalibrationTest {
     fun `a refit start passed as the epoch excludes the pre-refit labels`() {
         // StatsStore rebases the epoch on the first label under the current
         // weights; the report must honour that boundary the same way it honours
-        // a ladder-version change.
+        // a grading-version change.
         val beforeRefit = card(
             questionId = "before",
-            grade = Calibration.LadderGrade.EASY,
+            grade = Calibration.GradeClass.EASY,
             outcome = false,
             labelAt = t0 + day,
             outcomeAt = t0 + 6 * day
         )
         val afterRefit = card(
             questionId = "after",
-            grade = Calibration.LadderGrade.GOOD,
+            grade = Calibration.GradeClass.GOOD,
             outcome = true,
             labelAt = t0 + 10 * day,
             outcomeAt = t0 + 15 * day
@@ -144,7 +144,7 @@ class CalibrationTest {
             epochStart = refitAt
         )
         assertEquals(1, result.pairs)
-        assertEquals(Calibration.LadderGrade.GOOD, result.grades.first { it.pairs > 0 }.grade)
+        assertEquals(Calibration.GradeClass.GOOD, result.grades.first { it.pairs > 0 }.grade)
         assertEquals(refitAt, result.blocks.single().startAt)
     }
 
@@ -164,9 +164,9 @@ class CalibrationTest {
     @Test
     fun `a block carries its own card counts per grade`() {
         val result = Calibration.report(
-            card(questionId = "a", grade = Calibration.LadderGrade.EASY) +
-                card(questionId = "b", grade = Calibration.LadderGrade.EASY) +
-                card(questionId = "c", grade = Calibration.LadderGrade.GOOD),
+            card(questionId = "a", grade = Calibration.GradeClass.EASY) +
+                card(questionId = "b", grade = Calibration.GradeClass.EASY) +
+                card(questionId = "c", grade = Calibration.GradeClass.GOOD),
             now = t0 + 400 * day,
             epochStart = t0
         )
@@ -182,11 +182,11 @@ class CalibrationTest {
     fun `delta1 is the Easy minus Good residual`() {
         // Easy: correct vs 0.9 -> +0.1. Good: incorrect vs 0.8 -> -0.8.
         val result = Calibration.report(
-            card(grade = Calibration.LadderGrade.EASY, predicted = 0.9, outcome = true) +
+            card(grade = Calibration.GradeClass.EASY, predicted = 0.9, outcome = true) +
                 card(
                     paperId = "p1",
                     questionId = "q2",
-                    grade = Calibration.LadderGrade.GOOD,
+                    grade = Calibration.GradeClass.GOOD,
                     predicted = 0.8,
                     outcome = false
                 ),
@@ -195,7 +195,7 @@ class CalibrationTest {
         )
         assertEquals(2, result.pairs)
         assertEquals(0.9, result.contrast1.value!!, 1e-9)
-        val easy = result.grades.first { it.grade == Calibration.LadderGrade.EASY }
+        val easy = result.grades.first { it.grade == Calibration.GradeClass.EASY }
         assertEquals(1.0, easy.recall!!, 1e-9)
     }
 
@@ -243,11 +243,11 @@ class CalibrationTest {
     fun `follow-up counts only labels whose outcome is due`() {
         val rows = card(intervalDaysAfter = 60)
         val early = Calibration.report(rows, now = t0 + 10 * day, epochStart = t0)
-        val easyEarly = early.followUp.first { it.grade == Calibration.LadderGrade.EASY }
+        val easyEarly = early.followUp.first { it.grade == Calibration.GradeClass.EASY }
         assertEquals("not due yet, so not a miss", 0, easyEarly.due)
 
         val late = Calibration.report(rows, now = t0 + 100 * day, epochStart = t0)
-        val easyLate = late.followUp.first { it.grade == Calibration.LadderGrade.EASY }
+        val easyLate = late.followUp.first { it.grade == Calibration.GradeClass.EASY }
         assertEquals(1, easyLate.due)
         assertEquals(1, easyLate.observed)
         assertEquals(1.0, easyLate.rate!!, 1e-9)
@@ -258,7 +258,7 @@ class CalibrationTest {
         // One Easy label's outcome is back, one is not: 50% < 70%.
         val missingOutcome = row(
             questionId = "q2",
-            rating = Calibration.LadderGrade.EASY.rating,
+            rating = Calibration.GradeClass.EASY.rating,
             reviewedAt = t0 + 2 * day
         )
         val result = Calibration.report(
@@ -269,7 +269,7 @@ class CalibrationTest {
         assertFalse(result.followUpGatePassed)
         assertEquals(
             0.5,
-            result.followUp.first { it.grade == Calibration.LadderGrade.EASY }.rate!!,
+            result.followUp.first { it.grade == Calibration.GradeClass.EASY }.rate!!,
             1e-9
         )
 
@@ -292,7 +292,7 @@ class CalibrationTest {
     @Test
     fun `first exposures are reported but never paired`() {
         val result = Calibration.report(
-            card(newLabel = true, grade = Calibration.LadderGrade.EASY),
+            card(newLabel = true, grade = Calibration.GradeClass.EASY),
             now = t0 + 400 * day,
             epochStart = t0
         )
@@ -301,7 +301,7 @@ class CalibrationTest {
             1,
             result.exclusions.first { it.reason == Calibration.Exclusion.NEW_EITHER_ROW }.count
         )
-        val exposure = result.firstExposure.first { it.grade == Calibration.LadderGrade.EASY }
+        val exposure = result.firstExposure.first { it.grade == Calibration.GradeClass.EASY }
         assertEquals(1, exposure.count)
         assertEquals(1.0, exposure.recall!!, 1e-9)
     }
@@ -323,10 +323,10 @@ class CalibrationTest {
     @Test
     fun `closed blocks carry the delta the safety valve reads`() {
         val result = Calibration.report(
-            card(questionId = "easy", grade = Calibration.LadderGrade.EASY, outcome = true) +
+            card(questionId = "easy", grade = Calibration.GradeClass.EASY, outcome = true) +
                 card(
                     questionId = "good",
-                    grade = Calibration.LadderGrade.GOOD,
+                    grade = Calibration.GradeClass.GOOD,
                     outcome = false,
                     labelAt = t0 + 2 * day,
                     outcomeAt = t0 + 7 * day
@@ -357,7 +357,7 @@ class CalibrationTest {
     }
 
     /** [cards] samples per class, one card each, with alternating residuals. */
-    private fun sampleCards(grade: Calibration.LadderGrade, cards: Int): List<Calibration.Sample> =
+    private fun sampleCards(grade: Calibration.GradeClass, cards: Int): List<Calibration.Sample> =
         (1..cards).map { i ->
             // Residuals alternate -0.2 / +0.2 so both classes have variance.
             val predicted = if (i % 2 == 0) 0.7 else 0.9
@@ -374,22 +374,22 @@ class CalibrationTest {
     @Test
     fun `the interval tier follows the smaller class`() {
         val few = Calibration.contrast(
-            sampleCards(Calibration.LadderGrade.EASY, 10),
-            sampleCards(Calibration.LadderGrade.GOOD, 50)
+            sampleCards(Calibration.GradeClass.EASY, 10),
+            sampleCards(Calibration.GradeClass.GOOD, 50)
         )
         assertEquals(Calibration.IntervalMethod.NONE, few.method)
         assertNull(few.low)
 
         val descriptive = Calibration.contrast(
-            sampleCards(Calibration.LadderGrade.EASY, 25),
-            sampleCards(Calibration.LadderGrade.GOOD, 50)
+            sampleCards(Calibration.GradeClass.EASY, 25),
+            sampleCards(Calibration.GradeClass.GOOD, 50)
         )
         assertEquals(Calibration.IntervalMethod.T, descriptive.method)
         assertNotNull(descriptive.low)
 
         val decision = Calibration.contrast(
-            sampleCards(Calibration.LadderGrade.EASY, 45),
-            sampleCards(Calibration.LadderGrade.GOOD, 50)
+            sampleCards(Calibration.GradeClass.EASY, 45),
+            sampleCards(Calibration.GradeClass.GOOD, 50)
         )
         assertEquals(Calibration.IntervalMethod.BCA, decision.method)
         assertNotNull(decision.low)
@@ -399,8 +399,8 @@ class CalibrationTest {
 
     @Test
     fun `the bootstrap is deterministic for a seed`() {
-        val easy = sampleCards(Calibration.LadderGrade.EASY, 50)
-        val good = sampleCards(Calibration.LadderGrade.GOOD, 50)
+        val easy = sampleCards(Calibration.GradeClass.EASY, 50)
+        val good = sampleCards(Calibration.GradeClass.GOOD, 50)
         val a = Calibration.contrast(easy, good, resamples = 500, seed = 42L)
         val b = Calibration.contrast(easy, good, resamples = 500, seed = 42L)
         assertEquals(a.low, b.low)
@@ -410,9 +410,9 @@ class CalibrationTest {
     @Test
     fun `an all-identical class claims no interval`() {
         val easy = (1..50).map {
-            Calibration.Sample("p1", "q-$it", Calibration.LadderGrade.EASY, 1.0, 0.8, t0 + it)
+            Calibration.Sample("p1", "q-$it", Calibration.GradeClass.EASY, 1.0, 0.8, t0 + it)
         }
-        val good = sampleCards(Calibration.LadderGrade.GOOD, 50)
+        val good = sampleCards(Calibration.GradeClass.GOOD, 50)
         val contrast = Calibration.contrast(easy, good)
         assertNotNull(contrast.value)
         assertNull("a degenerate class gets no false interval", contrast.low)
@@ -433,5 +433,232 @@ class CalibrationTest {
         assertFalse(ready.copy(halfWidth = 0.051).ready)
         assertFalse(ready.copy(calendarDays = 27).ready)
         assertFalse(ready.copy(refitInEpoch = true).ready)
+    }
+
+    // --- the read-only cut suggestion ---
+
+    private fun closedReport(
+        value: Double?,
+        followUpGatePassed: Boolean = true,
+        readiness: Calibration.Readiness = Calibration.Readiness(
+            pairs = 320,
+            bindingCards = 60,
+            halfWidth = 0.04,
+            calendarDays = 30,
+            refitInEpoch = false
+        )
+    ): Calibration.Report = report(
+        card(questionId = "q1", grade = Calibration.GradeClass.EASY)
+    ).copy(
+        readiness = readiness,
+        followUpGatePassed = followUpGatePassed,
+        contrast1 = Calibration.Contrast(
+            value = value,
+            low = value?.minus(0.05),
+            high = value?.plus(0.05),
+            method = Calibration.IntervalMethod.T,
+            bindingCards = 60
+        )
+    )
+
+    @Test
+    fun `a closed report with no gap keeps the pair`() {
+        val suggestion = Calibration.suggestCuts(closedReport(0.01), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.KEEP, suggestion.status)
+        assertEquals(6L, suggestion.nextFast)
+        assertEquals(60L, suggestion.nextSlow)
+        assertFalse(suggestion.changes)
+    }
+
+    @Test
+    fun `an underperforming easy cut moves down by one second per five points`() {
+        val small = Calibration.suggestCuts(closedReport(-0.06), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_DOWN, small.status)
+        assertEquals(5L, small.nextFast)
+        assertEquals("the Hard cut is not moved", 60L, small.nextSlow)
+        assertTrue(small.changes)
+
+        val wider = Calibration.suggestCuts(closedReport(-0.20), 6, 60)
+        assertEquals(2L, wider.nextFast)
+        // A 40 pp gap would ask for eight seconds; the step is capped at four.
+        val capped = Calibration.suggestCuts(closedReport(-0.40), 10, 60)
+        assertEquals(6L, capped.nextFast)
+    }
+
+    @Test
+    fun `an out-of-band gap inside the threshold is not a move`() {
+        // 3 pp is outside zero but inside the 5 pp band the report acts on.
+        val suggestion = Calibration.suggestCuts(closedReport(-0.03), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.KEEP, suggestion.status)
+        assertEquals(6L, suggestion.nextFast)
+    }
+
+    @Test
+    fun `an overperforming easy cut moves up`() {
+        val suggestion = Calibration.suggestCuts(closedReport(0.12), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_UP, suggestion.status)
+        assertEquals(8L, suggestion.nextFast)
+    }
+
+    @Test
+    fun `a move past the end of the range keeps the pair`() {
+        val floor = Calibration.suggestCuts(closedReport(-0.30), 1, 60)
+        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, floor.status)
+        assertEquals(1L, floor.nextFast)
+
+        // fast must stay below slow, so the Hard cut is the wall.
+        val ceiling = Calibration.suggestCuts(closedReport(0.30), 59, 60)
+        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, ceiling.status)
+        assertEquals(59L, ceiling.nextFast)
+        assertEquals(60L, ceiling.nextSlow)
+    }
+
+    // --- the answer-time pair (correctness-only rule) ---
+
+    private fun timedRow(
+        questionId: String,
+        dwell: Long?,
+        at: Long,
+        correct: Boolean = true,
+        guess: Boolean = false,
+        skipped: Boolean = false,
+        correctnessOnly: Boolean = true
+    ) = row(
+        questionId = questionId,
+        rating = if (correct) 3 else 1,
+        reviewedAt = at,
+        wasCorrect = correct,
+        wasGuess = guess,
+        wasSkipped = skipped
+    ).copy(elapsedSeconds = dwell, correctnessOnly = correctnessOnly)
+
+    /** [counts] maps a dwell in seconds to how many answers took it. */
+    private fun timedRows(
+        counts: Map<Long, Int>,
+        cards: Int = 40,
+        spanDays: Int = 20
+    ): List<Calibration.Row> = buildList {
+        var i = 0
+        counts.forEach { (dwell, n) ->
+            repeat(n) {
+                add(timedRow("q${i % cards}", dwell, t0 + (i % spanDays) * day))
+                i++
+            }
+        }
+    }
+
+    @Test
+    fun `answer times place the cuts a tenth from each end`() {
+        // 20 answers at 3 s, 160 at 15 s, 20 at 60 s: p10 = 14 s, p90 = 20 s.
+        val rows = timedRows(linkedMapOf(3L to 20, 15L to 160, 60L to 20))
+        val suggestion = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+        assertEquals(14L, suggestion.nextFast)
+        assertEquals(20L, suggestion.nextSlow)
+        assertEquals(200, suggestion.evidence)
+        assertTrue(suggestion.changes)
+    }
+
+    @Test
+    fun `answer times ignore anything that is not a clean timed answer`() {
+        val clean = timedRows(linkedMapOf(3L to 20, 15L to 160, 60L to 20))
+        val noise = buildList {
+            repeat(30) { add(timedRow("wrong-$it", 4, t0 + day, correct = false)) }
+            repeat(20) { add(timedRow("guess-$it", 4, t0 + day, guess = true)) }
+            repeat(10) { add(timedRow("skip-$it", 4, t0 + day, skipped = true)) }
+            repeat(5) { add(timedRow("zero-$it", 0, t0 + day)) }
+            repeat(5) { add(timedRow("null-$it", null, t0 + day)) }
+            // Dwells recorded while the clock was tinted: the feedback could
+            // have shaped them, so they are not free evidence.
+            repeat(100) { add(timedRow("timed-$it", 4, t0 + day, correctnessOnly = false)) }
+        }
+        val suggestion = Calibration.suggestCutsFromDwell(
+            clean + noise, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+        assertEquals("noise must not enter the percentiles", 200, suggestion.evidence)
+        assertEquals(14L, suggestion.nextFast)
+    }
+
+    @Test
+    fun `answer times need rows, cards and a calendar span`() {
+        val short = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(15L to 199), cards = 40),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, short.status)
+        assertEquals(199, short.evidence)
+        assertEquals(6L, short.nextFast)
+
+        val fewCards = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(15L to 200), cards = 29),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, fewCards.status)
+
+        // 200 answers, but recorded inside a single week: the pace measured is
+        // one week's, not the learner's.
+        val fewDays = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(15L to 200), cards = 40, spanDays = 7),
+            now = t0 + 6 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, fewDays.status)
+    }
+
+    @Test
+    fun `answer times are clamped into a range worth naming`() {
+        // A slow tail must not push the Hard cut past the ceiling.
+        val slowTail = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(1L to 20, 5L to 100, 300L to 80)),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(120L, slowTail.nextSlow)
+        assertEquals(5L, slowTail.nextFast)
+
+        // An almost-instant pace must not put the two cuts a second apart.
+        val tight = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(1L to 200)),
+            now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(2L, tight.nextFast)
+        assertEquals(7L, tight.nextSlow)
+    }
+
+    @Test
+    fun `answer times that agree with the stored pair do not propose a move`() {
+        // 21 answers at each end keep both percentiles exact under linear
+        // interpolation.
+        val rows = timedRows(linkedMapOf(6L to 21, 30L to 158, 60L to 21))
+        val suggestion = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(6L, suggestion.nextFast)
+        assertEquals(60L, suggestion.nextSlow)
+        assertFalse(suggestion.changes)
+    }
+
+    @Test
+    fun `an open gate or a missing contrast asks for evidence`() {
+        val notReady = Calibration.suggestCuts(
+            closedReport(-0.30, readiness = Calibration.Readiness(
+                pairs = 299,
+                bindingCards = 60,
+                halfWidth = 0.04,
+                calendarDays = 30,
+                refitInEpoch = false
+            )),
+            6, 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, notReady.status)
+        assertFalse(notReady.changes)
+
+        val followUp = Calibration.suggestCuts(closedReport(-0.30, followUpGatePassed = false), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, followUp.status)
+        assertEquals(6L, followUp.nextFast)
+
+        val noValue = Calibration.suggestCuts(closedReport(null), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, noValue.status)
     }
 }

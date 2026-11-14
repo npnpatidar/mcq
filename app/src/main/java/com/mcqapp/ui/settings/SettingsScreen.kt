@@ -51,7 +51,6 @@ fun SettingsScreen(
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
     val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
-    val automaticLadderAdaptation by viewModel.automaticLadderAdaptation.collectAsStateWithLifecycle()
     val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
     val hapticsEnabled by viewModel.hapticsEnabled.collectAsStateWithLifecycle()
@@ -61,6 +60,7 @@ fun SettingsScreen(
     val avoidRecentQuestions by viewModel.avoidRecentQuestions.collectAsStateWithLifecycle()
     val loadRemoteImages by viewModel.loadRemoteImages.collectAsStateWithLifecycle()
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
+    val resetError by viewModel.resetError.collectAsStateWithLifecycle()
     val fsrsReviewCount by viewModel.fsrsReviewCount.collectAsStateWithLifecycle()
     val fsrsOptimize by viewModel.fsrsOptimize.collectAsStateWithLifecycle()
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
@@ -235,11 +235,12 @@ fun SettingsScreen(
             StudySchedulerSection(
                 config = schedulerConfig,
                 onChange = { viewModel.updateSchedulerConfig(it) },
+                onFastChange = { viewModel.setFastSeconds(it) },
+                onSlowChange = { viewModel.setSlowSeconds(it) },
+                onRuleChange = { viewModel.setGradeCorrectnessOnly(it) },
                 onReset = { viewModel.resetSchedulerConfig() },
                 simplifiedStudy = simplifiedStudy,
                 onSimplifiedChange = { viewModel.setSimplifiedStudy(it) },
-                automaticLadderAdaptation = automaticLadderAdaptation,
-                onAutomaticLadderChange = { viewModel.setAutomaticLadderAdaptation(it) },
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimize,
                 onOptimizeFsrs = { viewModel.optimizeFsrsParameters() },
@@ -320,6 +321,20 @@ fun SettingsScreen(
             text = { Text(report) },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { restoreDone = null }) {
+                    Text(stringResource(R.string.ok))
+                }
+            }
+        )
+    }
+    resetError?.let { message ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { viewModel.dismissResetError() },
+            title = { Text(stringResource(R.string.error)) },
+            text = { Text(message) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { viewModel.dismissResetError() }
+                ) {
                     Text(stringResource(R.string.ok))
                 }
             }

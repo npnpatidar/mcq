@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,17 +32,21 @@ import org.robolectric.annotation.Config
  * DB-backed test it runs on CI's x86_64 runners and not on the ARM64 host.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class StudyViewModelPullTest {
 
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication
     private val repository get() = app.repository
 
+    @get:Rule
+    val settingsReset = SettingsResetRule()
+
     @After
     fun cleanup() = runBlocking {
         // The scheduler settings live in a process-shared DataStore and the
         // paper in the process-shared database: both are reset so neither a
-        // mode nor a schedule leaks into another test.
+        // mode nor a schedule leaks into another test. The grading rule and
+        // version keys are the shared rule's business (Reset keeps the rule).
         repository.resetSchedulerConfig()
         repository.deletePaper("p1")
         shadowOf(Looper.getMainLooper()).idle()
@@ -121,17 +126,17 @@ class StudyViewModelPullTest {
     }
 
     /**
-     * Phase 1 provenance: an untouched Check is AUTO, the session's ladder
-     * version and allowance are stored, and a real review carries the forecast
-     * computed before the answer.
+     * Phase 1 provenance: an untouched Check is AUTO, the session's grading
+     * version is stored, and a real review carries the forecast computed
+     * before the answer.
      */
     @Test
     fun anAcceptedProposalRecordsAutoProvenanceAndItsForecast() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")
         assertTrue("state=${viewModel.state.value}", awaitCondition { viewModel.state.value.current != null })
-        val ladderVersion = runBlocking { repository.ladderVersion() }
-        assertTrue("the session must stamp a real ladder version", ladderVersion > 0)
+        val gradingVersion = runBlocking { repository.gradingVersion() }
+        assertTrue("the session must stamp a real grading version", gradingVersion > 0)
 
         viewModel.toggleOption("q1-a")
         viewModel.check()
@@ -144,10 +149,8 @@ class StudyViewModelPullTest {
             val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
             assertEquals(com.mcqapp.domain.GradeSource.AUTO.stored, row.gradeSource)
             assertEquals(proposed.ordinal + 1, row.proposedRating)
-            assertEquals(ladderVersion, row.ladderVersion)
+            assertEquals(gradingVersion, row.gradingVersion)
             assertTrue("a real review must store a forecast", row.predictedRecall != null)
-            assertTrue("the allowance that was subtracted must be stored",
-                (row.readingAllowanceSeconds ?: 0) > 0)
             assertEquals(false, row.wasSkipped)
         }
     }

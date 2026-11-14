@@ -27,8 +27,6 @@ import com.mcqapp.R
 import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.GroupRetention
 import com.mcqapp.domain.stats.IntervalBand
-import com.mcqapp.domain.stats.LadderChange
-import com.mcqapp.domain.stats.LadderPolicy
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.ui.stats.charts.CalibrationChart
 import com.mcqapp.ui.stats.charts.ChartCard
@@ -49,12 +47,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 internal fun RetentionSection(
-    bundle: RetentionData,
-    onApplyLadderProposal: (LadderPolicy.Proposal) -> Unit = {},
-    onDismissLadderProposal: (LadderPolicy.Proposal) -> Unit = {},
-    onUndoLadderChange: () -> Unit = {},
-    ladderBusy: Boolean = false,
-    ladderError: String? = null
+    bundle: RetentionData
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -62,15 +55,17 @@ internal fun RetentionSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item(contentType = "trend") { TrendCard(bundle) }
-        item(contentType = "calibration") {
-            CalibrationCard(
-                bundle = bundle,
-                onApplyLadderProposal = onApplyLadderProposal,
-                onDismissLadderProposal = onDismissLadderProposal,
-                onUndoLadderChange = onUndoLadderChange,
-                ladderBusy = ladderBusy,
-                ladderError = ladderError
-            )
+        // Correctness-only grading produces no Easy and no Hard labels, so the
+        // contrast, the readiness gate and the suggested pair have nothing to
+        // measure. The card is hidden rather than shown as perpetually empty.
+        if (bundle.timeBasedGrading) {
+            item(contentType = "calibration") {
+                CalibrationCard(bundle = bundle)
+            }
+        } else {
+            item(contentType = "dwell-cuts") {
+                DwellCutsCard(suggestion = bundle.dwellSuggestion)
+            }
         }
         if (bundle.groupRetention.isNotEmpty()) {
             item(contentType = "group-retention") { GroupRetentionCard(bundle) }
@@ -142,15 +137,54 @@ private fun LegendEntry(color: Color, @StringRes labelRes: Int) {
     }
 }
 
+/**
+ * The answer-time pair, shown while correctness-only grading is on. This is not
+ * calibration: nothing is compared against outcomes, and the card says so. It
+ * exists so that switching the rule off is not the first time a number
+ * appears — the pair is picked from the dwells the learner has already
+ * recorded.
+ */
 @Composable
-private fun CalibrationCard(
-    bundle: RetentionData,
-    onApplyLadderProposal: (LadderPolicy.Proposal) -> Unit,
-    onDismissLadderProposal: (LadderPolicy.Proposal) -> Unit,
-    onUndoLadderChange: () -> Unit,
-    ladderBusy: Boolean,
-    ladderError: String?
-) {
+private fun DwellCutsCard(suggestion: Calibration.CutSuggestion?) {
+    ChartCard(
+        testTag = "stats-dwell-cuts",
+        title = { ChartTitle(R.string.stats_dwell_cuts) },
+        subtitle = { ChartSubtitle(R.string.stats_dwell_cuts_help) }
+    ) {
+        if (suggestion == null) return@ChartCard
+        val text = when {
+            suggestion.status != Calibration.CutSuggestion.Status.FROM_TIMES ->
+                stringResource(
+                    R.string.stats_cuts_from_times_not_yet,
+                    suggestion.evidence,
+                    Calibration.MIN_DWELL_ROWS
+                )
+
+            suggestion.changes -> stringResource(
+                R.string.stats_cuts_from_times,
+                suggestion.nextFast,
+                suggestion.nextSlow,
+                suggestion.evidence
+            )
+
+            else -> stringResource(
+                R.string.stats_cuts_from_times_same,
+                suggestion.nextFast,
+                suggestion.nextSlow,
+                suggestion.evidence
+            )
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (suggestion.changes) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun CalibrationCard(bundle: RetentionData) {
     val calibration = bundle.calibration
     ChartCard(
         testTag = "stats-calibration",
@@ -179,15 +213,7 @@ private fun CalibrationCard(
             modifier = Modifier.padding(top = 8.dp)
         )
         bundle.calibrationReport?.let { report ->
-            CalibrationEvidence(
-                report = report,
-                bundle = bundle,
-                onApplyLadderProposal = onApplyLadderProposal,
-                onDismissLadderProposal = onDismissLadderProposal,
-                onUndoLadderChange = onUndoLadderChange,
-                ladderBusy = ladderBusy,
-                ladderError = ladderError
-            )
+            CalibrationEvidence(report = report, bundle = bundle)
         }
     }
 }
@@ -202,12 +228,7 @@ private fun CalibrationCard(
 @Composable
 private fun CalibrationEvidence(
     report: Calibration.Report,
-    bundle: RetentionData,
-    onApplyLadderProposal: (LadderPolicy.Proposal) -> Unit,
-    onDismissLadderProposal: (LadderPolicy.Proposal) -> Unit,
-    onUndoLadderChange: () -> Unit,
-    ladderBusy: Boolean,
-    ladderError: String?
+    bundle: RetentionData
 ) {
     Column(modifier = Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (!report.hasPairs) {
@@ -242,7 +263,48 @@ private fun CalibrationEvidence(
             contrast = report.contrast2,
             insufficient = report.hardUnderpowered || report.contrast2.low == null
         )
-        report.followUp.filter { it.grade != Calibration.LadderGrade.HARD }.forEach { follow ->
+        bundle.cutSuggestion?.let { suggestion ->
+            // The actionable conclusion, never an action: the learner sets the
+            // two fields, so the line names the pair and says so.
+            Text(
+                text = when (suggestion.status) {
+                    Calibration.CutSuggestion.Status.NEEDS_EVIDENCE ->
+                        stringResource(R.string.stats_cuts_needs_evidence)
+
+                    Calibration.CutSuggestion.Status.KEEP ->
+                        stringResource(
+                            R.string.stats_cuts_keep,
+                            suggestion.nextFast,
+                            suggestion.nextSlow
+                        )
+
+                    Calibration.CutSuggestion.Status.AT_LIMIT ->
+                        stringResource(
+                            R.string.stats_cuts_limit,
+                            suggestion.nextFast,
+                            suggestion.nextSlow
+                        )
+
+                    Calibration.CutSuggestion.Status.STEP_DOWN,
+                    Calibration.CutSuggestion.Status.STEP_UP,
+                    // Never produced by the contrast path, but the enum can
+                    // express it: fall back to the same "try X / Y" line.
+                    Calibration.CutSuggestion.Status.FROM_TIMES ->
+                        stringResource(
+                            R.string.stats_cuts_step,
+                            suggestion.nextFast,
+                            suggestion.nextSlow,
+                            suggestion.currentFast,
+                            suggestion.currentSlow
+                        )
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (suggestion.changes) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        report.followUp.filter { it.grade != Calibration.GradeClass.HARD }.forEach { follow ->
             Text(
                 stringResource(
                     R.string.stats_calibration_follow_up,
@@ -285,157 +347,6 @@ private fun CalibrationEvidence(
             ),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderDecision(
-            report = report,
-            evaluation = bundle.ladderEvaluation,
-            canRollback = bundle.ladderCanRollback,
-            lastChange = bundle.ladderLastChange,
-            onApply = onApplyLadderProposal,
-            onDismiss = onDismissLadderProposal,
-            onUndo = onUndoLadderChange,
-            busy = ladderBusy,
-            error = ladderError
-        )
-    }
-}
-
-/**
- * Phase 4's controller line and controls. A proposal is the only state with
- * buttons; every other state says why no change is being made, so a stalled
- * controller and a patient one look different.
- */
-@Composable
-private fun LadderDecision(
-    report: Calibration.Report,
-    evaluation: LadderPolicy.Evaluation?,
-    canRollback: Boolean,
-    lastChange: LadderChange?,
-    onApply: (LadderPolicy.Proposal) -> Unit,
-    onDismiss: (LadderPolicy.Proposal) -> Unit,
-    onUndo: () -> Unit,
-    busy: Boolean,
-    error: String?
-) {
-    Text(
-        stringResource(R.string.stats_ladder_auto),
-        style = MaterialTheme.typography.labelMedium,
-        modifier = Modifier.padding(top = 6.dp)
-    )
-    val proposal = evaluation?.proposal
-    when (evaluation?.status) {
-        LadderPolicy.Status.PROPOSE -> {
-            if (proposal != null) {
-                Text(
-                    stringResource(
-                        R.string.stats_ladder_proposal,
-                        proposal.currentEasySeconds,
-                        proposal.easySeconds,
-                        proposal.stepSeconds,
-                        formatSignedPp(proposal.delta1),
-                        formatSignedPp(proposal.delta1Low),
-                        formatSignedPp(proposal.delta1High)
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { onApply(proposal) },
-                        enabled = !busy,
-                        modifier = Modifier.testTag("stats-ladder-apply")
-                    ) { Text(stringResource(R.string.stats_ladder_apply)) }
-                    OutlinedButton(
-                        onClick = { onDismiss(proposal) },
-                        enabled = !busy,
-                        modifier = Modifier.testTag("stats-ladder-dismiss")
-                    ) { Text(stringResource(R.string.stats_ladder_dismiss)) }
-                }
-            }
-        }
-        LadderPolicy.Status.NOT_READY -> Text(
-            stringResource(
-                R.string.stats_ladder_not_ready,
-                report.readiness.pairs,
-                Calibration.MIN_PAIRS,
-                report.readiness.bindingCards,
-                Calibration.MIN_CARDS_PER_CLASS,
-                report.readiness.halfWidth?.let { formatPp(it) } ?: "—",
-                formatPp(Calibration.MAX_HALF_WIDTH)
-            ),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderPolicy.Status.BLOCK_OPEN -> Text(
-            stringResource(R.string.stats_ladder_block_open),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderPolicy.Status.BLOCK_EMPTY -> Text(
-            stringResource(R.string.stats_ladder_block_empty),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderPolicy.Status.ALREADY_DECIDED -> Text(
-            stringResource(R.string.stats_ladder_decided),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderPolicy.Status.NO_EFFECT -> Text(
-            stringResource(
-                R.string.stats_ladder_no_effect,
-                formatSignedPp(report.contrast1.value ?: 0.0),
-                formatSignedPp(report.contrast1.low ?: 0.0),
-                formatSignedPp(report.contrast1.high ?: 0.0)
-            ),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderPolicy.Status.REFIT -> Text(
-            stringResource(R.string.stats_ladder_refit),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LadderPolicy.Status.BOUNDS -> Text(
-            stringResource(R.string.stats_ladder_bounds),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        null -> Unit
-    }
-    if (lastChange != null) {
-        Text(
-            stringResource(
-                R.string.stats_ladder_last_change,
-                lastChange.fromEasySeconds,
-                lastChange.toEasySeconds
-            ),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    if (report.hardUnderpowered) {
-        Text(
-            stringResource(
-                R.string.stats_ladder_hard_note,
-                report.contrast2.bindingCards
-            ),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    if (canRollback) {
-        TextButton(
-            onClick = onUndo,
-            enabled = !busy,
-            modifier = Modifier.testTag("stats-ladder-undo")
-        ) { Text(stringResource(R.string.stats_ladder_undo)) }
-    }
-    if (error != null) {
-        Text(
-            stringResource(R.string.stats_ladder_error, error),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.error
         )
     }
 }

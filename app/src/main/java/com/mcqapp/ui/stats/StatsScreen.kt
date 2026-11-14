@@ -171,14 +171,7 @@ fun StatsScreen(
                                 )
                             }
                             StatsViewModel.Tab.RETENTION -> state.retention?.let { retention ->
-                                RetentionSection(
-                                    bundle = retention,
-                                    onApplyLadderProposal = viewModel::applyLadderProposal,
-                                    onDismissLadderProposal = viewModel::dismissLadderProposal,
-                                    onUndoLadderChange = viewModel::undoLadderChange,
-                                    ladderBusy = state.ladderBusy,
-                                    ladderError = state.ladderError
-                                )
+                                RetentionSection(bundle = retention)
                             }
                             StatsViewModel.Tab.WORKLOAD -> state.workload?.let { data ->
                                 WorkloadSection(

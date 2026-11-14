@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.chunks
@@ -61,6 +62,16 @@ import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * How many times a config read retries when it observes `gradingVersion == 0`.
+ * That state only exists between a Reset's id removal and its replacement
+ * row, both of which the retrying call itself writes, so three attempts is
+ * already generous; more would only hide a real write failure.
+ */
+private const val SCHEDULER_CONFIG_READ_ATTEMPTS = 3
 
 /**
  * Facade over the repository's collaborators, keeping the public API every
@@ -77,11 +88,39 @@ import kotlinx.coroutines.flow.Flow
  * Every method here is a one-line forward unless it belongs to no collaborator
  * (cross-paper search, the storage report), so this file stays a table of
  * contents rather than a second implementation.
+ *
+ * Freshness for the first-start grading-rule seed is always the database's
+ * answer: [InstallFreshness] probes `AppDatabase.hasNoPapersOrReviews` and
+ * persists its one-shot decision. There is deliberately no constructor that
+ * silently means "never seed"; tests that need a forced answer use the
+ * [VisibleForTesting] boolean or [InstallFreshness] seam.
  */
-class McqRepository(private val db: AppDatabase, private val context: Context) {
+class McqRepository internal constructor(
+    private val db: AppDatabase,
+    private val context: Context,
+    internal val installFreshness: InstallFreshness
+) {
 
-    private val settings = SettingsStore(context)
-    private val ladderStore = LadderStore(db, settings)
+    /** The production wiring: a new install is one whose database is empty. */
+    constructor(db: AppDatabase, context: Context) : this(
+        db,
+        context,
+        InstallFreshness(context) { db.hasNoPapersOrReviews() }
+    )
+
+    /**
+     * Pins the first-start answer for a test without a database (or one whose
+     * content cannot express the desired answer). Production must not use it.
+     */
+    @VisibleForTesting
+    internal constructor(db: AppDatabase, context: Context, freshInstall: Boolean) : this(
+        db,
+        context,
+        InstallFreshness.fixed(context, freshInstall)
+    )
+
+    private val settings = SettingsStore(context, installFreshness)
+    private val gradingRules = GradingRulesStore(db, settings)
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
     private val passageStore = PassageStore(db, mapper, questionStore)
@@ -90,8 +129,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val historyStore = HistoryStore(db, mapper, questionStore)
     private val signalStore = SignalStore(db)
     private val fsrsTuner = FsrsTuner(db, settings)
-    private val statsStore = StatsStore(db, settings)
-    private val ladderController = LadderController(db, settings, ladderStore, statsStore)
+    private val statsStore = StatsStore(db, settings, gradingRules)
     private val testProgress = TestProgressStore(db, settings)
 
     fun db(): AppDatabase = db
@@ -111,11 +149,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     fun simplifiedStudy(): Flow<Boolean> = settings.simplifiedStudy()
     suspend fun setSimplifiedStudy(enabled: Boolean) = settings.setSimplifiedStudy(enabled)
-
-    /** Phase 5: run the ladder policy automatically at the end of a sitting. */
-    fun automaticLadderAdaptation(): Flow<Boolean> = settings.automaticLadderAdaptation()
-    suspend fun setAutomaticLadderAdaptation(enabled: Boolean) =
-        settings.setAutomaticLadderAdaptation(enabled)
 
     fun shuffleOptions(): Flow<Boolean> = settings.shuffleOptions()
     suspend fun setShuffleOptions(enabled: Boolean) = settings.setShuffleOptions(enabled)
@@ -157,55 +190,112 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> = settings.schedulerConfig()
 
     /**
-     * The config a session grades under. Reading it also seeds the ladder
+     * The config a session grades under. Reading it also seeds the grading
      * version if this install has never had one, so the very first review is
      * stamped with a version that has a history row behind it.
+     *
+     * Invariant: a review's `gradingVersion` must name the row whose cuts
+     * graded it. `writeCuts` puts the pair and its id in one DataStore edit,
+     * so the returned config trusts the id stored *with* the cuts. Re-reading
+     * the id separately let a concurrent Reset or cut save interleave, so new
+     * cuts could wear the old id and every stats epoch derived from it would
+     * start at the wrong `effectiveFrom`.
+     *
+     * A config whose id reads as 0 is that interleaving: a Reset has removed
+     * the id but not yet written the replacement row. Pairing the id seeded
+     * above with those cuts would be exactly the mismatch this method exists
+     * to prevent, so the read is retried — `currentVersion()` re-seeds the id
+     * and its cuts atomically — and only a store that keeps answering 0 fails.
      */
     suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig {
-        ladderStore.currentVersion()
-        return settings.schedulerConfigNow()
+        repeat(SCHEDULER_CONFIG_READ_ATTEMPTS) {
+            gradingRules.currentVersion()
+            val config = settings.schedulerConfigNow()
+            if (config.gradingVersion > 0) return config
+        }
+        throw GradingRuleUnavailable()
+    }
+
+    /**
+     * Decides the first-start grading rule before any screen asks for the
+     * config. [McqApplication] calls this on an IO scope in `onCreate` so an
+     * import in the first run cannot turn a new install into an upgrade;
+     * every config read awaits the same decision.
+     */
+    internal suspend fun decideInstallFreshness(): Boolean {
+        // The seed is a write, so it belongs here (a job) and in
+        // `schedulerConfigNow`, never inside a settings flow collection.
+        settings.ensureInstallSeed()
+        return installFreshness.isNewInstall()
     }
 
     /**
      * Writes the whole scheduler config. A changed cut goes through
-     * [LadderStore] first, so the new value always owns a version row; the
-     * remaining fields are the settings store's business.
+     * [GradingRulesStore] first, so the new value always owns a version row;
+     * the remaining fields are the settings store's business.
+     *
+     * [schedulerWriteMutex] serialises this against [resetSchedulerConfig] and
+     * [settingsRestore]: those read the stored pair, write a new one and mint a
+     * version row, and two of them interleaving could file new cuts under an id
+     * that named the pair they replaced.
      */
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
-        ladderStore.recordConfigCuts(config)
-        settings.setSchedulerConfig(config)
+        schedulerWriteMutex.withLock {
+            writeSchedulerConfigLocked(config)
+        }
     }
-
-    suspend fun resetSchedulerConfig() {
-        settings.resetSchedulerConfig()
-        val defaults = com.mcqapp.domain.SchedulerConfig().sanitized()
-        ladderStore.setCuts(
-            easySeconds = defaults.fastSeconds,
-            slowSeconds = defaults.slowSeconds,
-            reason = LadderReason.MANUAL
-        )
-    }
-
-    /** The current ladder version; a manual Settings save of a cut writes one. */
-    internal suspend fun ladderVersion(): Int = ladderStore.currentVersion()
-
-    /** Applies an accepted Easy-cut proposal and records its evidence block. */
-    suspend fun applyLadderProposal(proposal: com.mcqapp.domain.stats.LadderPolicy.Proposal): Int =
-        ladderStore.applyProposal(proposal)
-
-    /** Records a dismissed proposal as a no-change block. */
-    suspend fun dismissLadderProposal(proposal: com.mcqapp.domain.stats.LadderPolicy.Proposal): Long =
-        ladderStore.dismissProposal(proposal)
-
-    /** Restores the previous ladder version; null when there is no earlier one. */
-    suspend fun rollbackLadder(): Int? = ladderStore.rollback()
 
     /**
-     * Runs phase 5's automatic controller. Called at the end of a sitting; a
-     * no-op unless the learner switched automatic grading on.
+     * Reads the stored config, applies [transform] and writes the result, all
+     * under [schedulerWriteMutex]. The Settings screen's per-field handlers use
+     * this instead of reading [schedulerConfigNow] and then calling
+     * [setSchedulerConfig]: those are two steps, so two overlapping edits (a
+     * cut typed while a rule switch is landing) would each start from the same
+     * stored value and the later write would revert the earlier field.
+     *
+     * Returns the config as written, including the version id
+     * [GradingRulesStore.recordConfigCuts] chose, so the caller can publish it
+     * without waiting for the DataStore flow to re-emit.
      */
-    internal suspend fun runLadderController(now: Long = System.currentTimeMillis()): LadderController.Result =
-        ladderController.run(now)
+    suspend fun updateSchedulerConfig(
+        transform: (com.mcqapp.domain.SchedulerConfig) -> com.mcqapp.domain.SchedulerConfig
+    ): com.mcqapp.domain.SchedulerConfig = schedulerWriteMutex.withLock {
+        val stored = schedulerConfigNow()
+        val edited = transform(stored).sanitized()
+        writeSchedulerConfigLocked(edited)
+    }
+
+    /** Must run under [schedulerWriteMutex]. Returns the config actually stored. */
+    private suspend fun writeSchedulerConfigLocked(
+        config: com.mcqapp.domain.SchedulerConfig
+    ): com.mcqapp.domain.SchedulerConfig {
+        val version = gradingRules.recordConfigCuts(config)
+        settings.setSchedulerConfig(config)
+        return config.copy(gradingVersion = version)
+    }
+
+    /** Serialises the three whole-config writers (save, reset, restore). */
+    private val schedulerWriteMutex = Mutex()
+
+    /**
+     * Resets the pacing knobs without touching the grading rule. The store
+     * decides from its single edit whether the effective cut pair changed: an
+     * unchanged pair keeps its version (and therefore the calibration epoch),
+     * while a changed pair gets one `manual` row for the defaults.
+     *
+     * Holding [schedulerWriteMutex] for the whole sequence is what makes that
+     * decision trustworthy: a concurrent save cannot move the pair between the
+     * reset's write and its follow-up read, so "unchanged" cannot mint a row
+     * and two confirms cannot write two rows.
+     */
+    suspend fun resetSchedulerConfig() = schedulerWriteMutex.withLock {
+        if (settings.resetSchedulerConfig()) {
+            gradingRules.recordResetCuts(settings.schedulerConfigNow())
+        }
+    }
+
+    /** The current grading version; a manual Settings save of a cut writes one. */
+    internal suspend fun gradingVersion(): Int = gradingRules.currentVersion()
 
     // --- FSRS parameter optimization ---
 
@@ -378,13 +468,23 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /**
      * Full replace of every preference from a backup. Restored cuts get a
-     * fresh `prior` ladder version continuing the restored numbering; the
-     * restored blocks stay as a prior epoch's evidence.
+     * fresh `prior` grading version continuing the restored numbering, so each
+     * review row still points at the pair that graded it.
+     *
+     * The `finally` invalidates the first-start answer even if the settings
+     * or version write throws: the database half of a full restore has
+     * already committed by the time this runs, so the pre-restore answer no
+     * longer describes the install.
      */
-    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
-        settings.restore(snapshot)
-        ladderStore.seedAfterRestore()
-    }
+    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) =
+        schedulerWriteMutex.withLock {
+            try {
+                settings.restore(snapshot)
+                gradingRules.seedAfterRestore()
+            } finally {
+                installFreshness.invalidate()
+            }
+        }
 
     // --- search & storage (no collaborator: they span everything) ---
 
@@ -521,7 +621,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         // writes live in mcq.db-wal until a checkpoint, and counting only the
         // main file understates the database after a session.
         val dbBytes = try {
-            val main = context.getDatabasePath("mcq.db")
+            val main = context.getDatabasePath(AppDatabase.NAME)
             listOf(main, java.io.File("${main.path}-wal"), java.io.File("${main.path}-shm"))
                 .filter { it.exists() }
                 .sumOf { it.length() }
@@ -1405,7 +1505,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         proposedGrade: com.mcqapp.domain.ReviewGrade? = null,
         gradeSource: com.mcqapp.domain.GradeSource =
             com.mcqapp.domain.GradeProvenance.source(proposedGrade, edited = false),
-        readingAllowanceSeconds: Long? = null,
         wasSkipped: Boolean? = null,
         /** The session's own config snapshot; null resolves the stored one. */
         config: com.mcqapp.domain.SchedulerConfig? = null
@@ -1421,7 +1520,6 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
             wasCorrect = wasCorrect,
             proposedGrade = proposedGrade,
             gradeSource = gradeSource,
-            readingAllowanceSeconds = readingAllowanceSeconds,
             wasSkipped = wasSkipped
         )
 
@@ -1573,7 +1671,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         paper: com.mcqapp.domain.Paper?,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.ReportEvidence {
-        val config = settings.schedulerConfigNow()
+        val config = schedulerConfigNow()
         val scheduler = com.mcqapp.domain.FsrsScheduler(
             desiredRetention = config.desiredRetention,
             config = config

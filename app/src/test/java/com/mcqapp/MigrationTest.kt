@@ -17,6 +17,7 @@ import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -204,7 +205,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_22_23,
         AppDatabase.MIGRATION_23_24,
         AppDatabase.MIGRATION_24_25,
-        AppDatabase.MIGRATION_25_26
+        AppDatabase.MIGRATION_25_26,
+        AppDatabase.MIGRATION_26_27
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1262,9 +1264,9 @@ class MigrationTest {
 
     /**
      * A genuine v25 file: the production chain from the v21 seed through 25,
-     * with one review already logged. The 25->26 migration must leave that row
-     * intact, stamp it ladderVersion 0 / no provenance, and create the three
-     * new tables with their indices and cascades.
+     * with one review already logged. The 25->27 chain must leave that row
+     * intact, stamp it gradingVersion 0 / no provenance, and create the
+     * session table with its cascade.
      */
     private fun createV25WithSeed() {
         createV21WithTaggedQuestion()
@@ -1291,41 +1293,32 @@ class MigrationTest {
     }
 
     @Test
-    fun `migration 25 to 26 keeps old reviews and creates the ladder tables`() {
+    fun `migration 25 to 27 keeps old reviews and versions the cuts`() {
         runBlocking {
             createV25WithSeed()
             val db = openMigrated()
             try {
-                // Opening ran 25->26; Room's identity check proves the schema.
+                // Opening ran 25->27; Room's identity check proves the schema.
                 val old = db.reviewLogDao().historyForQuestion("q1").single()
                 assertEquals(3, old.rating)
                 assertEquals(12L, old.elapsedSeconds)
                 assertEquals(1, old.wasCorrect?.let { if (it) 1 else 0 })
-                assertEquals(0, old.ladderVersion)
+                assertEquals(0, old.gradingVersion)
                 assertNull(old.gradeSource)
                 assertNull(old.proposedRating)
                 assertNull(old.predictedRecall)
                 assertNull(old.wasSkipped)
 
-                // The new tables are usable and the cascade is wired.
-                val versionId = db.ladderDao().insertVersion(
-                    com.mcqapp.data.local.LadderVersionEntity(
-                        easySeconds = 8,
-                        slowSeconds = 30,
+                // The version table is usable and the cascade is wired.
+                val versionId = db.gradingRulesDao().insertVersion(
+                    com.mcqapp.data.local.GradingVersionEntity(
+                        easySeconds = 6,
+                        slowSeconds = 60,
                         effectiveFrom = 100L,
                         reason = "prior"
                     )
                 )
-                assertEquals(versionId, db.ladderDao().version(versionId)!!.id)
-                db.ladderDao().insertBlock(
-                    com.mcqapp.data.local.LadderBlockEntity(
-                        startAt = 1L,
-                        endAt = 2L,
-                        ladderVersion = versionId.toInt(),
-                        outcome = "no-change"
-                    )
-                )
-                assertEquals(1, db.ladderDao().allBlocks().size)
+                assertEquals(versionId, db.gradingRulesDao().version(versionId)!!.id)
                 db.studySessionDao().insert(
                     com.mcqapp.data.local.StudySessionEntity(
                         paperId = "p1",
@@ -1339,6 +1332,73 @@ class MigrationTest {
                 // library cannot leave orphan hours in the denominator.
                 db.paperDao().deleteById("p1")
                 assertTrue(db.studySessionDao().getAll().isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * A genuine v26 file: the v25 chain plus the 25->26 columns, with the
+     * ladder's two tables populated, so 26->27 has something to copy and
+     * something to drop.
+     */
+    private fun createV26WithLadderHistory() {
+        createV25WithSeed()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(26) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_25_26.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO ladder_versions " +
+                    "(id,easySeconds,slowSeconds,effectiveFrom,reason,previousId,blockId,policyVersion) " +
+                    "VALUES (7,8,30,4000,'manual',NULL,NULL,1)"
+            )
+            // The v26 block table declares its counters NOT NULL, so the
+            // fixture has to carry a whole block, not just the keys.
+            raw.execSQL(
+                "INSERT INTO ladder_blocks " +
+                    "(id,startAt,endAt,ladderVersion,policyVersion,easyPairs," +
+                    "easyCards,goodPairs,goodCards,hardPairs,hardCards,outcome) " +
+                    "VALUES (1,1000,2000,7,1,10,5,12,6,8,4,'no-change')"
+            )
+            raw.version = 26
+        }
+    }
+
+    @Test
+    fun `migration 26 to 27 copies versions and drops the ladder blocks`() {
+        runBlocking {
+            createV26WithLadderHistory()
+            val db = openMigrated()
+            try {
+                // The pair survives with its id, so every pre-v27 review row
+                // still resolves the cuts that graded it.
+                val version = db.gradingRulesDao().allVersions().single()
+                assertEquals(7L, version.id)
+                assertEquals(8L, version.easySeconds)
+                assertEquals(30L, version.slowSeconds)
+                assertEquals("manual", version.reason)
+                // v26 never had the correctness-only mode.
+                assertFalse(version.correctnessOnly)
+
+                // The evidence blocks are gone, table and all.
+                val ladderTables = db.openHelper.readableDatabase.query(
+                    "SELECT name FROM sqlite_master WHERE type='table' " +
+                        "AND name IN ('ladder_versions','ladder_blocks')"
+                ).use { cursor ->
+                    buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+                }
+                assertTrue("ladder tables still present: $ladderTables", ladderTables.isEmpty())
+
+                // The old review keeps its version id; the column is intact.
+                assertEquals(0, db.reviewLogDao().historyForQuestion("q1").single().gradingVersion)
             } finally {
                 db.close()
             }

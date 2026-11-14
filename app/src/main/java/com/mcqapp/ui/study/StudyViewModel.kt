@@ -126,13 +126,18 @@ data class StudyUiState(
     /** Whether the question clock is running and should be shown as live. */
     val clockRunning: Boolean = false,
     /**
-     * The dwell thresholds the card on screen is graded against, reading time
-     * included. The header clock colours itself from this pair, and it comes
-     * from the same [Study.dwellLadder] the check path grades with, so the
-     * colour and the grade never disagree about where the card sits.
+     * The dwell thresholds the card on screen is graded against. Absolute, so
+     * the header clock and the check path read the same configured pair and can
+     * never disagree about where the card sits.
      */
     val dwellEasySeconds: Long = Study.FAST_SECONDS,
     val dwellHardSeconds: Long = Study.SLOW_SECONDS,
+    /**
+     * Grade on correctness alone (v27). The clock keeps counting and the dwell
+     * is still stored for later analysis, but it no longer colours itself or
+     * decides the grade: the cuts above are unused while this is true.
+     */
+    val correctnessOnlyGrading: Boolean = false,
     /** The grade Check proposed; Next persists it. Null until checked. */
     val pendingGrade: ReviewGrade? = null,
     /**
@@ -143,8 +148,6 @@ data class StudyUiState(
     val proposedGrade: ReviewGrade? = null,
     /** Whether [changeGrade] ran for this card; sticky, even if changed back. */
     val gradeEdited: Boolean = false,
-    /** The reading allowance subtracted from the Easy cut, in seconds. */
-    val readingAllowanceSeconds: Long? = null,
     /** What the last check decided, for the result card. */
     val lastResult: StudyResult? = null,
     /** Every bookmarked question id, so the header can toggle the current one. */
@@ -291,7 +294,7 @@ class StudyViewModel(
     private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** The end-of-sitting controller run; a restart waits for it. */
-    private var ladderCheckJob: Job? = null
+    private var sessionEndJob: Job? = null
 
     init {
         load()
@@ -500,22 +503,18 @@ class StudyViewModel(
             val passage = question.passageId?.let { pid ->
                 repository.getPassagesByIds(listOf(pid)).firstOrNull()
             }
-            // The card's own ladder, reading time included: the clock's colour
-            // and the check's grade both read it, so a long question gets the
-            // same extra Easy/Good room in both places.
-            val ladder = Study.dwellLadder(
-                config = config ?: SchedulerConfig(),
-                question = question,
-                passage = passage
-            )
+            // The clock's colour and the check's grade read the same absolute
+            // pair, so the two can never disagree about where the card sits.
+            val schedulerConfig = config ?: SchedulerConfig()
             val now = SystemClock.elapsedRealtime()
             _state.update {
                 it.copy(
                     current = card,
                     question = question,
                     passage = passage,
-                    dwellEasySeconds = ladder.easySeconds,
-                    dwellHardSeconds = ladder.hardSeconds,
+                    dwellEasySeconds = schedulerConfig.fastSeconds,
+                    dwellHardSeconds = schedulerConfig.slowSeconds,
+                    correctnessOnlyGrading = schedulerConfig.correctnessOnlyGrading,
                     selection = emptySet(),
                     revealed = false,
                     grading = false,
@@ -523,7 +522,6 @@ class StudyViewModel(
                     pendingGrade = null,
                     proposedGrade = null,
                     gradeEdited = false,
-                    readingAllowanceSeconds = null,
                     lastResult = null,
                     isGuess = false,
                     questionStartedAt = now,
@@ -578,7 +576,6 @@ class StudyViewModel(
                 pendingGrade = null,
                 proposedGrade = null,
                 gradeEdited = false,
-                readingAllowanceSeconds = null,
                 lastResult = null,
                 questionStartedAt = 0L,
                 questionElapsedMillis = 0L,
@@ -781,23 +778,12 @@ class StudyViewModel(
         // Next, a grade change and Stop all persist this same value.
         val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
         val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
-        // Reading time lifts both ends of the ladder by the same amount, so
-        // Good stays reachable on long questions and deliberation beyond the
-        // Easy window is not mistaken for a struggle. The header clock reads
-        // the same pair.
-        val ladder = com.mcqapp.domain.Study.dwellLadder(
-            config = schedulerConfig,
-            question = question,
-            passage = paused.passage
-        )
         val grade = com.mcqapp.domain.Study.autoGrade(
             correctOptionIds = question.correctOptionIds,
             selection = paused.selection,
             dwellSeconds = dwellSeconds,
             isGuess = paused.isGuess,
-            config = schedulerConfig,
-            fastSeconds = ladder.easySeconds,
-            slowSeconds = ladder.hardSeconds
+            config = schedulerConfig
         )
         _state.update {
             it.copy(
@@ -806,7 +792,6 @@ class StudyViewModel(
                 pendingGrade = grade,
                 proposedGrade = grade,
                 gradeEdited = false,
-                readingAllowanceSeconds = ladder.easySeconds,
                 lastResult = buildResult(
                     question, paused.selection, grade, paused.isGuess, dwellSeconds,
                     System.currentTimeMillis()
@@ -910,7 +895,6 @@ class StudyViewModel(
                         current.proposedGrade,
                         edited = current.gradeEdited
                     ),
-                    readingAllowanceSeconds = current.readingAllowanceSeconds,
                     wasSkipped = current.selection.isEmpty()
                 )
                 persisted = true
@@ -990,10 +974,9 @@ class StudyViewModel(
                     // side of the dashboard by construction.
                     wasGuess = false,
                     wasCorrect = isCorrect(question, current.selection),
-                    // Classic mode has no app proposal and no reading allowance.
+                    // Classic mode has no app proposal.
                     proposedGrade = null,
                     gradeSource = com.mcqapp.domain.GradeSource.CHOSEN,
-                    readingAllowanceSeconds = null,
                     wasSkipped = current.selection.isEmpty()
                 )
                 persisted = true
@@ -1109,7 +1092,6 @@ class StudyViewModel(
                         current.proposedGrade,
                         edited = current.gradeEdited
                     ),
-                    readingAllowanceSeconds = current.readingAllowanceSeconds,
                     wasSkipped = current.selection.isEmpty()
                 )
                 Logger.i(
@@ -1244,10 +1226,10 @@ class StudyViewModel(
         stopped.set(false)
         viewModelScope.launch {
             try {
-                // Never start a new sitting while the previous one's automatic
-                // ladder check is still running: a cut change must not land
-                // under a session that already snapshotted the old config.
-                ladderCheckJob?.join()
+                // Never start a new sitting while the previous one's end-of-
+                // sitting write is still running: its timing row must land
+                // before the next session records its own start.
+                sessionEndJob?.join()
                 // A drill restarts from the scheduler now, not from the list
                 // it loaded when the screen opened: "Study again" promises a
                 // fresh pass, and the world has moved on — cards graded
@@ -1283,7 +1265,6 @@ class StudyViewModel(
                         pendingGrade = null,
                         proposedGrade = null,
                         gradeEdited = false,
-                        readingAllowanceSeconds = null,
                         lastResult = null,
                         // A failed write reported on the old summary must not
                         // follow the learner into the fresh sitting.
@@ -1338,20 +1319,12 @@ class StudyViewModel(
         val startedAt = sessionStartedAtWall
         val endedAt = System.currentTimeMillis()
         val activeSeconds = _sessionSeconds.value
-        ladderCheckJob = sessionScope.launch {
+        sessionEndJob = sessionScope.launch {
             try {
                 repository.recordStudySession(paperId, startedAt, endedAt, activeSeconds)
             } catch (e: Exception) {
                 // Best effort: a lost timing row must never disturb the summary.
                 Logger.e("STUDY", "recordStudySession($paperId) failed", e)
-            }
-            // Phase 5: automatic adaptation runs here, at the end of the
-            // sitting. A failed timing row must not also suppress it, and a
-            // controller failure must stay off the summary.
-            try {
-                repository.runLadderController()
-            } catch (e: Exception) {
-                Logger.e("STUDY", "runLadderController($paperId) failed", e)
             }
         }
     }

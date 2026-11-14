@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.backup.BackupRestorer
 import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
@@ -182,10 +183,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _simplifiedStudy = MutableStateFlow(true)
     val simplifiedStudy: StateFlow<Boolean> = _simplifiedStudy.asStateFlow()
 
-    private val _automaticLadderAdaptation = MutableStateFlow(false)
-    val automaticLadderAdaptation: StateFlow<Boolean> =
-        _automaticLadderAdaptation.asStateFlow()
-
     private val _shuffleOptions = MutableStateFlow(false)
     val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
 
@@ -198,10 +195,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.simplifiedStudy().collect { _simplifiedStudy.value = it }
-        }
-        viewModelScope.launch {
-            repository.automaticLadderAdaptation()
-                .collect { _automaticLadderAdaptation.value = it }
         }
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
@@ -228,10 +221,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setSimplifiedStudy(enabled: Boolean) {
         viewModelScope.launch { repository.setSimplifiedStudy(enabled) }
-    }
-
-    fun setAutomaticLadderAdaptation(enabled: Boolean) {
-        viewModelScope.launch { repository.setAutomaticLadderAdaptation(enabled) }
     }
 
     fun setShuffleOptions(enabled: Boolean) {
@@ -333,42 +322,148 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setPdfTwoColumn(enabled) }
     }
 
-    private val _schedulerConfig = MutableStateFlow(com.mcqapp.domain.SchedulerConfig())
-    val schedulerConfig: StateFlow<com.mcqapp.domain.SchedulerConfig> = _schedulerConfig.asStateFlow()
+    /**
+     * Null until the first stored (seeded) config is known. The screen renders
+     * a loading state and leaves every control disabled while it is null: the
+     * old non-null default published `SchedulerConfig()` immediately, so a tap
+     * in the window where the first-start seed or the version seed was still
+     * running could write the defaults over it.
+     */
+    private val _schedulerConfig =
+        MutableStateFlow<com.mcqapp.domain.SchedulerConfig?>(null)
+    val schedulerConfig: StateFlow<com.mcqapp.domain.SchedulerConfig?> =
+        _schedulerConfig.asStateFlow()
 
     init {
         viewModelScope.launch {
+            // The fresh-install seed is a preference write, so it must happen
+            // here, in a one-shot suspend read, and not inside the DataStore
+            // collection below: a collector must never trigger the database
+            // probe behind the seed. The flow is then pure and its first
+            // emission is the seeded value.
+            val first = try {
+                repository.schedulerConfigNow()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Could not load the scheduler config", e)
+                null
+            }
+            if (first != null) _schedulerConfig.value = first
             repository.schedulerConfig().collect { _schedulerConfig.value = it }
         }
     }
 
     /**
-     * Applies a single change. Each field edit writes the whole config, so the
-     * in-progress value and the stored value never drift apart.
+     * Applies a change to a knob without a dedicated setter.
      *
-     * The weights are re-based on the STORED config before the write: the
-     * composition's snapshot can be a re-emit behind a fresh fit (the tuner
-     * persists with its own single-key write), and writing the snapshot's
-     * stale weights over it reverted the fit while the success banner showed
-     * (consolidated_bugs.md H4). Only the tuner's own path changes weights,
-     * so the stored copy is always the newest.
+     * The edit is applied to the STORED config inside
+     * [McqRepository.updateSchedulerConfig], under the repository's write
+     * mutex, not to this screen's snapshot. That matters twice:
+     *
+     *  - `fsrsParameters`: the composition's snapshot can be a re-emit behind a
+     *    fresh fit (the tuner persists with its own single-key write), and
+     *    writing the snapshot's stale weights over it reverted the fit while
+     *    the success banner showed (consolidated_bugs.md H4).
+     *  - `correctnessOnlyGrading` and the two cuts: they have their own edit
+     *    paths below, so a generic snapshot is by definition one that did not
+     *    observe their newest stored value. Writing them from it reverted a
+     *    Reset, a restore or a concurrent cut edit, and minted a spurious
+     *    `rule`/`manual` version.
+     *
+     * The snapshot supplies only the fields without their own path; the other
+     * four are taken from the value read under the mutex.
      */
     fun updateSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
         val sanitized = config.sanitized()
-        viewModelScope.launch {
-            val stored = try {
-                repository.schedulerConfigNow()
-            } catch (_: Exception) {
-                sanitized
-            }
-            repository.setSchedulerConfig(sanitized.copy(fsrsParameters = stored.fsrsParameters))
+        applyEdit { stored ->
+            sanitized.copy(
+                fsrsParameters = stored.fsrsParameters,
+                correctnessOnlyGrading = stored.correctnessOnlyGrading,
+                fastSeconds = stored.fastSeconds,
+                slowSeconds = stored.slowSeconds
+            )
         }
-        _schedulerConfig.value = sanitized
     }
 
+    /**
+     * The correctness switch's own path: an atomic read-modify-write of the
+     * stored config, never this screen's snapshot.
+     */
+    fun setGradeCorrectnessOnly(enabled: Boolean) {
+        applyEdit { stored ->
+            if (stored.correctnessOnlyGrading == enabled) stored
+            else stored.copy(correctnessOnlyGrading = enabled)
+        }
+    }
+
+    /** The Easy cut's own path: an atomic read-modify-write of the stored pair. */
+    fun setFastSeconds(fastSeconds: Long) {
+        applyEdit { stored -> stored.copy(fastSeconds = fastSeconds) }
+    }
+
+    /** The Hard cut's own path: an atomic read-modify-write of the stored pair. */
+    fun setSlowSeconds(slowSeconds: Long) {
+        applyEdit { stored -> stored.copy(slowSeconds = slowSeconds) }
+    }
+
+    /**
+     * Runs one field edit through the repository, which reads the stored
+     * config, transforms it and writes it back under the write mutex. The
+     * returned value is what the store actually holds, so the screen publishes
+     * it immediately instead of waiting for a flow re-emit.
+     *
+     * A failure leaves the previous state on screen: the old handlers read the
+     * config first and then called a separate write, so two overlapping edits
+     * could each start from the same stored value and the later write reverted
+     * the earlier field.
+     */
+    private fun applyEdit(
+        transform: (com.mcqapp.domain.SchedulerConfig) -> com.mcqapp.domain.SchedulerConfig
+    ) {
+        viewModelScope.launch {
+            val updated = try {
+                repository.updateSchedulerConfig(transform)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Could not save the scheduler config", e)
+                return@launch
+            }
+            _schedulerConfig.value = updated
+        }
+    }
+
+    /**
+     * Reset is a pacing action: the grading rule is not a knob and must not be
+     * reverted in the UI. The stored config is re-read after the reset so the
+     * switch and both cuts show what the store actually kept.
+     *
+     * A failed reset leaves the previous state on screen and reports the
+     * failure. The old fallback published `SchedulerConfig()`, which both hid
+     * the failure and showed a rule the store never wrote — the next unrelated
+     * edit would then have persisted that false.
+     */
     fun resetSchedulerConfig() {
-        _schedulerConfig.value = com.mcqapp.domain.SchedulerConfig().sanitized()
-        viewModelScope.launch { repository.resetSchedulerConfig() }
+        viewModelScope.launch {
+            try {
+                repository.resetSchedulerConfig()
+                _schedulerConfig.value = repository.schedulerConfigNow()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Could not reset study settings", e)
+                _resetError.value = getApplication<Application>()
+                    .getString(R.string.settings_reset_failed)
+            }
+        }
+    }
+
+    private val _resetError = MutableStateFlow<String?>(null)
+    val resetError: StateFlow<String?> = _resetError.asStateFlow()
+
+    fun dismissResetError() {
+        _resetError.value = null
     }
 
     // --- FSRS parameter optimization ---
@@ -551,8 +646,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                     inProgressTest = inProgressTest,
                                     panels = source.panels(),
                                     blueprints = source.backupBlueprints(),
-                                    ladderVersions = source.ladderVersions(),
-                                    ladderBlocks = source.ladderBlocks(),
+                                    gradingVersions = source.gradingVersions(),
                                     studySessions = source.studySessions()
                                 )
                             },
@@ -643,7 +737,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                                 paperCreated = paperCreated,
                                 inProgressTest = inProgressTest,
                                 panels = source.panels(),
-                                blueprints = source.backupBlueprints()
+                                blueprints = source.backupBlueprints(),
+                                gradingVersions = source.gradingVersions(),
+                                studySessions = source.studySessions()
                             )
                         },
                         settings = settings

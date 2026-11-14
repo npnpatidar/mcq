@@ -543,7 +543,7 @@ internal class StudyStore(
         /**
          * The config snapshot the session actually graded under. Passed in,
          * never read here: a settings edit, a refit or a restore between the
-         * session's load and this write must not make the row claim a ladder
+         * session's load and this write must not make the row claim a grading
          * version or forecast that was never used to grade it.
          */
         config: com.mcqapp.domain.SchedulerConfig,
@@ -561,8 +561,6 @@ internal class StudyStore(
         /** AUTO, EDITED or CHOSEN. */
         gradeSource: com.mcqapp.domain.GradeSource =
             com.mcqapp.domain.GradeProvenance.source(proposedGrade, edited = false),
-        /** The reading allowance subtracted from the Easy cut, when one applied. */
-        readingAllowanceSeconds: Long? = null,
         /** The attempt was submitted with an empty selection. */
         wasSkipped: Boolean? = null
     ): com.mcqapp.domain.CardState {
@@ -602,10 +600,9 @@ internal class StudyStore(
                     wasCorrect = wasCorrect,
                     proposedRating = proposedGrade?.ordinal?.plus(1),
                     gradeSource = gradeSource.stored,
-                    ladderVersion = config.ladderVersion,
+                    gradingVersion = config.gradingVersion,
                     predictedRecall = predictedRecall,
                     fsrsFitVersion = config.fsrsFitVersion,
-                    readingAllowanceSeconds = readingAllowanceSeconds?.toInt(),
                     wasSkipped = wasSkipped
                 )
             )

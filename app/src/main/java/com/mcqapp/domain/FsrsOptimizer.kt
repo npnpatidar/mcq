@@ -101,9 +101,13 @@ class FsrsFitInsufficientData(message: String) : IllegalStateException(message)
  * Deliberate deviations, all documented at the code that makes them:
  *  - Gradients are central differences over the batch loss (68 evaluations a
  *    step) instead of the reference's forward-mode automatic differentiation;
- *    all arithmetic is f64 where the reference trains in f32, and the batch
- *    shuffle uses Kotlin's PRNG rather than the reference's StdRng, so fitted
- *    weights are close to the reference's but not bit-identical.
+ *    the approximation is pinned, not assumed: a golden test checks it against
+ *    a Richardson-extrapolated reference and bounds the deviation at 2e-4
+ *    (measured 3.1e-5), the floor being the eight-decimal state rounding each
+ *    replay applies. All arithmetic is f64 where the reference trains in f32,
+ *    and the batch shuffle uses Kotlin's PRNG rather than the reference's
+ *    StdRng, so fitted weights are close to the reference's but not
+ *    bit-identical.
  *  - Imported cards replay from their stored post-review memory (a seed)
  *    instead of an unknown earlier history; the reference has no seeds.
  *  - The reference's optional schedule penalty (`enable_sched_penalties`,
@@ -215,36 +219,15 @@ object FsrsOptimizer {
         currentParameters: List<Double>,
         onProgress: (Int, Int) -> Unit
     ): FsrsFitResult {
-        val prepared = cards.map { prepare(it) }
-
-        // Every review after the first is a prediction target — same-day ones
-        // included. A complete history's first row has no prior state to
-        // predict from; a seeded one starts at its first logged review, whose
-        // pre-state is the recorded seed.
-        val trainItems = ArrayList<ItemRef>()
-        prepared.forEachIndexed { cardIndex, card ->
-            val first = if (card.seeded) 0 else 1
-            for (pos in first until card.size) trainItems += ItemRef(cardIndex, pos)
-        }
+        val trainSet = trainSet(cards)
+        val prepared = trainSet.prepared
+        val trainItems = trainSet.items
+        val weightByCard = trainSet.weightByCard
         if (trainItems.size < MIN_ITEMS_FOR_DEFAULTS) {
             throw FsrsFitInsufficientData(
                 "Only ${trainItems.size} review prefixes found; " +
                     "at least $MIN_ITEMS_FOR_DEFAULTS needed"
             )
-        }
-
-        // Recency weights over trainset items ordered by the review they
-        // predict, the reference's 0.0667 + 0.9333·(i/n)^11.25, assigned before
-        // the sequence cap is applied.
-        val weightByCard = Array(prepared.size) { card ->
-            DoubleArray(prepared[card].size) { -1.0 }
-        }
-        val byTime = trainItems.sortedWith(
-            compareBy({ prepared[it.card].times[it.pos] }, { it.card }, { it.pos })
-        )
-        val weightDenominator = max(byTime.size, 1)
-        byTime.forEachIndexed { index, item ->
-            weightByCard[item.card][item.pos] = recencyWeight(index, weightDenominator)
         }
 
         val initialParameters = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toDoubleArray()
@@ -330,6 +313,90 @@ object FsrsOptimizer {
     }
 
     // --- data preparation -------------------------------------------------
+
+    /**
+     * The prepared cards plus every prediction target and its recency weight —
+     * the trainset before the sequence cap. One builder, so the fit and the
+     * tests' objective/gradient seams see the same items in the same order.
+     */
+    private class TrainSet(
+        val prepared: List<PreparedCard>,
+        val items: List<ItemRef>,
+        val weightByCard: Array<DoubleArray>
+    )
+
+    /**
+     * Builds the full trainset for [cards].
+     *
+     * Every review after the first is a prediction target — same-day ones
+     * included. A complete history's first row has no prior state to predict
+     * from; a seeded one starts at its first logged review, whose pre-state is
+     * the recorded seed. Recency weights follow the reference's
+     * `0.0667 + 0.9333·(i/n)^11.25` over items ordered by the review they
+     * predict, assigned **before** the sequence cap is applied.
+     */
+    private fun trainSet(cards: List<FsrsTrainingCard>): TrainSet {
+        val prepared = cards.map { prepare(it) }
+        val items = ArrayList<ItemRef>()
+        prepared.forEachIndexed { cardIndex, card ->
+            val first = if (card.seeded) 0 else 1
+            for (pos in first until card.size) items += ItemRef(cardIndex, pos)
+        }
+        val weightByCard = Array(prepared.size) { card ->
+            DoubleArray(prepared[card].size) { -1.0 }
+        }
+        val byTime = items.sortedWith(
+            compareBy({ prepared[it.card].times[it.pos] }, { it.card }, { it.pos })
+        )
+        val weightDenominator = max(byTime.size, 1)
+        byTime.forEachIndexed { index, item ->
+            weightByCard[item.card][item.pos] = recencyWeight(index, weightDenominator)
+        }
+        return TrainSet(prepared, items, weightByCard)
+    }
+
+    /**
+     * The whole trainset's **unnormalized** objective at [parameters] as
+     * `(sum, denominator)`: exactly what `fit` descends, without the sequence
+     * cap or the L2 term. Exposed so the golden test can pin the loss upstream
+     * accumulates rather than a value rounded for the UI.
+     */
+    internal fun objectiveOn(
+        parameters: List<Double>,
+        cards: List<FsrsTrainingCard>
+    ): Pair<Double, Double> {
+        val train = trainSet(cards)
+        val loss = evaluateBatchLoss(
+            parameters.toDoubleArray(),
+            train.prepared,
+            groupTerms(train.items, train.prepared, train.weightByCard)
+        )
+        return loss.sum to loss.denominator
+    }
+
+    /**
+     * The exact objective's gradient over the whole trainset, **without** the
+     * L2 term (the target is [parameters] itself, so its gradient is zero).
+     *
+     * The production trainer takes this same finite-difference path; the test
+     * compares it to a Richardson-extrapolated reference at a larger step and
+     * pins the resulting tolerance, which is the audit's alternative to
+     * analytic gradients.
+     */
+    internal suspend fun gradientOn(
+        parameters: List<Double>,
+        cards: List<FsrsTrainingCard>
+    ): DoubleArray {
+        val train = trainSet(cards)
+        val weights = parameters.toDoubleArray()
+        return gradient(
+            weights = weights,
+            batch = groupTerms(train.items, train.prepared, train.weightByCard),
+            prepared = train.prepared,
+            target = weights,
+            totalSize = train.items.size
+        )
+    }
 
     private class ItemRef(val card: Int, val pos: Int)
 
@@ -621,6 +688,20 @@ object FsrsOptimizer {
 
     // --- loss --------------------------------------------------------------
 
+    /**
+     * One recency-weighted binary-cross-entropy **loss** term with upstream's
+     * probability clamp (`analytic_v7.rs` uses 1e-5 on both ends).
+     *
+     * The scheduler's own curve already maps `[0,1]` onto
+     * `[1e-5, 1-1e-5]`, so in practice the clamp is a guard rather than a
+     * working bound; a `NaN` probability still propagates as `NaN`, which the
+     * tuner then refuses to persist as an improvement.
+     */
+    internal fun bceTerm(probability: Double, label: Double, weight: Double): Double {
+        val predicted = probability.coerceIn(PROBABILITY_FLOOR, PROBABILITY_CEILING)
+        return -weight * (label * ln(predicted) + (1.0 - label) * ln(1.0 - predicted))
+    }
+
     /** The unnormalized weighted BCE loss and its total weight. */
     private class BatchLoss(val sum: Double, val denominator: Double) {
         /** The mean loss — what the UI reports; never the training objective. */
@@ -648,7 +729,7 @@ object FsrsOptimizer {
             config = SchedulerConfig(),
             zoneOffset = { 0L }
         )
-        var numerator = 0.0
+        var sum = 0.0
         var denominator = 0.0
         for (cardTerms in terms) {
             val card = prepared[cardTerms.card]
@@ -657,12 +738,12 @@ object FsrsOptimizer {
             var pos = 0
             while (term < cardTerms.positions.size) {
                 if (pos == cardTerms.positions[term]) {
-                    val predicted = scheduler.recallAt(state, card.deltas[pos])
-                        .coerceIn(PROBABILITY_FLOOR, PROBABILITY_CEILING)
-                    val label = cardTerms.labels[term]
-                    val weight = cardTerms.weights[term]
-                    numerator += weight * (label * ln(predicted) + (1.0 - label) * ln(1.0 - predicted))
-                    denominator += weight
+                    sum += bceTerm(
+                        probability = scheduler.recallAt(state, card.deltas[pos]),
+                        label = cardTerms.labels[term],
+                        weight = cardTerms.weights[term]
+                    )
+                    denominator += cardTerms.weights[term]
                     term += 1
                     if (term == cardTerms.positions.size) break
                 }
@@ -670,9 +751,8 @@ object FsrsOptimizer {
                 pos += 1
             }
         }
-        // The running numerator accumulates log-likelihood (negative loss); the
-        // training objective is its negation, unnormalized, exactly as upstream
-        // sums it.
-        return BatchLoss(-numerator, denominator)
+        // Upstream accumulates the weighted BCE loss as a plain sum; it is
+        // never divided before the gradient is taken.
+        return BatchLoss(sum, denominator)
     }
 }

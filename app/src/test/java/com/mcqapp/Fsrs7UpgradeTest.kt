@@ -7,12 +7,19 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
+import com.mcqapp.domain.FsrsScheduler
+import com.mcqapp.domain.Question
+import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.ReviewGrade
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -229,6 +236,121 @@ class Fsrs7UpgradeTest {
         assertTrue(settings.fsrs7RebuildDone())
     }
 
+    // --- what the review loop actually persists ----------------------------
+
+    /**
+     * Two graded reviews written through the real study path, then read back
+     * from Room, must equal the same two transitions run purely in memory.
+     * This is the test the audit asks for that the pure scheduler vectors
+     * cannot be: it covers the entity mapper, which is where the fast trace was
+     * being dropped.
+     */
+    @Test
+    fun twoPersistedReviewsMatchThePureSchedulerSequence() = runBlocking {
+        repository.saveQuestion(question("q1"))
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
+        val first = t0 + 5 * day
+        val second = first + 4 * day
+
+        repository.recordStudyReview(
+            paperId = "p1", questionId = "q1", grade = ReviewGrade.GOOD,
+            now = first, config = config
+        )
+        repository.recordStudyReview(
+            paperId = "p1", questionId = "q1", grade = ReviewGrade.HARD,
+            now = second, config = config
+        )
+
+        var expected = scheduler.initial("q1")
+        expected = scheduler.next(expected, ReviewGrade.GOOD, first)
+        expected = scheduler.next(expected, ReviewGrade.HARD, second)
+
+        val stored = db.cardStateDao().get("p1", "q1")!!
+        // Exact agreement: both sides run the same arithmetic on the same
+        // config, so any difference is a lost field, not a rounding question.
+        assertEquals(expected.stability, stored.stability, 0.0)
+        assertEquals(expected.stabilityFast, stored.stabilityFast, 0.0)
+        assertTrue("the fast trace must survive the write", stored.stabilityFast > 0.0)
+        assertEquals(expected.difficulty, stored.difficulty, 0.0)
+        assertEquals(expected.intervalDays, stored.intervalDays)
+        assertEquals(expected.dueAt, stored.dueAt)
+        assertEquals(expected.reps, stored.reps)
+        assertEquals(expected.reviewCount, stored.reviewCount)
+        assertEquals(expected.lastReviewedAt, stored.lastReviewedAt)
+    }
+
+    /**
+     * The repair's guard is `stabilityFast = 0`: a row that already carries a
+     * trace — because a review wrote it after the omission was discovered — is
+     * never touched, even when the log claims a different value. A damaged row
+     * beside it is still restored, so the isolation is per row rather than
+     * all-or-nothing.
+     */
+    @Test
+    fun theRepairNeverOverwritesARowAReviewAlreadyWrote() = runBlocking {
+        db.cardStateDao().upsert(
+            card(stability = 4.0, difficulty = 5.0, lastReviewedAt = t0 + day)
+        )
+        db.reviewLogDao().insert(
+            ReviewLogEntity(
+                paperId = "p1", questionId = "q1", rating = 3, reviewedAt = t0 + day,
+                stateBefore = "NEW", stabilityAfter = 4.0, difficultyAfter = 5.0,
+                stabilityFastAfter = 2.75, intervalDaysAfter = 3
+            )
+        )
+        // q2 was graded by the fixed code: its row has a real trace.
+        db.cardStateDao().upsert(
+            card(stability = 8.0, difficulty = 4.0, lastReviewedAt = t0 + day, questionId = "q2")
+                .copy(stabilityFast = 6.0)
+        )
+        insertLog(3, t0 + day, stabilityAfter = 8.0, difficultyAfter = 4.0, questionId = "q2")
+        // A stale log row claiming a different fast value for q2.
+        db.reviewLogDao().insert(
+            ReviewLogEntity(
+                paperId = "p1", questionId = "q2", rating = 3, reviewedAt = t0 + 2 * day,
+                stateBefore = "REVIEW", stabilityAfter = 8.0, difficultyAfter = 4.0,
+                stabilityFastAfter = 99.0, intervalDaysAfter = 3
+            )
+        )
+        settings.completeFsrs7Rebuild()
+
+        repository.rebuildFsrs7Memory()
+
+        assertEquals(2.75, db.cardStateDao().get("p1", "q1")!!.stabilityFast, 0.0)
+        assertEquals("a written trace must not be repaired", 6.0, db.cardStateDao().get("p1", "q2")!!.stabilityFast, 0.0)
+    }
+
+    /**
+     * The audit's damaged-versus-legacy isolation: a row whose log records a
+     * fast trace was damaged by the write bug and is restored from it; a row
+     * whose log predates FSRS-7 has no trace to copy, so zero — "unknown" —
+     * must survive rather than be filled with the slow trace here.
+     */
+    @Test
+    fun theRepairRestoresADamagedRowAndLeavesAGenuineLegacyRowUnknown() = runBlocking {
+        db.cardStateDao().upsert(
+            card(stability = 4.0, difficulty = 5.0, lastReviewedAt = t0 + day)
+        )
+        db.reviewLogDao().insert(
+            ReviewLogEntity(
+                paperId = "p1", questionId = "q1", rating = 3, reviewedAt = t0 + day,
+                stateBefore = "NEW", stabilityAfter = 4.0, difficultyAfter = 5.0,
+                stabilityFastAfter = 2.75, intervalDaysAfter = 3
+            )
+        )
+        db.cardStateDao().upsert(
+            card(stability = 6.0, difficulty = 4.0, lastReviewedAt = t0 + day, questionId = "q2")
+        )
+        insertLog(3, t0 + day, stabilityAfter = 6.0, difficultyAfter = 4.0, questionId = "q2")
+        settings.completeFsrs7Rebuild()
+
+        repository.rebuildFsrs7Memory()
+
+        assertEquals(2.75, db.cardStateDao().get("p1", "q1")!!.stabilityFast, 0.0)
+        assertEquals(0.0, db.cardStateDao().get("p1", "q2")!!.stabilityFast, 0.0)
+    }
+
     // --- the race the CAS exists for ---------------------------------------
 
     /**
@@ -273,6 +395,45 @@ class Fsrs7UpgradeTest {
                 difficulty = 3.5
             )
         )
+    }
+
+    /**
+     * The audit's deterministic interleaving, with a *real* review: the rebuild
+     * reads a card's rows, the learner grades the card, and only then does the
+     * replay of the rows it read try to write. Because the CAS predicate is the
+     * replay's own last review (`t0`), the card's stamp has already moved to the
+     * review's instant, so the stale write misses and the review's memory is
+     * what the row keeps — the exact sequence that used to overwrite it.
+     */
+    @Test
+    fun aReviewThatLandsAfterThePageReadIsNotOverwritten() = runBlocking {
+        repository.saveQuestion(question("q1"))
+        db.cardStateDao().upsert(card(stability = 3.0, difficulty = 5.0, lastReviewedAt = t0))
+        insertLog(3, t0, stabilityAfter = 3.0, difficultyAfter = 5.0, stateBefore = "NEW")
+
+        // The rebuild's page read.
+        val page = db.reviewLogDao().rowsForQuestions(listOf("q1"))
+        assertEquals(t0, page.single().reviewedAt)
+
+        // The live review commits before the replay writes.
+        val live = repository.recordStudyReview(
+            paperId = "p1", questionId = "q1", grade = ReviewGrade.GOOD, now = t0 + 2 * day
+        )
+
+        val applied = db.cardStateDao().rebuildMemoryIfUnchanged(
+            paperId = "p1",
+            questionId = "q1",
+            lastReviewedAt = page.single().reviewedAt,
+            stability = 1.0,
+            stabilityFast = 1.0,
+            difficulty = 1.0
+        )
+
+        assertEquals(0, applied)
+        val stored = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(live.stability, stored.stability, 0.0)
+        assertEquals(live.stabilityFast, stored.stabilityFast, 0.0)
+        assertEquals(live.difficulty, stored.difficulty, 0.0)
     }
 
     /**
@@ -368,6 +529,54 @@ class Fsrs7UpgradeTest {
         assertEquals(7.0, rebuilt.difficulty, 0.5)
     }
 
+    // --- restoring an FSRS-6-era backup ------------------------------------
+
+    /**
+     * FSRS-010, end to end: a settings backup from a fitted v26 install carries
+     * 21 weights and a fit version. Restoring it must
+     *
+     *  - retire the set for the FSRS-7 defaults (21 weights cannot be
+     *    converted),
+     *  - reset the fit version to zero — defaults nobody fitted are not a fit,
+     *    whatever the backup claimed,
+     *  - raise the one-shot notice,
+     *  - and rebuild the fast traces **during the restore**, because a cursor
+     *    from another device is meaningless here and waiting for the next
+     *    launch would leave `Sf` unknown until then.
+     */
+    @Test
+    fun aFittedFsrs6BackupIsRetiredAndRebuiltWithoutARelaunch() = runBlocking {
+        val legacyFit = List(21) { 0.4 + it * 0.02 }
+        val backup = McqBackupFormat.SettingsFile(
+            mapOf(
+                "fsrs_parameters" to McqBackupFormat.PreferenceEntry(
+                    "string", JsonPrimitive(legacyFit.joinToString(","))
+                ),
+                "fsrs_fit_version" to McqBackupFormat.PreferenceEntry("int", JsonPrimitive(3))
+            )
+        )
+        // The card the restore brings along: memory, no fast trace, one log row.
+        db.cardStateDao().upsert(
+            card(stability = 4.0, difficulty = 5.0, lastReviewedAt = t0 + day)
+        )
+        db.reviewLogDao().insert(
+            ReviewLogEntity(
+                paperId = "p1", questionId = "q1", rating = 3, reviewedAt = t0 + day,
+                stateBefore = "NEW", stabilityAfter = 4.0, difficultyAfter = 5.0,
+                stabilityFastAfter = 2.75, intervalDaysAfter = 3
+            )
+        )
+
+        repository.settingsRestore(backup)
+
+        val config = settings.schedulerConfigNow()
+        assertEquals(FsrsScheduler.DEFAULT_FSRS_PARAMETERS, config.fsrsParameters)
+        assertEquals("a retired legacy fit is version zero", 0, config.fsrsFitVersion)
+        assertTrue(settings.fsrs7Notice().first())
+        assertTrue("the restore must rebuild, not defer to the next launch", settings.fsrs7RebuildDone())
+        assertTrue(db.cardStateDao().get("p1", "q1")!!.stabilityFast > 0.0)
+    }
+
     // --- helpers -----------------------------------------------------------
 
     private fun card(
@@ -398,6 +607,14 @@ class Fsrs7UpgradeTest {
         stabilityFast = 0.0,
         cardState = cardState,
         reviewCount = reps
+    )
+
+    private fun question(id: String) = Question(
+        id = id,
+        categoryId = "c1",
+        text = "Q $id",
+        options = listOf(QuestionOption("$id-a", "A"), QuestionOption("$id-b", "B")),
+        correctOptionIds = setOf("$id-a")
     )
 
     private suspend fun insertLog(

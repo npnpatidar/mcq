@@ -141,6 +141,66 @@ class FsrsSchedulerTest {
         assertEquals(Math.round(second.difficulty * 1e8) / 1e8, second.difficulty, 0.0)
     }
 
+    /**
+     * FSRS-014's golden vector under a **custom, many-decimal** weight set — the
+     * defaults are short enough to hide the 8-decimal state rounding. Pinned at
+     * exact equality because the rule is arithmetic: initial stabilities and
+     * difficulties are rounded on construction, and an update rounds both
+     * traces plus difficulty again. The `Sf = 0.8·S` first-exposure ratio is
+     * rounded *after* the ratio, and a `Hard` update keeps the fast trace growing
+     * far past the slow one, which is the branch a short default vector cannot
+     * exercise.
+     */
+    @Test
+    fun aCustomWeightVectorFollowsThePinnedRoundingRule() {
+        val weights = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList().also {
+            it[0] = 0.1104123456789
+            it[2] = 3.922123456789
+            it[4] = 6.1686999999
+            it[7] = 1.9795111111
+            it[10] = 0.7024333333
+            it[24] = 0.0801555555
+            it[26] = 0.9464444444
+        }
+        val scheduler = FsrsScheduler(
+            parameters = weights,
+            config = SchedulerConfig(dayStartHour = 0),
+            zoneOffset = { 0L }
+        )
+
+        data class Expected(val s: Double, val sf: Double, val d: Double)
+        val initials = mapOf(
+            ReviewGrade.AGAIN to Expected(0.11041235, 0.08832988, 6.1687),
+            ReviewGrade.HARD to Expected(2.2395, 1.7916, 5.26137831),
+            ReviewGrade.GOOD to Expected(3.92212346, 3.13769877, 3.53082398),
+            ReviewGrade.EASY to Expected(11.7841, 9.42728, 1.0)
+        )
+        initials.forEach { (grade, expected) ->
+            val next = scheduler.next(scheduler.initial("q"), grade, t0)
+            assertEquals("$grade S", expected.s, next.stability, 0.0)
+            assertEquals("$grade Sf", expected.sf, next.stabilityFast, 0.0)
+            assertEquals("$grade D", expected.d, next.difficulty, 0.0)
+        }
+
+        val graduated = scheduler.next(scheduler.initial("q"), ReviewGrade.GOOD, t0)
+        val at = t0 + 3 * 86_400_000L
+        assertEquals(0.9146835939710306, scheduler.retention(graduated, at), 1e-12)
+        val updates = mapOf(
+            ReviewGrade.AGAIN to Triple(Expected(1.20590326, 0.25625999, 8.81317704), 0, 0.0),
+            ReviewGrade.HARD to Triple(Expected(7.7125007, 101.89279132, 6.11703732), 7, 0.0),
+            ReviewGrade.GOOD to Triple(Expected(9.84643925, 163.40237347, 3.49781674), 23, 0.0),
+            ReviewGrade.EASY to Triple(Expected(9.84643925, 177.3293737, 1.0), 47, 0.0)
+        )
+        updates.forEach { (grade, expected) ->
+            val next = scheduler.next(graduated, grade, at)
+            val state = expected.first
+            assertEquals("$grade S", state.s, next.stability, 0.0)
+            assertEquals("$grade Sf", state.sf, next.stabilityFast, 0.0)
+            assertEquals("$grade D", state.d, next.difficulty, 0.0)
+            assertEquals("$grade interval", expected.second, next.intervalDays)
+        }
+    }
+
     @Test
     fun onlyAFailureKeepsAFirstExposureInTheSitting() {
         val scheduler = exactScheduler()

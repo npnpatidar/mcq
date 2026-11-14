@@ -50,13 +50,7 @@ internal class FsrsTuner(
         val cards = buildTrainingCards(db.reviewLogDao())
         val current = settings.schedulerConfigNow().fsrsParameters
         val result = FsrsOptimizer.fit(cards, current, onProgress)
-        val improves = result.lossAfter < result.lossBefore
-        if (improves) {
-            // A single-key DataStore edit: no read-modify-write of the whole
-            // config, so a racing pacing slider write cannot clobber the fit
-            // (or the fit cannot clobber it).
-            settings.setFsrsParameters(result.parameters)
-        }
+        val improves = storeIfImproved(result)
         Logger.i(
             "TUNER",
             "FSRS optimized on ${result.predictions} predictions " +
@@ -65,6 +59,30 @@ internal class FsrsTuner(
                 (if (improves) "(stored)" else "(kept current weights)")
         )
         return result
+    }
+
+    /**
+     * Persists [result] when it is a **strict** improvement, and reports whether
+     * it did.
+     *
+     * The policy is deliberately narrow:
+     *  - `lossAfter < lossBefore` — an equal loss is not an improvement, so the
+     *    learner keeps the weights they already had (current Anki/rslib keeps
+     *    the current set when the candidate is no worse).
+     *  - both losses must be finite. A non-finite prediction makes the loss
+     *    `NaN`, and `NaN < x` is false, but the explicit check says so instead
+     *    of relying on the comparison's polarity.
+     *
+     * The write is a single-key DataStore edit: no read-modify-write of the
+     * whole config, so a racing pacing slider write cannot clobber the fit (or
+     * the fit cannot clobber it).
+     */
+    internal suspend fun storeIfImproved(result: FsrsFitResult): Boolean {
+        val improves = result.lossBefore.isFinite() &&
+            result.lossAfter.isFinite() &&
+            result.lossAfter < result.lossBefore
+        if (improves) settings.setFsrsParameters(result.parameters)
+        return improves
     }
 
     /**

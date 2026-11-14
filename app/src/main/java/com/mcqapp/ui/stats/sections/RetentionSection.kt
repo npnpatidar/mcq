@@ -55,14 +55,15 @@ internal fun RetentionSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item(contentType = "trend") { TrendCard(bundle) }
-        // Correctness-only grading produces no Easy and no Hard labels, so the
-        // contrast, the readiness gate and the suggested pair have nothing to
-        // measure. The card is hidden rather than shown as perpetually empty.
-        if (bundle.timeBasedGrading) {
-            item(contentType = "calibration") {
-                CalibrationCard(bundle = bundle)
-            }
-        } else {
+        // The predicted-vs-actual chart and its Brier summary survive every
+        // rule: outcomes are still forecast and still observed, so the only
+        // part that depends on Easy/Hard labels is the cut evidence inside.
+        item(contentType = "calibration") {
+            CalibrationCard(bundle = bundle)
+        }
+        // The answer-time pair is the stand-in while the clock is ignored: no
+        // Easy or Hard label exists to calibrate, so the cuts come from dwells.
+        if (!bundle.timeBasedGrading) {
             item(contentType = "dwell-cuts") {
                 DwellCutsCard(suggestion = bundle.dwellSuggestion)
             }
@@ -154,11 +155,7 @@ private fun DwellCutsCard(suggestion: Calibration.CutSuggestion?) {
         if (suggestion == null) return@ChartCard
         val text = when {
             suggestion.status != Calibration.CutSuggestion.Status.FROM_TIMES ->
-                stringResource(
-                    R.string.stats_cuts_from_times_not_yet,
-                    suggestion.evidence,
-                    Calibration.MIN_DWELL_ROWS
-                )
+                notYetLine(suggestion)
 
             suggestion.changes -> stringResource(
                 R.string.stats_cuts_from_times,
@@ -182,6 +179,35 @@ private fun DwellCutsCard(suggestion: Calibration.CutSuggestion?) {
         )
     }
 }
+
+/**
+ * The gate that actually failed, with its own constant. Quoting the row count
+ * for every gate printed impossible lines like "250 of 200 correct answers"
+ * whenever the card or day gate was the binding one.
+ */
+@Composable
+private fun notYetLine(suggestion: Calibration.CutSuggestion): String =
+    when (suggestion.blockingGate) {
+        Calibration.CutSuggestion.Gate.CARDS -> stringResource(
+            R.string.stats_cuts_from_times_not_yet_cards,
+            suggestion.evidenceCards,
+            Calibration.MIN_DWELL_CARDS
+        )
+
+        Calibration.CutSuggestion.Gate.DAYS -> stringResource(
+            R.string.stats_cuts_from_times_not_yet_days,
+            suggestion.evidenceDays,
+            Calibration.MIN_DWELL_DAYS
+        )
+
+        // ROWS, and the unreachable "no gate named" case: the row gate is
+        // checked first, so it is the honest default.
+        else -> stringResource(
+            R.string.stats_cuts_from_times_not_yet_rows,
+            suggestion.evidence,
+            Calibration.MIN_DWELL_ROWS
+        )
+    }
 
 @Composable
 private fun CalibrationCard(bundle: RetentionData) {
@@ -212,8 +238,11 @@ private fun CalibrationCard(bundle: RetentionData) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp)
         )
-        bundle.calibrationReport?.let { report ->
-            CalibrationEvidence(report = report, bundle = bundle)
+        // Only this part reads the grade labels; the chart above does not.
+        if (bundle.timeBasedGrading) {
+            bundle.calibrationReport?.let { report ->
+                CalibrationEvidence(report = report, bundle = bundle)
+            }
         }
     }
 }

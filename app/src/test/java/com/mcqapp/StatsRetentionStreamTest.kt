@@ -29,6 +29,8 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -219,6 +221,28 @@ class StatsRetentionStreamTest {
                 "the retention load must carry the calibration report",
                 streamed.calibrationReport != null
             )
+            // The suggestions are exactly the fields the oracle above has to
+            // drop, so assert them here instead of trusting the copy: one is
+            // populated, and it is the one the rule in force can produce.
+            if (streamed.timeBasedGrading) {
+                assertNotNull(
+                    "timed grading must offer the contrast-based pair",
+                    streamed.cutSuggestion
+                )
+                assertNull(
+                    "answer-time evidence is only for the clock-ignored rule",
+                    streamed.dwellSuggestion
+                )
+            } else {
+                assertNotNull(
+                    "correctness-only grading must offer the answer-time pair",
+                    streamed.dwellSuggestion
+                )
+                assertNull(
+                    "no Easy/Hard labels exist, so the contrast has nothing to say",
+                    streamed.cutSuggestion
+                )
+            }
             // Guard against both sides agreeing on an empty payload.
             assertTrue(streamed.retentionTrend.points.any { it.count > 0 })
             assertTrue(streamed.weekdayRetention.any { it.reviews > 0 })

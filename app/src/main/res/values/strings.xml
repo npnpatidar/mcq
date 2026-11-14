@@ -824,7 +824,9 @@
     <string name="stats_dwell_cuts_help">Placed from your own answer times, not from retention. About a tenth of your correct answers would be Easy and a tenth Hard.</string>
     <string name="stats_cuts_from_times">Try %1$ds / %2$ds, from %3$d correct answers. Turn the correctness-only switch off in Settings, then set the two thresholds to these.</string>
     <string name="stats_cuts_from_times_same">Your %3$d correct answers agree with the current %1$ds / %2$ds.</string>
-    <string name="stats_cuts_from_times_not_yet">Not yet: %1$d of %2$d correct answers recorded, over at least 14 days.</string>
+    <string name="stats_cuts_from_times_not_yet_rows">Not yet: %1$d of %2$d correct answers recorded.</string>
+    <string name="stats_cuts_from_times_not_yet_cards">Not yet: %1$d of %2$d different questions answered.</string>
+    <string name="stats_cuts_from_times_not_yet_days">Not yet: %1$d of %2$d days of answer times.</string>
     <string name="stats_by_group">Retention by paper</string>
     <string name="stats_by_group_help">Share of reviews answered correctly; weakest first.</string>
     <string name="stats_by_weekday">Retention by weekday</string>

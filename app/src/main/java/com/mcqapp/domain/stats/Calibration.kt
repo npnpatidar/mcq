@@ -191,7 +191,17 @@ object Calibration {
         val nextSlow: Long,
         val status: Status,
         /** How many reviews the proposal is based on; 0 when not applicable. */
-        val evidence: Int = 0
+        val evidence: Int = 0,
+        /**
+         * The gate that stopped an answer-time pair, so the UI can name the real
+         * blocker instead of always quoting the row count. Null when no gate
+         * was involved.
+         */
+        val blockingGate: Gate? = null,
+        /** Distinct questions behind [evidence]; 0 when no gate needed them. */
+        val evidenceCards: Int = 0,
+        /** Days spanned by the answers behind [evidence]; 0 when not counted. */
+        val evidenceDays: Int = 0
     ) {
         enum class Status {
             /** The gates are not met, so no number would be honest. */
@@ -214,6 +224,18 @@ object Calibration {
              * a starting pair, not a retention finding.
              */
             FROM_TIMES
+        }
+
+        /** The gates of [suggestCutsFromDwell], in the order they are checked. */
+        enum class Gate {
+            /** Too few correct, clock-neutral answers. */
+            ROWS,
+
+            /** Too few distinct questions behind them. */
+            CARDS,
+
+            /** Recorded over too short a span to be a pace. */
+            DAYS
         }
 
         val changes: Boolean get() = nextFast != currentFast || nextSlow != currentSlow
@@ -283,12 +305,6 @@ object Calibration {
         fastSeconds: Long,
         slowSeconds: Long
     ): CutSuggestion {
-        fun insufficient(evidence: Int) = CutSuggestion(
-            fastSeconds, slowSeconds, fastSeconds, slowSeconds,
-            CutSuggestion.Status.NEEDS_EVIDENCE,
-            evidence
-        )
-
         val usable = reviews.filter {
             it.correctnessOnly &&
                 it.elapsedSeconds != null && it.elapsedSeconds > 0L &&
@@ -297,11 +313,25 @@ object Calibration {
                 it.wasSkipped != true
         }
         val cards = usable.map { it.paperId to it.questionId }.toSet()
-        if (usable.size < MIN_DWELL_ROWS || cards.size < MIN_DWELL_CARDS) {
-            return insufficient(usable.size)
-        }
-        val first = usable.minOf { it.reviewedAt }
-        if (now - first < MIN_DWELL_DAYS * DAY_MS) return insufficient(usable.size)
+        val first = if (usable.isEmpty()) now else usable.minOf { it.reviewedAt }
+        val days = ((now - first) / DAY_MS).toInt().coerceAtLeast(0)
+        fun insufficient(gate: CutSuggestion.Gate) = CutSuggestion(
+            currentFast = fastSeconds,
+            currentSlow = slowSeconds,
+            nextFast = fastSeconds,
+            nextSlow = slowSeconds,
+            status = CutSuggestion.Status.NEEDS_EVIDENCE,
+            evidence = usable.size,
+            blockingGate = gate,
+            evidenceCards = cards.size,
+            evidenceDays = days
+        )
+        // Checked one at a time so the "not yet" line can name the gate that
+        // actually failed: with 250 answers on 12 cards, quoting the row count
+        // printed "250 of 200" and hid the real requirement.
+        if (usable.size < MIN_DWELL_ROWS) return insufficient(CutSuggestion.Gate.ROWS)
+        if (cards.size < MIN_DWELL_CARDS) return insufficient(CutSuggestion.Gate.CARDS)
+        if (now - first < MIN_DWELL_DAYS * DAY_MS) return insufficient(CutSuggestion.Gate.DAYS)
 
         val sorted = usable.map { it.elapsedSeconds!! }.sorted()
         val fast = percentile(sorted, DWELL_EASY_PERCENT)

@@ -591,12 +591,16 @@ class CalibrationTest {
         assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, short.status)
         assertEquals(199, short.evidence)
         assertEquals(6L, short.nextFast)
+        // Each gate names itself, so the UI can quote the one that is binding.
+        assertEquals(Calibration.CutSuggestion.Gate.ROWS, short.blockingGate)
 
         val fewCards = Calibration.suggestCutsFromDwell(
             timedRows(linkedMapOf(15L to 200), cards = 29),
             now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
         )
         assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, fewCards.status)
+        assertEquals(Calibration.CutSuggestion.Gate.CARDS, fewCards.blockingGate)
+        assertEquals(29, fewCards.evidenceCards)
 
         // 200 answers, but recorded inside a single week: the pace measured is
         // one week's, not the learner's.
@@ -605,6 +609,7 @@ class CalibrationTest {
             now = t0 + 6 * day, fastSeconds = 6, slowSeconds = 60
         )
         assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, fewDays.status)
+        assertEquals(Calibration.CutSuggestion.Gate.DAYS, fewDays.blockingGate)
     }
 
     @Test

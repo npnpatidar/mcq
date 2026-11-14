@@ -105,6 +105,14 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
   Anki path bisects the mixed curve instead).
 - **No short-term branch.** Elapsed time stays fractional on purpose; rounding it
   to whole days changes the model. Only the resulting interval is whole days.
+- **A failed card relearns in the sitting, but only three times a study day.**
+  `FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY` bounds the loop: from the third
+  exposure a failure takes the model's interval (≥ 1 day) and is due on a day
+  boundary. That row is therefore `RELEARNING` **with** a positive
+  `intervalDays` — deliberate, not a bug. The exposure count comes from
+  `review_log` for the `(paperId, questionId)` since `DayBoundary.startOfDay`
+  (no counter column), and `FsrsReplay` counts the same way so the statistics
+  reconstruct the stored schedule.
 - **21 FSRS-6 weights cannot be converted** to 34 FSRS-7 weights. An upgraded
   install falls back to the defaults with `fsrs_fit_version = 0` and a one-shot
   Settings notice (`SettingsStore.ensureFsrs7`).

@@ -201,6 +201,17 @@ class FsrsScheduler private constructor(
     }
 
     /**
+     * The start of the study day containing [millis], in this scheduler's zone.
+     *
+     * Shared with [com.mcqapp.domain.stats.FsrsReplay] so a replayed history
+     * counts exposures against the same day boundary the live scheduler used;
+     * a different boundary would reconstruct a capped failure as a zero-day
+     * interval.
+     */
+    fun studyDayStart(millis: Long): Long =
+        DayBoundary.startOfDay(millis, config.dayStartHour, zoneOffset(millis))
+
+    /**
      * The FSRS-7 retrievability: predicted recall probability from the elapsed
      * time and the card's memory state.
      *

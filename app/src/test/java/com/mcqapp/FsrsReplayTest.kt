@@ -225,4 +225,51 @@ class FsrsReplayTest {
         assertNull(replayed[1].predictedRetention)
         assertTrue(replayed[2].predictedRetention != null)
     }
+
+    /**
+     * The relearn loop is capped per study day, so the replay has to count the
+     * same way. A per-review count would reconstruct the third failure as a
+     * zero-day interval and file the next review in the first interval band;
+     * the card was actually carrying the model's day.
+     */
+    @Test
+    fun replayCountsExposuresWithinTheStudyDay() {
+        val replayScheduler = FsrsScheduler(
+            config = com.mcqapp.domain.SchedulerConfig(dayStartHour = 0),
+            zoneOffset = { 0L }
+        )
+        // A study-day boundary under dayStartHour = 0 and a zero offset.
+        val t0 = 2 * day
+        val reviews = listOf(
+            row(1, rating = 1, reviewedAt = t0 + 60_000),
+            row(2, rating = 1, reviewedAt = t0 + 120_000),
+            row(3, rating = 1, reviewedAt = t0 + 180_000),
+            row(4, rating = 3, reviewedAt = t0 + day + 60_000)
+        )
+        val replayed = FsrsReplay.replay(reviews, replayScheduler)
+
+        // Exposures one and two relearn inside the sitting.
+        assertEquals(0, replayed[1].intervalBeforeDays)
+        assertEquals(0, replayed[2].intervalBeforeDays)
+        // The third is spaced by the model, so the next review carried a day.
+        assertEquals(1, replayed[3].intervalBeforeDays)
+        // And that is exactly what grading would have written.
+        val third = replayScheduler.next(
+            replayScheduler.next(
+                replayScheduler.next(replayScheduler.initial("q1"), ReviewGrade.AGAIN, t0 + 60_000),
+                ReviewGrade.AGAIN,
+                t0 + 120_000,
+                2
+            ),
+            ReviewGrade.AGAIN,
+            t0 + 180_000,
+            3
+        )
+        assertEquals(third.intervalDays, replayed[3].intervalBeforeDays)
+
+        // The streaming replay keeps the same per-day budget.
+        val stream = FsrsReplay.Stream(replayScheduler)
+        val streamed = reviews.map(stream::accept)
+        assertEquals(1, streamed[3].intervalBeforeDays)
+    }
 }

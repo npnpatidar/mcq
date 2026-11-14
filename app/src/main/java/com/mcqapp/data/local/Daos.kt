@@ -2030,18 +2030,23 @@ interface ReviewLogDao {
     suspend fun pageAfterId(afterId: Long, limit: Int): List<ReviewLogEntity>
 
     /**
-     * Cards with at least one review-log row after [afterRowId], one page of
-     * keys in first-row order. `id` is the autoincrement primary key and so is
-     * the rowid alias; the cursor is the last returned [ReviewCardPageRow.firstRowId].
+     * One keyset page of distinct cards in first-row order: each card's
+     * **global** minimum `review_log` id, above [afterRowId]. The cursor is the
+     * last returned [ReviewCardPageRow.firstRowId].
      *
-     * Both the FSRS-7 rebuild and the optimizer page cards, not rows: a card's
-     * history can straddle a row page, and replaying half of it would write a
-     * wrong memory state. The key is the composite card identity
-     * `(paperId, questionId)`.
+     * `HAVING MIN(id) > :afterRowId` is load-bearing. Filtering rows with a
+     * `WHERE id > :afterRowId` before the `GROUP BY` re-emits a card on every
+     * later page that happens to own a row above the cursor — the optimizer
+     * then trains on duplicate cards and the rebuild replays one twice. A
+     * card's history must also arrive whole: replaying half of it writes a
+     * wrong memory state.
+     *
+     * Both the FSRS-7 rebuild and the optimizer page cards by the composite
+     * identity `(paperId, questionId)`.
      */
     @Query(
         "SELECT paperId, questionId, MIN(id) AS firstRowId FROM review_log " +
-            "WHERE id > :afterRowId GROUP BY paperId, questionId " +
+            "GROUP BY paperId, questionId HAVING MIN(id) > :afterRowId " +
             "ORDER BY firstRowId LIMIT :limit"
     )
     suspend fun pageCardKeysAfterRowId(

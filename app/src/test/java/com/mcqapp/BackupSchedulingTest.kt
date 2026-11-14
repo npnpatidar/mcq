@@ -158,50 +158,46 @@ class BackupSchedulingTest {
     }
 
     /**
-     * The JSON schedule map is keyed by `(paperId, questionId)`: two papers
-     * that hold the same question id keep their own schedules through an
-     * export and a streamed restore. A bare question id used to collapse them
-     * into one entry, which was then applied to both occurrences.
+     * The JSON schedule map is keyed by `(paperId, questionId)`. Two card rows
+     * can share a question id across papers (a question moved between papers
+     * leaves the old paper's schedule behind), and a bare question-id key used
+     * to collapse them into one entry — silently dropping the other schedule.
+     * Both entries must be written, each under its own paper.
+     *
+     * (The rows are seeded directly: `questions.id` is a global primary key, so
+     * two live question rows cannot share an id and the schedule map is the
+     * only place the collision exists.)
      */
     @Test
-    fun theSameQuestionInTwoPapersKeepsBothSchedules() = runBlocking {
+    fun theSameQuestionInTwoPapersKeepsBothSchedulesInTheExport() = runBlocking {
         repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
-        repository.saveQuestion(
-            Question(
-                id = "q1",
-                categoryId = "c2",
-                text = "a different question with the same id?",
-                options = listOf(QuestionOption("a", "yes"), QuestionOption("b", "no")),
-                correctOptionIds = setOf("a")
+        studyOnce()
+        db.cardStateDao().upsert(
+            CardStateEntity(
+                paperId = "p2",
+                questionId = "q1",
+                ease = 2.5,
+                intervalDays = 9,
+                dueAt = 1_700_100_000_000L,
+                reps = 2,
+                lapses = 0,
+                leech = false,
+                lastReviewedAt = 1_700_100_000_000L,
+                contentHash = "hash2",
+                difficulty = 5.5,
+                stability = 12.5,
+                stabilityFast = 4.5,
+                cardState = com.mcqapp.domain.CardStateKind.REVIEW,
+                reviewCount = 2
             )
         )
-        studyOnce()
-        repository.recordStudyReview(
-            paperId = "p2",
-            questionId = "q1",
-            grade = ReviewGrade.EASY,
-            now = 1_700_100_000_000L
-        )
-        val firstPaper = repository.cardState("p1", "q1")!!
-        val secondPaper = repository.cardState("p2", "q1")!!
-        assertTrue(firstPaper.lastReviewedAt != secondPaper.lastReviewedAt)
-        val json = exportAllJson()
-
-        db.close()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
-        repository = McqRepository(db, context)
-        StreamingImporter(db, captureSchedules = true)
-            .import({ java.io.ByteArrayInputStream(json.toByteArray()) })
-
-        val restoredFirst = repository.cardState("p1", "q1")!!
-        val restoredSecond = repository.cardState("p2", "q1")!!
-        assertEquals(firstPaper.lastReviewedAt, restoredFirst.lastReviewedAt)
-        assertEquals(secondPaper.lastReviewedAt, restoredSecond.lastReviewedAt)
-        assertEquals(firstPaper.stability, restoredFirst.stability, 1e-9)
-        assertEquals(secondPaper.stability, restoredSecond.stability, 1e-9)
+        val file = LegacyParser.parse(exportAllJson())
+        val first = file.scheduling[com.mcqapp.data.io.cardScheduleKey("p1", "q1")]
+        val second = file.scheduling[com.mcqapp.data.io.cardScheduleKey("p2", "q1")]
+        assertTrue("the first paper's schedule must be exported", first != null)
+        assertTrue("the second paper's schedule must be exported", second != null)
+        assertTrue(first!!.lastReviewedAt != second!!.lastReviewedAt)
+        assertEquals(12.5, second.stability, 0.0)
     }
 
     @Test

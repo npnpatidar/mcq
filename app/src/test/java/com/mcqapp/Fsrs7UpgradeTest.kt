@@ -196,17 +196,36 @@ class Fsrs7UpgradeTest {
         db.cardStateDao().upsert(
             card(stability = 10.0, difficulty = 5.0, lastReviewedAt = t0 + 5 * day)
         )
+        db.cardStateDao().upsert(
+            card(
+                stability = 10.0,
+                difficulty = 5.0,
+                lastReviewedAt = t0 + 5 * day,
+                questionId = "q2"
+            )
+        )
         insertLog(3, t0, stabilityAfter = 5.0, difficultyAfter = 5.0, stateBefore = "NEW")
         insertLog(3, t0 + 5 * day, stabilityAfter = 10.0, difficultyAfter = 5.0)
-        // Simulate a kill after the first page: the cursor is persisted and the
-        // completion flag is not.
-        settings.setFsrsRebuildCursor(db.reviewLogDao().getAll().first().id)
+        val firstCardFirstRow = db.reviewLogDao().getAll().first().id
+        insertLog(
+            3, t0, stabilityAfter = 5.0, difficultyAfter = 5.0,
+            stateBefore = "NEW", questionId = "q2"
+        )
+        insertLog(3, t0 + 5 * day, stabilityAfter = 10.0, difficultyAfter = 5.0, questionId = "q2")
+        // Simulate a kill after the first page: q1 is done, the cursor is
+        // persisted and the completion flag is not.
+        settings.setFsrsRebuildCursor(firstCardFirstRow)
         assertFalse(settings.fsrs7RebuildDone())
 
         repository.rebuildFsrs7Memory()
 
-        val rebuilt = db.cardStateDao().get("p1", "q1")!!
-        assertTrue(rebuilt.stabilityFast > 0.0)
+        // q1 was on the finished page and is not replayed again...
+        assertEquals(10.0, db.cardStateDao().get("p1", "q1")!!.stability, 0.0)
+        // ...while q2, past the cursor, is replayed: its stale 10.0 is replaced
+        // by the history's two Good reviews.
+        val resumed = db.cardStateDao().get("p1", "q2")!!
+        assertNotEquals(10.0, resumed.stability)
+        assertTrue(resumed.stabilityFast > 0.0)
         assertTrue(settings.fsrs7RebuildDone())
     }
 
@@ -360,10 +379,11 @@ class Fsrs7UpgradeTest {
         lapses: Int = 0,
         leech: Boolean = false,
         lastReviewedAt: Long = t0,
-        cardState: CardStateKind = CardStateKind.REVIEW
+        cardState: CardStateKind = CardStateKind.REVIEW,
+        questionId: String = "q1"
     ) = CardStateEntity(
         paperId = "p1",
-        questionId = "q1",
+        questionId = questionId,
         ease = 2.5,
         intervalDays = intervalDays,
         dueAt = dueAt,
@@ -385,12 +405,13 @@ class Fsrs7UpgradeTest {
         reviewedAt: Long,
         stabilityAfter: Double,
         difficultyAfter: Double,
-        stateBefore: String? = "REVIEW"
+        stateBefore: String? = "REVIEW",
+        questionId: String = "q1"
     ) {
         db.reviewLogDao().insert(
             ReviewLogEntity(
                 paperId = "p1",
-                questionId = "q1",
+                questionId = questionId,
                 rating = rating,
                 reviewedAt = reviewedAt,
                 elapsedSeconds = 10,

@@ -7,6 +7,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestAnswer
 import com.mcqapp.domain.TestSnapshot
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
@@ -158,21 +159,26 @@ class TestProgressStoreTest {
         val rowsTwo = listOf(TestAnswer("q2", selection = setOf("q2-b"), dwellSeconds = 2))
         val first = launch { saveOrThrow(store, header(index = 0), rowsOne) }
 
-        // Deterministic (no sleeps; pure scheduler turns, bounded by the
-        // repeat) wait for save #1 to enter its header write.
+        // Wait for save #1 to enter its header write. The suspension before it
+        // is a Room query, whose callback arrives from another thread on a
+        // loaded CI runner; yielding alone (~a microsecond per turn) can lose
+        // that race, so give the event loop a real millisecond to receive it.
         var entered = false
         repeat(128) {
             if (slot.started.isNotEmpty()) {
                 entered = true
                 return@repeat
             }
-            yield()
+            delay(1)
         }
         assertTrue("save #1 must reach its header write", entered)
 
         val second = launch { saveOrThrow(store, header(index = 1), rowsTwo) }
         // Fair chance for save #2 to (wrongly) proceed while #1 is inside.
-        repeat(128) { yield() }
+        repeat(20) {
+            yield()
+            delay(1)
+        }
         assertTrue(
             "save #2 must wait for save #1's whole save, rows included",
             db.testProgressDao().getForPaper("p1").none { it.questionId == "q2" }

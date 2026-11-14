@@ -45,7 +45,7 @@ import org.robolectric.annotation.Config
  * (`TestPlan.freshSampleFits`), so the preview must keep showing the full pool.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class BlueprintPreviewFreshTest {
 
     private lateinit var app: McqApplication

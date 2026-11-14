@@ -60,6 +60,7 @@ fun SettingsScreen(
     val avoidRecentQuestions by viewModel.avoidRecentQuestions.collectAsStateWithLifecycle()
     val loadRemoteImages by viewModel.loadRemoteImages.collectAsStateWithLifecycle()
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
+    val resetError by viewModel.resetError.collectAsStateWithLifecycle()
     val fsrsReviewCount by viewModel.fsrsReviewCount.collectAsStateWithLifecycle()
     val fsrsOptimize by viewModel.fsrsOptimize.collectAsStateWithLifecycle()
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
@@ -234,6 +235,9 @@ fun SettingsScreen(
             StudySchedulerSection(
                 config = schedulerConfig,
                 onChange = { viewModel.updateSchedulerConfig(it) },
+                onFastChange = { viewModel.setFastSeconds(it) },
+                onSlowChange = { viewModel.setSlowSeconds(it) },
+                onRuleChange = { viewModel.setGradeCorrectnessOnly(it) },
                 onReset = { viewModel.resetSchedulerConfig() },
                 simplifiedStudy = simplifiedStudy,
                 onSimplifiedChange = { viewModel.setSimplifiedStudy(it) },
@@ -317,6 +321,20 @@ fun SettingsScreen(
             text = { Text(report) },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { restoreDone = null }) {
+                    Text(stringResource(R.string.ok))
+                }
+            }
+        )
+    }
+    resetError?.let { message ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { viewModel.dismissResetError() },
+            title = { Text(stringResource(R.string.error)) },
+            text = { Text(message) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { viewModel.dismissResetError() }
+                ) {
                     Text(stringResource(R.string.ok))
                 }
             }

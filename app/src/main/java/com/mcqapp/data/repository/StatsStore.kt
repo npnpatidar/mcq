@@ -28,6 +28,8 @@ import com.mcqapp.domain.stats.ReviewHistoryEntry
 import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
+import com.mcqapp.util.Logger
+import kotlinx.coroutines.CancellationException
 
 /**
  * Loads what the statistics page needs: the replayed review log, every card's
@@ -37,12 +39,71 @@ import com.mcqapp.domain.stats.WorkloadData
  * independently. The list-shaped reads are kept whole so the ViewModel can
  * re-slice ranges and scopes in memory without touching the database.
  */
-internal class StatsStore(private val db: AppDatabase, private val settings: SettingsStore) {
+internal class StatsStore(
+    private val db: AppDatabase,
+    private val settings: SettingsStore,
+    private val gradingRules: GradingRulesStore
+) {
+
+    /**
+     * The scheduler config every read in this store measures against, with
+     * the grading version guaranteed to exist first.
+     *
+     * [gradingRules] is not an alternative source of the cuts; it is the
+     * seed. A stats read can be the first thing a v27 install does (Statistics
+     * opened before any study session or Settings save), and without this call
+     * `gradingVersion` is 0 -> [loadCalibration]'s `epochStart` falls back to
+     * 0 -> pre-v27 rows graded under the retired reading allowance are pooled
+     * with rows graded under absolute 6/60. Once the `prior` row exists this
+     * is a no-op read, so the read path writes only on the first pass.
+     *
+     * Invariant: a review's `gradingVersion` must name the row whose cuts
+     * graded it. `writeCuts` puts the pair and its id in one DataStore edit,
+     * so the config is trusted only when the id it was read with is positive.
+     * A 0 means a Reset has removed the id but its replacement has not landed,
+     * and the id from the seed above must NOT be substituted: that would pair
+     * a version with cuts it did not grade. The read is retried instead, which
+     * lets `currentVersion()` seed the pair and id atomically.
+     *
+     * If seeding fails, a positive stored id is still usable — the crash
+     * repair will fill in the row on the next write path — and the report is
+     * built against it. The raw `ladder_version` is deliberately not used as a
+     * fallback: it ignores the rule gate and could name a pair retired on
+     * upgrade. With no usable id the method returns null: callers must fail
+     * loudly and let `StatsViewModel.loadError` render the tab, rather than
+     * building a version-0 report that pools the pre-v27 history this feature
+     * exists to exclude. That is the one failure shape worse than an error
+     * screen.
+     */
+    private suspend fun currentConfig(): SchedulerConfig? {
+        repeat(CONFIG_READ_ATTEMPTS) {
+            try {
+                gradingRules.currentVersion()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.e("STATS", "Could not seed the grading version", e)
+                return settings.schedulerConfigNow().takeIf { it.gradingVersion > 0 }
+            }
+            val config = settings.schedulerConfigNow()
+            if (config.gradingVersion > 0) return config
+        }
+        return null
+    }
+
+    /**
+     * The config a tab needs, or a failure StatsViewModel already knows how to
+     * show. A contaminated report is never an acceptable fallback.
+     */
+    private suspend fun requireConfig(): SchedulerConfig =
+        currentConfig() ?: throw GradingRuleUnavailable()
 
     /** The calibration report plus the answer-time pair that may stand alone. */
     private data class CalibrationLoad(
         val report: Calibration.Report,
-        val dwellSuggestion: Calibration.CutSuggestion?
+        val dwellSuggestion: Calibration.CutSuggestion?,
+        /** The config the report was actually built against (see [configWithEpoch]). */
+        val config: SchedulerConfig
     )
 
     /**
@@ -57,7 +118,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
     )
 
     suspend fun loadLibrary(): Library {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         return Library(
             cards = loadCards(),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
@@ -70,7 +131,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
      * that only needs the retention tab streams instead and never pays for it.
      */
     suspend fun loadReviews(): List<ReplayReview> {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         return replayLog(scheduler)
     }
@@ -88,7 +149,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): RetentionData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.RetentionAccumulator(
             scopePaperId = scopePaperId,
@@ -126,19 +187,22 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         }
         val data = accumulator.toData(tagsOfQuestion, categoriesForSlice)
         val calibration = loadCalibration(scopePaperId, now, config)
+        // The calibration load can resolve a newer config when the read raced
+        // a Reset; every field below must describe the report it returned.
+        val effective = calibration.config
         return data.copy(
             calibrationReport = calibration.report,
-            timeBasedGrading = !config.correctnessOnlyGrading,
+            timeBasedGrading = !effective.correctnessOnlyGrading,
             // The two suggestions answer different questions and never appear
             // together: the contrast needs labels, the answer-time pair needs
             // only dwells, and only one rule can be in force at a time.
-            cutSuggestion = if (config.correctnessOnlyGrading) {
+            cutSuggestion = if (effective.correctnessOnlyGrading) {
                 null
             } else {
                 Calibration.suggestCuts(
                     report = calibration.report,
-                    fastSeconds = config.fastSeconds,
-                    slowSeconds = config.slowSeconds
+                    fastSeconds = effective.fastSeconds,
+                    slowSeconds = effective.slowSeconds
                 )
             },
             dwellSuggestion = calibration.dwellSuggestion
@@ -159,12 +223,10 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         now: Long,
         config: SchedulerConfig
     ): CalibrationLoad {
-        val version = config.gradingVersion
-        val versionStart = if (version > 0) {
-            db.gradingRulesDao().version(version.toLong())?.effectiveFrom ?: 0L
-        } else {
-            0L
-        }
+        // [configWithEpoch] can resolve a newer config when the read raced a
+        // Reset; the report, its cache key and the suggestion all use it.
+        val (resolvedConfig, versionStart) = configWithEpoch(config)
+        val version = resolvedConfig.gradingVersion
         var maxReviewedAt = 0L
         // The weight-set boundary is tracked unscoped: a refit anywhere in the
         // log changes the forecast yardstick for every paper's report.
@@ -183,10 +245,10 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
             if (page.isEmpty()) break
             page.forEach { row ->
                 if (row.reviewedAt > maxReviewedAt) maxReviewedAt = row.reviewedAt
-                if (versionStart > 0L && row.reviewedAt >= versionStart) {
+                if (row.reviewedAt >= versionStart) {
                     val fit = row.fsrsFitVersion
-                    if (fit != null && fit != config.fsrsFitVersion) staleFitSeen = true
-                    if (fit == config.fsrsFitVersion && row.reviewedAt < fitStartedAt) {
+                    if (fit != null && fit != resolvedConfig.fsrsFitVersion) staleFitSeen = true
+                    if (fit == resolvedConfig.fsrsFitVersion && row.reviewedAt < fitStartedAt) {
                         fitStartedAt = row.reviewedAt
                     }
                 }
@@ -200,10 +262,10 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         // with another weight set, so the epoch restarts at the first label
         // recorded under the current weights.
         val refitInEpoch = staleFitSeen && fitStartedAt == Long.MAX_VALUE
-        val epochStart = when {
-            versionStart <= 0L -> 0L
-            staleFitSeen && fitStartedAt != Long.MAX_VALUE -> maxOf(versionStart, fitStartedAt)
-            else -> versionStart
+        val epochStart = if (staleFitSeen && fitStartedAt != Long.MAX_VALUE) {
+            maxOf(versionStart, fitStartedAt)
+        } else {
+            versionStart
         }
         val closedBlockEnd = if (epochStart > 0L && now > epochStart) {
             epochStart + ((now - epochStart) / BLOCK_MS) * BLOCK_MS
@@ -213,27 +275,61 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         val key = CalibrationCacheKey(
             scopePaperId = scopePaperId,
             gradingVersion = version,
-            fsrsFitVersion = config.fsrsFitVersion,
+            fsrsFitVersion = resolvedConfig.fsrsFitVersion,
             blockEnd = closedBlockEnd,
             maxReviewedAt = maxReviewedAt
         )
         // Answer times are cheap evidence and need no cache: the rows are
         // already built by the pass above.
-        val dwellSuggestion = if (config.correctnessOnlyGrading) {
+        val dwellSuggestion = if (resolvedConfig.correctnessOnlyGrading) {
             Calibration.suggestCutsFromDwell(
                 reviews = rows,
                 now = now,
-                fastSeconds = config.fastSeconds,
-                slowSeconds = config.slowSeconds
+                fastSeconds = resolvedConfig.fastSeconds,
+                slowSeconds = resolvedConfig.slowSeconds
             )
         } else {
             null
         }
-        calibrationCache[key]?.let { return CalibrationLoad(it, dwellSuggestion) }
+        calibrationCache[key]?.let {
+            return CalibrationLoad(it, dwellSuggestion, resolvedConfig)
+        }
         val report = Calibration.report(rows, now, epochStart, refitInEpoch)
         calibrationCache.clear()
         calibrationCache[key] = report
-        return CalibrationLoad(report, dwellSuggestion)
+        return CalibrationLoad(report, dwellSuggestion, resolvedConfig)
+    }
+
+    /**
+     * [config] paired with the `effectiveFrom` of the row its `gradingVersion`
+     * names.
+     *
+     * A version whose row is missing cannot be used: `epochStart = 0` pools
+     * every review recorded before the rule existed, which is the
+     * contamination this feature exists to exclude. The row is normally there
+     * — [requireConfig] seeds it — and one retry covers the write order of a
+     * save or Reset: the cuts and their new id land in one DataStore edit and
+     * the `grading_versions` row is inserted after it, so a stats read can
+     * observe the id for an instant before its row exists. The retry calls
+     * [currentConfig], whose `currentVersion()` re-inserts a missing row, so it
+     * heals the window instead of just waiting it out. Writing the row inside
+     * the Reset's edit is not possible — the row lives in Room and the id in
+     * DataStore — so this is the only fix that covers every writer.
+     */
+    private suspend fun configWithEpoch(
+        config: SchedulerConfig
+    ): Pair<SchedulerConfig, Long> {
+        if (config.gradingVersion > 0) {
+            db.gradingRulesDao().version(config.gradingVersion.toLong())
+                ?.let { return config to it.effectiveFrom }
+        }
+        val retried = currentConfig() ?: throw GradingRuleUnavailable()
+        val row = if (retried.gradingVersion > 0) {
+            db.gradingRulesDao().version(retried.gradingVersion.toLong())
+        } else {
+            null
+        }
+        return retried to (row?.effectiveFrom ?: throw GradingRuleUnavailable())
     }
 
     private fun ReviewLogEntity.toCalibrationRow(
@@ -285,7 +381,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): OverviewData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.OverviewAccumulator(
             scopePaperId = scopePaperId,
@@ -317,7 +413,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): WorkloadData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.WorkloadAccumulator(
             scopePaperId = scopePaperId,
@@ -341,7 +437,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): MemoryData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val zone = DayBoundary.zoneOffset(now)
         val overview = StatsAggregator.OverviewAccumulator(
@@ -388,7 +484,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): CardsData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.CardsAccumulator(
             scopePaperId = scopePaperId,
@@ -422,7 +518,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): ProgressData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.ProgressAccumulator(
             scopePaperId = scopePaperId,
@@ -447,7 +543,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         now: Long,
         collectEntries: Boolean
     ): SessionsData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.SessionsAccumulator(
             scopePaperId = scopePaperId,
@@ -483,7 +579,7 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
         range: StatsAggregator.Range,
         now: Long
     ): GuessingData {
-        val config = settings.schedulerConfigNow()
+        val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val accumulator = StatsAggregator.GuessingAccumulator(
             scopePaperId = scopePaperId,
@@ -644,5 +740,24 @@ internal class StatsStore(private val db: AppDatabase, private val settings: Set
 
         /** One evidence block's width, for the cache's closed-block boundary. */
         const val BLOCK_MS = Calibration.BLOCK_DAYS * 86_400_000L
+
+        /**
+         * How many times a config read retries when it observes
+         * `gradingVersion == 0`. That state only exists between a Reset's id
+         * removal and its replacement row, both of which the retrying read
+         * itself writes, so three attempts is already generous.
+         */
+        const val CONFIG_READ_ATTEMPTS = 3
     }
 }
+
+/**
+ * The grading rule could not be resolved, and a report without one would pool
+ * history from before the rule existed.
+ *
+ * `StatsViewModel` puts `e.message` into `loadError` and the Statistics screen
+ * renders it in place of the tabs, so this message reaches the learner: keep it
+ * a complete sentence, not a log label.
+ */
+internal class GradingRuleUnavailable :
+    IllegalStateException("The grading rule could not be loaded.")

@@ -49,8 +49,11 @@ import kotlin.math.roundToInt
 /** The Study / Spaced repetition group: the whole scheduler card, collapsible. */
 @Composable
 fun StudySchedulerSection(
-    config: com.mcqapp.domain.SchedulerConfig,
+    config: com.mcqapp.domain.SchedulerConfig?,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onFastChange: (Long) -> Unit,
+    onSlowChange: (Long) -> Unit,
+    onRuleChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
@@ -68,18 +71,41 @@ fun StudySchedulerSection(
         onExpandedChange = onExpandedChange,
         testTag = "settings-section-study"
     ) {
-        AnkiSchedulerBody(
-            config = config,
-            onChange = onChange,
-            onReset = onReset,
-            simplifiedStudy = simplifiedStudy,
-            onSimplifiedChange = onSimplifiedChange,
-            fsrsReviewCount = fsrsReviewCount,
-            fsrsOptimizeState = fsrsOptimizeState,
-            onOptimizeFsrs = onOptimizeFsrs,
-            onDismissFsrsOptimize = onDismissFsrsOptimize,
-            onRestoreFsrsDefaults = onRestoreFsrsDefaults
-        )
+        if (config == null) {
+            // The first stored config has not arrived yet (the fresh-install
+            // seed and the version seed both run behind it). Nothing here is
+            // editable: writing the defaults in this window would overwrite
+            // whichever of those landed first.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    stringResource(R.string.loading),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        } else {
+            AnkiSchedulerBody(
+                config = config,
+                onChange = onChange,
+                onFastChange = onFastChange,
+                onSlowChange = onSlowChange,
+                onRuleChange = onRuleChange,
+                onReset = onReset,
+                simplifiedStudy = simplifiedStudy,
+                onSimplifiedChange = onSimplifiedChange,
+                fsrsReviewCount = fsrsReviewCount,
+                fsrsOptimizeState = fsrsOptimizeState,
+                onOptimizeFsrs = onOptimizeFsrs,
+                onDismissFsrsOptimize = onDismissFsrsOptimize,
+                onRestoreFsrsDefaults = onRestoreFsrsDefaults
+            )
+        }
     }
 }
 
@@ -97,6 +123,9 @@ fun StudySchedulerSection(
 private fun AnkiSchedulerBody(
     config: com.mcqapp.domain.SchedulerConfig,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onFastChange: (Long) -> Unit,
+    onSlowChange: (Long) -> Unit,
+    onRuleChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
@@ -339,7 +368,7 @@ private fun AnkiSchedulerBody(
         label = stringResource(R.string.grade_correctness_only),
         help = stringResource(R.string.grade_correctness_only_help),
         checked = config.correctnessOnlyGrading,
-        onChange = { onChange(config.copy(correctnessOnlyGrading = it)) },
+        onChange = onRuleChange,
         testTag = "setting-grade-correctness-only"
     )
     Spacer(Modifier.height(12.dp))
@@ -359,7 +388,7 @@ private fun AnkiSchedulerBody(
             // (consolidated_bugs.md H3).
             range = 1f..3600f,
             suffix = "s",
-            onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
+            onChange = { onFastChange(it.toLong()) }
         )
         AnkiNumberRow(
             label = stringResource(R.string.hard_answer_threshold),
@@ -372,7 +401,7 @@ private fun AnkiSchedulerBody(
             // value below fast "succeeded" silently, left a phantom in the
             // field and stored the old value (consolidated_bugs.md F16/H2).
             validExtra = { it >= config.fastSeconds },
-            onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
+            onChange = { onSlowChange(it.toLong()) }
         )
 
         Spacer(Modifier.height(8.dp))

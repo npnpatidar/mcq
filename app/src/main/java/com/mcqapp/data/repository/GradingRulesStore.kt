@@ -32,7 +32,7 @@ enum class GradingReason(val stored: String) {
  * leaves a version number whose row is missing — repaired here on the next
  * read from the preferences — never a cut value without a version.
  */
-internal class GradingRulesStore(
+internal open class GradingRulesStore(
     private val db: AppDatabase,
     private val settings: SettingsStore
 ) {
@@ -44,8 +44,11 @@ internal class GradingRulesStore(
      * never been versioned. Seeding is guarded by the presence of the version
      * key, not by an empty table, so two concurrent first reads cannot both
      * insert a seed.
+     *
+     * Open only so a test can substitute a failing store and prove the
+     * statistics read refuses to build a version-0 report.
      */
-    suspend fun currentVersion(): Int = mutex.withLock { ensureVersionLocked() }
+    open suspend fun currentVersion(): Int = mutex.withLock { ensureVersionLocked() }
 
     /**
      * The whole-config write path: records a MANUAL version when a cut changed,
@@ -73,6 +76,34 @@ internal class GradingRulesStore(
             config.fastSeconds,
             config.slowSeconds,
             if (ruleChanged && !cutsChanged) GradingReason.RULE else GradingReason.MANUAL,
+            config.correctnessOnlyGrading
+        )
+        id
+    }
+
+    /**
+     * Records the pair `Reset study settings` put back. The caller
+     * ([McqRepository.resetSchedulerConfig]) only reaches this when the
+     * store's single reset edit reported that the effective pair changed, so
+     * this always mints a row: Reset is a user action on the cuts, and
+     * `manual` is what it is. A reset whose pair was already the defaults
+     * never gets here, so moving an unrelated pacing knob cannot end the
+     * calibration epoch. The row captures [config]'s rule, so a
+     * correctness-only install never files the reset under a tinted clock.
+     */
+    suspend fun recordResetCuts(config: SchedulerConfig): Int = mutex.withLock {
+        val id = nextVersionId()
+        settings.writeCuts(
+            config.fastSeconds,
+            config.slowSeconds,
+            id,
+            config.correctnessOnlyGrading
+        )
+        insert(
+            id,
+            config.fastSeconds,
+            config.slowSeconds,
+            GradingReason.MANUAL,
             config.correctnessOnlyGrading
         )
         id

@@ -20,6 +20,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,6 +38,9 @@ class RepositoryTest {
     private lateinit var db: AppDatabase
     private lateinit var repository: McqRepository
 
+    @get:Rule
+    val settingsReset = SettingsResetRule()
+
     @Before
     fun setup() {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -53,6 +57,9 @@ class RepositoryTest {
         // would leak into every later test process in the run. Reset before
         // the database closes so test order cannot change what a pull serves.
         repository.resetSchedulerConfig()
+        // Reset leaves the grading rule alone (it is the measurement
+        // condition, not a pacing knob); the shared rule clears the rule and
+        // version keys around every test.
         db.close()
     }
 

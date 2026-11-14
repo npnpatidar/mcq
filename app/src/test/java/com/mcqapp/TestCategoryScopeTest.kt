@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -40,11 +41,14 @@ import org.robolectric.annotation.Config
  * on the ARM64 host (where every Robolectric class aborts with SIGABRT).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class TestCategoryScopeTest {
 
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication
     private val repository get() = app.repository
+
+    @get:Rule
+    val settingsReset = SettingsResetRule()
 
     @After
     fun cleanup() = runBlocking {

@@ -30,7 +30,7 @@ import org.robolectric.annotation.Config
  * under the qemu environment).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class EditorMoveToQuestionTest {
 
     private lateinit var repository: com.mcqapp.data.repository.McqRepository

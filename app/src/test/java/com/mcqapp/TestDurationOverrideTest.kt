@@ -25,7 +25,7 @@ import kotlinx.coroutines.runBlocking
  * assertions can tell the three sources apart.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class TestDurationOverrideTest {
 
     private lateinit var app: McqApplication

@@ -524,6 +524,7 @@
     <string name="target_retention">Target retention</string>
     <string name="target_retention_value">Target retention: %1$d%%</string>
     <string name="reset_study_settings_confirm">Reset every study setting to its default? This resets the schedule knobs, target retention, ranking mode and new-card handling. Fitted FSRS weights are kept.</string>
+    <string name="settings_reset_failed">Could not reset study settings. Your current values are unchanged.</string>
     <string name="restore_fsrs_defaults_confirm">Restore the default FSRS weights? Your fitted weights are discarded.</string>
     <string name="target_retention_help">How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.</string>
     <string name="optimize_fsrs_parameters">Optimize FSRS parameters</string>

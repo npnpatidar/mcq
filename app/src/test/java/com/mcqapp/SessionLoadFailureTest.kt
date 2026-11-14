@@ -30,7 +30,7 @@ import org.robolectric.annotation.Config
  * other test sharing this JVM.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class SessionLoadFailureTest {
 
     private lateinit var app: McqApplication

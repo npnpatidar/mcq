@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,17 +32,21 @@ import org.robolectric.annotation.Config
  * DB-backed test it runs on CI's x86_64 runners and not on the ARM64 host.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class StudyViewModelPullTest {
 
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication
     private val repository get() = app.repository
 
+    @get:Rule
+    val settingsReset = SettingsResetRule()
+
     @After
     fun cleanup() = runBlocking {
         // The scheduler settings live in a process-shared DataStore and the
         // paper in the process-shared database: both are reset so neither a
-        // mode nor a schedule leaks into another test.
+        // mode nor a schedule leaks into another test. The grading rule and
+        // version keys are the shared rule's business (Reset keeps the rule).
         repository.resetSchedulerConfig()
         repository.deletePaper("p1")
         shadowOf(Looper.getMainLooper()).idle()

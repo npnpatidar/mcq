@@ -1,6 +1,7 @@
 package com.mcqapp.data.local
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -10,6 +11,8 @@ import com.mcqapp.domain.TagNormalizer
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Database(
     entities = [
@@ -59,12 +62,61 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun gradingRulesDao(): GradingRulesDao
     abstract fun studySessionDao(): StudySessionDao
 
+    /**
+     * The app's single definition of a new install (v27): this database has
+     * never held a paper or a review row.
+     *
+     * The first-launch grading-rule seed asks this instead of probing for the
+     * database file. The file is created by far more than a first study
+     * session — opening the library, importing a paper, starting a test — so
+     * its presence says nothing about whether the learner has used the app
+     * before. Content does.
+     *
+     * One statement on the database, not two DAO counts: `NOT EXISTS` stops at
+     * the first row, so the probe is O(1) on either table, and one snapshot
+     * cannot see a paper appear between the two halves.
+     */
+    suspend fun hasNoPapersOrReviews(): Boolean {
+        // Recorded on the caller's thread, before the switch to IO: a startup
+        // probe that was made synchronous would arrive here on the main
+        // thread, which StartupTest fails on. `withContext` would hide that.
+        freshnessProbeThread = Thread.currentThread().name
+        return withContext(Dispatchers.IO) {
+            openHelper.readableDatabase.query(
+                "SELECT NOT EXISTS(SELECT 1 FROM papers) " +
+                    "AND NOT EXISTS(SELECT 1 FROM review_log)"
+            ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
+        }
+    }
+
     companion object {
-        /** The database file name; the app checks it to spot a fresh install. */
+        /** The database file name, for the storage report. */
         const val NAME = "mcq.db"
+
+        /**
+         * The thread that last ran [hasNoPapersOrReviews], for `StartupTest`.
+         * The first-start probe is a background job; a main-thread name here
+         * means `onCreate` was made to open the database synchronously.
+         */
+        @VisibleForTesting
+        @Volatile
+        internal var freshnessProbeThread: String? = null
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        /**
+         * Drops the cached instance, for a test that drives the real
+         * [com.mcqapp.McqApplication] startup probe. Robolectric keeps static
+         * state between tests in one sandbox, so without this the probe would
+         * answer from a previous test's database. The old instance is not
+         * closed: the suite never closes the process-wide database, and its
+         * temporary directory is already gone.
+         */
+        @VisibleForTesting
+        internal fun resetInstanceForTests() {
+            INSTANCE = null
+        }
 
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {

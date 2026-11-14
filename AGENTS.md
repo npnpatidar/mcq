@@ -11,6 +11,23 @@ Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar
 - Releases tag the merge commit on `main` as `0.0.N`, in the existing shape: asset
   `mcq-<tag>-signed.apk` plus its `.sha256`, notes auto-generated with the PR links.
 
+## Supervisor workflow (owner rule, set 2026-11-14)
+
+- The supervising agent does **not** write product code: no edits under `app/`, no build
+  files, no schema. Every code change goes to an implementation subagent with a scoped brief
+  (intent, files, constraints, acceptance criteria); the supervisor reviews the result.
+- Markdown (reports, commit messages, PR text) and read-only inspection stay with the
+  supervisor.
+- Every code change is reviewed by a **separate** reviewer subagent — never the author.
+  One area-matched reviewer per batch by default; **three** specialist reviewers
+  (design/domain, implementation/integration, tests/docs) for anything significant,
+  including the grading rule, the Room schema, the backup format or first-run defaults.
+- Subagents run **strictly sequentially**, never in parallel, even independent ones.
+- Behaviour changes, user-facing copy, scope and release state are the owner's call. When
+  the owner is away and a decision is unavoidable, launch three decision subagents
+  sequentially with the identical question, adopt the convergent answer, and report the
+  decision and the split afterwards.
+
 ## Build and test
 
 ```bash

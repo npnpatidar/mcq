@@ -64,16 +64,24 @@ import kotlin.math.pow
  * @param desiredRetention the recall probability intervals target, 0..1.
  *   0.9 is the FSRS default.
  */
-class FsrsScheduler(
-    parameters: List<Double>? = null,
-    val desiredRetention: Double = DEFAULT_DESIRED_RETENTION,
-    private val config: SchedulerConfig = SchedulerConfig(),
+class FsrsScheduler private constructor(
+    parameters: List<Double>?,
+    val desiredRetention: Double,
+    private val config: SchedulerConfig,
     /**
      * The device's UTC offset, injected rather than read so the scheduler
      * stays deterministic.
      */
-    private val zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
+    private val zoneOffset: (Long) -> Long,
+    clipInputs: Boolean
 ) : Scheduler {
+
+    constructor(
+        parameters: List<Double>? = null,
+        desiredRetention: Double = DEFAULT_DESIRED_RETENTION,
+        config: SchedulerConfig = SchedulerConfig(),
+        zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
+    ) : this(parameters, desiredRetention, config, zoneOffset, clipInputs = true)
 
     private val w: DoubleArray = (parameters ?: config.fsrsParameters).toDoubleArray()
 
@@ -81,6 +89,13 @@ class FsrsScheduler(
         require(w.size == PARAMETER_COUNT) {
             "FSRS-7 needs $PARAMETER_COUNT parameters, got ${w.size}"
         }
+        // The reference's `FSRS::new` clips every input, so a scheduler built
+        // from an arbitrary set can never evaluate out-of-range weights. Doing
+        // it here (rather than only in the optimizer and `sanitized()`) means
+        // the parity guarantee holds for every construction path. The one
+        // exception is the optimizer's replay, whose finite-difference probes
+        // step outside the box on purpose ([trainingScheduler]).
+        if (clipInputs) clipInPlace(w)
     }
 
     override val leechThreshold: Int get() = config.leechThreshold
@@ -162,8 +177,14 @@ class FsrsScheduler(
 
     /**
      * The FSRS-7 retrievability: predicted recall probability from the elapsed
-     * time and the card's memory state. Zero for a card with no memory, as the
-     * reference scheduler returns 0 for a never-reviewed card.
+     * time and the card's memory state.
+     *
+     * A card with no memory returns 0. That is this app's "unknown" sentinel,
+     * not the reference's number: `fsrs-rs` clamps the stability to `S_MIN`
+     * before evaluating the curve, so a zero-stability state reads as
+     * ~0.99999 there. Keeping 0 here is what lets every caller test
+     * `stability > 0` for "has memory" without inventing a probability for a
+     * card nobody has studied.
      */
     override fun retention(state: CardState, now: Long): Double =
         recallAt(state, elapsedDaysSinceLastReview(state, now))
@@ -221,6 +242,58 @@ class FsrsScheduler(
             state = CardStateKind.REVIEW,
             reviewCount = state.reviewCount + 1
         )
+    }
+
+    /**
+     * The official FSRS-7 SM-2 bridge (`memory_state_from_sm2_scalar` in
+     * `fsrs-rs`): the memory state whose mixed curve reaches [retention] at
+     * exactly [intervalDays], with the fast trace at 0.8× the slow one.
+     *
+     * FSRS-7 has no scalar difficulty bridge, so difficulty is fixed at 5 and
+     * Anki's ease factor is not used. The reference clamps the interval to
+     * `S_MIN..S_MAX` and bisects the log-stability; this does the same with the
+     * scheduler's active weights, so an imported card is due when Anki says it
+     * is under the same model the app will grade it with.
+     *
+     * @throws IllegalArgumentException when [intervalDays] is not finite or
+     *   [retention] is outside (0, 1).
+     */
+    fun stateForInterval(
+        intervalDays: Double,
+        retention: Double = desiredRetention
+    ): CardState {
+        require(intervalDays.isFinite()) { "interval must be finite, got $intervalDays" }
+        require(retention.isFinite() && retention > 0.0 && retention < 1.0) {
+            "retention must be in (0, 1), got $retention"
+        }
+        val interval = intervalDays.coerceIn(STABILITY_MIN, MAX_STABILITY)
+
+        fun stateAt(logStability: Double): CardState {
+            val stability = exp(logStability).coerceIn(STABILITY_MIN, MAX_STABILITY)
+            return CardState(
+                questionId = "",
+                stability = stability,
+                stabilityFast = (stability * FAST_INIT_RATIO)
+                    .coerceIn(STABILITY_MIN, MAX_STABILITY),
+                difficulty = 5.0,
+                state = CardStateKind.REVIEW
+            )
+        }
+
+        val lowState = stateAt(ln(STABILITY_MIN))
+        val highState = stateAt(ln(MAX_STABILITY))
+        val lowRetention = recallAt(lowState, interval)
+        val highRetention = recallAt(highState, interval)
+        if (retention <= lowRetention) return lowState
+        if (retention >= highRetention) return highState
+
+        var low = ln(STABILITY_MIN)
+        var high = ln(MAX_STABILITY)
+        repeat(BISECTION_ITERATIONS) {
+            val mid = (low + high) / 2.0
+            if (recallAt(stateAt(mid), interval) < retention) low = mid else high = mid
+        }
+        return stateAt((low + high) / 2.0)
     }
 
     /**
@@ -300,7 +373,7 @@ class FsrsScheduler(
      * rule as an update ([updateMemory]): see the class KDoc's parity note.
      */
     private fun initialMemory(rating: Int): Memory {
-        val stability = w[rating - 1].coerceIn(STABILITY_MIN, INIT_S_MAX)
+        val stability = w[rating - 1].coerceIn(STABILITY_MIN, MAX_STABILITY)
         return Memory(
             stability = round8(stability).coerceIn(STABILITY_MIN, MAX_STABILITY),
             stabilityFast = round8(stability * FAST_INIT_RATIO)
@@ -532,6 +605,62 @@ class FsrsScheduler(
 
         /** The initial-stability ceiling of the reference's fit (w0..w3). */
         const val INIT_S_MAX = 100.0
+
+        /** Official FSRS-7 parameter bounds (`parameter_clipper_v7`). */
+        internal val LOWER_BOUNDS = doubleArrayOf(
+            0.0001, 0.0001, 0.0001, 0.0001,
+            1.0, 0.001, 0.1,
+            0.0, 0.0, 0.3, 0.01, 0.1, 0.0, 0.0, 1.0,
+            0.0, 0.0, 0.5, 0.001, 0.001, 0.0, 0.0, 1.0,
+            0.01, 0.01, 0.2, 0.5, 0.01, 0.1, 0.0, 0.1, 0.0, 0.0, 0.0
+        )
+
+        internal val UPPER_BOUNDS = doubleArrayOf(
+            50.0, 100.0, 100.0, 100.0,
+            10.0, 4.0, 4.0,
+            4.0, 1.2, 3.0, 1.5, 1.0, 3.5, 1.0, 7.0,
+            4.0, 2.0, 6.0, 1.5, 1.0, 5.0, 1.0, 7.0,
+            0.25, 0.95, 0.85, 0.99, 1.0, 1.0, 0.9, 1.1, 1.0, 0.6, 0.6
+        )
+
+        /**
+         * A scheduler for the optimizer's replay: same weights, but unclipped,
+         * because a finite-difference probe evaluates the model slightly outside
+         * the box and the objective is defined on the raw weights. The
+         * optimizer clips after every Adam step regardless.
+         */
+        internal fun trainingScheduler(parameters: DoubleArray): FsrsScheduler =
+            FsrsScheduler(
+                parameters.toList(),
+                DEFAULT_DESIRED_RETENTION,
+                SchedulerConfig(),
+                { 0L },
+                clipInputs = false
+            )
+
+        /**
+         * Clamps [weights] into the official bounds plus FSRS-7's two
+         * cross-parameter rules: initial stabilities must not invert
+         * (`w0 ≤ w1 ≤ w2 ≤ w3`) and the slow anchor must sit above the fast one
+         * (`w26 ≥ max(w25, 0.5)`).
+         *
+         * A NaN is replaced by the shipped default: `NaN.coerceIn(a, b)` is NaN
+         * in Kotlin, so a bare clamp would let it through and poison every
+         * later step.
+         */
+        internal fun clipInPlace(weights: DoubleArray) {
+            require(weights.size == PARAMETER_COUNT) {
+                "FSRS-7 needs $PARAMETER_COUNT parameters, got ${weights.size}"
+            }
+            for (i in weights.indices) {
+                if (weights[i].isNaN()) weights[i] = DEFAULT_FSRS_PARAMETERS[i]
+                weights[i] = weights[i].coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i])
+            }
+            weights[1] = max(weights[1], weights[0])
+            weights[2] = max(weights[2], weights[1])
+            weights[3] = max(weights[3], weights[2])
+            weights[26] = max(weights[26], max(weights[25], 0.5))
+        }
 
         const val MIN_DIFFICULTY = 1.0
 

@@ -44,16 +44,12 @@ class AnkiSchedulingTest {
         assertEquals(7, state.reps)
         assertEquals(1, state.lapses)
         assertEquals(2.5, state.ease, 0.0001)
-        // FSRS-7 conversion: the kind follows Anki's type, the ease mirrors
-        // onto the difficulty scale, and the stability is solved *backwards*
-        // from Anki's one stored number — under the mixture curve the interval
-        // at the benchmark retention is not the stability, so the inverse is
-        // what makes the card due when Anki says it is. The fast trace is
-        // unknown for an import, so it mirrors the slow one. That is a
-        // deliberate deviation, pinned here: upstream's `memory_state_from_sm2`
-        // seeds a newly imported memory at `Sf = 0.8·S`, while this app treats
-        // an unobserved trace as unknown (`Sf = S`) and never fabricates the
-        // initialization ratio for history it did not see.
+        // FSRS-7 conversion follows upstream's `memory_state_from_sm2`:
+        // the kind follows Anki's type; difficulty is fixed at 5 because
+        // FSRS-7 has no scalar difficulty bridge; the fast trace is 0.8× the
+        // slow one; and the stability is solved *backwards* from Anki's one
+        // stored number, so the card's mixed curve reaches the benchmark
+        // retention at exactly the interval Anki records.
         assertEquals(CardStateKind.REVIEW, state.cardStateKind())
         assertEquals(
             5.0,
@@ -71,13 +67,10 @@ class AnkiSchedulingTest {
             ),
             0.02
         )
-        assertEquals(state.stability, state.stabilityFast, 0.0)
+        assertEquals(0.8 * state.stability, state.stabilityFast, 1e-9)
         assertEquals(7, state.reviewCount)
-        assertEquals(
-            1.0 + (3.0 - 2.5) / (3.0 - 1.3) * 9.0,
-            state.difficulty,
-            0.0001
-        )
+        // FSRS-7 ignores Anki's ease factor for the memory state.
+        assertEquals(5.0, state.difficulty, 0.0)
         assertTrue(state.dueAt > crt * 1000L)
         // Five days out, within a day of slack for Anki's 04:00 rollover.
         assertTrue(

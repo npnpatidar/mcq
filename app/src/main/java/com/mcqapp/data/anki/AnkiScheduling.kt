@@ -69,6 +69,10 @@ object AnkiScheduling {
      *
      * [lastReviewedAtMillis] comes from the review log, which a package may
      * omit; when it is absent the last review is inferred from the interval.
+     *
+     * [parameters] and [desiredRetention] are the weights and target the
+     * scheduler will grade the card with; they default to the official set so
+     * a caller without settings still gets a valid bridge.
      */
     fun fromAnki(
         type: Int,
@@ -80,7 +84,9 @@ object AnkiScheduling {
         lapses: Int,
         crtSeconds: Long,
         lastReviewedAtMillis: Long = 0L,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        parameters: List<Double>? = null,
+        desiredRetention: Double = com.mcqapp.domain.FsrsScheduler.DEFAULT_DESIRED_RETENTION
     ): CardScheduleDto? {
         // Suspended and buried cards are not due, and this app has no such
         // state; a new card is already new here, so there is nothing to carry.
@@ -120,31 +126,28 @@ object AnkiScheduling {
                 max(0L, dueAt - intervalDays * DAY_MS)
             ).coerceAtMost(nowMillis)
         }
-        // FSRS-7 conversion: the card kind follows Anki's own type, and the
-        // ease mirrors back onto the 1..10 difficulty scale — an estimate, not
-        // a claim. The interval is the one number Anki actually stores, so the
-        // stability is solved *backwards* from it: under FSRS-7 the interval at
-        // the benchmark retention is not the stability, and inverting the
-        // mixed curve in closed form is impossible. The fast trace is unknown
-        // for an imported card, so it is set equal to the slow one, which is
-        // exactly how the scheduler reads a missing trace.
+        // FSRS-7 conversion: the card kind follows Anki's own type. The
+        // memory state comes from the official `memory_state_from_sm2` bridge —
+        // the interval is the one number Anki stores, so stability is the value
+        // whose mixed curve reaches the target retention at that interval,
+        // with difficulty fixed at 5 and the fast trace at 0.8× the slow one.
+        // FSRS-7 has no scalar difficulty bridge, so Anki's ease factor does
+        // not inform the memory state; it is still carried on the DTO for the
+        // SM-2-facing surfaces and the export round trip.
         val kind = when {
             type == TYPE_REVIEW || queue == QUEUE_REVIEW -> com.mcqapp.domain.CardStateKind.REVIEW
             type == TYPE_RELEARN -> com.mcqapp.domain.CardStateKind.RELEARNING
             else -> com.mcqapp.domain.CardStateKind.LEARNING
         }
         val ease = (factor / 1000.0).coerceIn(MIN_EASE, MAX_EASE)
-        val difficulty = if (intervalDays > 0) {
-            (com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY +
-                (MAX_EASE - ease) / (MAX_EASE - MIN_EASE) * 9.0)
-                .coerceIn(
-                    com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY,
-                    com.mcqapp.domain.FsrsScheduler.MAX_DIFFICULTY
-                )
+        val memory = if (intervalDays > 0) {
+            com.mcqapp.domain.FsrsScheduler(
+                parameters = parameters,
+                desiredRetention = desiredRetention
+            ).stateForInterval(intervalDays.toDouble(), desiredRetention)
         } else {
-            0.0
+            null
         }
-        val stability = stabilityForInterval(intervalDays, difficulty)
         return CardScheduleDto(
             ease = ease,
             intervalDays = intervalDays,
@@ -153,47 +156,12 @@ object AnkiScheduling {
             lapses = max(0, lapses),
             leech = lapses >= LEECH_THRESHOLD,
             lastReviewedAt = inferred,
-            difficulty = difficulty,
-            stability = stability,
-            stabilityFast = stability,
+            difficulty = memory?.difficulty ?: 0.0,
+            stability = memory?.stability ?: 0.0,
+            stabilityFast = memory?.stabilityFast ?: 0.0,
             cardState = kind.name,
             reviewCount = max(0, reps)
         )
-    }
-
-    /**
-     * The slow stability whose mixed curve reaches the benchmark retention at
-     * exactly [intervalDays], with the fast trace collapsed onto it.
-     *
-     * Rather than calling `intervalForRetention` per candidate — which itself
-     * solves for a time — this evaluates the recall at the one time that
-     * matters, which is a single curve evaluation per bisection step. Recall
-     * rises with stability, so a log-space bisection always closes; 60 steps
-     * resolve the 1e-4..36500 range to far below a day.
-     */
-    private fun stabilityForInterval(intervalDays: Int, difficulty: Double): Double {
-        if (intervalDays <= 0 || difficulty <= 0.0) return 0.0
-        val scheduler = com.mcqapp.domain.FsrsScheduler()
-        val target = com.mcqapp.domain.FsrsScheduler.BENCHMARK_RETENTION
-        fun recallAt(stability: Double): Double = scheduler.retention(
-            com.mcqapp.domain.CardState(
-                questionId = "",
-                intervalDays = intervalDays,
-                lastReviewedAt = 0L,
-                difficulty = difficulty,
-                stability = stability,
-                stabilityFast = stability,
-                state = com.mcqapp.domain.CardStateKind.REVIEW
-            ),
-            0L
-        )
-        var low = kotlin.math.ln(com.mcqapp.domain.FsrsScheduler.STABILITY_MIN)
-        var high = kotlin.math.ln(com.mcqapp.domain.FsrsScheduler.MAX_STABILITY)
-        repeat(60) {
-            val mid = (low + high) / 2.0
-            if (recallAt(kotlin.math.exp(mid)) > target) high = mid else low = mid
-        }
-        return kotlin.math.exp((low + high) / 2.0)
     }
 
     /**

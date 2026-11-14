@@ -2,7 +2,6 @@ package com.mcqapp
 
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.repository.FsrsTuner
-import com.mcqapp.domain.FsrsFitInsufficientData
 import com.mcqapp.domain.FsrsOptimizer
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.FsrsTrainingCard
@@ -620,11 +619,14 @@ class FsrsOptimizerTest {
         assertEquals(2, progressed)
     }
 
-    /** The reference returns defaults below 8 trainset items; we say so. */
+    /**
+     * Below 64 trainset items the reference returns the defaults untouched
+     * rather than failing, and so do we — even for a history this thin.
+     */
     @Test
-    fun fitRefusesHistoryTooThinToMeanAnything() = runBlocking {
+    fun fitReturnsDefaultsWhenHistoryIsTooThinToMeanAnything() = runBlocking {
         // Two complete cards, one predicted review each: two prefixes, well
-        // under the eight the reference needs before a fit means anything.
+        // under the training floor.
         val thin = listOf(
             FsrsTrainingCard(
                 reviews = listOf(
@@ -639,13 +641,10 @@ class FsrsOptimizerTest {
                 )
             )
         )
-        try {
-            FsrsOptimizer.fit(thin, FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
-            fail("expected FsrsFitInsufficientData")
-        } catch (expected: FsrsFitInsufficientData) {
-            assertTrue(expected.message!!.contains("2"))
-            assertTrue(expected.message!!.contains("8"))
-        }
+        val result = FsrsOptimizer.fit(thin, FsrsScheduler.DEFAULT_FSRS_PARAMETERS)
+        assertEquals(0, result.steps)
+        assertEquals(2, result.items)
+        assertEquals(FsrsScheduler.DEFAULT_FSRS_PARAMETERS, result.parameters)
     }
 
     /**

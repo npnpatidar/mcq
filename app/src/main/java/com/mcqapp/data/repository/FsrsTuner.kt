@@ -40,8 +40,8 @@ internal class FsrsTuner(
      * (`rslib/src/scheduler/fsrs/params.rs`); an equal loss is therefore not
      * an improvement either, and the learner keeps what they already had.
      *
-     * @throws com.mcqapp.domain.FsrsFitInsufficientData when the log is too
-     *   thin to fit anything.
+     * A log too thin to train returns the official defaults untouched
+     * (`steps = 0`), as the reference does.
      */
     suspend fun optimize(onProgress: (Int, Int) -> Unit = { _, _ -> }): FsrsFitResult {
         // A fit must never race the one-time model migration: the weights it

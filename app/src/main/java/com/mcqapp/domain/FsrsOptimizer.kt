@@ -66,9 +66,6 @@ data class FsrsFitResult(
     val steps: Int
 )
 
-/** Not enough complete history to fit anything; the caller should say so. */
-class FsrsFitInsufficientData(message: String) : IllegalStateException(message)
-
 /**
  * Fits the 34 FSRS-7 weights to a learner's own review history — the app-side
  * counterpart of Anki's "Optimize" button.
@@ -133,7 +130,6 @@ object FsrsOptimizer {
     internal const val ADAM_EPSILON = 1e-8
     internal const val L2_WEIGHT = 0.3333
     internal const val MAX_SEQ_LEN = 1024
-    internal const val MIN_ITEMS_FOR_DEFAULTS = 8
     internal const val MIN_ITEMS_FOR_TRAINING = 64
 
     /** `analytic_v7.rs`'s BCE floor; the ceiling mirrors it. */
@@ -149,21 +145,15 @@ object FsrsOptimizer {
         0.1282, 0.1397, 0.1407, 0.1489, 0.2, 0.15, 0.15
     )
 
-    /** Official FSRS-7 parameter bounds (fsrs-rs parameter_clipper_v7). */
-    internal val LOWER_BOUNDS = doubleArrayOf(
-        0.0001, 0.0001, 0.0001, 0.0001,
-        1.0, 0.001, 0.1,
-        0.0, 0.0, 0.3, 0.01, 0.1, 0.0, 0.0, 1.0,
-        0.0, 0.0, 0.5, 0.001, 0.001, 0.0, 0.0, 1.0,
-        0.01, 0.01, 0.2, 0.5, 0.01, 0.1, 0.0, 0.1, 0.0, 0.0, 0.0
-    )
-    internal val UPPER_BOUNDS = doubleArrayOf(
-        50.0, 100.0, 100.0, 100.0,
-        10.0, 4.0, 4.0,
-        4.0, 1.2, 3.0, 1.5, 1.0, 3.5, 1.0, 7.0,
-        4.0, 2.0, 6.0, 1.5, 1.0, 5.0, 1.0, 7.0,
-        0.25, 0.95, 0.85, 0.99, 1.0, 1.0, 0.9, 1.1, 1.0, 0.6, 0.6
-    )
+    /**
+     * Official FSRS-7 parameter bounds (`fsrs-rs` `parameter_clipper_v7`).
+     *
+     * The arrays live on [FsrsScheduler] because its constructor clips too —
+     * every construction path gets the reference's `FSRS::new` behaviour, not
+     * only the ones that pass through the optimizer.
+     */
+    internal val LOWER_BOUNDS: DoubleArray get() = FsrsScheduler.LOWER_BOUNDS
+    internal val UPPER_BOUNDS: DoubleArray get() = FsrsScheduler.UPPER_BOUNDS
 
     /**
      * Clamps [parameters] into the official bounds, preserving order.
@@ -171,12 +161,9 @@ object FsrsOptimizer {
      * A box clamp alone cannot express FSRS-7's two cross-parameter rules — the
      * initial stabilities must not invert (`w0 ≤ w1 ≤ w2 ≤ w3`) and the slow
      * anchor must sit above the fast one (`w26 ≥ max(w25, 0.5)`) — so those are
-     * applied after it. `FsrsScheduler` relies on both.
+     * applied after it.
      */
     fun clip(parameters: List<Double>): List<Double> {
-        require(parameters.size == FsrsScheduler.PARAMETER_COUNT) {
-            "FSRS-7 needs ${FsrsScheduler.PARAMETER_COUNT} parameters, got ${parameters.size}"
-        }
         val weights = parameters.toDoubleArray()
         clipInPlace(weights)
         return weights.toList()
@@ -193,8 +180,9 @@ object FsrsOptimizer {
      * coroutine's cancellation stops between steps and inside the gradient
      * fan-out.
      *
-     * @throws FsrsFitInsufficientData when fewer than
-     *   [MIN_ITEMS_FOR_DEFAULTS] review prefixes exist.
+     * Returns the official defaults with `steps = 0` when the history is too
+     * thin to train ([MIN_ITEMS_FOR_TRAINING] review prefixes, or no review
+     * sequence with a long-term component); the reference never throws here.
      */
     suspend fun fit(
         cards: List<FsrsTrainingCard>,
@@ -223,12 +211,6 @@ object FsrsOptimizer {
         val prepared = trainSet.prepared
         val trainItems = trainSet.items
         val weightByCard = trainSet.weightByCard
-        if (trainItems.size < MIN_ITEMS_FOR_DEFAULTS) {
-            throw FsrsFitInsufficientData(
-                "Only ${trainItems.size} review prefixes found; " +
-                    "at least $MIN_ITEMS_FOR_DEFAULTS needed"
-            )
-        }
 
         val initialParameters = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toDoubleArray()
 
@@ -258,11 +240,16 @@ object FsrsOptimizer {
         ).mean
 
         // The reference returns the initialized (default) weights untouched
-        // when the trainset is thin, or when nothing in it has more than one
-        // long-term review — there is no long-term memory to describe.
-        val hasLongTermDepth = prepared.any { card -> card.deltas.count { it >= 1.0 } >= 2 }
+        // when the trainset is thin, or when every prefix carries exactly one
+        // long-term review (`all(long_term_review_cnt() == 1)`) — there is no
+        // long-term memory to describe. The old predicate asked for a card
+        // with *two* gaps, which silently refused same-day-only histories the
+        // reference trains (the fast trace exists for exactly those).
+        val hasLongTermSignal = trainItems.any { item ->
+            longTermReviewCount(prepared[item.card].deltas, item.pos) != 1
+        }
         val enoughToTrain = trainItems.size >= MIN_ITEMS_FOR_TRAINING &&
-            hasLongTermDepth &&
+            hasLongTermSignal &&
             groupedTerms.isNotEmpty()
         if (!enoughToTrain) {
             val lossAfter = evaluateBatchLoss(initialParameters, prepared, groupedTerms).mean
@@ -313,6 +300,17 @@ object FsrsOptimizer {
     }
 
     // --- data preparation -------------------------------------------------
+
+    /**
+     * `long_term_review_cnt` over the reviews a prefix at [pos] has seen: every
+     * entry of `deltas[0..pos]` at least one day long, including the leading
+     * zero (a first exposure) and, for a seeded card, the gap from its seed.
+     */
+    private fun longTermReviewCount(deltas: DoubleArray, pos: Int): Int {
+        var count = 0
+        for (i in 0..pos) if (deltas[i] >= 1.0) count++
+        return count
+    }
 
     /**
      * The prepared cards plus every prediction target and its recency weight —
@@ -612,6 +610,11 @@ object FsrsOptimizer {
      * evaluations are independent, so they fan out across the default
      * dispatcher. Each evaluation checks for cancellation so a cancelled fit
      * stops inside this fan-out instead of after several more replays.
+     *
+     * The replay is built with [FsrsScheduler.trainingScheduler], which does not
+     * clip: several defaults sit exactly on a bound (w8, w14, w22 and w29), so a
+     * probe that was clamped would turn the central difference into half the
+     * slope. The reference's analytic gradient sees the same unclipped model.
      */
     private suspend fun gradient(
         weights: DoubleArray,
@@ -665,26 +668,9 @@ object FsrsOptimizer {
 
     /**
      * Box clamp plus FSRS-7's cross-parameter constraints, applied after every
-     * Adam step and by [clip].
+     * Adam step and by [clip]. Shared with [FsrsScheduler]'s constructor.
      */
-    private fun clipInPlace(weights: DoubleArray) {
-        val defaults = FsrsScheduler.DEFAULT_FSRS_PARAMETERS
-        for (i in weights.indices) {
-            // `NaN.coerceIn(a, b)` is NaN: neither comparison holds, so a NaN
-            // would survive a bare box clamp and poison every later step. The
-            // shipped default is the deterministic, in-bounds replacement;
-            // infinities are already handled by the clamp itself.
-            if (weights[i].isNaN()) weights[i] = defaults[i]
-            weights[i] = weights[i].coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i])
-        }
-        // Initial stabilities must not invert: the better the grade, the longer
-        // the first interval. A raw Adam step can cross them.
-        weights[1] = max(weights[1], weights[0])
-        weights[2] = max(weights[2], weights[1])
-        weights[3] = max(weights[3], weights[2])
-        // The slow curve's anchor retention must sit above the fast one's.
-        weights[26] = max(weights[26], max(weights[25], 0.5))
-    }
+    private fun clipInPlace(weights: DoubleArray) = FsrsScheduler.clipInPlace(weights)
 
     // --- loss --------------------------------------------------------------
 
@@ -723,12 +709,7 @@ object FsrsOptimizer {
         terms: List<CardTerms>
     ): BatchLoss {
         if (terms.isEmpty()) return BatchLoss(0.0, 0.0)
-        val scheduler = FsrsScheduler(
-            parameters = parameters.toList(),
-            desiredRetention = FsrsScheduler.DEFAULT_DESIRED_RETENTION,
-            config = SchedulerConfig(),
-            zoneOffset = { 0L }
-        )
+        val scheduler = FsrsScheduler.trainingScheduler(parameters)
         var sum = 0.0
         var denominator = 0.0
         for (cardTerms in terms) {

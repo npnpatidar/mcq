@@ -215,9 +215,8 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
 
     /**
      * Fits the 34 weights to the whole review log and stores them when the fit
-     * is strictly better than the current set; nothing else is touched.
-     * @throws com.mcqapp.domain.FsrsFitInsufficientData when the log is too
-     * thin to fit.
+     * is strictly better than the current set; nothing else is touched. A log
+     * too thin to train returns the official defaults with `steps = 0`.
      */
     suspend fun optimizeFsrsParameters(
         onProgress: (Int, Int) -> Unit = { _, _ -> }

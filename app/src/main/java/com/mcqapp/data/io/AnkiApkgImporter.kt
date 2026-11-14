@@ -28,7 +28,14 @@ import kotlinx.serialization.json.Json
 class AnkiApkgImporter(
     private val db: AppDatabase,
     private val updateAnswersOnDuplicate: Boolean = false,
-    private val batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE
+    private val batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
+    /**
+     * The model the app will grade imported cards with. The Anki bridge uses
+     * its weights and target retention, so a card due today in the package is
+     * due today here too.
+     */
+    private val schedulerConfig: com.mcqapp.domain.SchedulerConfig =
+        com.mcqapp.domain.SchedulerConfig()
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -67,7 +74,13 @@ class AnkiApkgImporter(
                 schedules: Map<String, CardScheduleDto>
             ) = session.onQuestions(categoryId, questions, schedules)
         }
-        val tail = source().use { AnkiPackageReader.stream(it, sink, batchSize, nowMillis) }
+        val tail = source().use {
+            AnkiPackageReader.stream(
+                it, sink, batchSize, nowMillis,
+                parameters = schedulerConfig.fsrsParameters,
+                desiredRetention = schedulerConfig.desiredRetention
+            )
+        }
         session.finish(
             LegacyParser.StreamedFile(
                 version = 1,

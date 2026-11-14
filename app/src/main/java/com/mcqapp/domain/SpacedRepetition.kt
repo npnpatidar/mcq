@@ -408,9 +408,19 @@ object Study {
      * source of truth, rounded half-up once, at the moment the grade is
      * proposed. The clock display truncates instead, because a clock reading
      * 3 s then 4 s is what a learner expects.
+     *
+     * An answer given before the clock has shown its first second is stored as
+     * 0, the untimed value. A correct answer that fast is a reflex or a
+     * mis-tap, not a recall measured in time, so it grades Good: [inferGrade]
+     * reads 0 as "no timing" and [dwellBand] calls it neutral, and the
+     * answer-time suggestion's `dwellSeconds > 0` queries leave the row out. A
+     * wrong one is Again either way. Rounding 500-999 ms up to a second would
+     * instead hand out Easy for the fastest possible tap.
      */
-    fun gradedDwellSeconds(elapsedMillis: Long): Long =
-        (elapsedMillis.coerceAtLeast(0L) + 500L) / 1000L
+    fun gradedDwellSeconds(elapsedMillis: Long): Long {
+        val millis = elapsedMillis.coerceAtLeast(0L)
+        return if (millis < 1_000L) 0L else (millis + 500L) / 1000L
+    }
 
     /** Every card eligible right now, split into the pull order's pools. */
     data class CandidatePools(

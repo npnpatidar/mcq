@@ -810,7 +810,10 @@ then **Again / Hard / Good / Easy** (each shows delay preview: `10m`, `6h`,
   cuts: `dwell < fastSeconds` (default 6 s) → `Easy`;
   `dwell >= slowSeconds` (default 60 s) → `Hard`; else `Good`. The clock starts
   when the card appears, so reading time counts against the cut and a long
-  question buys no extra Easy time. With `Grade on correctness only` on, the
+  question buys no extra Easy time. An answer inside the first second is stored
+  as untimed (`0 s`), so a right one is `Good` and a wrong one `Again` — the
+  fastest possible tap never earns `Easy`, and the row stays out of the
+  answer-time suggestion. With `Grade on correctness only` on, the
   clock is not consulted: a correct answer is always `Good`, so `Easy` and
   `Hard` only appear when the learner edits the grade.
 - Result card shows grade, dwell, `Change grade` (re-opens Again/Hard/Good/Easy
@@ -891,7 +894,7 @@ this, never midnight.
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
 | `Grade on correctness only` | on for a new install (off for an upgrade) | switch | On = correct → `Good`, wrong/guess/skip → `Again`, the clock never decides the grade or its colour. Hides both cut fields below and the Stats calibration card; Statistics shows the cuts your own answer times suggest instead. Dwell is still recorded. |
-| `Minimum easy answer threshold` | 6 s | 1–3599, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. A wrong, guessed or skipped answer is `Again` at any dwell, and an untimed (0 s) answer is `Good` rather than Easy. Hidden while correctness-only grading is on. |
+| `Minimum easy answer threshold` | 6 s | 1–3599, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. A wrong, guessed or skipped answer is `Again` at any dwell, and an untimed (0 s, anything under one second) answer is `Good` rather than Easy. Hidden while correctness-only grading is on. |
 | `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast + 1 | Auto-graded Hard at or above this. The pair must keep a second between the cuts: with both equal the `Good` band is empty and the calibration report could never say anything. Hidden while correctness-only grading is on. |
 | **Advanced** (collapsed) | | | |
 | `Next day starts at` | 4 h | 0–23 | Study-day boundary. |

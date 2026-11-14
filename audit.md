@@ -301,18 +301,20 @@ ui-test):
 | Doc accuracy | Fixed: `threshold.md` post-ship predicate, README cut rows and §3.6 range/clamp |
 | Nits | Fixed: outdated `StatsStore` dispatcher comment, the orphaned KDoc in `RepositorySettingsTest` |
 
-**Still open, deliberately:**
+**Owner decisions, taken 2026-11-14 — the rest of the audit is closed:**
 
-| Finding | Why it is open |
+| Finding | Decision |
 |---|---|
-| **M1** in-app notice | Copy is the owner's call; the value is now kept |
-| **M3** the 10 %-Hard target itself | Explicit owner decision (#2) |
-| **M8** v27 amended in place | Needs one build to regenerate `27.json`, and a 27→28 decision if v27 escaped dev/CI |
-| Minor 2 (`dwell == 0` not Easy) | Owner decision (#4): it changes what a sub-half-second answer grades as |
-| Minor 5, 6 | Naming refactor and the historical migrated rows; no behaviour to fix today |
-| **M9** streaming half | A whole legacy zip through `readStreaming` is still uncovered; the wire-key decode is now tested |
-| **M10** (closed) | All 13 classes that read or write the grading preferences use `SettingsResetRule`; the other files that mention grading state are pure-domain (`CalibrationTest`, `SpacedRepetitionTest`) or raw-DB (`MigrationTest`, `BackupRestoreRoundTripTest`), so no shared-DataStore leak remains |
-| Remaining nits | Test-only helpers, the `NoDeadCodeTest` denylist, and the unreferenced `minimumDetectableEffect` |
+| Thresholds | **6 s / 60 s stays.** The 8 s plus reading-time variant in `threshold_analysis.md` is not taken for this release |
+| **M1** in-app notice | **Silent.** The retired pair stays in `retired_easy_seconds`/`retired_slow_seconds` for recoverability, but nothing in the UI mentions the replacement |
+| **M3** relative rule | **Keep as is.** The card stays a pace quantile, now labelled as one |
+| Minor 2 | **Settled, and implemented:** an answer inside the first second is untimed — `gradedDwellSeconds` returns 0 below 1 000 ms, so a right answer is `Good` and a wrong one `Again`. This also removes the 500–999 ms window that used to round up to 1 s and grade `Easy` |
+| **M8** v27 amended in place | **Closed as won't-fix:** only tagged releases matter, and no tagged release has ever carried v27, so no 27→28 migration is owed. `27.json` correctness rests on the green CI build |
+| **M9** streaming half | **Closed as won't-fix:** no user holds a pre-upgrade backup, so a whole-zip `readStreaming` fixture would test a path nobody can reach. The wire-key decode test stays |
+| Minor 5, 6 | **Leave.** No naming refactor, no era flag on migrated rows |
+| Remaining nits | **Leave.** Test-only helpers, the `NoDeadCodeTest` denylist and `minimumDetectableEffect` stay as they are |
+| Planning docs | `threshold.md` and `threshold_analysis.md` stay on the branch until the release notes are written from them |
 
-**Verification limits:** no JDK, Android SDK or aapt2 on this host, so this pass was
-reviewed by reading only; the uncommitted items are unproven until CI runs them.
+**Verification:** this pass ran CI green on `5641fd2` — 2 157 unit tests, 0 failures,
+7 skipped, plus Lint, the release build and the emulator UI tests. The sub-second change
+above landed after that run and is verified by the same suite on the next push.

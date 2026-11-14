@@ -527,6 +527,37 @@ class StudyViewModelPullTest {
         }
     }
 
+    /**
+     * The owner's sub-second rule, all the way to the row: a tap inside the
+     * first second is stored as untimed (0 s) and grades Good when right, so
+     * the fastest possible tap can never earn Easy.
+     */
+    @Test
+    fun aTapInsideTheFirstSecondIsUntimedAndNeverEasy() {
+        seedOverdueRelearningAndFresh()
+        runBlocking {
+            repository.updateSchedulerConfig { it.copy(correctnessOnlyGrading = false) }
+        }
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
+            viewModel.state.value.current != null && !viewModel.state.value.loading
+        })
+
+        viewModel.freezeDwellForTests(700L)
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        assertEquals(0L, viewModel.state.value.gradedDwellSeconds)
+        assertEquals(ReviewGrade.GOOD, viewModel.state.value.pendingGrade)
+
+        viewModel.next()
+        assertTrue(awaitCondition { viewModel.state.value.reviewed == 1 })
+        runBlocking {
+            val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
+            assertEquals(0L, row.elapsedSeconds)
+            assertEquals(3, row.rating)
+        }
+    }
+
     @Test
     fun revealingAQuestionFreezesItsClockAndTheNextCardRestartsIt() {
         seedOverdueRelearningAndFresh()

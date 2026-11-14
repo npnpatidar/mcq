@@ -87,14 +87,52 @@ class StudyDwellBandTest {
     }
 
     @Test
-    fun `a graded dwell rounds half up once`() {
+    fun `a sub-second answer is untimed and the rest rounds half up once`() {
+        assertEquals(0L, Study.gradedDwellSeconds(-1L))
         assertEquals(0L, Study.gradedDwellSeconds(0L))
         assertEquals(0L, Study.gradedDwellSeconds(499L))
-        assertEquals(1L, Study.gradedDwellSeconds(500L))
+        // 500-999 ms used to round up to a measured second and grade Easy; the
+        // first second is untimed, so it is stored as 0.
+        assertEquals(0L, Study.gradedDwellSeconds(500L))
+        assertEquals(0L, Study.gradedDwellSeconds(999L))
+        assertEquals(1L, Study.gradedDwellSeconds(1_000L))
         assertEquals(1L, Study.gradedDwellSeconds(1_499L))
         assertEquals(2L, Study.gradedDwellSeconds(1_500L))
         assertEquals(8L, Study.gradedDwellSeconds(7_500L))
-        assertEquals(0L, Study.gradedDwellSeconds(-1L))
+    }
+
+    /**
+     * The rule the owner set: inside the first second, a right answer is Good
+     * and a wrong one is Again. Neither reads the cut pair, so the fastest tap
+     * cannot earn Easy.
+     */
+    @Test
+    fun `an answer inside the first second is good when right and again when wrong`() {
+        for (millis in listOf(0L, 300L, 500L, 900L, 999L)) {
+            val dwell = Study.gradedDwellSeconds(millis)
+            assertEquals(
+                "correct at ${millis}ms",
+                ReviewGrade.GOOD,
+                Study.autoGrade(
+                    correctOptionIds = setOf("a"),
+                    selection = setOf("a"),
+                    dwellSeconds = dwell,
+                    isGuess = false
+                )
+            )
+            assertEquals(
+                "wrong at ${millis}ms",
+                ReviewGrade.AGAIN,
+                Study.autoGrade(
+                    correctOptionIds = setOf("a"),
+                    selection = setOf("b"),
+                    dwellSeconds = dwell,
+                    isGuess = false
+                )
+            )
+        }
+        // And the boundary itself is measured: a whole second grades Easy.
+        assertEquals(ReviewGrade.EASY, Study.inferGrade(true, Study.gradedDwellSeconds(1_000L)))
     }
 
     @Test

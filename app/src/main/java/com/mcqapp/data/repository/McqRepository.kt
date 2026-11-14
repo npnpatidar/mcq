@@ -1422,6 +1422,24 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
         Map<String, com.mcqapp.domain.CategoryCounts> = studyStore.categoryCounts(paperId, now)
     suspend fun cardState(paperId: String, questionId: String): com.mcqapp.domain.CardState? =
         studyStore.cardState(paperId, questionId)
+
+    /**
+     * The card's presentation number in the study day containing [now]. The
+     * study screen needs it before grading to label the answer buttons: from
+     * `FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY` exposures on, `Again` is
+     * spaced by the model instead of the relearn delay.
+     */
+    suspend fun exposureInStudyDay(
+        paperId: String,
+        questionId: String,
+        config: com.mcqapp.domain.SchedulerConfig? = null,
+        now: Long = System.currentTimeMillis()
+    ): Int = studyStore.exposureInStudyDay(
+        paperId,
+        questionId,
+        config ?: schedulerConfigNow(),
+        now
+    )
     suspend fun recordStudyReview(
         paperId: String,
         questionId: String,

@@ -503,6 +503,30 @@ internal class StudyStore(
         )
     }
 
+    /**
+     * The card's presentation number within the study day containing [now]: 1
+     * for its first exposure today, 2 for the second, and so on.
+     *
+     * Read from `review_log` rather than a counter column, so it needs no
+     * schema of its own and a process kill cannot reset a relearn loop. The
+     * `(paperId, questionId, reviewedAt)` index serves the count. The preview
+     * path uses the same function, so an answer button and the grade it
+     * produces agree on the exposure budget.
+     */
+    suspend fun exposureInStudyDay(
+        paperId: String,
+        questionId: String,
+        config: com.mcqapp.domain.SchedulerConfig,
+        now: Long = System.currentTimeMillis()
+    ): Int {
+        val dayStart = com.mcqapp.domain.DayBoundary.startOfDay(
+            now,
+            config.dayStartHour,
+            com.mcqapp.domain.DayBoundary.zoneOffset(now)
+        )
+        return db.reviewLogDao().countForCardSince(paperId, questionId, dayStart) + 1
+    }
+
     /** The stored schedule for a card, or null if it has never been studied. */
     suspend fun cardState(
         paperId: String,
@@ -558,7 +582,15 @@ internal class StudyStore(
             now = now,
             retention = scheduler::retention
         )
-        val next = scheduler.next(existing ?: scheduler.initial(questionId), grade, now)
+        // A card that keeps failing must not loop on the ten-minute relearn
+        // delay all evening: from the third exposure the model spaces it.
+        val exposureInStudyDay = exposureInStudyDay(paperId, questionId, config, now)
+        val next = scheduler.next(
+            existing ?: scheduler.initial(questionId),
+            grade,
+            now,
+            exposureInStudyDay
+        )
         db.withTransaction {
             db.cardStateDao().upsert(
                 next.toEntity(paperId, question?.let { mapper.contentHashOf(it) } ?: "")

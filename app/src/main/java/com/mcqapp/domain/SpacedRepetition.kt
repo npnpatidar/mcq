@@ -143,6 +143,19 @@ interface Scheduler {
     /** Applies one grade and returns the next state. */
     fun next(state: CardState, grade: ReviewGrade, now: Long): CardState
 
+    /**
+     * [next] with the card's presentation number inside the current study day
+     * (1-based). The scheduling interface exposes it because the answer-button
+     * preview and the grade it produces have to agree on the exposure budget
+     * that bounds a relearn loop. Callers with no study-day count pass 1.
+     */
+    fun next(
+        state: CardState,
+        grade: ReviewGrade,
+        now: Long,
+        exposureInStudyDay: Int
+    ): CardState
+
     /** Estimated probability of recall, 0..1, for display only. */
     fun retention(state: CardState, now: Long): Double
 
@@ -636,9 +649,11 @@ object Study {
     fun previewDelays(
         scheduler: Scheduler,
         state: CardState,
-        now: Long
+        now: Long,
+        /** The card's presentation number in the study day; 1 when unknown. */
+        exposureInStudyDay: Int = 1
     ): Map<ReviewGrade, Long> = ReviewGrade.entries.associateWith { grade ->
-        scheduler.next(state, grade, now).dueAt - now
+        scheduler.next(state, grade, now, exposureInStudyDay).dueAt - now
     }
 
     /**

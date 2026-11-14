@@ -107,10 +107,11 @@ data class FsrsFitResult(
  *    bit-identical.
  *  - Imported cards replay from their stored post-review memory (a seed)
  *    instead of an unknown earlier history; the reference has no seeds.
- *  - The reference's optional schedule penalty (`enable_sched_penalties`,
- *    which Anki enables) is not implemented: it needs a differentiable
- *    interval simulation this app does not have, and it is not part of the
- *    default FSRS-7 recipe.
+ *  - The reference's optional schedule penalty (`enable_sched_penalties`) is
+ *    not implemented: it needs a differentiable interval simulation this app
+ *    does not have, and it is off by default. It is also absent from the fsrs
+ *    version Anki ships today (6.6.2), whose `ComputeParametersInput` has no
+ *    such field, so this is not a difference from Anki's Optimize.
  */
 object FsrsOptimizer {
 

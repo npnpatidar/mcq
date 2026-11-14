@@ -36,6 +36,10 @@ import kotlin.math.pow
  *    [SchedulerConfig.relearnMs] like SM-2's relearn path; the step ladder
  *    would add a second, parallel notion of "short interval" the study loop
  *    has no UI for. FSRS-7's fast trace still records the short-term gain.
+ *    The delay is bounded per study day, though: once a card has had
+ *    [MAX_EXPOSURES_PER_STUDY_DAY] exposures, another failure takes the
+ *    model's own interval instead of starting a ten-minute loop that would run
+ *    all evening (see [next]).
  *  - **One rounding rule, pinned to TS-FSRS.** Both the initial state and every
  *    updated state are rounded to 8 decimals ([round8]). TS-FSRS rounds both;
  *    the audited `fsrs-rs` build does not round at all. The difference is at
@@ -102,7 +106,27 @@ class FsrsScheduler private constructor(
 
     override fun initial(questionId: String): CardState = CardState(questionId = questionId)
 
-    override fun next(state: CardState, grade: ReviewGrade, now: Long): CardState {
+    override fun next(state: CardState, grade: ReviewGrade, now: Long): CardState =
+        next(state, grade, now, exposureInStudyDay = 1)
+
+    /**
+     * [next] with the card's presentation number within the current study day,
+     * 1-based: 1 for the day's first exposure of the card, then 2, 3, …
+     *
+     * A failure returns after [SchedulerConfig.relearnMs] while the learner is
+     * still working through the mistake. Uncapped that degenerates into a loop —
+     * the card is due again every ten minutes until the day rolls over — so from
+     * [MAX_EXPOSURES_PER_STUDY_DAY] exposures on, a failure takes the model's
+     * own interval and lands on a day boundary instead: the answer the reference
+     * scheduler gives on the very first lapse. Callers with no study-day count
+     * (replay, previews, statistics) use exposure 1 and see the plain behaviour.
+     */
+    override fun next(
+        state: CardState,
+        grade: ReviewGrade,
+        now: Long,
+        exposureInStudyDay: Int
+    ): CardState {
         val rating = grade.ordinal + 1
         val failed = grade == ReviewGrade.AGAIN
         val hadMemory = state.state != CardStateKind.NEW && state.stability > 0.0
@@ -147,11 +171,12 @@ class FsrsScheduler private constructor(
         }
 
         // A failure returns inside the sitting (real elapsed time, never
-        // snapped); anything else takes the FSRS interval from the start of
-        // the study day, as in Anki and SM-2.
+        // snapped) until the study day's exposure budget is spent; from then on
+        // it takes the FSRS interval from the start of the study day, as a pass
+        // does and as the reference scheduler does on every lapse.
         val interval: Int
         val dueAt: Long
-        if (failed) {
+        if (failed && exposureInStudyDay < MAX_EXPOSURES_PER_STUDY_DAY) {
             interval = 0
             dueAt = now + config.relearnMs
         } else {
@@ -587,6 +612,12 @@ class FsrsScheduler private constructor(
         const val DAY_MS = DayBoundary.DAY_MS
 
         const val PARAMETER_COUNT = 34
+
+        /**
+         * How many times one card may be presented in a study day before a
+         * further failure is spaced by the model instead of the relearn delay.
+         */
+        const val MAX_EXPOSURES_PER_STUDY_DAY = 3
 
         /** The ease scale difficulty is mirrored onto. Fixed: Anki's bounds. */
         const val EASE_FLOOR = 1.3

@@ -2103,6 +2103,19 @@ interface ReviewLogDao {
     suspend fun countCards(): Int
 
     /**
+     * Reviews of one card since [since] — the study day's exposure count for
+     * that card, which bounds the relearn delay (`FsrsScheduler`
+     * `MAX_EXPOSURES_PER_STUDY_DAY`). Read from the log rather than a counter
+     * column so it needs no schema of its own and survives a process kill.
+     * `(paperId, questionId, reviewedAt)` is indexed for it.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM review_log WHERE paperId = :paperId " +
+            "AND questionId = :questionId AND reviewedAt >= :since"
+    )
+    suspend fun countForCardSince(paperId: String, questionId: String, since: Long): Int
+
+    /**
      * Removes one question's logged reviews. The log is immutable per review,
      * but it is not a graveyard: deleting a question, bulk-deleting or moving
      * one across papers drops its schedule and its history in the same

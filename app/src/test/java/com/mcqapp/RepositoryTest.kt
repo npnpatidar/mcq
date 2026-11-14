@@ -616,6 +616,34 @@ class RepositoryTest {
     }
 
     @Test
+    fun theRelearnLoopStopsAfterThreeExposuresInTheStudyDay() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val relearn = com.mcqapp.domain.SchedulerConfig().relearnMs
+        val again = com.mcqapp.domain.ReviewGrade.AGAIN
+        var now = 1_000_000L
+
+        // The day's first two failures keep the card in the sitting.
+        repeat(2) {
+            val state = repository.recordStudyReview("p1", "q1", again, now = now)
+            assertEquals(0, state.intervalDays)
+            assertEquals(now + relearn, state.dueAt)
+            now += relearn
+        }
+
+        // The third hands it to the model instead of a third ten-minute delay.
+        val third = repository.recordStudyReview("p1", "q1", again, now = now)
+        assertTrue(third.intervalDays >= 1)
+        assertTrue(third.dueAt > now + relearn)
+
+        // Next study day the budget is fresh: the exposure count comes from the
+        // log's own window, so a process kill cannot carry a stale loop over.
+        val tomorrow = repository.recordStudyReview("p1", "q1", again, now = third.dueAt)
+        assertEquals(0, tomorrow.intervalDays)
+        assertEquals(third.dueAt + relearn, tomorrow.dueAt)
+    }
+
+    @Test
     fun editingAQuestionResetsItsSchedule() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repository.saveQuestion(question("q1", setOf("q1-a")))

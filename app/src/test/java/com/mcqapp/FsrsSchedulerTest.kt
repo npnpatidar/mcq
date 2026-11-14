@@ -532,6 +532,66 @@ class FsrsSchedulerTest {
     }
 
     @Test
+    fun aSecondExposureInAStudyDayStillRelearnsInTheSitting() {
+        val scheduler = exactScheduler()
+        val now = t0 + 3_600_000L
+        val next = scheduler.next(
+            scheduler.initial("q"),
+            ReviewGrade.AGAIN,
+            now,
+            exposureInStudyDay = 2
+        )
+        assertEquals(0, next.intervalDays)
+        assertEquals(now + SchedulerConfig().relearnMs, next.dueAt)
+        assertEquals(CardStateKind.LEARNING, next.state)
+    }
+
+    @Test
+    fun theThirdExposureTakesTheModelIntervalInsteadOfAnotherRelearn() {
+        val scheduler = exactScheduler()
+        val now = t0 + 3_600_000L
+        val next = scheduler.next(
+            scheduler.initial("q"),
+            ReviewGrade.AGAIN,
+            now,
+            exposureInStudyDay = FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY
+        )
+        assertTrue(next.intervalDays >= 1)
+        assertEquals(DayBoundary.dueAfter(now, next.intervalDays, 0, 0L), next.dueAt)
+        // It lapsed and has not passed since, so it is still relearning — just
+        // scheduled by the model rather than by the relearn delay.
+        assertEquals(CardStateKind.LEARNING, next.state)
+    }
+
+    @Test
+    fun theExposureBudgetEndsARelearningLoop() {
+        val scheduler = exactScheduler()
+        var state = scheduler.next(scheduler.initial("q"), ReviewGrade.GOOD, t0)
+        var now = state.dueAt
+
+        // The first two failures of the day keep the card in the sitting.
+        for (exposure in 1 until FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY) {
+            state = scheduler.next(state, ReviewGrade.AGAIN, now, exposureInStudyDay = exposure)
+            assertEquals(0, state.intervalDays)
+            assertEquals(CardStateKind.RELEARNING, state.state)
+            now += SchedulerConfig().relearnMs
+        }
+
+        // The third hands it back to the model, so the loop cannot outlive the
+        // study day.
+        state = scheduler.next(
+            state,
+            ReviewGrade.AGAIN,
+            now,
+            exposureInStudyDay = FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY
+        )
+        assertEquals(CardStateKind.RELEARNING, state.state)
+        assertTrue(state.intervalDays >= 1)
+        assertEquals(DayBoundary.dueAfter(now, state.intervalDays, 0, 0L), state.dueAt)
+        assertTrue(state.dueAt > now + SchedulerConfig().relearnMs)
+    }
+
+    @Test
     fun desiredRetentionScalesTheInterval() {
         val state = exactScheduler().next(exactScheduler().initial("q"), ReviewGrade.GOOD, t0)
         val interval = { target: Double ->

@@ -30,11 +30,16 @@ import kotlinx.coroutines.yield
  * Safety:
  *  - **Resumable.** The last processed `review_log` id is persisted, so a
  *    process kill costs one page, not the whole replay.
- *  - **Races the study loop safely.** The replay never holds a lock; the write
- *    is a compare-and-set on `lastReviewedAt`, so if a review landed in the
- *    meantime that review wins. It was produced by the FSRS-7 engine anyway
- *    (using the `Sf = S` fallback), from a state at least as fresh as the
- *    replay's.
+ *  - **Races the study loop safely.** The replay never holds a lock, and the
+ *    write is a compare-and-set on the **last logged review's** timestamp, not
+ *    on a stamp read separately: history and predicate describe the same
+ *    snapshot. A review that committed between the history read and the write
+ *    advanced `lastReviewedAt`, so the predicate misses and that review wins.
+ *    (Reading a stamp after the history could record the newer timestamp and
+ *    let the stale replay match — the race this ordering removes.)
+ *  - **Repairs dropped fast traces.** Rows saved before the write-side fix
+ *    lost `stabilityFast`; a one-shot repair copies the latest review-log
+ *    `stabilityFastAfter`, which is the value the review actually produced.
  *  - **Cards with no log.** A pure Anki import carries memory but no review
  *    history. Their fast trace is set to the slow one at the end — the same
  *    "unknown fast trace" rule the scheduler applies at read time, never the
@@ -55,6 +60,11 @@ internal class Fsrs7Upgrade(
      */
     suspend fun runIfNeeded(onProgress: (Int, Int) -> Unit = { _, _ -> }) =
         withContext(Dispatchers.IO) {
+            if (!settings.fastTraceRepairDone()) {
+                val repaired = db.cardStateDao().repairFastStabilityFromLog()
+                settings.completeFastTraceRepair()
+                Logger.i("FSRS7", "fast-trace repair: $repaired row(s) restored from the log")
+            }
             if (settings.fsrs7RebuildDone()) return@withContext
             val startedAt = System.currentTimeMillis()
             val config = settings.schedulerConfigNow()
@@ -77,20 +87,17 @@ internal class Fsrs7Upgrade(
                     .rowsForQuestions(questionIds)
                     .filter { (it.paperId to it.questionId) in keys }
                     .groupBy { it.paperId to it.questionId }
-                // Stamps are read *before* the transaction: that is what makes
-                // the write a compare-and-set rather than a blind overwrite.
-                val stamps = db.cardStateDao()
-                    .memoryStampsFor(questionIds)
-                    .associateBy { it.paperId to it.questionId }
 
                 db.withTransaction {
                     for ((cardKey, rows) in rowsByCard) {
-                        val stamp = stamps[cardKey] ?: continue
                         val rebuilt = replay(rows, scheduler) ?: continue
+                        // The predicate is the replay's own last review, so a
+                        // review that committed after these rows were read
+                        // makes the stamp differ and this write a no-op.
                         db.cardStateDao().rebuildMemoryIfUnchanged(
                             paperId = cardKey.first,
                             questionId = cardKey.second,
-                            lastReviewedAt = stamp.lastReviewedAt,
+                            lastReviewedAt = rebuilt.lastReviewedAt,
                             stability = rebuilt.stability,
                             stabilityFast = rebuilt.stabilityFast,
                             difficulty = rebuilt.difficulty
@@ -121,7 +128,9 @@ internal class Fsrs7Upgrade(
     private class Rebuilt(
         val stability: Double,
         val stabilityFast: Double,
-        val difficulty: Double
+        val difficulty: Double,
+        /** The rewritten history's last review — the compare-and-set stamp. */
+        val lastReviewedAt: Long
     )
 
     /**
@@ -171,7 +180,8 @@ internal class Fsrs7Upgrade(
         return Rebuilt(
             stability = state.stability,
             stabilityFast = state.stabilityFast,
-            difficulty = state.difficulty
+            difficulty = state.difficulty,
+            lastReviewedAt = state.lastReviewedAt
         )
     }
 

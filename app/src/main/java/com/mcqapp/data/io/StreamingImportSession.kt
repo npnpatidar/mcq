@@ -70,6 +70,9 @@ internal class StreamingImportSession(
     private var paperOpen = false
     private var paperIndex = 0
     private var effectivePaperId = ""
+
+    /** The file's own id for the open paper — the schedule map's key prefix. */
+    private var sourcePaperId = ""
     private var isNewPaper = false
     private var categoryIndex = 0
     private val catsInPaper = mutableListOf<CategoryEntity>()
@@ -282,6 +285,7 @@ internal class StreamingImportSession(
             header
         }
         val paperMatch = matchImportedPaper(db, editedHeader.id, editedHeader.title)
+        sourcePaperId = editedHeader.id
         effectivePaperId = paperMatch?.paper?.id ?: editedHeader.id
         isNewPaper = paperMatch == null
         if (paperMatch != null) {
@@ -617,15 +621,20 @@ internal class StreamingImportSession(
             if (!contentChanged) {
                 // Accepted, so a tail `scheduling` entry naming it applies at
                 // [finish]: remember the paper it landed under, the row id it was
-                // written under, and the hash of its stored bytes.
-                acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, effectiveQuestionId, contentHash))
+                // written under, and the hash of its stored bytes. Stored under
+                // both the composite key and the bare question id, so an
+                // exporter that keys per paper and one that does not both
+                // resolve.
+                val target = ScheduleTarget(effectivePaperId, effectiveQuestionId, contentHash)
+                acceptedSchedules?.put(dto.id, target)
+                acceptedSchedules?.put(cardScheduleKey(sourcePaperId, dto.id), target)
 
                 // Review progress is applied only to a question this import
                 // accepted, exactly as the whole-file importer applies the file's
                 // `scheduling` map. The hash is the stored bytes' hash, because
                 // that is what the study session recomputes: a mismatch reads as
                 // edited content and would reset the card on the next load.
-                schedules[dto.id]?.let { schedule ->
+                (schedules[dto.id] ?: schedules[cardScheduleKey(sourcePaperId, dto.id)])?.let { schedule ->
                     db.cardStateDao().upsert(
                         CardStateEntity(
                             paperId = effectivePaperId,

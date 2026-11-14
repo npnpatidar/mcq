@@ -85,9 +85,12 @@ class FsrsFitInsufficientData(message: String) : IllegalStateException(message)
  *    there is no closed-form initial-stability fit and no outlier filter: the
  *    fit starts from the official defaults and the history as recorded.
  *  - **Loss**: recency-weighted binary cross entropy of the predicted recall
- *    probability, p clamped to [1e-4, 1-1e-4], replayed through the app's own
+ *    probability, p clamped to [1e-5, 1-1e-5], replayed through the app's own
  *    [FsrsScheduler] so training and scheduling can never disagree. Recency is
- *    the reference's `0.0667 + 0.9333·(i/n)^11.25`.
+ *    the reference's `0.0667 + 0.9333·(i/n)^11.25`. Training and gradients use
+ *    the **unnormalized** weighted sum, as upstream does, so the L2 term keeps
+ *    its upstream scale; the mean is only reported to the UI
+ *    ([FsrsFitResult.lossBefore]/[FsrsFitResult.lossAfter]).
  *  - **Optimizer**: Adam (β 0.70/0.98, ε 1e-8) on a cosine-annealed learning
  *    rate of 0.0118 over 9 epochs of card-windowed ~512-item batches, L2
  *    (0.3333, per-weight σ) toward the defaults, weights clipped to the
@@ -129,8 +132,9 @@ object FsrsOptimizer {
     internal const val MIN_ITEMS_FOR_DEFAULTS = 8
     internal const val MIN_ITEMS_FOR_TRAINING = 64
 
-    private const val PROBABILITY_FLOOR = 0.0001
-    private const val PROBABILITY_CEILING = 0.9999
+    /** `analytic_v7.rs`'s BCE floor; the ceiling mirrors it. */
+    private const val PROBABILITY_FLOOR = 0.00001
+    private const val PROBABILITY_CEILING = 0.99999
     private const val FD_STEP = 1e-5
 
     /** Per-weight σ the reference L2 penalty normalizes by (fsrs-rs training_v7). */
@@ -264,7 +268,11 @@ object FsrsOptimizer {
         // loss is measured.
         onProgress(0, totalSteps)
 
-        val lossBefore = evaluateBatch(currentParameters.toDoubleArray(), prepared, groupedTerms)
+        val lossBefore = evaluateBatchLoss(
+            currentParameters.toDoubleArray(),
+            prepared,
+            groupedTerms
+        ).mean
 
         // The reference returns the initialized (default) weights untouched
         // when the trainset is thin, or when nothing in it has more than one
@@ -274,7 +282,7 @@ object FsrsOptimizer {
             hasLongTermDepth &&
             groupedTerms.isNotEmpty()
         if (!enoughToTrain) {
-            val lossAfter = evaluateBatch(initialParameters, prepared, groupedTerms)
+            val lossAfter = evaluateBatchLoss(initialParameters, prepared, groupedTerms).mean
             return FsrsFitResult(
                 parameters = initialParameters.toList(),
                 predictions = lossTerms.size,
@@ -309,7 +317,7 @@ object FsrsOptimizer {
         val clipped = weights.copyOf()
         for (i in 0 until 4) clipped[i] = smoothed[i]
         clipInPlace(clipped)
-        val lossAfter = evaluateBatch(clipped, prepared, groupedTerms)
+        val lossAfter = evaluateBatchLoss(clipped, prepared, groupedTerms).mean
         return FsrsFitResult(
             parameters = clipped.toList(),
             predictions = lossTerms.size,
@@ -419,25 +427,60 @@ object FsrsOptimizer {
         )
     }
 
-    /** Whole cards in time order, ~[BATCH_SIZE] items per window. */
+    /**
+     * [batchGroups]' layout over the cards that actually have items, in card
+     * order. Whole cards, so a card's sequence never spans two gradients.
+     */
     private fun windowedBatches(
         items: List<ItemRef>,
         prepared: List<PreparedCard>,
         weightByCard: Array<DoubleArray>
     ): List<List<CardTerms>> {
         if (items.isEmpty()) return emptyList()
-        val byCard = items.groupBy { it.card }.toList()
-            .sortedWith(compareBy({ (card, _) -> prepared[card].times.last() }, { it.first }))
-        val batches = ArrayList<List<CardTerms>>()
-        var current = ArrayList<ItemRef>()
-        for ((_, refs) in byCard) {
-            current.addAll(refs)
-            if (current.size >= BATCH_SIZE) {
-                batches += groupTerms(current, prepared, weightByCard)
-                current = ArrayList()
-            }
+        val refsByCard = items.groupBy { it.card }
+        val cardOrder = refsByCard.keys.sorted()
+        val sizes = IntArray(cardOrder.size) { refsByCard.getValue(cardOrder[it]).size }
+        return batchGroups(sizes).map { group ->
+            groupTerms(
+                group.flatMap { refsByCard.getValue(cardOrder[it]) },
+                prepared,
+                weightByCard
+            )
         }
-        if (current.isNotEmpty()) batches += groupTerms(current, prepared, weightByCard)
+    }
+
+    /**
+     * The reference's batch layout over card sizes (`training.rs`
+     * `build_windowed_batches`): cards ordered by `(full history length, card
+     * id)` — [cardSizes] is already in card-id order, so the index breaks
+     * ties — and a window is closed **before** a card that would take it past
+     * [batchSize].
+     *
+     * The old time-ordered, post-flush window let a long card push a batch far
+     * past 512 items, changing batch membership, the effective learning rate
+     * and memory use. A single card larger than the window still forms its own
+     * (oversized) batch, as upstream does.
+     *
+     * @return batches as indices into [cardSizes].
+     */
+    internal fun batchGroups(
+        cardSizes: IntArray,
+        batchSize: Int = BATCH_SIZE
+    ): List<List<Int>> {
+        val order = cardSizes.indices.sortedWith(compareBy({ cardSizes[it] }, { it }))
+        val batches = ArrayList<List<Int>>()
+        var current = ArrayList<Int>()
+        var count = 0
+        for (card in order) {
+            if (current.isNotEmpty() && count + cardSizes[card] > batchSize) {
+                batches += current
+                current = ArrayList()
+                count = 0
+            }
+            current += card
+            count += cardSizes[card]
+        }
+        if (current.isNotEmpty()) batches += current
         return batches
     }
 
@@ -519,7 +562,8 @@ object FsrsOptimizer {
                     val up = weights.copyOf().also { it[index] += step }
                     val down = weights.copyOf().also { it[index] -= step }
                     results += index to
-                        ((evaluateBatch(up, prepared, batch) - evaluateBatch(down, prepared, batch)) /
+                        ((evaluateBatchLoss(up, prepared, batch).sum -
+                            evaluateBatchLoss(down, prepared, batch).sum) /
                             (2.0 * step))
                     coroutineContext.ensureActive()
                 }
@@ -557,7 +601,13 @@ object FsrsOptimizer {
      * Adam step and by [clip].
      */
     private fun clipInPlace(weights: DoubleArray) {
+        val defaults = FsrsScheduler.DEFAULT_FSRS_PARAMETERS
         for (i in weights.indices) {
+            // `NaN.coerceIn(a, b)` is NaN: neither comparison holds, so a NaN
+            // would survive a bare box clamp and poison every later step. The
+            // shipped default is the deterministic, in-bounds replacement;
+            // infinities are already handled by the clamp itself.
+            if (weights[i].isNaN()) weights[i] = defaults[i]
             weights[i] = weights[i].coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i])
         }
         // Initial stabilities must not invert: the better the grade, the longer
@@ -571,17 +621,27 @@ object FsrsOptimizer {
 
     // --- loss --------------------------------------------------------------
 
+    /** The unnormalized weighted BCE loss and its total weight. */
+    private class BatchLoss(val sum: Double, val denominator: Double) {
+        /** The mean loss — what the UI reports; never the training objective. */
+        val mean: Double get() = if (denominator == 0.0) 0.0 else sum / denominator
+    }
+
     /**
-     * Mean recency-weighted log loss over [terms]: replays each card through
+     * The recency-weighted log loss over [terms]: replays each card through
      * [FsrsScheduler] at its own fractional gaps and scores the predicted
      * recall before every predicted review.
+     *
+     * [BatchLoss.sum] is the **unnormalized** weighted sum upstream trains on.
+     * Dividing it by weight here would leave the upstream-scaled L2 term
+     * disproportionately strong, so the mean is computed only for reporting.
      */
-    private fun evaluateBatch(
+    private fun evaluateBatchLoss(
         parameters: DoubleArray,
         prepared: List<PreparedCard>,
         terms: List<CardTerms>
-    ): Double {
-        if (terms.isEmpty()) return 0.0
+    ): BatchLoss {
+        if (terms.isEmpty()) return BatchLoss(0.0, 0.0)
         val scheduler = FsrsScheduler(
             parameters = parameters.toList(),
             desiredRetention = FsrsScheduler.DEFAULT_DESIRED_RETENTION,
@@ -610,6 +670,9 @@ object FsrsOptimizer {
                 pos += 1
             }
         }
-        return if (denominator == 0.0) 0.0 else -numerator / denominator
+        // The running numerator accumulates log-likelihood (negative loss); the
+        // training objective is its negation, unnormalized, exactly as upstream
+        // sums it.
+        return BatchLoss(-numerator, denominator)
     }
 }

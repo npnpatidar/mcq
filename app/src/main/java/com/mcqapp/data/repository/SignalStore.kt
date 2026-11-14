@@ -4,7 +4,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.getCountersByIdsChunked
 import com.mcqapp.data.local.getGuessCountsByIdsChunked
 import com.mcqapp.data.local.getSignalRowsByCategoriesChunked
-import com.mcqapp.data.local.getSignalsByIdsChunked
+import com.mcqapp.data.local.getSignalsByPaperChunked
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.FsrsScheduler
@@ -21,10 +21,12 @@ import com.mcqapp.domain.signals.Signals
  * `question_stats`, `card_state` and `review_log`, and never writes Study state.
  * A missing counter row, card or guess sample becomes the neutral prior in
  * [QuestionSignals], not a zero that would look like perfect performance.
+ *
+ * Retention is computed with the same fitted weights and target retention the
+ * study scheduler uses ([SettingsStore.schedulerConfigNow]), so a signal never
+ * describes a different model than the one that will schedule the card.
  */
-class SignalStore(private val db: AppDatabase) {
-
-    private val scheduler = FsrsScheduler()
+internal class SignalStore(private val db: AppDatabase, private val settings: SettingsStore) {
 
     /**
      * One signal per question in [scopeIds], or the whole paper when the scope
@@ -43,12 +45,19 @@ class SignalStore(private val db: AppDatabase) {
         }
         if (questions.isEmpty()) return emptyList()
 
+        val config = settings.schedulerConfigNow()
+        val scheduler = FsrsScheduler(
+            desiredRetention = config.desiredRetention,
+            config = config
+        )
         val ids = questions.map { it.questionId }
         val counters = db.questionStatsDao()
             .getCountersByIdsChunked(ids)
             .associateBy { it.questionId }
+        // Scoped by paper: a question id can exist in two papers, and the
+        // signals of one must never read the other's card state.
         val cards = db.cardStateDao()
-            .getSignalsByIdsChunked(ids)
+            .getSignalsByPaperChunked(paperId, ids)
             .associateBy { it.questionId }
         val guesses = db.reviewLogDao()
             .getGuessCountsByIdsChunked(ids)
@@ -62,6 +71,10 @@ class SignalStore(private val db: AppDatabase) {
             val state = card?.let {
                 CardState(
                     questionId = it.questionId,
+                    // Copied so a card with memory but no review timestamp
+                    // (an imported card) reports its real elapsed time in the
+                    // signal retention instead of a clamped one day.
+                    intervalDays = it.intervalDays,
                     dueAt = it.dueAt,
                     reps = it.reviewCount,
                     lapses = it.lapses,

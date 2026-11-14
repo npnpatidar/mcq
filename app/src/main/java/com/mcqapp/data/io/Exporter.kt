@@ -145,7 +145,9 @@ class Exporter(private val db: AppDatabase) {
     }
 
     /**
-     * The question-keyed review map, one keyset page at a time.
+     * The card-keyed review map, one keyset page at a time. The key is
+     * `(paperId, questionId)` ([cardScheduleKey]) so two papers that hold the
+     * same question keep independent schedules.
      *
      * This is what the streaming rewrite of the whole-bank export dropped: the
      * plain JSON export wrote `{}` here, so a bank exported and imported lost
@@ -165,7 +167,9 @@ class Exporter(private val db: AppDatabase) {
                 if (state.reps <= 0 && state.dueAt <= 0L) continue
                 if (!first) writer.write(",")
                 first = false
-                writer.write(JsonPrimitive(state.questionId).toString())
+                writer.write(
+                    JsonPrimitive(cardScheduleKey(state.paperId, state.questionId)).toString()
+                )
                 writer.write(":")
                 writer.write(json.encodeToString(CardScheduleDto.serializer(), state.toCardScheduleDto()))
             }
@@ -234,13 +238,17 @@ class Exporter(private val db: AppDatabase) {
             bookmarks = bookmarks,
             passages = db.passageDao().getAll().map { it.toPassageDto() },
             attempts = attemptDtos,
-            // Review progress travels with the JSON backup, keyed by question
-            // id. The full per-paper rows ride in the backup zip's study.json
+            // Review progress travels with the JSON backup, keyed by the
+            // composite card identity so per-paper schedules cannot collapse.
+            // The full per-paper rows ride in the backup zip's study.json
             // instead, which is why they are not built there.
             scheduling = if (withScheduling) {
                 db.cardStateDao().getAll()
                     .filter { it.reps > 0 || it.dueAt > 0L }
-                    .associate { state -> state.questionId to state.toCardScheduleDto() }
+                    .associate { state ->
+                        cardScheduleKey(state.paperId, state.questionId) to
+                            state.toCardScheduleDto()
+                    }
             } else {
                 emptyMap()
             }

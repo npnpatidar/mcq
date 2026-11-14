@@ -310,6 +310,33 @@ class RepositoryTest {
         assertEquals(0, repository.getStudyCounts("p1", now = drained).fresh)
     }
 
+    /**
+     * FSRS-7 keeps two traces, and both have to survive the entity mapper.
+     * The fast trace used to be dropped on save, so the next graded review
+     * silently ran on `Sf = S` after a reload.
+     */
+    @Test
+    fun aGradePersistsItsFastTraceAndTheNextGradeBuildsOnIt() = runBlocking {
+        repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+        repository.saveQuestion(question("q1", setOf("q1-a")))
+        val day = 86_400_000L
+        val first = repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L
+        )
+        assertTrue("the first grade must produce a fast trace", first.stabilityFast > 0)
+        val stored = repository.cardState("p1", "q1")!!
+        assertEquals(first.stabilityFast, stored.stabilityFast, 0.0)
+
+        val second = repository.recordStudyReview(
+            "p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L + 5 * day
+        )
+        assertEquals(
+            second.stabilityFast,
+            repository.cardState("p1", "q1")!!.stabilityFast,
+            0.0
+        )
+    }
+
     @Test
     fun theReviewLogKeepsOrderedHistoryAcrossSittings() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")

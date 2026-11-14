@@ -169,7 +169,9 @@ data class SchedulerConfig(
     val leechThreshold: Int = 8,
     /**
      * Recall probability future intervals target (FSRS), clamped 0.75..0.97.
-     * 0.9 is the FSRS default: at it, a card's interval equals its stability.
+     * 0.9 is the FSRS default. The interval is *solved* for that target from
+     * the difficulty-modulated mixture curve: it is not the stability, and
+     * `R(t = S)` is not 0.9 (FSRS-6's identity is gone).
      */
     val desiredRetention: Double = 0.9,
     /** How the next card is picked: memory first, or new cards explored. */

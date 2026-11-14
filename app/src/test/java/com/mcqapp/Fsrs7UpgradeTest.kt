@@ -193,7 +193,9 @@ class Fsrs7UpgradeTest {
      */
     @Test
     fun anInterruptedRebuildResumesFromItsCursor() = runBlocking {
-        db.cardStateDao().upsert(card(stability = 10.0, difficulty = 5.0))
+        db.cardStateDao().upsert(
+            card(stability = 10.0, difficulty = 5.0, lastReviewedAt = t0 + 5 * day)
+        )
         insertLog(3, t0, stabilityAfter = 5.0, difficultyAfter = 5.0, stateBefore = "NEW")
         insertLog(3, t0 + 5 * day, stabilityAfter = 10.0, difficultyAfter = 5.0)
         // Simulate a kill after the first page: the cursor is persisted and the
@@ -252,6 +254,64 @@ class Fsrs7UpgradeTest {
                 difficulty = 3.5
             )
         )
+    }
+
+    /**
+     * The history and the CAS predicate are the same snapshot: when the last
+     * logged review does not match the card's stamp, the replay cannot claim
+     * to describe this row and writes nothing. The old code read the stamp
+     * separately, which is how a review that landed between the two reads was
+     * overwritten by a stale replay.
+     */
+    @Test
+    fun aHistoryThatDisagreesWithTheCardStampWritesNoMemory() = runBlocking {
+        db.cardStateDao().upsert(
+            card(stability = 7.0, difficulty = 6.0, lastReviewedAt = t0 + 2 * day)
+        )
+        insertLog(3, t0, stabilityAfter = 5.0, difficultyAfter = 6.0, stateBefore = "NEW")
+        insertLog(3, t0 + day, stabilityAfter = 6.0, difficultyAfter = 6.0)
+
+        repository.rebuildFsrs7Memory()
+
+        val row = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(7.0, row.stability, 0.0)
+        assertEquals(6.0, row.difficulty, 0.0)
+        // The one-shot backstop still fills the fast trace from the slow one.
+        assertEquals(7.0, row.stabilityFast, 0.0)
+    }
+
+    /**
+     * The one-shot repair for rows saved while the entity mapper dropped the
+     * fast trace: the review log's latest `stabilityFastAfter` is authoritative
+     * and restored, without replaying anything.
+     */
+    @Test
+    fun theOneShotRepairRestoresADroppedFastTrace() = runBlocking {
+        db.cardStateDao().upsert(
+            card(stability = 4.0, difficulty = 5.0, lastReviewedAt = t0 + day)
+        )
+        db.reviewLogDao().insert(
+            ReviewLogEntity(
+                paperId = "p1",
+                questionId = "q1",
+                rating = 3,
+                reviewedAt = t0 + day,
+                stateBefore = "NEW",
+                stabilityAfter = 4.0,
+                difficultyAfter = 5.0,
+                stabilityFastAfter = 2.75,
+                intervalDaysAfter = 3
+            )
+        )
+        // Isolate the repair from the replay.
+        settings.completeFsrs7Rebuild()
+
+        repository.rebuildFsrs7Memory()
+
+        val row = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(2.75, row.stabilityFast, 0.0)
+        // Still only memory: the visible schedule did not move.
+        assertEquals(3, row.intervalDays)
     }
 
     // --- the seeded (imported) history rule --------------------------------

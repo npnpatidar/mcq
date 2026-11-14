@@ -583,7 +583,16 @@ class Importer(
                         // the user has since moved on with. A question whose
                         // content changed gets no schedule either: the file's
                         // progress describes the old content.
-                        if (!contentChanged) restoreScheduling[questionDto.id]?.let { schedule ->
+                        // Composite key first (this build's export), then the
+                        // bare question id for files written before it and the
+                        // Anki path, whose map is scoped to one paper.
+                        val schedule = if (contentChanged) {
+                            null
+                        } else {
+                            restoreScheduling[cardScheduleKey(paperDto.id, questionDto.id)]
+                                ?: restoreScheduling[questionDto.id]
+                        }
+                        schedule?.let { schedule ->
                             // The hash of the bytes as stored, because that is
                             // what the study session recomputes it from: a
                             // mismatch reads as edited content and would reset

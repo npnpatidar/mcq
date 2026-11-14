@@ -286,9 +286,12 @@ private fun AnkiSchedulerBody(
     }
     when (val state = fsrsOptimizeState) {
         is FsrsOptimizeState.Done -> {
+            // The tuner stores the fit only when it is strictly better; an
+            // equal or worse result keeps the current weights and says so.
+            val improved = state.result.lossAfter < state.result.lossBefore
             Text(
                 stringResource(
-                    R.string.optimize_fsrs_done,
+                    if (improved) R.string.optimize_fsrs_done else R.string.optimize_fsrs_done_kept,
                     state.result.predictions,
                     state.result.cards,
                     String.format(Locale.US, "%.4f", state.result.lossBefore),

@@ -88,7 +88,7 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     private val paperStore = PaperStore(db, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
-    private val signalStore = SignalStore(db)
+    private val signalStore = SignalStore(db, settings)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings)
     private val ladderController = LadderController(db, settings, ladderStore, statsStore)
@@ -214,9 +214,10 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     fun fsrsReviewCount(): Flow<Int> = fsrsTuner.observeReviewCount()
 
     /**
-     * Fits the 21 weights to the whole review log and stores them; nothing
-     * else is touched. @throws com.mcqapp.domain.FsrsFitInsufficientData
-     * when the log is too thin to fit.
+     * Fits the 34 weights to the whole review log and stores them when the fit
+     * is strictly better than the current set; nothing else is touched.
+     * @throws com.mcqapp.domain.FsrsFitInsufficientData when the log is too
+     * thin to fit.
      */
     suspend fun optimizeFsrsParameters(
         onProgress: (Int, Int) -> Unit = { _, _ -> }
@@ -405,6 +406,13 @@ class McqRepository(private val db: AppDatabase, private val context: Context) {
     suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
         settings.restore(snapshot)
         ladderStore.seedAfterRestore()
+        // A restored install can carry pre-FSRS-7 card rows — a v26 backup, or
+        // one taken before the rebuild finished — and the restore itself
+        // clears the done flag. Rebuild here instead of leaving `Sf = 0` (read
+        // as `Sf = S`) until the next process start. `runIfNeeded` is
+        // idempotent, so a backup that already carries FSRS-7 rows returns
+        // after the one-shot fast-trace repair.
+        rebuildFsrs7Memory()
     }
 
     // --- search & storage (no collaborator: they span everything) ---

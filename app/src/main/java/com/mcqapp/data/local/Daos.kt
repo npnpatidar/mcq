@@ -213,17 +213,6 @@ data class ReviewCardPageRow(
     val firstRowId: Long
 )
 
-/**
- * The compare-and-set stamp of one card row: [lastReviewedAt] as it stood
- * *before* the FSRS-7 replay started. A review that lands mid-rebuild advances
- * it, so the rebuild's update misses and the live review wins.
- */
-data class CardMemoryStamp(
-    val paperId: String,
-    val questionId: String,
-    val lastReviewedAt: Long
-)
-
 @Dao
 interface PassageDao {
     @Query("SELECT * FROM passages WHERE id = :id")
@@ -1618,11 +1607,11 @@ interface CardStateDao {
      * hash to invalidate a stale memory estimate.
      */
     @Query(
-        "SELECT questionId, difficulty, stability, stabilityFast, reviewCount, lapses, leech, " +
-            "dueAt, lastReviewedAt, contentHash, cardState " +
-            "FROM card_state WHERE questionId IN (:ids)"
+        "SELECT questionId, intervalDays, difficulty, stability, stabilityFast, reviewCount, " +
+            "lapses, leech, dueAt, lastReviewedAt, contentHash, cardState " +
+            "FROM card_state WHERE paperId = :paperId AND questionId IN (:ids)"
     )
-    suspend fun getSignalsByIds(ids: List<String>): List<CardSignalRow>
+    suspend fun getSignalsByPaper(paperId: String, ids: List<String>): List<CardSignalRow>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(state: CardStateEntity)
@@ -1632,11 +1621,11 @@ interface CardStateDao {
 
     /**
      * The FSRS-7 rebuild's only write. Compare-and-set on `lastReviewedAt`:
-     * [lastReviewedAt] is the stamp observed *before* the replay, so a review
-     * that landed in between advanced that timestamp and the predicate misses
-     * — the live review wins. Nothing but the three memory numbers is touched:
-     * due dates, intervals and counters keep the schedule the learner already
-     * sees.
+     * [lastReviewedAt] is the **last review in the replayed history**, so a
+     * review that committed after those rows were read advanced the row's
+     * timestamp and the predicate misses — the live review wins. Nothing but
+     * the three memory numbers is touched: due dates, intervals and counters
+     * keep the schedule the learner already sees.
      *
      * @return 1 when the row was rebuilt, 0 when a newer review owns it.
      */
@@ -1656,17 +1645,6 @@ interface CardStateDao {
     ): Int
 
     /**
-     * The CAS stamps of the given questions, read before their histories are
-     * replayed. Keyed by (paperId, questionId) by the caller, because a
-     * question id alone can appear in more than one paper.
-     */
-    @Query(
-        "SELECT paperId, questionId, lastReviewedAt FROM card_state " +
-            "WHERE questionId IN (:questionIds)"
-    )
-    suspend fun memoryStampsFor(questionIds: Collection<String>): List<CardMemoryStamp>
-
-    /**
      * Cards with memory but no fast trace get `Sf = S` once the log replay has
      * finished. This is the only place the fallback is written down, and it is
      * the same rule the scheduler applies at read time.
@@ -1678,6 +1656,32 @@ interface CardStateDao {
             "WHERE stability > 0 AND stabilityFast = 0"
     )
     suspend fun fillMissingFastStability(): Int
+
+    /**
+     * The one-shot repair for rows written while [com.mcqapp.data.repository.StudyStore]
+     * still dropped the fast trace on save. The authoritative value is the
+     * latest review-log row's `stabilityFastAfter`; a card whose log carries no
+     * fast trace at all (a genuine legacy/imported row) is left at zero, which
+     * the scheduler still reads as "unknown".
+     *
+     * A concurrent review writes `stabilityFast > 0` in the same transaction
+     * as its log row, so the `stabilityFast = 0` predicate either sees the
+     * whole review or none of it — the repair cannot clobber it.
+     *
+     * @return how many rows were repaired.
+     */
+    @Query(
+        "UPDATE card_state SET stabilityFast = (" +
+            "SELECT rl.stabilityFastAfter FROM review_log rl " +
+            "WHERE rl.paperId = card_state.paperId AND rl.questionId = card_state.questionId " +
+            "AND rl.stabilityFastAfter IS NOT NULL AND rl.stabilityFastAfter > 0 " +
+            "ORDER BY rl.reviewedAt DESC, rl.id DESC LIMIT 1) " +
+            "WHERE stabilityFast = 0 AND stability > 0 AND EXISTS (" +
+            "SELECT 1 FROM review_log rl " +
+            "WHERE rl.paperId = card_state.paperId AND rl.questionId = card_state.questionId " +
+            "AND rl.stabilityFastAfter IS NOT NULL AND rl.stabilityFastAfter > 0)"
+    )
+    suspend fun repairFastStabilityFromLog(): Int
 
     @Query("DELETE FROM card_state WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
@@ -1935,17 +1939,14 @@ interface CardStateDao {
     ): CardStateEntity?
 
     /**
-     * The due review card `Study.pools` would rank first: the one whose
-     * predicted retention is lowest. Retention is a strictly decreasing
-     * function of `elapsed / stability`, so the ranking is that ratio
-     * descending, computed in SQL so `LIMIT 1` reads one row instead of the
-     * whole backlog. `stability <= 0` is retention 0 and sorts ahead of every
-     * positive ratio; ties fall to the oldest due date then authored order,
-     * the same comparator `Study.pools` uses. [dayMs] converts the millisecond
-     * gap to days so both branches of the ratio share one unit.
+     * The paper's due review candidates, in authored order.
      *
-     * A due leech is an ordinary review here, exactly as in `Study.pools`; the
-     * leech drill filters them separately.
+     * SQL deliberately does **not** rank these: FSRS-7 retention is the
+     * difficulty-modulated mixture of the fast and slow traces, so the FSRS-6
+     * `elapsed / stability` ordering can pick a card that is not the
+     * lowest-retention one. The caller ranks with `Study.bestReview`, the same
+     * comparator as the pool. A due leech is an ordinary review here, exactly
+     * as in `Study.pools`; the leech drill filters them separately.
      */
     @Query(
         "SELECT cs.* FROM card_state cs " +
@@ -1955,27 +1956,14 @@ interface CardStateDao {
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
             "AND cs.contentHash = q.contentHash " +
             "AND cs.cardState NOT IN ('LEARNING','RELEARNING') " +
-            "ORDER BY " +
-            "CASE WHEN cs.stability <= 0.0 THEN 0 ELSE 1 END ASC, " +
-            "CASE WHEN cs.stability <= 0.0 THEN 0.0 " +
-            "WHEN cs.lastReviewedAt = 0 " +
-            "THEN MAX(cs.intervalDays, 1) * 1.0 / cs.stability " +
-            "ELSE (:now - cs.lastReviewedAt) * 1.0 / (:dayMs * cs.stability) END DESC, " +
-            "cs.dueAt ASC, " +
-            "c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
     )
-    suspend fun bestDueReviewForPaper(
-        paperId: String,
-        now: Long,
-        dayMs: Double
-    ): CardStateEntity?
+    suspend fun dueReviewsForPaper(paperId: String, now: Long): List<CardStateEntity>
 
     /**
-     * [bestDueReviewForPaper] restricted to an explicit category selection: the
-     * scope is one predicate on the `WHERE` line, while the retention
-     * expression and the `cs.dueAt ASC, c.sortOrder, c.title, q.sortOrder,
-     * q.rowid` tie-break stay byte-identical. The caller picks the global
-     * winner across chunks with the same comparator.
+     * [dueReviewsForPaper] restricted to an explicit category selection. The
+     * caller concatenates the chunks and ranks the whole set, so a chunk
+     * boundary cannot hide the true winner.
      */
     @Query(
         "SELECT cs.* FROM card_state cs " +
@@ -1986,21 +1974,13 @@ interface CardStateDao {
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
             "AND cs.contentHash = q.contentHash " +
             "AND cs.cardState NOT IN ('LEARNING','RELEARNING') " +
-            "ORDER BY " +
-            "CASE WHEN cs.stability <= 0.0 THEN 0 ELSE 1 END ASC, " +
-            "CASE WHEN cs.stability <= 0.0 THEN 0.0 " +
-            "WHEN cs.lastReviewedAt = 0 " +
-            "THEN MAX(cs.intervalDays, 1) * 1.0 / cs.stability " +
-            "ELSE (:now - cs.lastReviewedAt) * 1.0 / (:dayMs * cs.stability) END DESC, " +
-            "cs.dueAt ASC, " +
-            "c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
     )
-    suspend fun bestDueReviewForCategories(
+    suspend fun dueReviewsForCategories(
         paperId: String,
         categoryIds: List<String>,
-        now: Long,
-        dayMs: Double
-    ): CardStateEntity?
+        now: Long
+    ): List<CardStateEntity>
 }
 
 /**
@@ -2054,8 +2034,10 @@ interface ReviewLogDao {
      * keys in first-row order. `id` is the autoincrement primary key and so is
      * the rowid alias; the cursor is the last returned [ReviewCardPageRow.firstRowId].
      *
-     * The FSRS-7 rebuild pages cards, not rows: a card's history can straddle a
-     * row page, and replaying half of it would write a wrong memory state.
+     * Both the FSRS-7 rebuild and the optimizer page cards, not rows: a card's
+     * history can straddle a row page, and replaying half of it would write a
+     * wrong memory state. The key is the composite card identity
+     * `(paperId, questionId)`.
      */
     @Query(
         "SELECT paperId, questionId, MIN(id) AS firstRowId FROM review_log " +
@@ -2066,18 +2048,6 @@ interface ReviewLogDao {
         afterRowId: Long,
         limit: Int
     ): List<ReviewCardPageRow>
-
-    /**
-     * One keyset page of the log's distinct question ids, in id order. The
-     * optimizer builds one training card per question and a card needs all of
-     * its rows: paging *questions* first lets the rows arrive one question at a
-     * time (see [rowsForQuestions]) without ever holding the whole log.
-     */
-    @Query(
-        "SELECT DISTINCT questionId FROM review_log " +
-            "WHERE questionId > :afterId ORDER BY questionId LIMIT :limit"
-    )
-    suspend fun pageQuestionIdsAfter(afterId: String, limit: Int): List<String>
 
     /**
      * Every row of [questionIds], each question's rows oldest first — the order
@@ -3341,6 +3311,7 @@ data class QuestionCounterRow(
 /** The scheduling columns the signal calculation reads from `card_state`. */
 data class CardSignalRow(
     val questionId: String,
+    val intervalDays: Int,
     val difficulty: Double,
     val stability: Double,
     val stabilityFast: Double,

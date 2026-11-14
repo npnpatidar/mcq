@@ -36,6 +36,12 @@ import kotlin.math.pow
  *    [SchedulerConfig.relearnMs] like SM-2's relearn path; the step ladder
  *    would add a second, parallel notion of "short interval" the study loop
  *    has no UI for. FSRS-7's fast trace still records the short-term gain.
+ *  - **One rounding rule, pinned to TS-FSRS.** Both the initial state and every
+ *    updated state are rounded to 8 decimals ([round8]). TS-FSRS rounds both;
+ *    the audited `fsrs-rs` build does not round at all. The difference is at
+ *    most 5e-9 per value, far below the 1e-4 parity tolerance the reference
+ *    vectors are compared with, and rounding both sides keeps the app's state
+ *    identical whichever path produced it (a first review vs. a later one).
  *  - No fuzz. Intervals are deterministic for a card and a given instant, so
  *    a preview matches what grading would persist at the moment it was drawn;
  *    elapsed time can still change the exact delay before the tap.
@@ -290,15 +296,17 @@ class FsrsScheduler(
      * A first exposure: S₀ = w[G−1], Sf₀ = 0.8·S₀, D₀ clamped to 1..10.
      *
      * The 0.8 ratio is legitimate exactly here and after an `Again` — it is not
-     * a migration formula for an already-learned card.
+     * a migration formula for an already-learned card. Rounded with the same
+     * rule as an update ([updateMemory]): see the class KDoc's parity note.
      */
     private fun initialMemory(rating: Int): Memory {
         val stability = w[rating - 1].coerceIn(STABILITY_MIN, INIT_S_MAX)
         return Memory(
-            stability = stability,
-            stabilityFast = (stability * FAST_INIT_RATIO)
+            stability = round8(stability).coerceIn(STABILITY_MIN, MAX_STABILITY),
+            stabilityFast = round8(stability * FAST_INIT_RATIO)
                 .coerceIn(STABILITY_MIN, MAX_STABILITY),
-            difficulty = difficultyZero(rating).coerceIn(MIN_DIFFICULTY, MAX_DIFFICULTY)
+            difficulty = round8(difficultyZero(rating))
+                .coerceIn(MIN_DIFFICULTY, MAX_DIFFICULTY)
         )
     }
 
@@ -489,7 +497,11 @@ class FsrsScheduler(
     private fun fastStabilityOf(state: CardState): Double =
         if (state.stabilityFast > 0.0) state.stabilityFast else state.stability
 
-    /** The reference rounds every new state value to 8 decimals; f64 here too. */
+    /**
+     * The app's one state-rounding rule, applied to initial and updated values
+     * alike: 8 decimals, matching TS-FSRS. See the class KDoc for the pinned
+     * parity choice and its bounds against the non-rounding `fsrs-rs` build.
+     */
     private fun round8(value: Double): Double = Math.round(value * 1e8) / 1e8
 
     /** Mirror of difficulty on SM-2's 1.3..3.0 ease scale, for export and UI. */

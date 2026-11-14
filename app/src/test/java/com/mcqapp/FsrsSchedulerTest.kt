@@ -111,6 +111,36 @@ class FsrsSchedulerTest {
         }
     }
 
+    /**
+     * The app pins one state-rounding rule to TS-FSRS: initial and updated
+     * values are both rounded to 8 decimals. A custom, many-decimal weight
+     * vector is the only way to see it — the defaults are already short.
+     */
+    @Test
+    fun initialAndUpdatedStatesShareTheTsFsrsRoundingRule() {
+        val weights = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList().also {
+            it[2] = 3.922123456789
+        }
+        val scheduler = FsrsScheduler(
+            parameters = weights,
+            config = SchedulerConfig(dayStartHour = 0),
+            zoneOffset = { 0L }
+        )
+        val first = scheduler.next(scheduler.initial("q"), ReviewGrade.GOOD, t0)
+        val rounded = Math.round(weights[2] * 1e8) / 1e8
+        assertEquals(rounded, first.stability, 0.0)
+        assertEquals(Math.round(rounded * 0.8 * 1e8) / 1e8, first.stabilityFast, 0.0)
+        assertEquals(
+            Math.round(first.difficulty * 1e8) / 1e8,
+            first.difficulty,
+            0.0
+        )
+        val second = scheduler.next(first, ReviewGrade.GOOD, at(3.0))
+        assertEquals(Math.round(second.stability * 1e8) / 1e8, second.stability, 0.0)
+        assertEquals(Math.round(second.stabilityFast * 1e8) / 1e8, second.stabilityFast, 0.0)
+        assertEquals(Math.round(second.difficulty * 1e8) / 1e8, second.difficulty, 0.0)
+    }
+
     @Test
     fun onlyAFailureKeepsAFirstExposureInTheSitting() {
         val scheduler = exactScheduler()

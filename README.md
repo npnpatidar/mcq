@@ -2097,13 +2097,13 @@ Button `Optimize FSRS parameters`:
 - Disabled when `fsrsReviewCount < 1000` or fit running.
 - Running: label `Optimizing…` → `Optimizing… X/Y` + circular progress.
 - Under threshold: `Reviews logged: X of 1000 needed.`
-- Success: `Fitted on X review points from Y cards. Log loss vs your current weights: A → B.` (loss `%.4f`, `Locale.US`) + `Restore defaults` / `OK`.
+- Success: `Fitted on X review points from Y cards. Log loss vs your current weights: A → B.` (loss `%.4f`, `Locale.US`) + `Restore defaults` / `OK`. When B is not below A the current weights are kept and the line says so instead.
   - `Restore defaults` → confirmation dialog, then `repository.restoreFsrsDefaults()` (drops fitted 34 weights for the official set), clears state.
   - `OK` → dismiss message.
 - Failure: error-coloured `Optimization failed: <msg>` + `OK` (clears state; nothing persisted).
 - Cancelling/leaving Settings cancels silently.
-- Weights persisted even when re-fit loss is worse (Anki parity); message makes regression visible.
-- Key: `fsrs_parameters` (CSV of 21 doubles) via `FsrsTuner`.
+- The result is stored only when its loss is **strictly better** than the current weights; an equal or worse fit keeps the current set and the message says no improvement was found (current Anki/rslib policy).
+- Key: `fsrs_parameters` (CSV of 34 doubles) via `FsrsTuner`. A legacy 21-value FSRS-6 set is retired rather than converted: a restore that carries one falls back to the FSRS-7 defaults with fit version 0 and the one-shot retirement notice.
 
 #### 3.4 Ranking Mode
 **Key:** `study_mode` | **Default:** `MEMORY_FIRST` | Chips: `Memory first` / `Explore new cards`. Help: `Memory first clears what is due before showing anything new. Explore surfaces a new card every few reviews.` (`Study.EXPLORE_NEW_EVERY = 3`). Read per pull ⇒ next review onward.

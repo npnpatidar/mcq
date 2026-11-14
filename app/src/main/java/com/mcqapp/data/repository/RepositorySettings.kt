@@ -283,6 +283,13 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     /** Whether the FSRS-7 card-state rebuild finished (v27). */
     private val fsrsRebuildDoneKey = booleanPreferencesKey("fsrs_rebuild_done")
 
+    /**
+     * Whether the one-shot fast-trace repair ran (the write-side bug that
+     * dropped `stabilityFast`). Cleared by a restore, which is fine: the
+     * repair is idempotent and bounded by rows still at zero.
+     */
+    private val fsrsFastRepairDoneKey = booleanPreferencesKey("fsrs_fast_repair_done")
+
     /** The ladder version the cut points belong to (v26). */
     private val ladderVersionKey = intPreferencesKey("ladder_version")
 
@@ -433,6 +440,14 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     /** Whether the card-state rebuild has already run to completion. */
     internal suspend fun fsrs7RebuildDone(): Boolean =
         context.dataStore.data.map { it[fsrsRebuildDoneKey] ?: false }.first()
+
+    /** Whether the one-shot fast-trace repair already ran. */
+    internal suspend fun fastTraceRepairDone(): Boolean =
+        context.dataStore.data.map { it[fsrsFastRepairDoneKey] ?: false }.first()
+
+    internal suspend fun completeFastTraceRepair() {
+        context.dataStore.edit { it[fsrsFastRepairDoneKey] = true }
+    }
 
     /** Whether the one-shot FSRS-7 migration notice is still waiting. */
     fun fsrs7Notice(): Flow<Boolean> =
@@ -608,10 +623,24 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         // A pre-v26 backup carries weights but no fit version. Version 0 is
         // the honest label there: the backup cannot say which fit produced
         // them, and claiming a bump would invent provenance.
+        //
+        // A retired FSRS-6 fit is the same story even when the backup recorded
+        // a version: the defaults written here were never fitted under FSRS-7,
+        // so carrying the old version over would claim provenance they do not
+        // have.
         writeWeights(
             restoredWeights ?: com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
-            forceVersion = restoredFitVersion ?: 0
+            forceVersion = if (restoredRetiredFit) 0 else (restoredFitVersion ?: 0)
         )
+        // The rebuild cursor names a `review_log` row id from the device the
+        // backup was taken on; the restored rows have their own ids, so a
+        // restored cursor cannot be trusted to resume. Start the rebuild from
+        // scratch (the caller runs it immediately after restoring).
+        context.dataStore.edit {
+            it.remove(fsrsRebuildCursorKey)
+            it.remove(fsrsRebuildDoneKey)
+            it.remove(fsrsFastRepairDoneKey)
+        }
         if (restoredRetiredFit) {
             context.dataStore.edit { it[fsrs7NoticeKey] = true }
         }

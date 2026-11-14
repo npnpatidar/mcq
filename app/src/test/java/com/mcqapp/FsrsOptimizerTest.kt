@@ -102,6 +102,49 @@ class FsrsOptimizerTest {
         }
     }
 
+    /**
+     * `NaN` survives a bare `coerceIn` (neither comparison holds), so the
+     * clipper has to replace it with a deterministic in-bounds value; the
+     * infinities are already handled by the clamp itself.
+     */
+    @Test
+    fun clipRepairsNonFiniteParameters() {
+        val nan = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList().also { it[3] = Double.NaN }
+        val nanClipped = FsrsOptimizer.clip(nan)
+        assertEquals(FsrsScheduler.DEFAULT_FSRS_PARAMETERS[3], nanClipped[3], 0.0)
+
+        val infinite = List(34) { if (it % 2 == 0) Double.POSITIVE_INFINITY else Double.NEGATIVE_INFINITY }
+        val clipped = FsrsOptimizer.clip(infinite)
+        clipped.forEachIndexed { index, value ->
+            assertTrue("w$index not finite", value.isFinite())
+            assertTrue(value >= FsrsOptimizer.LOWER_BOUNDS[index])
+            assertTrue(value <= FsrsOptimizer.UPPER_BOUNDS[index])
+        }
+        assertTrue(clipped[1] >= clipped[0])
+        assertTrue(clipped[2] >= clipped[1])
+        assertTrue(clipped[3] >= clipped[2])
+        assertTrue(clipped[26] >= maxOf(clipped[25], 0.5))
+    }
+
+    /**
+     * `build_windowed_batches`: shortest history first, card id breaking ties,
+     * and the window closes *before* a card that would cross the boundary.
+     */
+    @Test
+    fun batchGroupsFollowTheReferencePreFlushRule() {
+        // Exactly at the boundary stays together.
+        assertEquals(listOf(listOf(0, 1)), FsrsOptimizer.batchGroups(intArrayOf(256, 256)))
+        // Crossing it flushes first, rather than after.
+        assertEquals(listOf(listOf(0), listOf(1)), FsrsOptimizer.batchGroups(intArrayOf(300, 300)))
+        assertEquals(listOf(listOf(0, 1), listOf(2)), FsrsOptimizer.batchGroups(intArrayOf(255, 255, 255)))
+        // A single card longer than the window forms its own batch.
+        assertEquals(listOf(listOf(0)), FsrsOptimizer.batchGroups(intArrayOf(513)))
+        // Ordering is by history length, not index: card 1 (5) precedes card 0 (600).
+        assertEquals(listOf(listOf(1), listOf(0)), FsrsOptimizer.batchGroups(intArrayOf(600, 5)))
+        // Equal histories tie-break on card id (the index).
+        assertEquals(listOf(listOf(0, 1)), FsrsOptimizer.batchGroups(intArrayOf(200, 200)))
+    }
+
     @Test
     fun clipEnforcesTheCrossParameterConstraints() {
         // A box clamp cannot express either rule, so clip has to apply them
@@ -326,6 +369,27 @@ class FsrsOptimizerTest {
         assertEquals(listOf(2), card.reviews.map { it.rating })
     }
 
+    /**
+     * Card identity is `(paperId, questionId)`: the same question in two papers
+     * is two independent histories, never one interleaved card.
+     */
+    @Test
+    fun theSameQuestionInTwoPapersStaysTwoTrainingCards() {
+        val day = dayMs
+        val logs = listOf(
+            log("q1", rating = 3, reviewedAt = day, stateBefore = "NEW", paperId = "p1"),
+            log("q1", rating = 1, reviewedAt = 2 * day, stateBefore = "NEW", paperId = "p2"),
+            log("q1", rating = 2, reviewedAt = 3 * day, stateBefore = "REVIEW", paperId = "p1"),
+            log("q1", rating = 4, reviewedAt = 4 * day, stateBefore = "REVIEW", paperId = "p2")
+        )
+        val cards = FsrsTuner.buildFsrsTrainingCards(logs)
+        assertEquals(2, cards.size)
+        // Each card sees only its own paper's two rows, in time order.
+        assertEquals(listOf(3, 2), cards[0].reviews.map { it.rating })
+        assertEquals(listOf(1, 4), cards[1].reviews.map { it.rating })
+        cards.forEach { card -> assertEquals(null, card.seedStability) }
+    }
+
     @Test
     fun aLoneImportedRowHasNothingToTrainOn() {
         val only = log(
@@ -365,9 +429,10 @@ class FsrsOptimizerTest {
         reviewedAt: Long,
         stateBefore: String?,
         stabilityAfter: Double? = null,
-        difficultyAfter: Double? = null
+        difficultyAfter: Double? = null,
+        paperId: String = "p1"
     ) = ReviewLogEntity(
-        paperId = "p1",
+        paperId = paperId,
         questionId = questionId,
         rating = rating,
         reviewedAt = reviewedAt,

@@ -22,7 +22,7 @@ import com.mcqapp.data.local.getCountersByIdsChunked
 import com.mcqapp.data.local.getMistakeOrderRowsInScopeChunked
 import com.mcqapp.data.local.getPriorStandingsChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
-import com.mcqapp.data.local.getSignalsByIdsChunked
+import com.mcqapp.data.local.getSignalsByPaperChunked
 import com.mcqapp.data.local.getTestedBeforeIdsChunked
 import com.mcqapp.domain.Attempt
 import com.mcqapp.domain.AttemptMetadata
@@ -578,7 +578,7 @@ internal class HistoryStore(
         val ids = rows.map { it.questionId }.distinct()
         val hashes = db.questionDao().getContentHashesByIdsChunked(ids)
             .associate { it.questionId to it.contentHash }
-        val cards = db.cardStateDao().getSignalsByIdsChunked(ids)
+        val cards = db.cardStateDao().getSignalsByPaperChunked(attempt.paperId, ids)
             .associateBy { it.questionId }
         val counters = db.questionStatsDao().getCountersByIdsChunked(ids)
             .associateBy { it.questionId }

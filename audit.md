@@ -265,3 +265,54 @@ Local evidence for `58c5d8e`: `compileDebugKotlin`, `compileDebugUnitTestKotlin`
 ---
 
 *Findings marked "verified" were re-checked against the tree during synthesis; the rest carry the reviewing agent's `path:line` evidence and should be re-confirmed when fixed.*
+
+---
+
+## Round status, second pass (appended 2026-11-14)
+
+The first round-status table above stops at `58c5d8e`/`d4ed972`. This pass re-checked
+every open finding against the tree and fixed the ones that do not need an owner
+decision.
+
+**Fixes in `564497d`** (CI green: run `43614597225`, build + Lint + release-build +
+ui-test):
+
+| Finding | Outcome | Where |
+|---|---|---|
+| **M2** forecast chart hidden | Fixed — the chart and Brier summary render under every rule; only `CalibrationEvidence` is gated on `timeBasedGrading` | `RetentionSection.kt` |
+| **M5** wrong gate in the "not yet" line | Fixed — `CutSuggestion` carries `blockingGate`/`evidenceCards`/`evidenceDays`, the gates are checked in order, and each renders its own constant | `Calibration.kt`, `RetentionSection.kt`, `strings.xml`, `CalibrationTest` |
+| **M7** stream test dropped the new fields | Fixed — asserts exactly one suggestion, the one the rule in force can produce | `StatsRetentionStreamTest.kt` |
+
+**Fixes in the working tree** (not yet committed or pushed, as instructed):
+
+| Finding | Outcome |
+|---|---|
+| Minor 1 (clock vs grade boundary) | Fixed: the tint is measured from `liveDwellMillis` through `gradedDwellSeconds`, and the ticker re-anchors on each card. `StudyUiState.dwellMillis` is the single untruncated reading |
+| Minor 3 (equal cuts) | Fixed: `sanitized()` keeps a one-second gap (`fast` 1–3599, `slow` ≥ fast + 1), the Settings field validates `>` and its range follows |
+| Minor 4 (stale snapshot) | Already fixed in the tree; the audit's `SettingsViewModel.kt:344-354` reference is stale — cuts and the rule are re-based from the stored config in `updateSchedulerConfig` |
+| Minor 10 (titled empty card) | Fixed: `DwellCutsCard` returns before drawing its frame |
+| Minor 8 (restore lost unrepresentable values) | Fixed: `restore` keeps any preference the settings file cannot carry (today a string set) across its wipe, instead of clearing it silently |
+| **M1** (partly) retired pair lost | Fixed where code can: the pair the absolute rule retires is kept under two inert `retired_*` preferences before 6/60 is adopted, so it is recoverable. An in-app notice is copy and stays open |
+| **M3** (partly) relative rule | The math is unchanged by choice — the KDoc now states the percentiles are over answers, not cards, and the copy calls the pair a pace quantile, not a retention target. Changing the 10 % target itself is the owner decision |
+| **M4** suggested pair unreachable | Fixed: under timed grading the card now renders while the applied pair differs from the suggested one, with its own instruction line, so the numbers survive the switch flip |
+| **M9** legacy wire compatibility | Fixed at the file level: a test decodes a legacy `study.json` carrying `ladderVersions` and `ladderBlocks` (key kept, blocks ignored, `correctnessOnly` defaults false) |
+| **M6** no end-to-end correctness-only test | Fixed: `freezeDwellForTests` plus two `StudyViewModelPullTest` cases — 90 s dwell stores Good under correctness-only and Hard under the timed rule |
+| **M9** `correctnessOnly` only ever `false` | Fixed for the round-trip half: the seeded `grading_versions` row in `BackupRestoreRoundTripTest` now carries `true`, which the before/after table fingerprint compares |
+| Doc accuracy | Fixed: `threshold.md` post-ship predicate, README cut rows and §3.6 range/clamp |
+| Nits | Fixed: outdated `StatsStore` dispatcher comment, the orphaned KDoc in `RepositorySettingsTest` |
+
+**Still open, deliberately:**
+
+| Finding | Why it is open |
+|---|---|
+| **M1** in-app notice | Copy is the owner's call; the value is now kept |
+| **M3** the 10 %-Hard target itself | Explicit owner decision (#2) |
+| **M8** v27 amended in place | Needs one build to regenerate `27.json`, and a 27→28 decision if v27 escaped dev/CI |
+| Minor 2 (`dwell == 0` not Easy) | Owner decision (#4): it changes what a sub-half-second answer grades as |
+| Minor 5, 6 | Naming refactor and the historical migrated rows; no behaviour to fix today |
+| **M9** streaming half | A whole legacy zip through `readStreaming` is still uncovered; the wire-key decode is now tested |
+| **M10** (closed) | All 13 classes that read or write the grading preferences use `SettingsResetRule`; the other files that mention grading state are pure-domain (`CalibrationTest`, `SpacedRepetitionTest`) or raw-DB (`MigrationTest`, `BackupRestoreRoundTripTest`), so no shared-DataStore leak remains |
+| Remaining nits | Test-only helpers, the `NoDeadCodeTest` denylist, and the unreferenced `minimumDetectableEffect` |
+
+**Verification limits:** no JDK, Android SDK or aapt2 on this host, so this pass was
+reviewed by reading only; the uncommitted items are unproven until CI runs them.

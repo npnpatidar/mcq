@@ -288,6 +288,16 @@ internal class SettingsStore(
     private val ladderVersionKey = intPreferencesKey("ladder_version")
 
     /**
+     * The cut pair a pre-v27 build stored, kept when the absolute rule retires
+     * it. It cannot be reinterpreted under the new rule (it was tuned against
+     * the reading allowance), but a rule change that silently replaces a
+     * hand-tuned pair should still leave the old value recoverable, so two
+     * inert preferences hold it. Nothing reads them for grading.
+     */
+    private val retiredEasyKey = longPreferencesKey("retired_easy_seconds")
+    private val retiredSlowKey = longPreferencesKey("retired_slow_seconds")
+
+    /**
      * Which build of the cut rule the stored pair was calibrated for (v27).
      * Bumped whenever the rule itself changes, so the pair does not outlive the
      * model it was tuned against.
@@ -470,6 +480,20 @@ internal class SettingsStore(
         }
     }
 
+    /**
+     * Captures the stored pair before the absolute rule retires it. A no-op
+     * once a pair has been kept, and a no-op when the install never stored one.
+     */
+    internal suspend fun retainRetiredCuts() {
+        context.dataStore.edit { prefs ->
+            if (prefs[retiredEasyKey] != null) return@edit
+            val easy = prefs[schedKey("fast_seconds")]?.toLong() ?: return@edit
+            val slow = prefs[schedKey("slow_seconds")]?.toLong() ?: return@edit
+            prefs[retiredEasyKey] = easy
+            prefs[retiredSlowKey] = slow
+        }
+    }
+
     /** The stored grading version, or null when none has been written yet. */
     internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
@@ -617,6 +641,9 @@ internal class SettingsStore(
                 is Int -> McqBackupFormat.PreferenceEntry("int", JsonPrimitive(value))
                 is Long -> McqBackupFormat.PreferenceEntry("long", JsonPrimitive(value))
                 is String -> McqBackupFormat.PreferenceEntry("string", JsonPrimitive(value))
+                // Not representable in the settings file (today: a string set).
+                // [restore] preserves these across its wipe for exactly this
+                // reason, so extending the vocabulary later is additive.
                 else -> continue
             }
             out[key.name] = entry
@@ -650,8 +677,21 @@ internal class SettingsStore(
             // call. Clearing it here would destroy a live snapshot on a
             // settings-only restore, so preserve it across the replace.
             val progress = prefs[progressKey]
+            // A value the export cannot represent is not in the file at all, so
+            // clearing it here would destroy it silently. Keep exactly those,
+            // the way the resume snapshot above is kept. The test is on the
+            // value type, so a future `stringSet` preference is covered the
+            // day it is added and never becomes a restore-time loss.
+            val unportable = prefs.asMap().filterValues { value ->
+                value !is Boolean && value !is Double && value !is Float &&
+                    value !is Int && value !is Long && value !is String
+            }
             prefs.clear()
             if (progress != null) prefs[progressKey] = progress
+            for ((key, value) in unportable) {
+                @Suppress("UNCHECKED_CAST")
+                prefs[key as Preferences.Key<Any>] = value
+            }
             for ((name, entry) in settings.preferences) {
                 if (name == progressKey.name ||
                     name == InstallFreshness.MARKER_KEY.name

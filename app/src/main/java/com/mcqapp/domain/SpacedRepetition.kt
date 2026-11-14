@@ -221,8 +221,11 @@ data class SchedulerConfig(
         leechThreshold = leechThreshold.coerceIn(1, 100),
         desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
         dayStartHour = dayStartHour.coerceIn(0, 23),
-        fastSeconds = fastSeconds.coerceIn(1, 3600),
-        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600),
+        fastSeconds = fastSeconds.coerceIn(1, 3599),
+        // The pair needs a one-second gap. With both cuts equal the Good class
+        // is empty, so the calibration contrast is null forever and the report
+        // can never say anything — a degenerate rule, not a preference.
+        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3599) + 1, 3600),
         gradingVersion = gradingVersion.coerceAtLeast(0),
         fsrsFitVersion = fsrsFitVersion.coerceAtLeast(0),
         fsrsParameters = fsrsParameters

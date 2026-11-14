@@ -298,6 +298,12 @@ object Calibration {
      * not a free measurement of their pace. Outcomes are not consulted, so this
      * says nothing about retention; it places the bands where the learner's own
      * pace already separates fast from slow.
+     *
+     * The percentiles are taken over answers, not over cards, so a few heavily
+     * repeated questions weigh more than the gate's 30-card floor suggests:
+     * 200 answers on 30 cards resolve the tenth percentile from roughly 30
+     * distinct readings. Read the result as a pace quantile, not a precise cut
+     * — [MIN_DWELL_CARDS] is the guard against a single card setting both ends.
      */
     fun suggestCutsFromDwell(
         reviews: List<Row>,

@@ -205,7 +205,12 @@ internal class StatsStore(
                     slowSeconds = effective.slowSeconds
                 )
             },
-            dwellSuggestion = calibration.dwellSuggestion
+            // Under the clock-ignored rule the pair is the suggestion; under
+            // the timed rule it is only worth surfacing while the applied pair
+            // still differs from it — a line that repeats the fields is noise.
+            dwellSuggestion = calibration.dwellSuggestion?.takeIf {
+                effective.correctnessOnlyGrading || it.changes
+            }
         )
     }
 
@@ -280,17 +285,15 @@ internal class StatsStore(
             maxReviewedAt = maxReviewedAt
         )
         // Answer times are cheap evidence and need no cache: the rows are
-        // already built by the pass above.
-        val dwellSuggestion = if (resolvedConfig.correctnessOnlyGrading) {
-            Calibration.suggestCutsFromDwell(
-                reviews = rows,
-                now = now,
-                fastSeconds = resolvedConfig.fastSeconds,
-                slowSeconds = resolvedConfig.slowSeconds
-            )
-        } else {
-            null
-        }
+        // already built by the pass above. Computed under both rules, because a
+        // timed install that still has rows from a clock-neutral epoch can be
+        // told it never applied the pair the learner was shown.
+        val dwellSuggestion = Calibration.suggestCutsFromDwell(
+            reviews = rows,
+            now = now,
+            fastSeconds = resolvedConfig.fastSeconds,
+            slowSeconds = resolvedConfig.slowSeconds
+        )
         calibrationCache[key]?.let {
             return CalibrationLoad(it, dwellSuggestion, resolvedConfig)
         }
@@ -363,9 +366,9 @@ internal class StatsStore(
     )
 
     /**
-     * One entry: the report for the exact inputs a refresh would change. The
-     * Stats tab loads on `Dispatchers.Default` and the session-end controller
-     * on `Dispatchers.IO`, so the map must tolerate two threads.
+     * One entry: the report for the exact inputs a refresh would change. A tab
+     * load and a post-write refresh can race on different dispatchers, so the
+     * map must tolerate two threads.
      */
     private val calibrationCache =
         java.util.concurrent.ConcurrentHashMap<CalibrationCacheKey, Calibration.Report>()

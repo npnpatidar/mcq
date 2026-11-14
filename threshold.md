@@ -258,7 +258,10 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 - After installing: confirm a 6 s / 60 s session grades as expected.
 
 Post-ship checks from the real log:
-- every `gradeSource = AUTO` row has `dwell < 6` ⇒ `rating = 4`, `dwell >= 60` ⇒ `rating = 2`;
+- every `gradeSource = AUTO` row satisfies
+  `wasCorrect && !wasGuess && !wasSkipped && dwell >= 1` ⇒
+  (`rating = 4` ⇔ `dwell < 6`, `rating = 2` ⇔ `dwell >= 60`); wrong/guess/skip is
+  `rating = 1` at any dwell, and `dwell = 0` is `rating = 3`, not Easy;
 - `readingAllowanceSeconds` is null on new rows and unchanged on old ones;
 - a Settings save of a cut writes exactly one `grading_versions` row with `reason = manual`.
 

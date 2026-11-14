@@ -229,10 +229,15 @@ class StatsRetentionStreamTest {
                     "timed grading must offer the contrast-based pair",
                     streamed.cutSuggestion
                 )
-                assertNull(
-                    "answer-time evidence is only for the clock-ignored rule",
-                    streamed.dwellSuggestion
-                )
+                // The answer-time pair may also be present here, but only as
+                // the "you never applied this" hint, so it must be a real
+                // move away from the pair in force.
+                streamed.dwellSuggestion?.let {
+                    assertTrue(
+                        "a timed dwell hint must name a different pair",
+                        it.changes
+                    )
+                }
             } else {
                 assertNotNull(
                     "correctness-only grading must offer the answer-time pair",

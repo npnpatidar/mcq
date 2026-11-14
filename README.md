@@ -891,8 +891,8 @@ this, never midnight.
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
 | `Introduce new cards` | **on** | switch | Off = review-only sessions (no NEW pool). |
 | `Grade on correctness only` | on for a new install (off for an upgrade) | switch | On = correct → `Good`, wrong/guess/skip → `Again`, the clock never decides the grade or its colour. Hides both cut fields below and the Stats calibration card; Statistics shows the cuts your own answer times suggest instead. Dwell is still recorded. |
-| `Minimum easy answer threshold` | 6 s | 1–3600, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. Hidden while correctness-only grading is on. |
-| `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast | Auto-graded Hard at or above this. Hidden while correctness-only grading is on. |
+| `Minimum easy answer threshold` | 6 s | 1–3599, step 1 | Auto-graded Easy below this. Absolute: reading time is inside the cut. A wrong, guessed or skipped answer is `Again` at any dwell, and an untimed (0 s) answer is `Good` rather than Easy. Hidden while correctness-only grading is on. |
+| `Hard answer threshold` | 60 s | 1–3600, step 1, ≥ fast + 1 | Auto-graded Hard at or above this. The pair must keep a second between the cuts: with both equal the `Good` band is empty and the calibration report could never say anything. Hidden while correctness-only grading is on. |
 | **Advanced** (collapsed) | | | |
 | `Next day starts at` | 4 h | 0–23 | Study-day boundary. |
 | `Maximum interval` | 36500 d | 1–36500 | Cap on any interval. |
@@ -2073,12 +2073,12 @@ On: `Study.inferGrade` returns `Good` for every correct, unguessed answer and `A
 **Default:** a new install starts with the switch on, because the rule is the measurement condition for the answer-time cuts: the dwell of a tinted clock is not free evidence, so a learner who starts on timing cannot produce that suggestion later without first spending weeks on correctness-only. Freshness is database content, decided once at first start and persisted: an installation with no papers and no reviews is new, so importing a paper during that first run does not turn it into an upgrade. An upgrade keeps the rule it already had, and a restored install keeps the rule from its backup; a stored choice (including an explicit off) always wins. `Reset study settings` does not change the rule. Failure edge: if the first probe fails (for example a database that cannot be read yet) the install is answered as "not new" and nothing is persisted; if the learner imports a paper before a retry succeeds, that retry answers from the paper and the install is thereafter treated as an upgrade, so the correctness-only default is lost silently. A full restore re-probes the restored database.
 
 #### 3.6 Minimum Easy Answer Threshold
-**Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`. Hidden while `Grade on correctness only` is on (the value is kept as the fallback rule).
+**Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3599, step 1. **Domain clamp:** `coerceIn(1, 3599)`, which keeps a second of room below the Hard cut. Hidden while `Grade on correctness only` is on (the value is kept as the fallback rule).
 
 Absolute: a correct answer faster than this is `Easy` and nothing is added for reading the question. A cut pair saved by a pre-v27 build is **retired on upgrade**: the version gate (`grading_rules_version`) is absent, so the first read writes the shipped 6/60 over the stored pair. The old value is not kept anywhere — it was tuned against the deleted reading allowance and cannot be reinterpreted under this rule — so a learner who had tuned the cuts has to re-enter the pair.
 
 #### 3.7 Hard Answer Threshold
-**Key:** `anki_slow_seconds` | **Default:** `60` s | Same stepper/field. **Cross-field rule:** `value >= fastSeconds`. Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
+**Key:** `anki_slow_seconds` | **Default:** `60` s | Same stepper/field, range 1–3600. **Cross-field rule:** `value > fastSeconds` (the pair keeps a one-second gap, because equal cuts leave the `Good` band empty). Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
 
 **Footnote (always shown):**
 `The response-time thresholds drive Simplified study's automatic grading. With Simplified study off you grade every card yourself.`

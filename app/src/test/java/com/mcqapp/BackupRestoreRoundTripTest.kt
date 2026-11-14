@@ -17,6 +17,7 @@ import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import androidx.room.Room
+import kotlinx.serialization.decodeFromString
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -214,13 +215,17 @@ class BackupRestoreRoundTripTest {
         )
         // v27: the cut pair that graded a span of reviews, plus a study
         // sitting. Both travel in study.json and must round-trip.
+        // The rule flag travels with the cuts, and `true` is the value a new
+        // install actually writes: a fixture that only ever seeds `false`
+        // cannot fail if the column is dropped on the way through a backup.
         db.gradingRulesDao().insertVersion(
             com.mcqapp.data.local.GradingVersionEntity(
                 id = 2,
                 easySeconds = 6,
                 slowSeconds = 60,
                 effectiveFrom = 1_700_000_000_100,
-                reason = "manual"
+                reason = "manual",
+                correctnessOnly = true
             )
         )
         db.studySessionDao().insert(
@@ -231,6 +236,39 @@ class BackupRestoreRoundTripTest {
                 endedAt = 1_700_000_600_000,
                 activeSeconds = 600
             )
+        )
+    }
+
+    /**
+     * A backup written before the ladder was removed carries `ladderVersions`
+     * and `ladderBlocks`. The wire key is kept and the blocks array is skipped,
+     * so such a file must still decode — and a v26 row has no rule flag, so it
+     * has to default to the timed rule rather than read as correctness-only.
+     */
+    @Test
+    fun aLegacyStudyFileDecodesItsLadderFields() {
+        val legacy = """
+            {
+              "cardState": [],
+              "reviewLog": [],
+              "ladderVersions": [
+                {"id": 7, "easySeconds": 8, "slowSeconds": 30,
+                 "effectiveFrom": 1700000000000, "reason": "prior"}
+              ],
+              "ladderBlocks": [{"id": 1, "start": 1700000000000}]
+            }
+        """.trimIndent()
+        val study = McqBackupFormat.json.decodeFromString(
+            McqBackupFormat.StudyFile.serializer(),
+            legacy
+        )
+        assertEquals(1, study.gradingVersions.size)
+        assertEquals(7L, study.gradingVersions.first().id)
+        assertEquals(8L, study.gradingVersions.first().easySeconds)
+        assertEquals(
+            "a pre-v27 row was graded with the clock, so it is not correctness-only",
+            false,
+            study.gradingVersions.first().correctnessOnly
         )
     }
 

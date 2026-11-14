@@ -196,19 +196,22 @@ data class StudyUiState(
         get() = questionElapsedMillis / 1000L
 
     /**
-     * Total active seconds on the card on screen: banked time plus the current
-     * segment while the clock is running. Truncated only here, for display;
-     * [gradedDwellSeconds] is what a check freezes and stores.
+     * Active milliseconds on the card on screen: banked time plus the current
+     * segment while the clock is running. The clock's colour is measured from
+     * this, through the same half-up rounding a check uses, so the tint and the
+     * stored grade cannot disagree in the last half-second of a band.
      */
+    val dwellMillis: Long
+        get() = questionElapsedMillis +
+            if (clockRunning) {
+                (SystemClock.elapsedRealtime() - questionStartedAt).coerceAtLeast(0L)
+            } else {
+                0L
+            }
+
+    /** [dwellMillis] truncated for the clock's text; a clock reading 3 s then 4 s is what a learner expects. */
     val dwellSeconds: Long
-        get() = (
-            questionElapsedMillis +
-                if (clockRunning) {
-                    (SystemClock.elapsedRealtime() - questionStartedAt).coerceAtLeast(0L)
-                } else {
-                    0L
-                }
-            ) / 1000L
+        get() = dwellMillis / 1000L
 
     /** Seconds of this sitting spent on the question itself, for the summary. */
     val questionSeconds: Long
@@ -246,6 +249,15 @@ class StudyViewModel(
     /** Seconds spent on the question on screen, published once per second. */
     private val _liveDwell = MutableStateFlow(0L)
     val liveDwell: StateFlow<Long> = _liveDwell.asStateFlow()
+
+    /**
+     * The same reading in milliseconds, published with it. The clock's band is
+     * decided from this: [liveDwell] has already truncated the half-second the
+     * grade's rounding uses, so a card at 5.6 s was coloured Easy and graded
+     * Good. Kept as its own flow rather than re-derived to stay one tick.
+     */
+    private val _liveDwellMillis = MutableStateFlow(0L)
+    val liveDwellMillis: StateFlow<Long> = _liveDwellMillis.asStateFlow()
 
     /**
      * Active seconds in this sitting, published once per second. Kept out of
@@ -539,6 +551,10 @@ class StudyViewModel(
             clockPausedByUser = false
             refreshPreviews()
             publishDwell()
+            // Re-anchor the ticker on the card's own start: a ticker launched
+            // once at construction ticks on the ViewModel's phase, so the
+            // clock could lag the card by up to a second.
+            startDwellTicker()
             return
         }
     }
@@ -718,7 +734,25 @@ class StudyViewModel(
     }
 
     private fun publishDwell() {
-        _liveDwell.value = _state.value.dwellSeconds
+        val current = _state.value
+        _liveDwell.value = current.dwellSeconds
+        _liveDwellMillis.value = current.dwellMillis
+    }
+
+    /**
+     * Puts a fixed dwell on the card on screen and stops its clock, so a test
+     * can reach a band (Hard starts at 60 s) without waiting for it. Only the
+     * grading path reads this value, and nothing in the app calls it; the
+     * `ForTests` suffix keeps that visible at the call site.
+     */
+    internal fun freezeDwellForTests(millis: Long) {
+        _state.update {
+            it.copy(
+                questionElapsedMillis = millis,
+                clockRunning = false
+            )
+        }
+        publishDwell()
     }
 
     /** Banks the foreground segment and stops the sitting clock. */

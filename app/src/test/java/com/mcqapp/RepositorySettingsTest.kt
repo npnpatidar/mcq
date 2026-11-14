@@ -126,6 +126,12 @@ class RepositorySettingsTest {
         }
     }
 
+    /**
+     * The legacy `anki_*` quota keys are inert by omission: nothing reads
+     * them. An install that still carries them reads exactly like a fresh
+     * one, which is what this asserts by round-tripping only the FSRS-era
+     * settings and confirming none of the removed fields reappear.
+     */
     @Test
     fun aFreshStoreYieldsTheDocumentedDefaults() = runBlocking {
         val config = store().schedulerConfigNow()
@@ -138,12 +144,6 @@ class RepositorySettingsTest {
         assertEquals(0.9, config.desiredRetention, 0.0001)
     }
 
-    /**
-     * The legacy `anki_*` quota keys are inert by omission: nothing reads
-     * them. An install that still carries them reads exactly like a fresh
-     * one, which is what this asserts by round-tripping only the FSRS-era
-     * settings and confirming none of the removed fields reappear.
-     */
     /**
      * A new install starts on correctness-only grading. The rule is the
      * measurement condition for the answer-time cuts: the dwell of a tinted

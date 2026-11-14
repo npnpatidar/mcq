@@ -382,11 +382,11 @@ private fun AnkiSchedulerBody(
             help = stringResource(R.string.easy_answer_threshold_help),
             value = config.fastSeconds,
             step = 1.0,
-            // 1..3600: the domain clamps fastSeconds to 1..3600
-            // (SpacedRepetition.sanitized), and a restored 601-3600 value
-            // used to render as a permanent error with dead steppers
-            // (consolidated_bugs.md H3).
-            range = 1f..3600f,
+            // 1..3599: the domain clamps fastSeconds to 1..3599
+            // (SpacedRepetition.sanitized, which keeps a second of room below
+            // the Hard cut), and a restored 601-3600 value used to render as a
+            // permanent error with dead steppers (consolidated_bugs.md H3).
+            range = 1f..3599f,
             suffix = "s",
             onChange = { onFastChange(it.toLong()) }
         )
@@ -397,10 +397,11 @@ private fun AnkiSchedulerBody(
             step = 1.0,
             range = 1f..3600f,
             suffix = "s",
-            // The domain clamps slow up to fast; without this check a typed
-            // value below fast "succeeded" silently, left a phantom in the
-            // field and stored the old value (consolidated_bugs.md F16/H2).
-            validExtra = { it >= config.fastSeconds },
+            // The domain keeps a one-second gap above fast; without this check
+            // a typed value below fast "succeeded" silently, left a phantom in
+            // the field and stored the old value (consolidated_bugs.md
+            // F16/H2), and an equal pair left the Good class empty.
+            validExtra = { it > config.fastSeconds },
             onChange = { onSlowChange(it.toLong()) }
         )
 

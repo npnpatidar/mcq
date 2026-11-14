@@ -821,9 +821,10 @@
     <string name="stats_cuts_limit">Suggested cuts: keep %1$ds / %2$ds — the Easy cut is already at the edge of its allowed range.</string>
     <string name="stats_cuts_needs_evidence">Suggested cuts: not yet — the evidence lines above have to close first.</string>
     <string name="stats_dwell_cuts">Suggested cuts</string>
-    <string name="stats_dwell_cuts_help">Placed from your own answer times, not from retention. About a tenth of your correct answers would be Easy and a tenth Hard.</string>
+    <string name="stats_dwell_cuts_help">Placed from your own answer times, not from retention: a pace quantile, not a retention target. About a tenth of your correct answers fall on each side.</string>
     <string name="stats_cuts_from_times">Try %1$ds / %2$ds, from %3$d correct answers. Turn the correctness-only switch off in Settings, then set the two thresholds to these.</string>
     <string name="stats_cuts_from_times_same">Your %3$d correct answers agree with the current %1$ds / %2$ds.</string>
+    <string name="stats_cuts_from_times_timed">Set the two thresholds to %1$ds / %2$ds: your own answer times suggest them, from %3$d correct answers. They stay here until the fields match.</string>
     <string name="stats_cuts_from_times_not_yet_rows">Not yet: %1$d of %2$d correct answers recorded.</string>
     <string name="stats_cuts_from_times_not_yet_cards">Not yet: %1$d of %2$d different questions answered.</string>
     <string name="stats_cuts_from_times_not_yet_days">Not yet: %1$d of %2$d days of answer times.</string>

@@ -190,6 +190,9 @@ internal open class GradingRulesStore(
      */
     private suspend fun ensureVersionLocked(): Int {
         if (settings.gradingRulesVersionNow() < SettingsStore.GRADING_RULES_VERSION) {
+            // Keep the pair this rule is about to retire: it cannot be
+            // reinterpreted, but it should not vanish without a trace.
+            settings.retainRetiredCuts()
             // schedulerConfigNow() ignores the stale pair and returns 6/60.
             val config = settings.schedulerConfigNow()
             val id = nextVersionId()

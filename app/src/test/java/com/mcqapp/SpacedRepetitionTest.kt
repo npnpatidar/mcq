@@ -720,8 +720,21 @@ class SpacedRepetitionTest {
         assertTrue(broken.relearnMs >= 60_000L)
         assertTrue(broken.leechThreshold >= 1)
         assertTrue(broken.desiredRetention >= 0.75)
-        assertTrue(broken.slowSeconds >= broken.fastSeconds)
+        assertTrue(broken.slowSeconds > broken.fastSeconds)
         assertTrue(broken.maxIntervalDays >= 1)
+    }
+
+    @Test
+    fun `sanitized keeps a second between the cuts`() {
+        // Equal cuts leave the Good band empty, so the calibration report can
+        // never produce a contrast; the gap is part of the rule.
+        val equal = SchedulerConfig(fastSeconds = 6, slowSeconds = 6).sanitized()
+        assertEquals(6L, equal.fastSeconds)
+        assertEquals(7L, equal.slowSeconds)
+        // The largest cut still leaves room for the gap below the ceiling.
+        val top = SchedulerConfig(fastSeconds = 3600, slowSeconds = 3600).sanitized()
+        assertEquals(3599L, top.fastSeconds)
+        assertEquals(3600L, top.slowSeconds)
     }
 
     @Test

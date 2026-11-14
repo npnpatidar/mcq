@@ -462,6 +462,71 @@ class StudyViewModelPullTest {
         }
     }
 
+    /**
+     * The headline path of correctness-only grading, end to end: the switch is
+     * on, the clock has measured ninety seconds, and the review still stores
+     * Good. Its twin below grades the same ninety seconds Hard under the timed
+     * rule, so together they pin that the rule decides and the dwell only
+     * measures. Without this, passing the timed config to `autoGrade` would go
+     * unnoticed.
+     */
+    @Test
+    fun correctnessOnlyGradingIgnoresANinetySecondDwell() {
+        seedOverdueRelearningAndFresh()
+        runBlocking {
+            repository.updateSchedulerConfig { it.copy(correctnessOnlyGrading = true) }
+        }
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
+            viewModel.state.value.current != null && !viewModel.state.value.loading
+        })
+        assertTrue(
+            "the session must read the stored rule",
+            viewModel.state.value.correctnessOnlyGrading
+        )
+
+        viewModel.freezeDwellForTests(90_000L)
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        assertEquals(90L, viewModel.state.value.gradedDwellSeconds)
+        assertEquals(ReviewGrade.GOOD, viewModel.state.value.pendingGrade)
+        viewModel.next()
+        assertTrue(awaitCondition { viewModel.state.value.reviewed == 1 })
+
+        runBlocking {
+            val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
+            assertEquals(90L, row.elapsedSeconds)
+            assertEquals(3, row.rating)
+        }
+    }
+
+    @Test
+    fun theTimedRuleGradesTheSameNinetySecondDwellHard() {
+        seedOverdueRelearningAndFresh()
+        runBlocking {
+            repository.updateSchedulerConfig { it.copy(correctnessOnlyGrading = false) }
+        }
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
+            viewModel.state.value.current != null && !viewModel.state.value.loading
+        })
+        assertFalse(viewModel.state.value.correctnessOnlyGrading)
+
+        viewModel.freezeDwellForTests(90_000L)
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        assertEquals(90L, viewModel.state.value.gradedDwellSeconds)
+        assertEquals(ReviewGrade.HARD, viewModel.state.value.pendingGrade)
+        viewModel.next()
+        assertTrue(awaitCondition { viewModel.state.value.reviewed == 1 })
+
+        runBlocking {
+            val row = repository.db().reviewLogDao().historyForQuestion("q1").last()
+            assertEquals(90L, row.elapsedSeconds)
+            assertEquals(2, row.rating)
+        }
+    }
+
     @Test
     fun revealingAQuestionFreezesItsClockAndTheNextCardRestartsIt() {
         seedOverdueRelearningAndFresh()

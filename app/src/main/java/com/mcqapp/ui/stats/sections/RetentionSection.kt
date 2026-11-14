@@ -63,9 +63,15 @@ internal fun RetentionSection(
         }
         // The answer-time pair is the stand-in while the clock is ignored: no
         // Easy or Hard label exists to calibrate, so the cuts come from dwells.
-        if (!bundle.timeBasedGrading) {
+        // Under timed grading it stays only while the applied pair differs from
+        // the suggested one — otherwise the instruction would point at a card
+        // that disappears the moment the learner follows it.
+        val dwellCuts = bundle.dwellSuggestion?.takeIf {
+            !bundle.timeBasedGrading || it.changes
+        }
+        if (dwellCuts != null) {
             item(contentType = "dwell-cuts") {
-                DwellCutsCard(suggestion = bundle.dwellSuggestion)
+                DwellCutsCard(suggestion = dwellCuts, timed = bundle.timeBasedGrading)
             }
         }
         if (bundle.groupRetention.isNotEmpty()) {
@@ -146,16 +152,22 @@ private fun LegendEntry(color: Color, @StringRes labelRes: Int) {
  * recorded.
  */
 @Composable
-private fun DwellCutsCard(suggestion: Calibration.CutSuggestion?) {
+private fun DwellCutsCard(suggestion: Calibration.CutSuggestion, timed: Boolean) {
     ChartCard(
         testTag = "stats-dwell-cuts",
         title = { ChartTitle(R.string.stats_dwell_cuts) },
         subtitle = { ChartSubtitle(R.string.stats_dwell_cuts_help) }
     ) {
-        if (suggestion == null) return@ChartCard
         val text = when {
             suggestion.status != Calibration.CutSuggestion.Status.FROM_TIMES ->
                 notYetLine(suggestion)
+
+            timed -> stringResource(
+                R.string.stats_cuts_from_times_timed,
+                suggestion.nextFast,
+                suggestion.nextSlow,
+                suggestion.evidence
+            )
 
             suggestion.changes -> stringResource(
                 R.string.stats_cuts_from_times,

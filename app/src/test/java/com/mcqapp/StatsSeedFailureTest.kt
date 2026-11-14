@@ -10,7 +10,10 @@ import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.StatsStore
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.StatsAggregator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -21,6 +24,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.junit.rules.TimeoutRule
 
 /**
  * B1's failure edge: when the grading-version seed cannot run, Statistics must
@@ -39,12 +43,20 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], application = TestMcqApplication::class)
 class StatsSeedFailureTest {
 
+    @get:Rule
+    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+
     private lateinit var context: Context
     private lateinit var db: AppDatabase
     private lateinit var settings: SettingsStore
 
     @get:Rule
     val settingsReset = SettingsResetRule()
+
+    /** Database/DataStore work must not block Robolectric's paused main thread. */
+    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
+        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    }
 
     @Before
     fun setup() {
@@ -53,6 +65,7 @@ class StatsSeedFailureTest {
             .allowMainThreadQueries()
             .build()
         settings = SettingsStore(context, freshInstall = false)
+        dbBlocking { db.ensureOpen() }
     }
 
     @After
@@ -67,35 +80,37 @@ class StatsSeedFailureTest {
     }
 
     @Test
-    fun aFailedSeedStillUsesTheStoredVersionRatherThanZero() = runBlocking {
-        // A version id written by an earlier successful pass, with its row.
-        db.gradingRulesDao().insertVersion(
-            GradingVersionEntity(
-                id = 7,
-                easySeconds = 9L,
-                slowSeconds = 31L,
-                effectiveFrom = 1_000L,
-                reason = "prior",
-                correctnessOnly = false
+    fun aFailedSeedStillUsesTheStoredVersionRatherThanZero() {
+        dbBlocking {
+            // A version id written by an earlier successful pass, with its row.
+            db.gradingRulesDao().insertVersion(
+                GradingVersionEntity(
+                    id = 7,
+                    easySeconds = 9L,
+                    slowSeconds = 31L,
+                    effectiveFrom = 1_000L,
+                    reason = "prior",
+                    correctnessOnly = false
+                )
             )
-        )
-        settings.writeCuts(9L, 31L, 7, correctnessOnly = false)
+            settings.writeCuts(9L, 31L, 7, correctnessOnly = false)
 
-        val store = StatsStore(db, settings, failingRules())
-        val config = store.loadLibrary().config
-        assertEquals(
-            "the stored id is the only valid epoch; 0 would pool the old rule",
-            7,
-            config.gradingVersion
-        )
-        assertEquals(9L, config.fastSeconds)
+            val store = StatsStore(db, settings, failingRules())
+            val config = store.loadLibrary().config
+            assertEquals(
+                "the stored id is the only valid epoch; 0 would pool the old rule",
+                7,
+                config.gradingVersion
+            )
+            assertEquals(9L, config.fastSeconds)
+        }
     }
 
     @Test
     fun aFailedSeedWithNoStoredVersionFailsTheTabInsteadOfReportingVersionZero() {
         val store = StatsStore(db, settings, failingRules())
         val failure = assertThrows(IllegalStateException::class.java) {
-            runBlocking { store.loadLibrary() }
+            dbBlocking { store.loadLibrary() }
         }
         assertEquals(
             "the loadError path needs a message, not a version-0 report",
@@ -127,40 +142,42 @@ class StatsSeedFailureTest {
      * the tab and not fall back to an epoch of 0.
      */
     @Test
-    fun aVersionRowThatLandsAfterTheReadIsRepairedInsteadOfFailing() = runBlocking {
-        // The window: id 42 and its cuts are stored, its row is not yet.
-        settings.writeCuts(9L, 31L, 42, correctnessOnly = false)
-        val windowedRules = object : GradingRulesStore(db, settings) {
-            private val real = GradingRulesStore(db, settings)
-            private var calls = 0
-            override suspend fun currentVersion(): Int {
-                calls++
-                // The first read sees the id but must not repair it yet.
-                if (calls == 1) return 42
-                return real.currentVersion()
+    fun aVersionRowThatLandsAfterTheReadIsRepairedInsteadOfFailing() {
+        dbBlocking {
+            // The window: id 42 and its cuts are stored, its row is not yet.
+            settings.writeCuts(9L, 31L, 42, correctnessOnly = false)
+            val windowedRules = object : GradingRulesStore(db, settings) {
+                private val real = GradingRulesStore(db, settings)
+                private var calls = 0
+                override suspend fun currentVersion(): Int {
+                    calls++
+                    // The first read sees the id but must not repair it yet.
+                    if (calls == 1) return 42
+                    return real.currentVersion()
+                }
             }
+
+            val store = StatsStore(db, settings, windowedRules)
+            val retention = store.loadRetention(
+                scopePaperId = null,
+                range = StatsAggregator.Range.ALL,
+                now = System.currentTimeMillis()
+            )
+
+            assertNotNull(
+                "the retry must build the report, not fail the tab",
+                retention.calibrationReport
+            )
+            val repaired = db.gradingRulesDao().version(42L)
+            assertNotNull("the retry must re-insert the missing row", repaired)
+            assertEquals(9L, repaired!!.easySeconds)
+            assertEquals(31L, repaired.slowSeconds)
+            assertEquals(
+                "the report's epoch comes from the repaired row",
+                repaired.effectiveFrom,
+                retention.calibrationReport!!.epochStart
+            )
         }
-
-        val store = StatsStore(db, settings, windowedRules)
-        val retention = store.loadRetention(
-            scopePaperId = null,
-            range = StatsAggregator.Range.ALL,
-            now = System.currentTimeMillis()
-        )
-
-        assertNotNull(
-            "the retry must build the report, not fail the tab",
-            retention.calibrationReport
-        )
-        val repaired = db.gradingRulesDao().version(42L)
-        assertNotNull("the retry must re-insert the missing row", repaired)
-        assertEquals(9L, repaired!!.easySeconds)
-        assertEquals(31L, repaired.slowSeconds)
-        assertEquals(
-            "the report's epoch comes from the repaired row",
-            repaired.effectiveFrom,
-            retention.calibrationReport!!.epochStart
-        )
     }
 
     /**
@@ -169,28 +186,37 @@ class StatsSeedFailureTest {
      * never against version 0.
      */
     @Test
-    fun recoveryAfterAFailedSeedUsesTheFreshRow() = runBlocking {
-        val store = StatsStore(db, settings, failOnceRules())
+    fun recoveryAfterAFailedSeedUsesTheFreshRow() {
+        dbBlocking {
+            val store = StatsStore(db, settings, failOnceRules())
 
-        val first = assertThrows(IllegalStateException::class.java) {
-            runBlocking { store.loadLibrary() }
+            val first = try {
+                store.loadLibrary()
+                null
+            } catch (e: IllegalStateException) {
+                e
+            }
+            assertNotNull(
+                "the failing read must be the loadError path, not a version-0 report",
+                first
+            )
+            assertEquals(
+                "the failing read must be the loadError path, not a version-0 report",
+                "The grading rule could not be loaded.",
+                first!!.message
+            )
+
+            val config = store.loadLibrary().config
+            assertEquals("the retry must seed a real version", 1, config.gradingVersion)
+            val row = db.gradingRulesDao().version(config.gradingVersion.toLong())!!
+            assertEquals(
+                "the config must name the pair the fresh row recorded",
+                config.fastSeconds,
+                row.easySeconds
+            )
+            assertEquals(config.slowSeconds, row.slowSeconds)
+            assertEquals("prior", row.reason)
+            assertEquals(SchedulerConfig().fastSeconds, config.fastSeconds)
         }
-        assertEquals(
-            "the failing read must be the loadError path, not a version-0 report",
-            "The grading rule could not be loaded.",
-            first.message
-        )
-
-        val config = store.loadLibrary().config
-        assertEquals("the retry must seed a real version", 1, config.gradingVersion)
-        val row = db.gradingRulesDao().version(config.gradingVersion.toLong())!!
-        assertEquals(
-            "the config must name the pair the fresh row recorded",
-            config.fastSeconds,
-            row.easySeconds
-        )
-        assertEquals(config.slowSeconds, row.slowSeconds)
-        assertEquals("prior", row.reason)
-        assertEquals(SchedulerConfig().fastSeconds, config.fastSeconds)
     }
 }

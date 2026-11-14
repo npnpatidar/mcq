@@ -23,7 +23,10 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,6 +37,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.junit.rules.TimeoutRule
 
 /**
  * The retention tab aggregates while the log streams past it
@@ -46,6 +50,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class StatsRetentionStreamTest {
 
+    @get:Rule
+    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+
     private lateinit var db: AppDatabase
     private lateinit var repository: McqRepository
 
@@ -57,15 +64,23 @@ class StatsRetentionStreamTest {
     private val now = System.currentTimeMillis()
     private val todayStart = DayBoundary.startOfDay(now)
 
+    /** Database/DataStore work must not block Robolectric's paused main thread. */
+    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
+        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    }
+
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         // The DataStore is process-wide: start every test from a blank slate so
         // a grading pair or rule written by a neighbour cannot steer this one.
-        runBlocking { context.dataStore.edit { it.clear() } }
+        runBlocking {
+            withContext(Dispatchers.IO) { withTimeout(30_000) { context.dataStore.edit { it.clear() } } }
+        }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries().build()
         repository = McqRepository(db, context)
+        dbBlocking { db.ensureOpen() }
     }
 
     @After
@@ -74,8 +89,12 @@ class StatsRetentionStreamTest {
         // This class writes real preference keys (the v26 upgrade fixture), so
         // it must restore the process-wide store like GradingRulesStoreTest.
         runBlocking {
-            ApplicationProvider.getApplicationContext<Context>()
-                .dataStore.edit { it.clear() }
+            withContext(Dispatchers.IO) {
+                withTimeout(30_000) {
+                    ApplicationProvider.getApplicationContext<Context>()
+                        .dataStore.edit { it.clear() }
+                }
+            }
         }
     }
 
@@ -164,7 +183,7 @@ class StatsRetentionStreamTest {
     }
 
     @Test
-    fun streamedPayloadMatchesTheInMemoryBuild() = runBlocking {
+    fun streamedPayloadMatchesTheInMemoryBuild() = dbBlocking {
         seedLog()
         val cases = listOf(
             null to StatsAggregator.Range.ALL,
@@ -216,7 +235,7 @@ class StatsRetentionStreamTest {
      * would count them (`pairs > 0`).
      */
     @Test
-    fun openingStatisticsOnAMigratedV27InstallSeedsANewEpoch() = runBlocking {
+    fun openingStatisticsOnAMigratedV27InstallSeedsANewEpoch() = dbBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val oldEffectiveFrom = todayStart - 30 * day
         db.gradingRulesDao().insertVersion(
@@ -348,7 +367,7 @@ class StatsRetentionStreamTest {
     ).pairs
 
     @Test
-    fun paperScopeKeepsOnlyItsOwnRows() = runBlocking {
+    fun paperScopeKeepsOnlyItsOwnRows() = dbBlocking {
         seedLog()
         val everyPaper = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
         val scoped = repository.statsRetention("p1", StatsAggregator.Range.ALL, now)
@@ -366,7 +385,7 @@ class StatsRetentionStreamTest {
     }
 
     @Test
-    fun theScopedCategoryMapPagesOnlyTheSelectedPaper() = runBlocking {
+    fun theScopedCategoryMapPagesOnlyTheSelectedPaper() = dbBlocking {
         // The Retention tab's question→category-title map used to be built by
         // reading every question in the bank, even with one paper selected.
         // These two keyset pages are the scoped replacement, so they must never

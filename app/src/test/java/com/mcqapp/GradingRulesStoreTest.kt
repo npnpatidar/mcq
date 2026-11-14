@@ -18,8 +18,11 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.SchedulerConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,6 +36,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.junit.rules.TimeoutRule
 
 /**
  * The cut points' single writer (v27): every cut change owns a version row, the
@@ -47,11 +51,19 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class GradingRulesStoreTest {
 
+    @get:Rule
+    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+
     private lateinit var context: Context
     private lateinit var db: AppDatabase
 
     @get:Rule
     val settingsReset = SettingsResetRule()
+
+    /** Database/DataStore work must not block Robolectric's paused main thread. */
+    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
+        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    }
 
     @Before
     fun setup() {
@@ -59,6 +71,7 @@ class GradingRulesStoreTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
+        dbBlocking { db.ensureOpen() }
     }
 
     @After
@@ -80,7 +93,7 @@ class GradingRulesStoreTest {
     private fun upgradeRepository() = McqRepository(db, context, freshInstall = false)
 
     @Test
-    fun firstReadSeedsOnePriorVersionAndTheSecondDoesNot() = runBlocking {
+    fun firstReadSeedsOnePriorVersionAndTheSecondDoesNot() = dbBlocking {
         val first = rules().currentVersion()
         assertTrue(first > 0)
         val versions = db.gradingRulesDao().allVersions()
@@ -103,7 +116,7 @@ class GradingRulesStoreTest {
      * graded them would feed the answer-time suggestion with tinted dwells.
      */
     @Test
-    fun aFreshInstallGradesOnCorrectnessAndItsVersionRowSaysSo() = runBlocking {
+    fun aFreshInstallGradesOnCorrectnessAndItsVersionRowSaysSo() = dbBlocking {
         val freshStore = SettingsStore(context, freshInstall = true)
         val version = GradingRulesStore(db, freshStore).currentVersion()
         val row = db.gradingRulesDao().version(version.toLong())!!
@@ -117,7 +130,7 @@ class GradingRulesStoreTest {
      * still apply because the database has no papers and no reviews.
      */
     @Test
-    fun anUnrelatedPreferenceAndAnEmptyDatabaseStillSeedCorrectnessOnly() = runBlocking {
+    fun anUnrelatedPreferenceAndAnEmptyDatabaseStillSeedCorrectnessOnly() = dbBlocking {
         context.dataStore.edit { it[booleanPreferencesKey("haptics_enabled")] = false }
         val repository = productionRepository()
         assertTrue(
@@ -130,7 +143,7 @@ class GradingRulesStoreTest {
 
     /** B2: one paper is content, so the install is an upgrade and stays timed. */
     @Test
-    fun onePaperMakesTheInstallAnUpgrade() = runBlocking {
+    fun onePaperMakesTheInstallAnUpgrade() = dbBlocking {
         db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
         val repository = productionRepository()
         assertFalse(repository.schedulerConfigNow().correctnessOnlyGrading)
@@ -145,7 +158,7 @@ class GradingRulesStoreTest {
      * on its own, not as a consequence of the paper branch.
      */
     @Test
-    fun aReviewRowAlsoMakesTheInstallAnUpgrade() = runBlocking {
+    fun aReviewRowAlsoMakesTheInstallAnUpgrade() = dbBlocking {
         val sqlite = db.openHelper.writableDatabase
         sqlite.execSQL("PRAGMA foreign_keys=OFF")
         try {
@@ -169,7 +182,7 @@ class GradingRulesStoreTest {
      * a relaunch in the same install must inherit the same answer.
      */
     @Test
-    fun theFreshnessAnswerIsTakenAtFirstStartAndSurvivesARelaunch() = runBlocking {
+    fun theFreshnessAnswerIsTakenAtFirstStartAndSurvivesARelaunch() = dbBlocking {
         val firstStart = InstallFreshness(context) { db.hasNoPapersOrReviews() }
         assertTrue("the install is new at first start", firstStart.isNewInstall())
 
@@ -197,7 +210,7 @@ class GradingRulesStoreTest {
      * repaired install still gets the right rule.
      */
     @Test
-    fun aFailedProbeAnswersNotNewWithoutPersistingAndIsRetried() = runBlocking {
+    fun aFailedProbeAnswersNotNewWithoutPersistingAndIsRetried() = dbBlocking {
         var healthy = false
         val freshness = InstallFreshness(context) {
             check(healthy) { "grading_versions is unreadable" }
@@ -240,7 +253,7 @@ class GradingRulesStoreTest {
      * database would otherwise seed correctness-only.
      */
     @Test
-    fun anExplicitlyStoredFalseIsNeverOverwrittenByTheSeed() = runBlocking {
+    fun anExplicitlyStoredFalseIsNeverOverwrittenByTheSeed() = dbBlocking {
         context.dataStore.edit { it[booleanPreferencesKey("correctness_only")] = false }
         val repository = productionRepository()
         assertFalse(repository.schedulerConfigNow().correctnessOnlyGrading)
@@ -251,7 +264,7 @@ class GradingRulesStoreTest {
 
     /** A Settings cut edit must write a version row, not just a preference. */
     @Test
-    fun aManualCutEditWritesAVersionRow() = runBlocking {
+    fun aManualCutEditWritesAVersionRow() = dbBlocking {
         val repository = upgradeRepository()
         val before = repository.gradingVersion()
         repository.setSchedulerConfig(SchedulerConfig(fastSeconds = 10L))
@@ -267,7 +280,7 @@ class GradingRulesStoreTest {
 
     /** Saving a config whose cuts did not change is not a new version. */
     @Test
-    fun aSaveWithoutACutChangeDoesNotVersion() = runBlocking {
+    fun aSaveWithoutACutChangeDoesNotVersion() = dbBlocking {
         val repository = upgradeRepository()
         val before = repository.gradingVersion()
         repository.setSchedulerConfig(SchedulerConfig(desiredRetention = 0.85))
@@ -276,7 +289,7 @@ class GradingRulesStoreTest {
     }
 
     @Test
-    fun aResetThatChangesThePairWritesOneManualVersion() = runBlocking {
+    fun aResetThatChangesThePairWritesOneManualVersion() = dbBlocking {
         val repository = upgradeRepository()
         repository.setSchedulerConfig(SchedulerConfig(fastSeconds = 12L, slowSeconds = 40L))
         val before = repository.gradingVersion()
@@ -306,7 +319,7 @@ class GradingRulesStoreTest {
      * moved.
      */
     @Test
-    fun aResetWithAnUnchangedPairLeavesTheVersionAndEpochAlone() = runBlocking {
+    fun aResetWithAnUnchangedPairLeavesTheVersionAndEpochAlone() = dbBlocking {
         val repository = upgradeRepository()
         repository.setSchedulerConfig(
             SchedulerConfig(
@@ -336,7 +349,7 @@ class GradingRulesStoreTest {
      * that never existed.
      */
     @Test
-    fun aResetUnderCorrectnessOnlyKeepsTheRuleAndRecordsIt() = runBlocking {
+    fun aResetUnderCorrectnessOnlyKeepsTheRuleAndRecordsIt() = dbBlocking {
         val repository = upgradeRepository()
         repository.setSchedulerConfig(
             SchedulerConfig(
@@ -370,7 +383,7 @@ class GradingRulesStoreTest {
      * stored cuts rather than moving the number again.
      */
     @Test
-    fun aMissingHistoryRowIsRepairedFromThePreferences() = runBlocking {
+    fun aMissingHistoryRowIsRepairedFromThePreferences() = dbBlocking {
         val store = store()
         store.writeCuts(9L, 31L, 4, correctnessOnly = false)
         db.openHelper.writableDatabase.execSQL("DELETE FROM grading_versions")
@@ -389,7 +402,7 @@ class GradingRulesStoreTest {
      * pooled with reviews graded without it.
      */
     @Test
-    fun aRuleSwitchWritesItsOwnVersionAndSwitchingBackDoesToo() = runBlocking {
+    fun aRuleSwitchWritesItsOwnVersionAndSwitchingBackDoesToo() = dbBlocking {
         val repository = upgradeRepository()
         val before = repository.gradingVersion()
 
@@ -415,7 +428,7 @@ class GradingRulesStoreTest {
 
     /** A cut edited while the switch is on is a manual version of that rule. */
     @Test
-    fun aCutEditUnderCorrectnessOnlyKeepsTheModeOnItsRow() = runBlocking {
+    fun aCutEditUnderCorrectnessOnlyKeepsTheModeOnItsRow() = dbBlocking {
         val repository = upgradeRepository()
         repository.setSchedulerConfig(SchedulerConfig(correctnessOnlyGrading = true))
         repository.setSchedulerConfig(
@@ -428,7 +441,7 @@ class GradingRulesStoreTest {
     }
 
     @Test
-    fun restoreSeedsANewPriorVersionContinuingTheNumbering() = runBlocking {
+    fun restoreSeedsANewPriorVersionContinuingTheNumbering() = dbBlocking {
         rules().currentVersion()
         // Pretend the restored backup carried version 5 with its own cuts.
         db.gradingRulesDao().insertVersion(
@@ -454,7 +467,7 @@ class GradingRulesStoreTest {
      * it would pool two grading rules in one calibration epoch.
      */
     @Test
-    fun aPairSavedUnderAnOlderRuleStartsANewEpoch() = runBlocking {
+    fun aPairSavedUnderAnOlderRuleStartsANewEpoch() = dbBlocking {
         db.gradingRulesDao().insertVersion(
             GradingVersionEntity(
                 id = 1,
@@ -492,7 +505,7 @@ class GradingRulesStoreTest {
      * longer new, and the seed must not write correctness-only over it.
      */
     @Test
-    fun restoringAPreV27BackupOverRestoredHistoryDoesNotSeedCorrectnessOnly() = runBlocking {
+    fun restoringAPreV27BackupOverRestoredHistoryDoesNotSeedCorrectnessOnly() = dbBlocking {
         val repository = productionRepository()
         // The install was fresh before the restore: it seeded correctness-only.
         assertTrue(repository.schedulerConfigNow().correctnessOnlyGrading)
@@ -537,7 +550,7 @@ class GradingRulesStoreTest {
      * to contradict it.
      */
     @Test
-    fun aRestoredV27RuleWinsOverTheFreshInstallSeed() = runBlocking {
+    fun aRestoredV27RuleWinsOverTheFreshInstallSeed() = dbBlocking {
         val repository = productionRepository()
         assertTrue(repository.schedulerConfigNow().correctnessOnlyGrading)
 
@@ -570,7 +583,7 @@ class GradingRulesStoreTest {
      * must come back with that id and pair together.
      */
     @Test
-    fun schedulerConfigNowCarriesTheIdStoredWithTheSeededCuts() = runBlocking {
+    fun schedulerConfigNowCarriesTheIdStoredWithTheSeededCuts() = dbBlocking {
         db.gradingRulesDao().insertVersion(
             GradingVersionEntity(
                 id = 1,
@@ -609,7 +622,7 @@ class GradingRulesStoreTest {
      * longer grade anything.
      */
     @Test
-    fun aFirstResetOfARetiredPairMintsNoManualRow() = runBlocking {
+    fun aFirstResetOfARetiredPairMintsNoManualRow() = dbBlocking {
         val retired = GradingVersionEntity(
             id = 1,
             easySeconds = 8L,

@@ -63,6 +63,20 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun studySessionDao(): StudySessionDao
 
     /**
+     * Forces the underlying SQLite database open on [Dispatchers.IO]. The CI
+     * hang around a first Room/DAO access happened while Android's
+     * `SQLiteConnectionPool` was opening its first connection and another path
+     * waited for that connection; forcing the open on IO serializes that
+     * first-open work away from a caller that may be blocking Robolectric's
+     * main looper. This is a best-effort warm-up: Room's own connection
+     * management may still contend, but it keeps the initial framework open on
+     * a background dispatcher.
+     */
+    internal suspend fun ensureOpen() = withContext(Dispatchers.IO) {
+        openHelper.writableDatabase
+    }
+
+    /**
      * The app's single definition of a new install (v27): this database has
      * never held a paper or a review row.
      *
@@ -82,6 +96,10 @@ abstract class AppDatabase : RoomDatabase() {
         // thread, which StartupTest fails on. `withContext` would hide that.
         freshnessProbeThread = Thread.currentThread().name
         return withContext(Dispatchers.IO) {
+            // Warm the framework SQLite open on IO before the probe query, so a
+            // concurrent first DAO path is less likely to contend with a caller
+            // blocking Robolectric's main thread during initial open.
+            openHelper.writableDatabase
             openHelper.readableDatabase.query(
                 "SELECT NOT EXISTS(SELECT 1 FROM papers) " +
                     "AND NOT EXISTS(SELECT 1 FROM review_log)"
@@ -116,6 +134,11 @@ abstract class AppDatabase : RoomDatabase() {
         @VisibleForTesting
         internal fun resetInstanceForTests() {
             INSTANCE = null
+        }
+
+        @VisibleForTesting
+        internal fun restoreInstanceForTests(db: AppDatabase?) {
+            INSTANCE = db
         }
 
         val MIGRATION_3_4 = object : Migration(3, 4) {

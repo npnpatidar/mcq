@@ -9,18 +9,24 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.repository.InstallFreshness
 import com.mcqapp.data.repository.dataStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.junit.rules.TimeoutRule
 
 /**
  * §5.8 of the scaling plan: a cold start must not do database work on the main
@@ -44,6 +50,12 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = FreshStartupApplication::class)
 class StartupTest {
+
+    @get:Rule
+    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+
+    @get:Rule
+    val testName = TestName()
 
     @After
     fun clearInstallState() {
@@ -97,7 +109,9 @@ class StartupTest {
         )
         // The marker is written by the seed decision itself, so the seed has
         // already run: an upgrade must not have written the rule either.
-        val stored = runBlocking { context.dataStore.data.first()[CORRECTNESS_ONLY] }
+        val stored = runBlocking {
+            withContext(Dispatchers.IO) { withTimeout(10_000) { context.dataStore.data.first()[CORRECTNESS_ONLY] } }
+        }
         assertTrue(
             "an install that already holds a paper must not be seeded correctness-only",
             stored != true
@@ -123,7 +137,8 @@ class StartupTest {
     /**
      * Idles the main looper and polls the process-wide store until [key] has
      * [expected], or the timeout passes. Bounded rather than fixed-sleep: the
-     * startup job's latency is not the test's subject.
+     * startup job's latency is not the test's subject. DataStore reads run on
+     * IO so a background probe can progress while this test thread idles.
      */
     private fun awaitStored(
         context: Context,
@@ -134,11 +149,20 @@ class StartupTest {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             shadowOf(Looper.getMainLooper()).idle()
-            if (runBlocking { context.dataStore.data.first()[key] } == expected) return true
+            val value = runBlocking {
+                withContext(Dispatchers.IO) { withTimeout(2_000) { context.dataStore.data.first()[key] } }
+            }
+            if (value == expected) return true
             Thread.sleep(10)
         }
         shadowOf(Looper.getMainLooper()).idle()
-        return runBlocking { context.dataStore.data.first()[key] } == expected
+        val value = runBlocking {
+            withContext(Dispatchers.IO) { withTimeout(2_000) { context.dataStore.data.first()[key] } }
+        }
+        check(value == expected) {
+            "timed out waiting for ${key.name}==$expected in ${testName.methodName} (got $value)"
+        }
+        return true
     }
 
     private companion object {
@@ -157,7 +181,13 @@ class StartupTest {
  */
 class FreshStartupApplication : McqApplication() {
     override fun onCreate() {
-        runBlocking { SettingsResetRule.clearGradingKeys(this@FreshStartupApplication) }
+        runBlocking {
+            withContext(Dispatchers.IO) {
+                withTimeout(30_000) {
+                    SettingsResetRule.clearGradingKeysSuspend(this@FreshStartupApplication)
+                }
+            }
+        }
         AppDatabase.resetInstanceForTests()
         super.onCreate()
     }
@@ -169,12 +199,17 @@ class FreshStartupApplication : McqApplication() {
  */
 class UpgradeStartupApplication : McqApplication() {
     override fun onCreate() {
-        runBlocking { SettingsResetRule.clearGradingKeys(this@UpgradeStartupApplication) }
-        AppDatabase.resetInstanceForTests()
         runBlocking {
-            AppDatabase.get(this@UpgradeStartupApplication)
-                .paperDao()
-                .insertIgnore(PaperEntity(id = "existing", title = "Already here"))
+            withContext(Dispatchers.IO) {
+                withTimeout(30_000) {
+                    SettingsResetRule.clearGradingKeysSuspend(this@UpgradeStartupApplication)
+                    AppDatabase.resetInstanceForTests()
+                    AppDatabase.get(this@UpgradeStartupApplication).ensureOpen()
+                    AppDatabase.get(this@UpgradeStartupApplication)
+                        .paperDao()
+                        .insertIgnore(PaperEntity(id = "existing", title = "Already here"))
+                }
+            }
         }
         super.onCreate()
     }

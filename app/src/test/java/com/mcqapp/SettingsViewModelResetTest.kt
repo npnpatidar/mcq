@@ -6,7 +6,10 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.StudyMode
 import com.mcqapp.ui.settings.SettingsViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -14,10 +17,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestName
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.junit.rules.TimeoutRule
 
 /**
  * A: `Reset study settings` is a pacing action, so the Settings screen must
@@ -36,6 +41,12 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], application = TestMcqApplication::class)
 class SettingsViewModelResetTest {
 
+    @get:Rule
+    val timeout: TimeoutRule = TimeoutRule.seconds(180)
+
+    @get:Rule
+    val testName = TestName()
+
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication
     private val repository get() = app.repository
 
@@ -49,6 +60,11 @@ class SettingsViewModelResetTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
+    /** Database work must not block Robolectric's paused main thread. */
+    private fun <T> dbBlocking(block: suspend () -> T): T = runBlocking {
+        withContext(Dispatchers.IO) { withTimeout(30_000) { block() } }
+    }
+
     /** Idles the main looper until [condition] holds, or gives up. */
     private fun awaitCondition(condition: () -> Boolean): Boolean {
         repeat(400) {
@@ -56,7 +72,9 @@ class SettingsViewModelResetTest {
             if (condition()) return true
             Thread.sleep(5)
         }
-        return condition()
+        val ok = condition()
+        check(ok) { "timed out waiting for condition in ${testName.methodName}" }
+        return true
     }
 
     /**
@@ -75,9 +93,32 @@ class SettingsViewModelResetTest {
         )
     }
 
+    /**
+     * Regression for the former first-DAO-before-open hang: a fresh, unopened
+     * database must complete its first production repository operation without
+     * a test-only warm-up and without depending on progress from a blocked main
+     * looper. Bounded so a regression fails instead of hanging the run.
+     */
+    @Test
+    fun firstDatabaseOpenAndSeedPathCompletes() {
+        val context = app
+        val originalDb = com.mcqapp.data.local.AppDatabase.get(context)
+        com.mcqapp.data.local.AppDatabase.resetInstanceForTests()
+        val freshDb = com.mcqapp.data.local.AppDatabase.get(context)
+        try {
+            val freshRepository = com.mcqapp.data.repository.McqRepository(freshDb, context)
+            val config = dbBlocking { freshRepository.schedulerConfigNow() }
+            assertNotNull("seeding the first config must complete", config)
+            assertTrue(config.gradingVersion > 0)
+        } finally {
+            freshDb.close()
+            com.mcqapp.data.local.AppDatabase.restoreInstanceForTests(originalDb)
+        }
+    }
+
     @Test
     fun resetKeepsTheRuleInTheUiAndInTheStore() {
-        runBlocking {
+        dbBlocking {
             repository.setSchedulerConfig(
                 SchedulerConfig(
                     correctnessOnlyGrading = true,
@@ -86,38 +127,31 @@ class SettingsViewModelResetTest {
                 )
             )
         }
-        val beforeVersion = runBlocking { repository.gradingVersion() }
+        val beforeVersion = dbBlocking { repository.gradingVersion() }
         val viewModel = SettingsViewModel(app)
-        assertTrue(
-            "the screen never picked up the saved rule: ${viewModel.schedulerConfig.value}",
-            awaitCondition {
-                val config = viewModel.schedulerConfig.value
-                config != null &&
-                    config.correctnessOnlyGrading &&
-                    config.fastSeconds == 10L
-            }
-        )
+        awaitCondition {
+            val config = viewModel.schedulerConfig.value
+            config != null &&
+                config.correctnessOnlyGrading &&
+                config.fastSeconds == 10L
+        }
 
         viewModel.resetSchedulerConfig()
         // The version is the discriminator: the defaults carry version 0, and
         // an unchanged pair would keep `beforeVersion`. Awaiting only the
         // knobs let the init collector's re-emit hide a ViewModel that had
         // published `SchedulerConfig()` in the meantime.
-        assertTrue(
-            "Reset must show the stored rule, cuts and a new version: " +
-                "${viewModel.schedulerConfig.value}",
-            awaitCondition {
-                val config = viewModel.schedulerConfig.value
-                config != null &&
-                    config.correctnessOnlyGrading &&
-                    config.fastSeconds == 6L &&
-                    config.slowSeconds == 60L &&
-                    config.gradingVersion > beforeVersion
-            }
-        )
+        awaitCondition {
+            val config = viewModel.schedulerConfig.value
+            config != null &&
+                config.correctnessOnlyGrading &&
+                config.fastSeconds == 6L &&
+                config.slowSeconds == 60L &&
+                config.gradingVersion > beforeVersion
+        }
         val ui = viewModel.schedulerConfig.value
         assertNotNull("the screen lost the config after Reset", ui)
-        runBlocking {
+        dbBlocking {
             val stored = repository.schedulerConfigNow()
             assertTrue("Reset must not switch the rule off", stored.correctnessOnlyGrading)
             assertEquals(6L, stored.fastSeconds)
@@ -138,13 +172,10 @@ class SettingsViewModelResetTest {
         viewModel.updateSchedulerConfig(
             ui!!.copy(studyMode = StudyMode.EXPLORE_NEW)
         )
-        assertTrue(
-            "the unrelated edit never landed",
-            awaitCondition {
-                viewModel.schedulerConfig.value?.studyMode == StudyMode.EXPLORE_NEW
-            }
-        )
-        runBlocking {
+        awaitCondition {
+            viewModel.schedulerConfig.value?.studyMode == StudyMode.EXPLORE_NEW
+        }
+        dbBlocking {
             val stored = repository.schedulerConfigNow()
             assertTrue(
                 "an unrelated edit must not write the old UI snapshot's false rule",
@@ -166,7 +197,7 @@ class SettingsViewModelResetTest {
      */
     @Test
     fun aStaleSnapshotCannotWriteTheRuleOrTheCutsBack() {
-        runBlocking {
+        dbBlocking {
             repository.setSchedulerConfig(
                 SchedulerConfig(
                     correctnessOnlyGrading = true,
@@ -176,10 +207,7 @@ class SettingsViewModelResetTest {
             )
         }
         val viewModel = SettingsViewModel(app)
-        assertTrue(
-            "the screen never loaded: ${viewModel.schedulerConfig.value}",
-            awaitCondition { viewModel.schedulerConfig.value != null }
-        )
+        awaitCondition { viewModel.schedulerConfig.value != null }
 
         // Exactly the defaults a screen composed before the fixture's save
         // would still be holding.
@@ -191,13 +219,10 @@ class SettingsViewModelResetTest {
                 desiredRetention = 0.85
             )
         )
-        assertTrue(
-            "the knob edit never landed",
-            awaitCondition {
-                viewModel.schedulerConfig.value?.desiredRetention == 0.85
-            }
-        )
-        runBlocking {
+        awaitCondition {
+            viewModel.schedulerConfig.value?.desiredRetention == 0.85
+        }
+        dbBlocking {
             val stored = repository.schedulerConfigNow()
             assertTrue(
                 "a generic edit must never rewrite the rule from a stale snapshot",

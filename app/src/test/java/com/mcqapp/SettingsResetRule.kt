@@ -6,7 +6,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.repository.dataStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.rules.ExternalResource
 
 /**
@@ -43,16 +46,28 @@ class SettingsResetRule : ExternalResource() {
     }
 
     companion object {
+        suspend fun clearGradingKeysSuspend(
+            context: Context = ApplicationProvider.getApplicationContext()
+        ) {
+            // Bounded and off the paused Robolectric main thread so DataStore
+            // I/O can complete without stalling unrelated background work.
+            withContext(Dispatchers.IO) {
+                withTimeout(30_000) {
+                    context.dataStore.edit { prefs ->
+                        prefs.remove(booleanPreferencesKey("correctness_only"))
+                        prefs.remove(intPreferencesKey("grading_rules_version"))
+                        prefs.remove(intPreferencesKey("ladder_version"))
+                        prefs.remove(booleanPreferencesKey("install_first_start_new"))
+                    }
+                }
+            }
+        }
+
         fun clearGradingKeys(
             context: Context = ApplicationProvider.getApplicationContext()
         ) {
             runBlocking {
-                context.dataStore.edit { prefs ->
-                    prefs.remove(booleanPreferencesKey("correctness_only"))
-                    prefs.remove(intPreferencesKey("grading_rules_version"))
-                    prefs.remove(intPreferencesKey("ladder_version"))
-                    prefs.remove(booleanPreferencesKey("install_first_start_new"))
-                }
+                clearGradingKeysSuspend(context)
             }
         }
     }

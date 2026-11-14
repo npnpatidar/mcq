@@ -278,6 +278,9 @@ tasks.withType<Test>().configureEach {
         "robolectric.dependency.dir",
         layout.buildDirectory.dir("robolectric-sdk").get().asFile.absolutePath
     )
+    testLogging {
+        events("started", "failed", "skipped")
+    }
     // A hung test must fail the run, not sit for half an hour: we have seen
     // :app:testDebugUnitTest stall with no output (a runtime download, once;
     // a deadlocked Room/Robolectric observer, since). Ten minutes is several

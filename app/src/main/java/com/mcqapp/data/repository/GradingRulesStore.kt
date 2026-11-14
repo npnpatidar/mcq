@@ -48,7 +48,13 @@ internal open class GradingRulesStore(
      * Open only so a test can substitute a failing store and prove the
      * statistics read refuses to build a version-0 report.
      */
-    open suspend fun currentVersion(): Int = mutex.withLock { ensureVersionLocked() }
+    open suspend fun currentVersion(): Int {
+        // First grading-version access can be the first Room DAO path; warm the
+        // underlying SQLite open on IO so it does not race connection-pool setup
+        // against a caller blocking the main looper (the CI hang shape).
+        db.ensureOpen()
+        return mutex.withLock { ensureVersionLocked() }
+    }
 
     /**
      * The whole-config write path: records a MANUAL version when a cut changed,

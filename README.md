@@ -898,7 +898,7 @@ this, never midnight.
 | `Maximum interval` | 36500 d | 1–36500 | Cap on any interval. |
 | `Relearning delay` | 10 m | 1–1440 m, step 0.5 m | Delay after Again on REVIEW. |
 | `Leech threshold` | 8 | 1–100 | Lapses before flagging tricky. |
-| `Reset` | — | button (confirm dialog) | Resets every study setting — schedule knobs, target retention, ranking mode and new-card handling (not fitted weights). |
+| `Reset` | — | button (confirm dialog) | Resets every study setting — schedule knobs, target retention, ranking mode and new-card handling (not fitted weights, not the correctness-only rule). |
 
 **FSRS Parameters (21 weights, official defaults):**
 `w = [0.40, 0.60, 2.40, 5.80, 4.93, 0.94, 0.86, 0.01, 1.49, 0.14, 0.94,
@@ -2068,14 +2068,14 @@ Help: `Switch off for review-only sessions. Many new cards increase future revie
 #### Grade on Correctness Only (switch)
 **Key:** `correctness_only` | **Default:** on for a new install, off for an upgrade | **Control:** switch (tag `setting-grade-correctness-only`).
 
-On: `Study.inferGrade` returns `Good` for every correct, unguessed answer and `Again` for wrong/guess/skip; the cuts are not read. The question clock keeps running and `review_log.elapsedSeconds` is still written, so the dwell history stays analysable. The switch also starts a new grading version (`reason = rule`, `grading_versions.correctnessOnly = 1`), so rows graded with the clock are never pooled with rows graded without it. Both threshold fields below disappear while it is on; `Reset` turns it off. Statistics → Retention replaces the calibration card with the answer-time suggestion once 200 correct answers over 30 cards span at least 14 days; that pair is the one to enter when timing is switched back on.
+On: `Study.inferGrade` returns `Good` for every correct, unguessed answer and `Again` for wrong/guess/skip; the cuts are not read. The question clock keeps running and `review_log.elapsedSeconds` is still written, so the dwell history stays analysable. The switch also starts a new grading version (`reason = rule`, `grading_versions.correctnessOnly = 1`), so rows graded with the clock are never pooled with rows graded without it. Both threshold fields below disappear while it is on; `Reset study settings` leaves it alone (the rule is the measurement condition, not a pacing knob). Statistics → Retention replaces the calibration card with the answer-time suggestion once 200 correct answers over 30 cards span at least 14 days; that pair is the one to enter when timing is switched back on.
 
-**Default:** a new install starts with the switch on, because the rule is the measurement condition for the answer-time cuts: the dwell of a tinted clock is not free evidence, so a learner who starts on timing cannot produce that suggestion later without first spending weeks on correctness-only. The seed is written once, on the first read of the scheduler config, and only into an untouched install — an upgrade keeps the rule the learner had, and a restored install keeps the rule in its backup (the seed refuses to run once any preference is stored).
+**Default:** a new install starts with the switch on, because the rule is the measurement condition for the answer-time cuts: the dwell of a tinted clock is not free evidence, so a learner who starts on timing cannot produce that suggestion later without first spending weeks on correctness-only. Freshness is database content, decided once at first start and persisted: an installation with no papers and no reviews is new, so importing a paper during that first run does not turn it into an upgrade. An upgrade keeps the rule it already had, and a restored install keeps the rule from its backup; a stored choice (including an explicit off) always wins. `Reset study settings` does not change the rule. Failure edge: if the first probe fails (for example a database that cannot be read yet) the install is answered as "not new" and nothing is persisted; if the learner imports a paper before a retry succeeds, that retry answers from the paper and the install is thereafter treated as an upgrade, so the correctness-only default is lost silently. A full restore re-probes the restored database.
 
 #### 3.6 Minimum Easy Answer Threshold
 **Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 1–3600, step 1. **Domain clamp:** `coerceIn(1, 3600)`. Hidden while `Grade on correctness only` is on (the value is kept as the fallback rule).
 
-Absolute: a correct answer faster than this is `Easy` and nothing is added for reading the question. A cut pair stored by a pre-v27 build is ignored until a cut is saved under this rule (`grading_rules_version`).
+Absolute: a correct answer faster than this is `Easy` and nothing is added for reading the question. A cut pair saved by a pre-v27 build is **retired on upgrade**: the version gate (`grading_rules_version`) is absent, so the first read writes the shipped 6/60 over the stored pair. The old value is not kept anywhere — it was tuned against the deleted reading allowance and cannot be reinterpreted under this rule — so a learner who had tuned the cuts has to re-enter the pair.
 
 #### 3.7 Hard Answer Threshold
 **Key:** `anki_slow_seconds` | **Default:** `60` s | Same stepper/field. **Cross-field rule:** `value >= fastSeconds`. Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
@@ -2101,9 +2101,9 @@ Absolute: a correct answer faster than this is `Easy` and nothing is added for r
 #### 3.9 Reset (Button)
 **Label:** `Reset` (TextButton, right of `Spaced repetition` heading). Asks for confirmation because it resets more than the schedule knobs. `Restore defaults` under Optimize also asks before discarding fitted weights.
 
-Does: `repository.resetSchedulerConfig()` — rewrites **pacing knobs only**: max interval, relearn delay, leech threshold, day-start hour, easy threshold, hard threshold, target retention, ranking mode, introduce-new-cards. **Deliberately does NOT touch fitted FSRS weights** (`fsrs_parameters`); `Restore defaults` in optimizer block is the only way to drop those.
+Does: `repository.resetSchedulerConfig()` — rewrites **pacing knobs only**: max interval, relearn delay, leech threshold, day-start hour, easy threshold, hard threshold, target retention, ranking mode, introduce-new-cards. **Deliberately does NOT touch fitted FSRS weights** (`fsrs_parameters`); `Restore defaults` in optimizer block is the only way to drop those. **It also does not touch the grading rule** (`correctness_only`): the rule is the measurement condition, not a pacing knob. A reset that changes the cut pair writes one `manual` grading version. A reset whose pair is already 6/60 changes no version and does not move the calibration epoch — moving a pacing knob cannot end the sample. The exception is the first reset of a pair saved by a pre-v27 build: that pair was retired on upgrade and never graded anything, so its stale id is dropped and the next read mints a fresh `prior` row at that moment; the epoch **does** move, to the point the retired history stopped being measurable.
 
-Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises, then re-reads stored config and copies its `fsrsParameters` back in before writing, so a stale snapshot can never revert a fresh fit.
+Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises a knob edit and passes a transform to `McqRepository.updateSchedulerConfig`, which reads the stored config, applies the transform and writes it back **under the repository's scheduler write mutex**. The snapshot supplies only the fields without their own path; `fsrsParameters`, `correctnessOnlyGrading` and both cuts are taken from the value read under the mutex. The rule and each cut have their own handlers (`setGradeCorrectnessOnly`, `setFastSeconds`, `setSlowSeconds`), which go through the same read-modify-write, so the rule and the cuts are always read from the store before they are written and a stale composition snapshot cannot write them back. Reset, save and restore are serialised by that mutex, so two of them cannot interleave between their read and their version write.
 
 ---
 
@@ -2117,7 +2117,7 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises, then re-
 |---|-------|---------|--------|------------------------|
 | 1 | `Export all data (JSON)` | `!busy` | `CreateDocument("application/json")`, name `mcq-export.json` → streams `Exporter.exportAllTo` (includes papers, categories, questions, passages, bookmarks, attempts, **and** `scheduling` map) | System save dialog; success **silent** |
 | 2 | `Share all data (JSON)` | `!busy` | Renders JSON to `cacheDir/shared/mcq-export.json`, then `ACTION_SEND` chooser `Share file` | Chooser |
-| 3 | `Backup (zip)` | `!busy` | `CreateDocument("application/zip")`, name `mcqapp-backup.zip` → full zip: `manifest` (dbVersion, appVersion, exportedAt, counts), `content` (bank JSON without scheduling), `study.json` (card states, review log, paper createdAt+sortOrder, in-progress test, panels, blueprints), `settings.json` (all DataStore prefs except `in_progress_test`) | System save dialog; success **silent** |
+| 3 | `Backup (zip)` | `!busy` | `CreateDocument("application/zip")`, name `mcqapp-backup.zip` → full zip: `manifest` (dbVersion, appVersion, exportedAt, counts), `content` (bank JSON without scheduling), `study.json` (card states, review log, paper createdAt+sortOrder, in-progress test, panels, blueprints), `settings.json` (all DataStore prefs except `in_progress_test` and `install_first_start_new`) | System save dialog; success **silent** |
 | 4 | `Share backup (zip)` | `!busy` | Same zip to `cacheDir/shared/mcqapp-backup.zip`, then `Share file` chooser | Chooser |
 | 5 | `Restore backup` | `!busy` | `OpenDocument("application/zip", "application/octet-stream")` → **confirmation dialog first** | See below |
 | 6 | `Export Logs` | `!busy` | Shares app's log file via `FileProvider` + `ACTION_SEND` (`text/plain`), chooser title `Export Logs` | See failures |
@@ -2276,10 +2276,15 @@ All hex colours must be 6-digit (`#RRGGBB`).
 
 ### DataStore (Settings)
 Single file `settings`. `SettingsStore.snapshot()` captures **all** preferences
-generically (unknown types skipped; `in_progress_test` deliberately excluded).
-Every Settings control round-trips through `Backup (zip)`. `restore()` **replaces
-the whole preference set** — a setting changed since the backup does not survive
-a restore.
+generically (unknown types skipped). Two keys are deliberately excluded:
+`in_progress_test` is session state, and `install_first_start_new` is the
+install-scoped first-start answer — it describes this installation, not the
+learner, so it must not travel in a backup. `restore()` **replaces the whole
+preference set** — a setting changed since the backup does not survive a
+restore — skips both excluded keys, and invalidates the first-start answer
+before it clears anything. The next config read re-probes the restored
+database, which is what stops a pre-v27 backup landing in a formerly-fresh
+install from inheriting that install's correctness-only rule.
 
 ### Room Database (`mcq.db`)
 Tables: papers, categories, questions, options, passages, attempts, attempt
